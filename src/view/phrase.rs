@@ -18,6 +18,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::Undrawn;
+use crate::model::gate::{Fault, PullRequest, Unlinked};
 use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::tree::Unreachable;
@@ -781,6 +782,45 @@ pub fn undrawn(undrawn: &Undrawn) -> String {
             format!("no short form for {key}: its value does not fit the template")
         }
     }
+}
+
+/// The pull request a `gh:pr` gate waits on, as the row draws it, and the
+/// shorter form a narrow row falls back to where there is one. An await id
+/// that is not a number is the gate's word rather than `bdi`'s, so it is
+/// quoted.
+pub fn awaited_pull_request(awaited: &PullRequest) -> (String, Option<String>) {
+    let number = match &awaited.number {
+        Ok(number) => Some(format!("#{number}")),
+        Err(Fault::AwaitIdNotANumber(id)) => Some(quoted(id)),
+        Err(_) => None,
+    };
+    match (awaited.name(), number) {
+        (Some(name), Some(number)) => (format!("⇢ {name} {number}"), Some(format!("⇢ {number}"))),
+        (Some(name), None) => (format!("⇢ {name}"), None),
+        (None, Some(number)) => (format!("⇢ {number}"), None),
+        (None, None) => ("⇢".to_string(), None),
+    }
+}
+
+/// Why a `gh:pr` gate's pull request is drawn without a link, where it is.
+pub fn unlinked_pull_request(awaited: &PullRequest) -> Option<String> {
+    let number = awaited.number.clone().unwrap_or_default();
+    Some(match awaited.unlinked()? {
+        Unlinked::Fault(Fault::AwaitIdNotANumber(id)) => format!(
+            "no link to the pull request: its gate's await id {} is not a number",
+            quoted(&id)
+        ),
+        Unlinked::Fault(Fault::NoAwaitId) => {
+            "no link to the pull request: its gate has no await id".to_string()
+        }
+        Unlinked::Fault(Fault::NoRepo) => {
+            format!("no link to pull request #{number}: its gate names no repo")
+        }
+        Unlinked::RepoNotAnAddress => format!(
+            "no link to pull request #{number}: its gate's repo {} is not owner/repo",
+            quoted(awaited.repo.as_deref().unwrap_or_default())
+        ),
+    })
 }
 
 /// A link built and then refused at the point of writing it, because the

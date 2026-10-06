@@ -11,8 +11,8 @@
 #
 #   BDI_SHIM_BD_ANSWERS      directory holding one file per call, named by the
 #                            call as bdi asks it past whatever flags open it:
-#                            `list --all --limit 0 --json`, `blocked --json`,
-#                            `where --json`. A call with a file there is
+#                            `list --all --include-gates --limit 0 --json`,
+#                            `blocked --json`, `where --json`. A call with a file there is
 #                            answered with it; any other is refused. A file in
 #                            a directory under it named for the last component
 #                            of the tracker `-C` names answers for that

@@ -178,6 +178,52 @@ fn a_run_recorded_as_wisps_is_drawn_beside_the_permanent_work() {
     );
 }
 
+/// Three beads each blocked by a `gh:pr` gate, as bd 1.3.0 wrote them.
+const GH_PR_GATES: &str = include_str!("fixtures/bd_1.3.0_gh_pr_gates.json");
+
+/// A gate hangs under the bead it blocks and names the pull request it waits
+/// on, with no config naming either: `gh:pr` is beads' own await type.
+#[test]
+fn a_gh_pr_gate_hangs_under_the_bead_it_blocks_and_names_its_pull_request() {
+    let trackers = dunwich_with(Fake::holding(beads(GH_PR_GATES)));
+
+    let emitted = emit(&panes(), &trackers, Filter::All);
+
+    let trees = emitted["trees"].as_array().expect("trees is an array");
+    let dish = trees
+        .iter()
+        .find(|tree| tree["title"] == "re-point the dish")
+        .expect("the waiting bead is a root");
+    let gate = &dish["nodes"][1];
+    assert_eq!(
+        (&gate["issue_type"], &gate["depth"], &gate["edge"]),
+        (&json!("gate"), &json!(1), &json!("blocks"))
+    );
+    assert_eq!(
+        gate["pull_request"],
+        json!({
+            "repo": "dunwich/arkham",
+            "await_id": "12",
+            "url": "https://github.com/dunwich/arkham/pull/12",
+        })
+    );
+    assert!(
+        dish["nodes"][0].get("pull_request").is_none(),
+        "the waiting bead is no gate: {}",
+        dish["nodes"][0]
+    );
+
+    let wire = trees
+        .iter()
+        .find(|tree| tree["title"] == "string the wire")
+        .expect("the waiting bead is a root");
+    assert_eq!(
+        wire["nodes"][1]["pull_request"],
+        json!({"repo": null, "await_id": "the-wire", "url": null}),
+        "a gate whose pull request has no address is drawn, not dropped"
+    );
+}
+
 fn cfg() -> Config {
     Config::from_toml(CONFIG).expect("the config parses")
 }

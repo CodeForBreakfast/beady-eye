@@ -363,11 +363,12 @@ in `projects.badges`
 
 ## Badging the systems you reference
 
-`bdi` has no badge built in for any service, so every reference is one you
-write. The shapes below are what a reference usually looks like, and each is
-built the same way whichever place it is read from: a `match` that reads the
-value apart, a `render` that says what the row carries, and a `link` that
-rebuilds the address.
+`bdi` draws one reference with no badge configured: the pull request a beads
+`gh:pr` gate waits on, which the first shape below describes. Every other
+reference is one you write. The other shapes are what a reference usually looks
+like, and each is built the same way whichever place it is read from: a `match`
+that reads the value apart, a `render` that says what the row carries, and a
+`link` that rebuilds the address.
 
 **Which place you read depends on who wrote the reference.** One of beads' sync
 adapters fills `external_ref`, whose `tracker.IssueTracker` contract parses and
@@ -378,6 +379,41 @@ keys, so a metadata key avoids both.
 
 A bead holds one external reference and as many metadata keys as you write, so
 a setup referencing several systems badges all but one of them from metadata.
+
+### A pull request a bead waits on
+
+A bead waiting on a pull request needs no badge. Record the wait as a beads
+gate on the pull request's number:
+
+```console
+$ bd gate create --type=gh:pr --blocks dun-7 --await-id=12
+```
+
+The gate hangs under the bead it blocks, and its row draws `⇢ arkham #12`,
+linked to `https://github.com/dunwich/arkham/pull/12`. A narrow row draws
+`⇢ #12`.
+
+The repository comes from the gate's `repo` metadata, written as `OWNER/REPO`,
+or as `HOST/OWNER/REPO` for a pull request on a host other than GitHub.
+`bd gate create` copies `repo` from the bead the gate blocks. Where that bead
+has none, set it on the gate:
+
+```console
+$ bd update dun-9 --set-metadata repo=dunwich/arkham
+```
+
+A gate whose pull request has no address is still drawn, with no link and a
+note saying why:
+
+| the gate | the note |
+|---|---|
+| has no `repo` | `no link to pull request #12: its gate names no repo` |
+| has a `repo` that is not `OWNER/REPO` | `no link to pull request #12: its gate's repo “arkham” is not owner/repo` |
+| has an await id that is not a number | `no link to the pull request: its gate's await id “the-wire” is not a number` |
+| has no await id | `no link to the pull request: its gate has no await id` |
+
+`bdi --json` carries the gate's `repo`, its `await_id` and the `url` it links
+to under the gate's `pull_request`.
 
 ### An issue tracker key
 

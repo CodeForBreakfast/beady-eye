@@ -26,6 +26,7 @@ use crate::config::Scope;
 use crate::model::anomaly::Anomaly;
 use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
+use crate::model::gate::PullRequest;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link, OrphanedDependency};
 use crate::model::types::{Edge, PaneKey, PaneStatus, Status, Unreadable};
@@ -297,6 +298,9 @@ pub struct Node {
     /// The blockers the bead waits on that no tracker holds a bead for, each
     /// drawn beneath it with why.
     pub orphaned_dependencies: Vec<OrphanedDependency>,
+    /// The pull request the bead waits on, where it is a `gh:pr` gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<PullRequest>,
     /// What `bd show` says of the bead beyond its row, carried so the screen
     /// can show a bead without asking the tracker again. Not part of the
     /// forest's JSON, which is the forest and not the beads' prose.
@@ -406,6 +410,8 @@ struct Drawn<'a> {
     agent: Option<&'a AgentRef>,
     anomalies: &'a [Anomaly],
     orphaned_dependencies: &'a [OrphanedDependency],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pull_request: Option<&'a PullRequest>,
 }
 
 impl Tree {
@@ -431,6 +437,7 @@ impl Tree {
                     agent: node.agent.as_ref(),
                     anomalies: &node.anomalies,
                     orphaned_dependencies: &node.orphaned_dependencies,
+                    pull_request: node.pull_request.as_ref(),
                 }
             })
             .collect()

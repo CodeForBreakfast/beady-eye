@@ -374,6 +374,7 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
+            pull_request: None,
             description: "".into(),
             notes: "".into(),
             created_by: None,
