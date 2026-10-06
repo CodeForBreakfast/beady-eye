@@ -33,7 +33,9 @@ struct MergeCommit {
 }
 
 /// `pr` as GitHub has it now. The repository is always named, so the answer
-/// never depends on the directory `gh` runs in.
+/// never depends on the directory `gh` runs in. It goes to `gh` as the gate
+/// wrote it, so `gh` picks the host for one that names none, `GH_HOST`
+/// included, exactly as `bd gate check` has it pick.
 pub fn state(runner: &dyn Runner, pr: &PullRequest) -> Result<State, RunFailure> {
     let number = pr.number.to_string();
     let out = runner.run(
