@@ -5,13 +5,15 @@
 //! program it is, one for the environment each project's tracker is asked in,
 //! one for what it works out where nothing configured it, one for the pane
 //! text a tail shows, one for the socket a setup pokes to say a project's
-//! work changed, and one for what a running watcher says of each tracker.
+//! work changed, one for what a running watcher says of each tracker, and one
+//! for the pull requests each tracker's gates wait on.
 
 pub mod agents;
 pub mod bd;
 pub mod changes;
 pub mod discovery;
 pub mod environment;
+pub mod gates;
 pub mod herdr;
 pub mod panes;
 pub mod run;

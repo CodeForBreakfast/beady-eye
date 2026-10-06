@@ -18,6 +18,7 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
+use crate::collect::gates::{self, PrGate};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
@@ -390,15 +391,16 @@ impl<'r> Cli<'r> {
     }
 }
 
-impl Trackers for Cli<'_> {
-    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
+impl Cli<'_> {
+    /// `project`'s tracker, opened in the environment its config asks for.
+    fn reader(&self, project: &Project) -> Result<Reader<'_>, OpenFailure> {
         let env = environment::tracker_env(
             self.runner,
             project,
             self.ambient.as_deref(),
             self.cache.as_ref(),
         )?;
-        Ok(Box::new(Reader {
+        Ok(Reader {
             runner: self.runner,
             name: project.name.clone(),
             path: project.path.clone(),
@@ -407,7 +409,18 @@ impl Trackers for Cli<'_> {
             keeping_rows: self.keeping_rows,
             journal: self.reading_journals && project.events_journal,
             unfinished_work: self.unfinished_work,
-        }))
+        })
+    }
+
+    /// Every open gh:pr gate `project`'s tracker holds.
+    pub fn pr_gates(&self, project: &Project) -> Result<Vec<PrGate>, OpenFailure> {
+        Ok(self.reader(project)?.pr_gates()?)
+    }
+}
+
+impl Trackers for Cli<'_> {
+    fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
+        Ok(Box::new(self.reader(project)?))
     }
 }
 
@@ -575,6 +588,36 @@ impl Reader<'_> {
         beads.extend(briefly);
         beads.extend(rows(&wisps?, "query", self.keeping_rows)?);
         Ok(beads)
+    }
+
+    /// Every open gh:pr gate, each with the beads it holds back.
+    ///
+    /// `bd list` leaves gates out, and neither `bd gate list` nor `bd show`
+    /// carries the beads a gate holds back. `bd dep list` takes several ids
+    /// but answers one flat array that does not say which bead hangs on which
+    /// id, so it is asked once per gate.
+    fn pr_gates(&self) -> Result<Vec<PrGate>, RunFailure> {
+        let listed = self.asked(&["gate", "list", "--limit", "0", "--json"])?;
+        rows(&listed, "gate", false)?
+            .into_iter()
+            .filter(gates::awaits_a_pull_request)
+            .map(|gate| {
+                let held = self.asked(&[
+                    "dep",
+                    "list",
+                    &gate.id,
+                    "--direction=up",
+                    "--type",
+                    "blocks",
+                    "--json",
+                ])?;
+                let blocks = rows(&held, "dep", false)?
+                    .into_iter()
+                    .map(|bead| bead.id)
+                    .collect();
+                Ok(PrGate::of(&gate, blocks))
+            })
+            .collect()
     }
 }
 
