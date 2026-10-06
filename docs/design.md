@@ -2668,9 +2668,7 @@ the `projects` whose beads carry its prefix, `held-by-several` with the
 `projects` that each hold a bead by it, `held-by-unread` with the one
 configured `project` that gave no answer and whose config states its prefix,
 `not-read` with the configured `projects` that gave no answer and may hold it,
-or `unconfigured` with none. `pull_request` is on a `gh:pr` gate and on no
-other node: the gate's `repo` and `await_id`, `null` where it wrote none, and
-the `url` its row links to, `null` where the pull request has no address. `agents`
+or `unconfigured` with none. `agents`
 says which agent provider was asked and how that went, so a consumer knows
 which tier it is reading and which program answered for it: `state` is
 `answering`, `not-answering` where the provider is there and did not — which

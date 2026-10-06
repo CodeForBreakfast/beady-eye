@@ -12,6 +12,7 @@ use regex_lite::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 
 use crate::model::join::BeadKey;
+use crate::model::types::Bead;
 use crate::view::row::{Cell, Layout};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -310,23 +311,35 @@ pub struct Badge {
     pub key: String,
     #[serde(rename = "match")]
     pub match_value: Option<Pattern>,
+    /// Fields of the bead, each with a pattern it must match for the badge to
+    /// draw, keyed as `key` is. Every one must match.
+    ///
+    /// A field the bead does not hold reads as empty, so `""` asks for its
+    /// absence and `".+"` for its presence. A list matches where any one of
+    /// its members does.
+    #[serde(default)]
+    pub when: BTreeMap<String, Pattern>,
+    /// Fields of the bead, each with a pattern, read as `when` reads them.
+    /// The badge does not draw where any one matches.
+    #[serde(default)]
+    pub unless: BTreeMap<String, Pattern>,
     pub render: String,
     /// What the badge says on a row too narrow for its `render`, as a template
-    /// over the same captures.
+    /// over the same captures and fields.
     ///
     /// A template rather than a character, because a badge's length is not
     /// `bdi`'s to choose at either end: a setup that wants a bare glyph writes
     /// one, and one that wants a number keeps the number.
     ///
-    /// A brace pair naming nothing the value supplied leaves the badge with no
+    /// A brace pair naming nothing the bead supplied leaves the badge with no
     /// short form, as it leaves it with no `link`: a row that fell back to a
     /// half-substituted template would put the template in front of the reader
     /// at exactly the widths where it had least room to explain itself.
     pub short: Option<String>,
-    /// Where the badge points, as a template over the same captures `render`
-    /// reads.
+    /// Where the badge points, as a template over the same captures and fields
+    /// `render` reads.
     ///
-    /// A brace pair naming nothing the value supplied leaves the badge with
+    /// A brace pair naming nothing the bead supplied leaves the badge with
     /// no link at all: a destination built out of a part that was never
     /// there points somewhere else.
     pub link: Option<String>,
@@ -490,6 +503,14 @@ impl Pattern {
 
     fn captures<'v>(&self, value: &'v str) -> Option<Captures<'v>> {
         self.anchored.captures(value)
+    }
+
+    /// Whether any of `members` matches, where none reads as one empty value.
+    fn matches_any(&self, members: &[&str]) -> bool {
+        match members {
+            [] => self.anchored.is_match(""),
+            _ => members.iter().any(|member| self.anchored.is_match(member)),
+        }
     }
 }
 
@@ -1095,39 +1116,47 @@ fn names_of(projects: &[Project]) -> Vec<&str> {
 }
 
 impl Badge {
-    /// Render this badge for a metadata value, or `None` if it does not apply.
-    /// `{}` in `render` is replaced by the whole value, and `{name}` by what
-    /// the pattern's capture of that name took. A brace pair naming nothing
-    /// the pattern captured is left as it was written, and the pair taken is
-    /// the innermost, so `{{}}` still draws braces around the value.
+    /// Whether this badge's `when` and `unless` let it draw on `bead`.
+    pub fn draws_on(&self, bead: &Bead) -> bool {
+        let matched =
+            |(field, pattern): (&String, &Pattern)| pattern.matches_any(&bead.members(field));
+        self.when.iter().all(matched) && !self.unless.iter().any(matched)
+    }
+
+    /// Render this badge for the value of its key on `bead`, or `None` if it
+    /// does not apply. `{}` in `render` is replaced by the whole value, and
+    /// `{name}` by what the pattern's capture of that name took, or else by
+    /// the bead's value under the key `name`. A brace pair naming neither is
+    /// left as it was written, and the pair taken is the innermost, so `{{}}`
+    /// still draws braces around the value.
     ///
     /// One pass, so what is placed is never read again: a value spelled like
     /// a placeholder is a value.
-    pub fn apply(&self, value: &str) -> Option<String> {
-        Some(self.fill(&self.render, value)?.text)
+    pub fn apply(&self, value: &str, bead: &Bead) -> Option<String> {
+        Some(self.fill(&self.render, value, bead)?.text)
     }
 
     /// What this badge says where the row cannot afford its `render`: its
     /// `short` filled in from the captures `render` reads, or `None` where the
     /// config names no short form, the badge does not apply, or a brace pair
-    /// in the template named nothing the value supplied.
-    pub fn short_for(&self, value: &str) -> Option<String> {
-        let filled = self.fill(self.short.as_ref()?, value)?;
+    /// in the template named nothing the value or the bead supplied.
+    pub fn short_for(&self, value: &str, bead: &Bead) -> Option<String> {
+        let filled = self.fill(self.short.as_ref()?, value, bead)?;
         filled.whole.then_some(filled.text)
     }
 
-    /// Where this badge points for a metadata value: its `link` filled in
-    /// from the captures `render` reads, or `None` where the config names no
+    /// Where this badge points for a value: its `link` filled in from the
+    /// captures and fields `render` reads, or `None` where the config names no
     /// link, the badge does not apply, or a brace pair in the template named
-    /// nothing the value supplied.
-    pub fn link_for(&self, value: &str) -> Option<String> {
-        let filled = self.fill(self.link.as_ref()?, value)?;
+    /// nothing the value or the bead supplied.
+    pub fn link_for(&self, value: &str, bead: &Bead) -> Option<String> {
+        let filled = self.fill(self.link.as_ref()?, value, bead)?;
         filled.whole.then_some(filled.text)
     }
 
     /// `template` filled in for `value`, or `None` where this badge does not
     /// apply to the value at all.
-    fn fill(&self, template: &str, value: &str) -> Option<Filled> {
+    fn fill(&self, template: &str, value: &str, bead: &Bead) -> Option<Filled> {
         let taken = match &self.match_value {
             Some(pattern) => Some(pattern.captures(value)?),
             None => None,
@@ -1148,7 +1177,8 @@ impl Badge {
                 _ => taken
                     .as_ref()
                     .and_then(|taken| taken.name(name))
-                    .map(|capture| capture.as_str()),
+                    .map(|capture| capture.as_str())
+                    .or_else(|| bead.value(name)),
             };
             whole &= placed.is_some();
             text.push_str(&rest[..open]);
@@ -1297,6 +1327,8 @@ path = "/home/user/dev/cinder"
                     poll: true,
                     events_journal: true,
                     badges: vec![Badge {
+                        when: Default::default(),
+                        unless: Default::default(),
                         key: "metadata.delivery_pr".to_string(),
                         match_value: None,
                         render: "⇢ kadath/{}".to_string(),
@@ -1325,6 +1357,8 @@ path = "/home/user/dev/cinder"
             cfg.badges,
             vec![
                 Badge {
+                    when: Default::default(),
+                    unless: Default::default(),
                     key: "metadata.delivery_pr".to_string(),
                     match_value: None,
                     render: "⇢ {}".to_string(),
@@ -1333,6 +1367,8 @@ path = "/home/user/dev/cinder"
                     colour: None,
                 },
                 Badge {
+                    when: Default::default(),
+                    unless: Default::default(),
                     key: "metadata.blocked_on".to_string(),
                     match_value: Some(pattern("human")),
                     render: "⏸ waiting".to_string(),
@@ -1559,8 +1595,18 @@ title = ["title", "badge.metadata.jira", "badges"]
         Pattern::new(source).expect("the pattern compiles")
     }
 
+    /// A bead holding no field a template here names, so a template is filled
+    /// from the badge's own value and captures alone.
+    fn no_fields() -> Bead {
+        crate::collect::bd::parse_beads(r#"[{"id":"p-1","title":"t","status":"open"}]"#)
+            .expect("the bead parses")
+            .remove(0)
+    }
+
     fn badge(key: &str, render: &str) -> Badge {
         Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: key.to_string(),
             match_value: None,
             render: render.to_string(),
@@ -1572,6 +1618,8 @@ title = ["title", "badge.metadata.jira", "badges"]
 
     fn matching(key: &str, value: &str, render: &str) -> Badge {
         Badge {
+            when: Default::default(),
+            unless: Default::default(),
             match_value: Some(pattern(value)),
             ..badge(key, render)
         }
@@ -1685,8 +1733,8 @@ path = "/home/user/dev/kadath"
         let said = refused.to_string();
         assert_eq!(
             said.trim_end(),
-            "unknown field `path`, expected one of `key`, `match`, `render`, `short`, `link`, \
-             `colour`\n\
+            "unknown field `path`, expected one of `key`, `match`, `when`, `unless`, `render`, \
+             `short`, `link`, `colour`\n\
              in `projects.badges`"
         );
         assert!(!said.contains("missing field"), "{said}");
@@ -2416,6 +2464,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn badge_without_match_renders_any_value() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
@@ -2423,12 +2473,17 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.apply("owner/repo#7"), Some("⇢ owner/repo#7".to_string()));
+        assert_eq!(
+            b.apply("owner/repo#7", &no_fields()),
+            Some("⇢ owner/repo#7".to_string())
+        );
     }
 
     #[test]
     fn badge_with_match_is_selective() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
@@ -2436,8 +2491,11 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.apply("human"), Some("⏸ waiting".to_string()));
-        assert_eq!(b.apply("dependency"), None);
+        assert_eq!(
+            b.apply("human", &no_fields()),
+            Some("⏸ waiting".to_string())
+        );
+        assert_eq!(b.apply("dependency", &no_fields()), None);
     }
 
     /// What anchoring buys, stated over every pair a corpus makes rather
@@ -2463,6 +2521,8 @@ metadata_keys = ["working_topic"]
 
         for value in values {
             let badge = Badge {
+                when: Default::default(),
+                unless: Default::default(),
                 key: "metadata.blocked_on".to_string(),
                 match_value: Some(pattern(value)),
                 render: "drawn".to_string(),
@@ -2472,7 +2532,7 @@ metadata_keys = ["working_topic"]
             };
             for candidate in values.iter().flat_map(|v| anything_near(v)) {
                 assert_eq!(
-                    badge.apply(&candidate).is_some(),
+                    badge.apply(&candidate, &no_fields()).is_some(),
                     candidate == value,
                     "{value:?} against {candidate:?}"
                 );
@@ -2483,6 +2543,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn render_substitutes_a_capture_by_name_and_braces_by_the_whole_value() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number} of {}".to_string(),
@@ -2491,15 +2553,17 @@ metadata_keys = ["working_topic"]
             colour: None,
         };
         assert_eq!(
-            b.apply("owner/arkham#7"),
+            b.apply("owner/arkham#7", &no_fields()),
             Some("⇢ arkham #7 of owner/arkham#7".to_string())
         );
-        assert_eq!(b.apply("owner/arkham"), None);
+        assert_eq!(b.apply("owner/arkham", &no_fields()), None);
     }
 
     #[test]
     fn braces_written_around_the_braces_are_drawn_around_the_value() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "{{}}".to_string(),
@@ -2507,7 +2571,10 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.apply("owner/repo#7"), Some("{owner/repo#7}".to_string()));
+        assert_eq!(
+            b.apply("owner/repo#7", &no_fields()),
+            Some("{owner/repo#7}".to_string())
+        );
     }
 
     /// A value is placed, never read: what a capture took is not itself a
@@ -2515,6 +2582,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_value_spelled_like_a_placeholder_is_placed_and_not_read() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.working_topic".to_string(),
             match_value: Some(pattern(r"(?<channel>[^/]+)/(?<topic>.+)")),
             render: "{channel} · {topic}".to_string(),
@@ -2523,7 +2592,7 @@ metadata_keys = ["working_topic"]
             colour: None,
         };
         assert_eq!(
-            b.apply("{topic}/arkham"),
+            b.apply("{topic}/arkham", &no_fields()),
             Some("{topic} · arkham".to_string())
         );
     }
@@ -2534,6 +2603,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_is_built_from_the_captures_render_reads() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
@@ -2541,9 +2612,12 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.apply("dunwich/arkham#7"), Some("⇢ #7".to_string()));
         assert_eq!(
-            b.link_for("dunwich/arkham#7"),
+            b.apply("dunwich/arkham#7", &no_fields()),
+            Some("⇢ #7".to_string())
+        );
+        assert_eq!(
+            b.link_for("dunwich/arkham#7", &no_fields()),
             Some("https://forge.invalid/dunwich/arkham/pull/7".to_string())
         );
     }
@@ -2555,6 +2629,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_missing_one_of_its_captures_is_no_link_at_all() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(
                 r"(?:(?<owner>[^/]+)/(?<repo>[^#]+))?#?(?<number>[0-9]+)",
@@ -2564,10 +2640,10 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.apply("12"), Some("⇢ #12".to_string()));
-        assert_eq!(b.link_for("12"), None);
+        assert_eq!(b.apply("12", &no_fields()), Some("⇢ #12".to_string()));
+        assert_eq!(b.link_for("12", &no_fields()), None);
         assert_eq!(
-            b.link_for("dunwich/arkham#12"),
+            b.link_for("dunwich/arkham#12", &no_fields()),
             Some("https://forge.invalid/dunwich/arkham/pull/12".to_string())
         );
     }
@@ -2577,6 +2653,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_link_naming_a_capture_the_pattern_never_had_is_no_link() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"(?<number>[0-9]+)")),
             render: "⇢ #{number}".to_string(),
@@ -2584,12 +2662,14 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.link_for("12"), None);
+        assert_eq!(b.link_for("12", &no_fields()), None);
     }
 
     #[test]
     fn a_badge_that_does_not_apply_points_nowhere() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
@@ -2598,15 +2678,17 @@ metadata_keys = ["working_topic"]
             colour: None,
         };
         assert_eq!(
-            b.link_for("human"),
+            b.link_for("human", &no_fields()),
             Some("https://forge.invalid/waiting".to_string())
         );
-        assert_eq!(b.link_for("dependency"), None);
+        assert_eq!(b.link_for("dependency", &no_fields()), None);
     }
 
     #[test]
     fn a_badge_whose_config_names_no_link_points_nowhere() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
@@ -2614,7 +2696,7 @@ metadata_keys = ["working_topic"]
             short: None,
             colour: None,
         };
-        assert_eq!(b.link_for("dunwich/arkham#7"), None);
+        assert_eq!(b.link_for("dunwich/arkham#7", &no_fields()), None);
     }
 
     /// A `short` is a template over the same captures, so a badge says itself
@@ -2622,6 +2704,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_short_form_is_built_from_the_captures_render_reads() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(r"(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)")),
             render: "⇢ {repo} #{number}".to_string(),
@@ -2629,8 +2713,14 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.apply("dunwich/arkham#7"), Some("⇢ arkham #7".to_string()));
-        assert_eq!(b.short_for("dunwich/arkham#7"), Some("⇢ #7".to_string()));
+        assert_eq!(
+            b.apply("dunwich/arkham#7", &no_fields()),
+            Some("⇢ arkham #7".to_string())
+        );
+        assert_eq!(
+            b.short_for("dunwich/arkham#7", &no_fields()),
+            Some("⇢ #7".to_string())
+        );
     }
 
     /// The same rule a `link` follows, for the same reason. `⇢ #{number}`
@@ -2639,6 +2729,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_short_form_missing_one_of_its_captures_is_no_short_form_at_all() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: Some(pattern(
                 r"(?:(?<owner>[^/]+)/)?(?<repo>[^#]+)#(?<number>[0-9]+)",
@@ -2648,10 +2740,13 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.apply("arkham#12"), Some("⇢ arkham #12".to_string()));
-        assert_eq!(b.short_for("arkham#12"), None);
         assert_eq!(
-            b.short_for("dunwich/arkham#12"),
+            b.apply("arkham#12", &no_fields()),
+            Some("⇢ arkham #12".to_string())
+        );
+        assert_eq!(b.short_for("arkham#12", &no_fields()), None);
+        assert_eq!(
+            b.short_for("dunwich/arkham#12", &no_fields()),
             Some("⇢ dunwich #12".to_string())
         );
     }
@@ -2659,6 +2754,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_whose_config_names_no_short_form_has_none() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.delivery_pr".to_string(),
             match_value: None,
             render: "⇢ {}".to_string(),
@@ -2666,7 +2763,7 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.short_for("dunwich/arkham#7"), None);
+        assert_eq!(b.short_for("dunwich/arkham#7", &no_fields()), None);
     }
 
     /// A badge that does not apply to the value says nothing at either
@@ -2675,6 +2772,8 @@ metadata_keys = ["working_topic"]
     #[test]
     fn a_badge_that_does_not_apply_has_no_short_form_either() {
         let b = Badge {
+            when: Default::default(),
+            unless: Default::default(),
             key: "metadata.blocked_on".to_string(),
             match_value: Some(pattern("human")),
             render: "⏸ waiting".to_string(),
@@ -2682,8 +2781,8 @@ metadata_keys = ["working_topic"]
             link: None,
             colour: None,
         };
-        assert_eq!(b.short_for("human"), Some("⏸".to_string()));
-        assert_eq!(b.short_for("dependency"), None);
+        assert_eq!(b.short_for("human", &no_fields()), Some("⏸".to_string()));
+        assert_eq!(b.short_for("dependency", &no_fields()), None);
     }
 
     #[test]
@@ -2700,7 +2799,7 @@ short  = "⇢ #{{number}}"
         .expect("the config reads");
 
         assert_eq!(
-            cfg.badges[0].short_for("dunwich/arkham#7"),
+            cfg.badges[0].short_for("dunwich/arkham#7", &no_fields()),
             Some("⇢ #7".to_string())
         );
     }
@@ -2719,7 +2818,7 @@ link   = "https://forge.invalid/{{owner}}/{{repo}}/pull/{{number}}"
         .expect("the config reads");
 
         assert_eq!(
-            cfg.badges[0].link_for("dunwich/arkham#7"),
+            cfg.badges[0].link_for("dunwich/arkham#7", &no_fields()),
             Some("https://forge.invalid/dunwich/arkham/pull/7".to_string())
         );
     }

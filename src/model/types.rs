@@ -102,6 +102,9 @@ pub struct Bead {
     /// object by the two joined with a dot. So a field bd grows is drawable
     /// without `bdi` holding one of its own for it.
     pub values: BTreeMap<String, String>,
+    /// Every list of values the row held, under the key that names it as in
+    /// `values`, each member that is one value in the order the row wrote it.
+    pub lists: BTreeMap<String, Vec<String>>,
     /// The row's `created_by`. The row's `owner` is an address, which no
     /// surface draws, so it is not held.
     pub created_by: Option<String>,
@@ -158,6 +161,19 @@ impl Bead {
             !text.is_empty()
                 && serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text).is_err()
         })
+    }
+
+    /// Every value the row held under `key`: the one value where it holds
+    /// one, each member of a list, and none where it holds neither.
+    pub fn members(&self, key: &str) -> Vec<&str> {
+        match self.value(key) {
+            Some(value) => vec![value],
+            None => self
+                .lists
+                .get(key)
+                .map(|list| list.iter().map(String::as_str).collect())
+                .unwrap_or_default(),
+        }
     }
 }
 

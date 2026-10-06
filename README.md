@@ -289,7 +289,18 @@ $ bd gate create --type=gh:pr --blocks dun-7 --await-id=12
 The gate names its repository in `repo` metadata, as `OWNER/REPO`.
 `bd gate create` copies it from the bead the gate blocks, and where that bead
 has none, `bd update <gate> --set-metadata repo=dunwich/arkham` sets it. The
-eye draws the gate under the bead it blocks, linked to the pull request.
+eye draws the gate under the bead it blocks, and links it to its pull request
+only through a badge in your config:
+
+```toml
+[[badges]]
+key    = "metadata.repo"
+when   = { await_type = "gh:pr", await_id = "[0-9]+" }
+match  = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render = "⇢ {name} #{await_id}"
+short  = "⇢ #{await_id}"
+link   = "https://github.com/{owner}/{name}/pull/{await_id}"
+```
 
 `bdi gates` looks at every configured project's open gh:pr gates and asks
 GitHub, through `gh`, where each pull request stands. A merge closes the gate,
