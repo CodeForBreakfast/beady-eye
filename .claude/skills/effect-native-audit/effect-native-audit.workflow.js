@@ -1,9 +1,9 @@
 export const meta = {
   name: 'effect-native-audit',
   description:
-    'Sweep the codebase on four axes. SUBSTITUTION: domain-by-domain for logic that re-implements an Effect helper a per-line linter cannot see (inventory-first finders read Effect source + docs). STRUCTURAL: for code whose construction / DI / error / resource SPINE is still imperative OOP even though the leaves return Effect. MODELLING: for data/state REPRESENTATIONS that discard a type-level guarantee Effect data types provide — null over Option, sentinels over Either, flags over tagged unions, bare primitives over branded types, in-place mutation over immutable structures, hand-rolled equality over Equal, data-first helpers that block clean pipe composition. BEHAVIOUR: for native-but-misused / policy code — how effects RUN, FAIL, and what they TRUST — sequential when independent effects could be concurrent, unbounded fan-out at a shared service, unsupervised forks, untrusted data crossing the edge with no Schema decode, an untyped/swallowed error channel. The latter three axes read the Effect design docs and grep an anti-pattern catalogue. Adversarial verify kills false twins and unjustified rewrites; synthesis writes a report and returns the confirmed findings.',
+    'Sweep the codebase on four axes. SUBSTITUTION: domain-by-domain for logic that re-implements an Effect helper a per-line linter cannot see (inventory-first finders read Effect source + docs). STRUCTURAL: for code whose construction / DI / error / resource SPINE is still imperative OOP even though the leaves return Effect. MODELLING: for data/state REPRESENTATIONS that discard a type-level guarantee Effect data types provide — null over Option, sentinels over Result, flags over tagged unions, bare primitives over branded types, in-place mutation over immutable structures, hand-rolled equality over Equal, data-first helpers that block clean pipe composition. BEHAVIOUR: for native-but-misused / policy code — how effects RUN, FAIL, and what they TRUST — sequential when independent effects could be concurrent, unbounded fan-out at a shared service, unsupervised forks, untrusted data crossing the edge with no Schema decode, an untyped/swallowed error channel. The latter three axes read the Effect design docs and grep an anti-pattern catalogue. Adversarial verify kills false twins and unjustified rewrites; synthesis writes a report and returns the confirmed findings.',
   phases: [
-    { title: 'Sweep', detail: 'inventory-first finder per Effect domain (~22) + shape finder per structural smell (~6) + representation finder per modelling smell (~7) + behaviour finder per dynamic smell (~5)' },
+    { title: 'Sweep', detail: 'inventory-first finder per Effect domain (~23) + shape finder per structural smell (~6) + representation finder per modelling smell (~7) + behaviour finder per dynamic smell (~5)' },
     { title: 'Verify', detail: 'one adversarial refuter per finding — false-twin for swaps, justified-shape for structural + modelling + behaviour' },
     { title: 'Synthesise', detail: 'dedup, split confirmed vs low-confidence, write report' },
   ],
@@ -38,16 +38,22 @@ const SOURCE = 'plugin/node_modules'
 const SOURCE_FALLBACK = `If ${SOURCE} is absent, read each package's pinned version from plugin/package.json and
    fetch https://unpkg.com/<package>@<version>/<path under the package> instead (e.g.
    https://unpkg.com/effect@<version>/src/Array.ts), and set fellBackToFetch=true. Never read Effect
-   from GitHub's main branch or any unpinned copy: main is a different major version.`
+   from GitHub's main branch or any unpinned copy: main moves on past the pinned version.`
 
-// Effect 3's docs prose (Astro/Starlight). Effect-TS/website's main branch and effect.website now
-// document Effect 4; the Effect 3 docs are kept at the DOCS_TAG tag, under DOCS_PATH. A slug maps to
-// <docs>/<slug>.mdx (a page) or <docs>/<slug>/ (a multi-page section — read EVERY .mdx inside).
-// A domain's `docs` is that slug, or null when the module is API-reference only (no prose page —
-// e.g. Array/Record/String) and source is the ground. args.docsDir names a local checkout of
-// DOCS_PATH at DOCS_TAG; without one, finders read the tag from GitHub.
-const DOCS_TAG = 'pre-website-v2-migration'
-const DOCS_PATH = 'content/src/content/docs/docs'
+// Effect's own idiom guide ships inside the installed package, so it is the pinned version's:
+// AGENTS.md (Effect-TS/effect's LLMS.md) and the worked examples under ai-docs/src/. The migration
+// notes are not shipped; they are read from Effect-TS/effect at the tag for the pinned version.
+const IDIOM_GUIDE = `${SOURCE}/effect/AGENTS.md and the examples under ${SOURCE}/effect/ai-docs/src/`
+const MIGRATION_NOTES = `Effect-TS/effect at tag effect@<the version plugin/package.json pins>, files migration/*.md`
+
+// Effect 4's docs prose (Astro/Starlight), as effect.website serves it under /docs/v4/. The
+// unprefixed effect.website pages are Effect 3's. Effect-TS/website keeps the Effect 4 pages on its
+// main branch under DOCS_PATH. A slug maps to <docs>/<slug>.mdx (a page) or <docs>/<slug>/ (a
+// multi-page section — read EVERY .mdx inside). A domain's `docs` is that slug, or null when the
+// module is API-reference only (no prose page — e.g. Array/Record/String) and source is the
+// ground. args.docsDir names a local checkout of DOCS_PATH; without one, finders read GitHub.
+const DOCS_REF = 'main'
+const DOCS_PATH = 'apps/web/src/content/docs/v4'
 const DOCS_DIR = A.docsDir || null
 
 // ---------------------------------------------------------------------------
@@ -62,27 +68,28 @@ const DOMAINS = [
   { key: 'Array', src: ['effect/src/Array.ts'], docs: null },
   { key: 'Record', src: ['effect/src/Record.ts', 'effect/src/Struct.ts'], docs: null },
   { key: 'Chunk', src: ['effect/src/Chunk.ts'], docs: 'data-types/chunk' },
-  { key: 'Option', src: ['effect/src/Option.ts'], docs: 'data-types/option' },
-  { key: 'Either', src: ['effect/src/Either.ts'], docs: 'data-types/either' },
-  { key: 'Predicate', src: ['effect/src/Predicate.ts', 'effect/src/Function.ts'], docs: 'getting-started/building-pipelines' },
+  { key: 'Option', src: ['effect/src/Option.ts', 'effect/src/UndefinedOr.ts'], docs: 'data-types/option' },
+  { key: 'Result', src: ['effect/src/Result.ts'], docs: 'data-types/result' },
+  { key: 'Predicate', src: ['effect/src/Predicate.ts', 'effect/src/Function.ts', 'effect/src/Filter.ts'], docs: 'getting-started/building-pipelines' },
   { key: 'String', src: ['effect/src/String.ts'], docs: null },
   { key: 'Number', src: ['effect/src/Number.ts'], docs: null },
   // core combinators
-  { key: 'Effect', src: ['effect/src/Effect.ts'], docs: 'getting-started/control-flow' },
+  { key: 'Effect', src: ['effect/src/Effect.ts'], docs: 'code-style/control-flow' },
   // structural / domain modules
   { key: 'Config', src: ['effect/src/Config.ts', 'effect/src/ConfigProvider.ts'], docs: 'configuration' },
-  { key: 'Schema', src: ['effect/src/Schema.ts'], docs: 'schema' },
+  { key: 'Schema', src: ['effect/src/Schema.ts', 'effect/src/SchemaTransformation.ts', 'effect/src/SchemaGetter.ts'], docs: 'schema' },
   { key: 'Schedule', src: ['effect/src/Schedule.ts', 'effect/src/Cron.ts'], docs: 'scheduling' },
   { key: 'Stream', src: ['effect/src/Stream.ts'], docs: 'stream' },
   // the Node surfaces the plugin touches: files, paths, a unix socket, stdio, subprocesses
-  { key: 'Platform', src: ['@effect/platform/src/FileSystem.ts', '@effect/platform/src/Path.ts', '@effect/platform/src/Socket.ts', '@effect/platform/src/Command.ts', '@effect/platform/src/Terminal.ts', '@effect/platform-node/src/NodeSocket.ts', '@effect/platform-node/src/NodeStream.ts', '@effect/platform-node/src/NodeRuntime.ts'], docs: 'platform' },
+  { key: 'Platform', src: ['effect/src/FileSystem.ts', 'effect/src/Path.ts', 'effect/src/socket/Socket.ts', 'effect/src/process/ChildProcess.ts', 'effect/src/Stdio.ts', 'effect/src/Terminal.ts', '@effect/platform-node-shared/src/NodeSocket.ts', '@effect/platform-node-shared/src/NodeStream.ts', '@effect/platform-node-shared/src/NodeRuntime.ts', '@effect/platform-node/src/NodeServices.ts'], docs: 'platform' },
   { key: 'Layer', src: ['effect/src/Layer.ts', 'effect/src/Context.ts'], docs: 'requirements-management' },
   { key: 'Match', src: ['effect/src/Match.ts'], docs: 'code-style/pattern-matching' },
   { key: 'Equal', src: ['effect/src/Equal.ts', 'effect/src/Order.ts', 'effect/src/Hash.ts', 'effect/src/Data.ts'], docs: 'trait' },
-  { key: 'Ref', src: ['effect/src/Ref.ts', 'effect/src/SynchronizedRef.ts', 'effect/src/STM.ts'], docs: 'state-management' },
+  { key: 'Ref', src: ['effect/src/Ref.ts', 'effect/src/SynchronizedRef.ts', 'effect/src/SubscriptionRef.ts'], docs: 'state-management' },
   { key: 'Duration', src: ['effect/src/Duration.ts', 'effect/src/Clock.ts', 'effect/src/DateTime.ts'], docs: 'data-types/duration' },
   { key: 'Cause', src: ['effect/src/Cause.ts', 'effect/src/Exit.ts'], docs: 'error-management/two-error-types' },
-  { key: 'Concurrency', src: ['effect/src/Queue.ts', 'effect/src/PubSub.ts', 'effect/src/Mailbox.ts', 'effect/src/Deferred.ts', 'effect/src/Fiber.ts'], docs: 'concurrency' },
+  { key: 'Concurrency', src: ['effect/src/Queue.ts', 'effect/src/PubSub.ts', 'effect/src/Deferred.ts', 'effect/src/Latch.ts', 'effect/src/Semaphore.ts'], docs: 'concurrency' },
+  { key: 'Fiber', src: ['effect/src/Fiber.ts', 'effect/src/FiberSet.ts', 'effect/src/FiberMap.ts', 'effect/src/FiberHandle.ts'], docs: 'concurrency/fibers' },
   { key: 'Scope', src: ['effect/src/Scope.ts'], docs: 'resource-management' },
 ]
 
@@ -101,19 +108,19 @@ const STRUCTURAL_SMELLS = [
     smell:
       'A `new`-able class whose constructor synchronously derives state into private fields, with methods that return Effect. The leaves are Effect; the construction spine is OOP.',
     nativeShape:
-      'A `make` Effect — makeX(args): Effect<X, E, R> — that does `const dep = yield* Dep` and returns a closure-record of the operations; OR Context.Tag + Layer / Effect.Service for a genuine singleton. Pick by cardinality: N instances keyed by params -> make Effect; one shared instance -> Tag+Layer. (A class is NOT wrong merely for existing — Schema classes, tagged errors, Context.Tag subclasses are idiomatic. The smell is a class used as a SERVICE/CONSTRUCTION mechanism.)',
+      'A `make` Effect — makeX(args): Effect<X, E, R>, written with Effect.fn when it takes arguments — that does `const dep = yield* Dep` and returns a closure-record of the operations; OR a Context.Service class with a `make` effect and its layer built explicitly (`static readonly layer = Layer.effect(this, this.make)`) for a genuine singleton. Pick by cardinality: N instances keyed by params -> make Effect; one shared instance -> Context.Service + Layer. (A class is NOT wrong merely for existing — Schema classes, tagged errors, Context.Service subclasses are idiomatic. The smell is a class used as a SERVICE/CONSTRUCTION mechanism.)',
     docs: 'requirements-management',
-    nativeRef: 'Context.Tag, Effect.Service, Layer (Effect.ts / Context.ts / Layer.ts)',
+    nativeRef: 'Context.Service (with `make`), Layer.effect, Effect.fn (Context.ts / Layer.ts / Effect.ts)',
   },
   {
     key: 'manual-di',
     grep: "a dependency (httpClient, clock, logger, db, client, ConfigProvider/config source, env object) carried as a constructor arg or as a field/parameter on a config/options object, resolved at one layer and threaded down — INCLUDING a provider parameterised so the SAME code path takes the real value in prod and a fixture in tests (e.g. a layer/function taking an `env`/`provider` arg fed the real source in prod and a fixture in tests)",
     smell:
-      'A dependency carried as a constructor argument, config-object field, or threaded parameter instead of provided through the Effect DI mechanism (declared in the requirements R channel, provided by a Layer). Composition is manual DI threading, not `yield* Tag` / Layer provision, so the requirement is not type-enforced — the thing can be built without its dependency. This is GENERAL, not config-specific: the idiomatic way to provide ANY dependency is a real Layer in prod and a fixture Layer at the TEST boundary — never a parameter threaded through the construction path to unify the two. A telltale instance is a `ConfigProvider` (or any env / clock / client / logger source) parameterised so prod passes the real source and tests pass a fixture through the SAME function: prod should provide the real source directly (e.g. `ConfigProvider.fromEnv`, the live service Layer) and tests should override at their OWN boundary (e.g. `ConfigProvider.fromMap` via `setConfigProvider`/`withConfigProvider`, a fixture service Layer). The threaded parameter, an `as`-cast that reads the raw source in prod (`process.env as EnvLike`), and any converter that exists only to feed the unified path are all artifacts of the smell.',
+      'A dependency carried as a constructor argument, config-object field, or threaded parameter instead of provided through the Effect DI mechanism (declared in the requirements R channel, provided by a Layer). Composition is manual DI threading, not `yield* Tag` / Layer provision, so the requirement is not type-enforced — the thing can be built without its dependency. This is GENERAL, not config-specific: the idiomatic way to provide ANY dependency is a real Layer in prod and a fixture Layer at the TEST boundary — never a parameter threaded through the construction path to unify the two. A telltale instance is a `ConfigProvider` (or any env / clock / client / logger source) parameterised so prod passes the real source and tests pass a fixture through the SAME function: prod should take the real source from the context (a `Config` yielded with no provider installed reads `ConfigProvider.fromEnv()`; the live service Layer) and tests should override at their OWN boundary (e.g. `ConfigProvider.layer(ConfigProvider.fromUnknown(fixture))`, or `Effect.provideService(ConfigProvider.ConfigProvider, …)`, a fixture service Layer). The threaded parameter, an `as`-cast that reads the raw source in prod (`process.env as EnvLike`), and any converter that exists only to feed the unified path are all artifacts of the smell.',
     nativeShape:
-      'Provide the dependency via the Effect DI mechanism, splitting prod and test at the EDGE rather than threading a parameter: prod composes the real Layer (`Layer.setConfigProvider(ConfigProvider.fromEnv())`, the live `Context.Tag` service Layer); tests override at the test boundary (`Layer.setConfigProvider(ConfigProvider.fromMap(fixture))` / `Effect.withConfigProvider`, a fixture Layer). The construction Effect.gen does `const dep = yield* DepTag`; the dependency leaves the config/constructor/parameter list; composition cannot type-check without a Layer providing it. (Canonical: a ConfigProvider threaded as an `env` parameter instead of `fromEnv`-in-prod / `fromMap`-in-tests.)',
+      'Provide the dependency via the Effect DI mechanism, splitting prod and test at the EDGE rather than threading a parameter: prod composes the real Layer (the default `ConfigProvider.fromEnv()`, or `ConfigProvider.layer(ConfigProvider.fromEnv())`, the live `Context.Service` Layer); tests override at the test boundary (`ConfigProvider.layer(ConfigProvider.fromUnknown(fixture))` / `Effect.provideService(ConfigProvider.ConfigProvider, provider)`, a fixture Layer). The construction Effect.gen does `const dep = yield* DepService`; the dependency leaves the config/constructor/parameter list; composition cannot type-check without a Layer providing it. (Canonical: a ConfigProvider threaded as an `env` parameter instead of `fromEnv`-in-prod / `fromUnknown`-in-tests.)',
     docs: 'requirements-management',
-    nativeRef: 'Effect requirements channel (R), Context.Tag, Layer, Layer.setConfigProvider / Effect.withConfigProvider, ConfigProvider.fromEnv / fromMap',
+    nativeRef: 'Effect requirements channel (R), Context.Service, Layer, ConfigProvider.layer / Effect.provideService, ConfigProvider.fromEnv / fromUnknown',
   },
   {
     key: 'throw-in-effect',
@@ -121,19 +128,19 @@ const STRUCTURAL_SMELLS = [
     smell:
       'A synchronous `throw` (or a throwing brand constructor, or a *Sync schema decode) inside a function that returns an Effect. The failure escapes the typed E channel and becomes a defect instead of a tracked, recoverable error.',
     nativeShape:
-      'Move the failure into E: Effect.fail with a Data.TaggedError, a branded validator returning Effect<_, ParseError>, or Schema.decodeUnknown (Effect-returning). Reserve `throw`/Effect.die for genuine defects — an invariant that indicates a programmer bug, not a runtime input problem.',
+      'Move the failure into E: yield or Effect.fail a Schema.TaggedError / Data.TaggedError (both are yieldable: `return yield* new MyError(…)`), a branded validator returning Effect<_, Schema.SchemaError>, or Schema.decodeUnknownEffect. Reserve `throw`/Effect.die for genuine defects — an invariant that indicates a programmer bug, not a runtime input problem.',
     docs: 'error-management/expected-errors',
-    nativeRef: 'Effect.fail, Data.TaggedError, Schema.decodeUnknown',
+    nativeRef: 'Effect.fail, Schema.TaggedError, Data.TaggedError, Schema.decodeUnknownEffect',
   },
   {
     key: 'internal-bridge',
-    grep: "Effect.runPromise | Effect.runSync | Effect.runFork | Effect.tryPromise | Schema.decodeUnknownSync — anywhere that is NOT an app edge. The plugin has two: NodeRuntime.runMain, and a callback the MCP SDK invokes that must hand back a Promise (its request handlers and lifecycle hooks). A run* directly inside an Effect.gen body already fails the typecheck as runEffectInsideEffect.",
+    grep: "Effect.runPromise | Effect.runSync | Effect.runFork | Effect.tryPromise | Schema.decodeUnknownSync / Schema.decodeSync — anywhere that is NOT an app edge. The plugin has two: NodeRuntime.runMain, and a callback the MCP SDK invokes that must hand back a Promise (its request handlers and lifecycle hooks). A run* directly inside an Effect.gen body already fails the typecheck as runEffectInsideEffect, and Effect.runSync of a pure constructor as preferUnsafeConstructor.",
     smell:
       'An Effect<->Promise (or sync) bridge at an INTERNAL seam: run*/tryPromise/decodeUnknownSync used mid-program to keep a method Promise- or value-returning, instead of returning Effect and letting it flow through to one run* call at the app edge. Each bridge fragments the typed E channel.',
     nativeShape:
-      'Return Effect from the seam and compose upward; run* lives only at the host boundary. Where a Node API is wrapped in tryPromise, an @effect/platform service (FileSystem, Socket, Command) may already be the Effect-native edge. NOTE: tryPromise around a third-party Promise API that has no Effect counterpart (the MCP SDK) is the correct bridge, not this smell.',
+      'Return Effect from the seam and compose upward; run* lives only at the host boundary. Where a Node API is wrapped in tryPromise, an Effect platform service (FileSystem, Path, socket/Socket, process/ChildProcess, Stdio, provided by @effect/platform-node) may already be the Effect-native edge. NOTE: tryPromise around a third-party Promise API that has no Effect counterpart (the MCP SDK) is the correct bridge, not this smell.',
     docs: 'getting-started/running-effects',
-    nativeRef: 'run* only at the edge (running-effects); @effect/platform services for Node I/O',
+    nativeRef: 'run* only at the edge (running-effects); FileSystem, Path, Socket, ChildProcess and Stdio for Node I/O',
   },
   {
     key: 'mutable-state',
@@ -151,9 +158,9 @@ const STRUCTURAL_SMELLS = [
     smell:
       'Hand-rolled resource lifecycle: a try/finally or an explicit acquire-then-.close()/.dispose() pair managing a resource, instead of binding release to a scope so it is guaranteed and composes.',
     nativeShape:
-      'Effect.acquireRelease + Scope, or a Layer finalizer (releases run in reverse order). Effect.scoped bounds the lifetime to the effect. Release then survives interruption and failure, which a bare finally may not.',
+      'Effect.acquireRelease + Scope, or a finalizer registered with Effect.addFinalizer inside Layer.effect, which supplies the layer\'s Scope (releases run in reverse order). Effect.scoped bounds the lifetime to the effect. Release then survives interruption and failure, which a bare finally may not.',
     docs: 'resource-management',
-    nativeRef: 'Effect.acquireRelease, Scope, Layer finalizer, Effect.scoped',
+    nativeRef: 'Effect.acquireRelease, Effect.addFinalizer, Scope, Layer.effect, Effect.scoped',
   },
 ]
 
@@ -177,9 +184,9 @@ const MODELLING_SMELLS = [
     smell:
       'Optional presence modelled as `T | null` / `T | undefined` (return type or field) — the "maybe absent" case is encoded in a union the caller must remember to narrow, with no combinators and no short-circuit. Boundary vs the Option SUBSTITUTION domain: that finder asks "did we reimplement an Option helper?"; this asks "is the *representation* itself dishonest?" — file as modelling.',
     nativeShape:
-      'Option<T>: Option.fromNullable at the boundary, then map/flatMap/getOrElse over it so absence threads through composition instead of per-call null checks. NOTE: a `T | undefined` that is an external/library boundary type we cannot change, or a genuinely-optional config field that is never branched on as presence, is not this smell.',
+      'Option<T>: Option.fromNullishOr at the boundary, then map/flatMap/getOrElse over it so absence threads through composition instead of per-call null checks. NOTE: Effect 4 endorses plain `A | undefined` when undefined is the only absence marker, and ships UndefinedOr (map, match, getOrThrow) to compose over it — a `T | undefined` used that way is not this smell. Neither is a `T | undefined` that is an external/library boundary type we cannot change, or a genuinely-optional config field that is never branched on as presence. The smell is absence re-checked at each use, or null and undefined both standing for it.',
     docs: 'data-types/option',
-    nativeRef: 'Option, Option.fromNullable, Option.map/flatMap/getOrElse',
+    nativeRef: 'Option, Option.fromNullishOr, Option.map/flatMap/getOrElse, UndefinedOr',
   },
   {
     key: 'sentinel-or-throw',
@@ -187,9 +194,9 @@ const MODELLING_SMELLS = [
     smell:
       'A pure/sync function that encodes an expected failure or absence as a sentinel value (-1, empty string, null, NaN) or a `throw`, instead of a typed result the caller must handle. BOUNDARY vs structural throw-in-effect: that smell is a `throw` INSIDE an Effect-returning function; this one is the pure/sync complement — a sentinel or throw in a function that is NOT Effect-returning. If the function returns Effect, it is throw-in-effect, not this.',
     nativeShape:
-      'Option<T> when the only failure is "absent"; Either<E, A> (or a Data.TaggedError carried in a later Effect E channel) when there is a meaningful error to report. The caller composes over the result instead of checking a sentinel or wrapping in try/catch.',
-    docs: 'data-types/either',
-    nativeRef: 'Option, Either, Either.left/right, Data.TaggedError',
+      'Option<T> when the only failure is "absent"; Result<A, E> (or a tagged error carried in a later Effect E channel) when there is a meaningful error to report. The caller composes over the result instead of checking a sentinel or wrapping in try/catch.',
+    docs: 'data-types/result',
+    nativeRef: 'Option, Result, Result.succeed/fail, Schema.TaggedError, Data.TaggedError',
   },
   {
     key: 'flag-stringly-state',
@@ -197,9 +204,9 @@ const MODELLING_SMELLS = [
     smell:
       'A state/variant modelled as a bag of booleans + optional fields (isLoading, isError, data?, error?) or an ad-hoc string tag, so illegal combinations (loading AND error, data present in the error case) are representable and must be defended by convention. Make-illegal-states-unrepresentable is discarded.',
     nativeShape:
-      'A discriminated union — Data.taggedEnum (or a Schema tagged union) with one variant per legal state, each carrying exactly its own data — consumed with Match.exhaustive so the compiler proves every case is handled. NOTE: a single optional field with no cross-field invariant is not this smell; the smell needs ≥2 fields whose combinations include illegal states.',
+      'A discriminated union — Data.taggedEnum (or Schema.TaggedUnion, when the value crosses a decode boundary) with one variant per legal state, each carrying exactly its own data — consumed with Match.exhaustive / Match.tagsExhaustive or the enum\'s $match, so the compiler proves every case is handled. NOTE: a single optional field with no cross-field invariant is not this smell; the smell needs ≥2 fields whose combinations include illegal states.',
     docs: 'data-types/data',
-    nativeRef: 'Data.taggedEnum, Match.exhaustive, Schema tagged unions',
+    nativeRef: 'Data.taggedEnum, Match.exhaustive, Match.tagsExhaustive, Schema.TaggedUnion',
   },
   {
     key: 'bare-primitive',
@@ -207,9 +214,9 @@ const MODELLING_SMELLS = [
     smell:
       'A domain concept with real constraints (a channel id, an auth token, a URL, a non-empty name, a positive count) typed as bare `string`/`number`, so nothing stops an arbitrary string flowing where a validated one is required, and validation is re-checked (or forgotten) at each use site. The type carries no guarantee.',
     nativeShape:
-      'A branded / refined type: Schema.brand or Brand.nominal for a nominal distinction, Schema.NonEmptyString / Schema.pattern / Schema.URL / Schema.Int+positive for a refinement decoded once at the boundary, returning Effect<Brand, ParseError>. Interior code then receives the guarantee in its type. NOTE: a transient local string with no domain meaning is not this smell.',
+      'A branded / refined type: Schema.brand("Name") or Brand.nominal for a nominal distinction, Brand.make for a validated one, Schema.NonEmptyString / Schema.String.check(Schema.isPattern(re)) / Schema.URLFromString / Schema.Int.check(Schema.isGreaterThan(0)) for a refinement decoded once at the boundary, returning Effect<Brand, Schema.SchemaError>. Interior code then receives the guarantee in its type. NOTE: a transient local string with no domain meaning is not this smell.',
     docs: 'code-style/branded-types',
-    nativeRef: 'Schema.brand, Brand.nominal/refined, Schema.NonEmptyString/pattern/URL',
+    nativeRef: 'Schema.brand, Brand.nominal/make, Schema.NonEmptyString, Schema.check + Schema.isPattern, Schema.URLFromString',
   },
   {
     key: 'in-place-mutation',
@@ -217,9 +224,9 @@ const MODELLING_SMELLS = [
     smell:
       'Pure data assembled by in-place mutation — push/splice/sort/reverse into an array, or property writes onto an object, to build a value that is then returned or compared. The data is not modelled as immutable, so aliasing and accidental later mutation are possible and value-equality is unsafe. BOUNDARY vs structural mutable-state: that smell is reassigned state CROSSING an Effect/async boundary; this is mutation of pure data within sync code, a representation choice. If the mutated value crosses an Effect boundary, it is mutable-state, not this.',
     nativeShape:
-      'Immutable construction: build with Array map/filter/reduce / spread, or use a persistent collection (Chunk, HashMap, HashSet) and `readonly` types; for value objects use Data.struct/Data.array so the result is immutable AND gets structural equality. NOTE: a pure local accumulator built and consumed entirely within one synchronous function, never aliased or returned by reference, is acceptable — flag it only when the mutable value escapes or is used where immutability/equality matters.',
+      'Immutable construction: build with Array map/filter/reduce / spread, or use a persistent collection (Chunk, HashMap, HashSet) and `readonly` types. A plain object or array built this way already has structural equality under Equal.equals in Effect 4; reach for Data.Class only when the value wants a nominal type as well. NOTE: a pure local accumulator built and consumed entirely within one synchronous function, never aliased or returned by reference, is acceptable — flag it only when the mutable value escapes or is used where immutability/equality matters.',
     docs: 'data-types/chunk',
-    nativeRef: 'Array.map/filter/reduce, Chunk, HashMap, HashSet, Data.struct/array, readonly',
+    nativeRef: 'Array.map/filter/reduce, Chunk, HashMap, HashSet, Data.Class, readonly',
   },
   {
     key: 'hand-equality',
@@ -227,9 +234,9 @@ const MODELLING_SMELLS = [
     smell:
       'Structural equality computed by hand — field-by-field comparison, JSON.stringify round-trips, or dedup/membership keyed on a stringified form — instead of declaring the type equatable. Brittle (field drift, key order, undefined vs absent) and not reusable. BOUNDARY vs the Equal SUBSTITUTION domain: that finder spots a reimplemented Equal/Hash helper; this spots a type whose REPRESENTATION should carry value-equality but does not — file as modelling.',
     nativeShape:
-      'Make the type a value type with Data.struct / Data.case (or implement Equal + Hash), then use Equal.equals and the value-based HashSet/HashMap; equality and hashing come for free and stay correct as fields change. NOTE: comparing two genuinely-primitive scalars with === is fine — this is for structural/compound values.',
+      'Use Equal.equals, which compares plain objects, arrays, Maps, Sets and Dates structurally by default in Effect 4, and the value-based HashSet/HashMap for membership and dedup; equality and hashing come for free and stay correct as fields change. Where equality should rest on part of a value (an id), implement Equal + Hash on a Data.Class; where it must be by reference, mark the value with Equal.byReference. NOTE: comparing two genuinely-primitive scalars with === is fine — this is for structural/compound values.',
     docs: 'trait/equal',
-    nativeRef: 'Equal.equals, Data.struct/case, Hash, HashSet/HashMap',
+    nativeRef: 'Equal.equals, Equal.byReference, Data.Class, Hash, HashSet/HashMap',
   },
   {
     key: 'data-first-helper',
@@ -268,23 +275,23 @@ const BEHAVIOUR_SMELLS = [
   },
   {
     key: 'unbounded-fanout',
-    grep: "Effect.all / Effect.forEach with concurrency:'unbounded', or a fork-per-item loop (Effect.fork inside a map/forEach), over a collection whose size is driven by external/unbounded input and that hits a shared external resource (a socket peer, a subprocess, a tracker, an HTTP API)",
+    grep: "Effect.all / Effect.forEach / Stream.mapEffect with concurrency:'unbounded', or a fork-per-item loop (Effect.forkChild / forkDetach / forkIn inside a map/forEach), over a collection whose size is driven by external/unbounded input and that hits a shared external resource (a socket peer, a subprocess, a tracker, an HTTP API)",
     smell:
       'Concurrency with NO upper bound over a collection the program does not control — concurrency:"unbounded", or forking one fiber per item of an externally-sized list — fanning out onto a shared resource. Under a large input this is a self-inflicted rate-limit / resource exhaustion (connections, processes, file handles).',
     nativeShape:
-      'A BOUNDED concurrency: Effect.all/forEach with { concurrency: <n> } (or a Semaphore / Effect.withConcurrency) sized to what the downstream tolerates. NOTE: unbounded is fine for a provably small, fixed collection, or work that touches no shared/contended resource — flag it only when the size is externally driven AND the target is shared.',
+      'A BOUNDED concurrency: Effect.all/forEach with { concurrency: <n> }, or a Semaphore (Semaphore.make, withPermits) shared by the callers, sized to what the downstream tolerates. Effect 4 has no ambient concurrency setting, so the bound is passed at each combinator. NOTE: unbounded is fine for a provably small, fixed collection, or work that touches no shared/contended resource — flag it only when the size is externally driven AND the target is shared.',
     docs: 'concurrency/basic-concurrency',
-    nativeRef: 'Effect.all/forEach { concurrency: n }, Effect.Semaphore, Effect.withConcurrency',
+    nativeRef: 'Effect.all/forEach { concurrency: n }, Semaphore.make / withPermits',
   },
   {
     key: 'unsupervised-fork',
-    grep: "Effect.fork / forkDaemon / forkScoped / forkIn / runFork whose Fiber is never joined or awaited and has no error handler, or whose lifetime does not match the work it serves",
+    grep: "Effect.forkChild / forkDetach / forkScoped / forkIn / runFork whose Fiber is never joined or awaited and whose exit nothing reads, or whose lifetime does not match the work it serves",
     smell:
-      'A forked fiber whose failure nothing observes (never joined or awaited, no forkWithErrorHandler), so it fails silently; or a fork whose lifetime does not match its job. A bare `Effect.fork` is auto-supervised: it is interrupted, finalizers included, when its PARENT FIBER ends. That is a bug only when the work must outlive the parent, such as a listener forked from a short-lived handler. forkDaemon is the opposite bug when the work should end with its owner.',
+      'A forked fiber whose failure nothing observes (never joined or awaited, its Exit never read), so it fails silently; or a fork whose lifetime does not match its job. A plain `Effect.forkChild` is auto-supervised: it is interrupted, finalizers included, when its PARENT FIBER ends. That is a bug only when the work must outlive the parent, such as a listener forked from a short-lived handler. forkDetach is the opposite bug when the work should end with its owner.',
     nativeShape:
-      'Observe the failure: Fiber.join / Fiber.await, Effect.forkWithErrorHandler, or Effect.all/race when the fork was only ever concurrency. Match the lifetime: keep bare Effect.fork when the parent fiber is the right owner, Effect.forkScoped / Effect.forkIn when a Scope owns it, Effect.forkDaemon only for genuinely global work. NOTE: a fork whose lifetime matches its job and whose failures are observed is fine, whichever variant it uses.',
+      'Observe the failure: Fiber.join / Fiber.await (Effect 4 has no forkWithErrorHandler), or Effect.all/race when the fork was only ever concurrency. Match the lifetime: keep Effect.forkChild when the parent fiber is the right owner, Effect.forkScoped / Effect.forkIn when a Scope owns it, a FiberSet / FiberMap / FiberHandle when an owner tracks many or replaceable fibers, Effect.forkDetach only for genuinely global work. NOTE: a fork whose lifetime matches its job and whose failures are observed is fine, whichever variant it uses.',
     docs: 'concurrency/fibers',
-    nativeRef: 'Effect.fork, Effect.forkScoped, Effect.forkIn, Effect.forkDaemon, Effect.forkWithErrorHandler, Fiber.join/await, Effect.all/race',
+    nativeRef: 'Effect.forkChild, Effect.forkScoped, Effect.forkIn, Effect.forkDetach, FiberSet/FiberMap/FiberHandle, Fiber.join/await, Effect.all/race',
   },
   {
     key: 'unvalidated-boundary',
@@ -292,19 +299,19 @@ const BEHAVIOUR_SMELLS = [
     smell:
       'External, untrusted data — an HTTP response body, env value, message payload, third-party SDK return, or JSON.parse result — entering the domain via an `as` cast or by trusting the static type, with NO runtime validation. The compiler is told a shape it never verified; malformed input becomes a silent defect deep inside. BORDER: this is the ABSENCE of a decode (vs structural internal-bridge, which is a decodeUnknownSync bridge that DOES exist at a seam; vs modelling bare-primitive, which is a domain value lacking a brand). If a *Sync decode exists, that is internal-bridge; if a domain value just lacks a brand, that is bare-primitive; this is "no decode at all at the trust boundary".',
     nativeShape:
-      'Schema.decodeUnknown(MySchema)(input) at the boundary, returning Effect<A, ParseError, never> — the untrusted value is parsed into a validated domain type once, at the edge, and the interior receives the guarantee. NOTE: data from a genuinely trusted/internal source already decoded upstream, or a cast to a type the program fully owns end-to-end, is not this smell.',
+      'Schema.decodeUnknownEffect(MySchema)(input) at the boundary, returning Effect<A, Schema.SchemaError, never> — or Schema.fromJsonString(MySchema) when the input is JSON text — so the untrusted value is parsed into a validated domain type once, at the edge, and the interior receives the guarantee. NOTE: data from a genuinely trusted/internal source already decoded upstream, or a cast to a type the program fully owns end-to-end, is not this smell.',
     docs: 'schema/getting-started',
-    nativeRef: 'Schema.decodeUnknown, Schema.decode, ParseResult',
+    nativeRef: 'Schema.decodeUnknownEffect, Schema.decodeEffect, Schema.fromJsonString, Schema.SchemaError',
   },
   {
     key: 'untyped-error-channel',
-    grep: "an Effect whose error channel E is `unknown`/`string`/`{}` rather than a tagged union; OR catchAll / catchAllCause / orDie / ignore / Effect.option that swallows or downgrades a recoverable, typed failure. (E = the global `Error`, and a tryPromise/try `catch` returning `Error` or `unknown`, already fail the typecheck as globalErrorInEffectFailure / globalErrorInEffectCatch / unknownInEffectCatch.)",
+    grep: "an Effect whose error channel E is `unknown`/`string`/`{}` rather than a tagged union; OR Effect.catch / catchCause / orDie / ignore / Effect.option / orElseSucceed that swallows or downgrades a recoverable, typed failure. (E = the global `Error`, and a tryPromise/try `catch` returning `Error` or `unknown`, already fail the typecheck as globalErrorInEffectFailure / globalErrorInEffectCatch / unknownInEffectCatch.)",
     smell:
-      'The typed E channel is not designed: it is `Error` / `unknown` / a string (so callers cannot exhaustively handle it), or a recoverable typed failure is swallowed/downgraded — catchAll that discards the error, orDie turning a tracked failure into a defect, ignore/Effect.option dropping it — losing the very tracking the E channel exists for. BORDER vs structural throw-in-effect: that is a raw `throw` escaping into a defect; this is the SHAPE and HANDLING of the typed channel itself.',
+      'The typed E channel is not designed: it is `Error` / `unknown` / a string (so callers cannot exhaustively handle it), or a recoverable typed failure is swallowed/downgraded — Effect.catch that discards the error, orDie turning a tracked failure into a defect, ignore/Effect.option dropping it — losing the very tracking the E channel exists for. BORDER vs structural throw-in-effect: that is a raw `throw` escaping into a defect; this is the SHAPE and HANDLING of the typed channel itself.',
     nativeShape:
-      'Model failures as a tagged union of Data.TaggedError variants in E, and handle them with catchTag / catchTags / Match so each case is addressed (or deliberately re-failed) — not blanket-swallowed. Reserve orDie/die for genuine defects. NOTE: a deliberately broad E at a top-level convergence point that maps everything to one user-facing report, or a catchAll that genuinely HANDLES (recovers + continues) rather than swallows, is fine.',
+      'Model failures as a tagged union of Schema.TaggedError / Data.TaggedError variants in E, and handle them with catchTag / catchTags / catchReason / Match so each case is addressed (or deliberately re-failed) — not blanket-swallowed. Reserve orDie/die for genuine defects. NOTE: a deliberately broad E at a top-level convergence point that maps everything to one user-facing report, or an Effect.catch that genuinely HANDLES (recovers + continues) rather than swallows, is fine.',
     docs: 'error-management/two-error-types',
-    nativeRef: 'Data.TaggedError, Effect.catchTag/catchTags, Effect.fail vs Effect.die',
+    nativeRef: 'Schema.TaggedError, Data.TaggedError, Effect.catchTag/catchTags/catchReason, Effect.fail vs Effect.die',
   },
 ]
 
@@ -313,27 +320,63 @@ const BEHAVIOUR_SMELLS = [
 // The typecheck is Effect's tsgo build of tsc, run on plugin/ by `nix flake check`; with the
 // plugin's tsconfig every Effect diagnostic it emits fails the check, suggestions included. The
 // rules listed are the default-on ones that border this sweep, measured against the effect-tsgo
-// version flake.nix pins. The Biome GritQL plugin lints its own two patterns and leaves the
-// judgment-heavy axes to this sweep. The global-API rules are off by default, so the sweep keeps them.
+// version flake.nix pins, on Effect 4 code. The Biome GritQL plugin lints its own two patterns and
+// leaves the judgment-heavy axes to this sweep. The global-API rules are off by default, so the
+// sweep keeps them.
 // ---------------------------------------------------------------------------
 const LINT_OWNED = `Do NOT report anything the plugin's linters already report:
-- The typecheck (Effect's language service, built into tsc): a floating Effect (floatingEffect),
-  a bare yield in a generator (missingStarInYieldEffectGen), an Effect.gen holding one return
-  (unnecessaryEffectGen), Effect.succeed(undefined) for Effect.void (effectSucceedWithVoid),
-  Effect.map(() => undefined) for Effect.asVoid (effectMapVoid), returning an Effect from a
-  generator (returnEffectInGen), a *Sync Schema decode inside a generator (schemaSyncInEffect),
-  try/catch inside a generator (tryCatchInEffectGen), Effect.run* inside a generator
-  (runEffectInsideEffect), catchAll + fail for mapError (catchAllToMapError), catchAll + succeed for
-  orElseSucceed (catchToOrElseSucceed), catching an Effect that cannot fail (catchUnfailableEffect),
-  Effect.all over Array#map for Effect.forEach (allOfMapToForEach), the global Error in E
+- The typecheck (Effect's language service, built into tsc).
+  Generators and laziness: a floating Effect (floatingEffect), a bare yield in a generator
+  (missingStarInYieldEffectGen), an Effect.gen holding one return (unnecessaryEffectGen), returning
+  an Effect from a generator (returnEffectInGen), a never-succeeding Effect yielded without return
+  (missingReturnYieldStar), an exported zero-argument function returning an Effect (lazyEffect),
+  Effect.sync returning a Promise (lazyPromiseInEffectSync), a Promise or an Effect in a success or
+  failure channel (promiseInEffectSuccess, effectInVoidSuccess, effectInFailure), and an Effect.fn
+  called on the spot (effectFnIife).
+  Running and decoding: Effect.run* inside a generator (runEffectInsideEffect), Effect.runSync of a
+  pure constructor (preferUnsafeConstructor), Effect.runPromise of Effect.exit (runOfExitToRunExit),
+  a *Sync Schema decode inside a generator (schemaSyncInEffect), try/catch inside a generator
+  (tryCatchInEffectGen), and an unknown decode whose input already fits the schema
+  (preferTypedSchemaDecoder).
+  Combinator swaps: Effect.succeed(undefined) for Effect.void (effectSucceedWithVoid),
+  Effect.map(() => undefined) for Effect.asVoid (effectMapVoid), Effect.sync of a constant for
+  Effect.succeed (syncToSucceed), Effect.succeed(Option.some/none) for succeedSome/succeedNone
+  (preferSucceedSomeOrNone), Effect.map to Option.some for asSome (mapSomeToAsSome), flatMap of
+  succeed for map (flatMapToMap), flatMap ignoring its argument for andThen
+  (flatMapIgnoredParamToAndThen), map + flatten for flatMap (effectMapFlatten), a flatMap passing its
+  input through on a condition for filterOrFail (flatMapConditionalToFilterOrFail), matchEffect for
+  mapBoth or match (matchEffectToMapBoth, matchEffectToMatch), Option.match into succeed/fail for
+  Effect.fromOption (optionMatchToFromOption), Effect.all over Array#map for Effect.forEach
+  (allOfMapToForEach), raceFirst against a sleep for timeoutOrElse (raceFirstWithSleepToTimeout), a
+  catchTag on TimeoutError right after timeout (timeoutCatchTagToTimeoutOrElse), acquireRelease that
+  only disposes for acquireDisposable (acquireReleaseDisposable), a hand-built AbortController for
+  Effect.abortSignal (abortControllerInEffect), and Effect.fail of a yieldable error
+  (unnecessaryFailYieldableError).
+  Error handling: Effect.catch + fail for mapError (catchAllToMapError), catch + succeed for
+  orElseSucceed (catchToOrElseSucceed), catch returning Effect.void for ignore (catchToIgnore), catch
+  forwarding to die for orDie (catchDieToOrDie), catch re-failing after a side effect for tapError
+  (catchRefailToTapError), catch branching on _tag for catchTag/catchTags
+  (catchAllTagDispatchToCatchTag, catchIfTagToCatchTag, multipleCatchTag), a conditional re-fail for
+  catchIf (catchConditionalRefailToCatchIf), branching on reason._tag for catchReason
+  (catchTagToCatchReason), chained fallbacks for firstSuccessOf (catchChainToFirstSuccessOf), a
+  repeated trailing mapError or orDie on every yield (redundantMapError, redundantOrDie), catching an
+  Effect that cannot fail (catchUnfailableEffect), the global Error in E
   (globalErrorInEffectFailure), and a catch callback returning Error or unknown
   (globalErrorInEffectCatch, unknownInEffectCatch).
+  Services and layers: a service method leaking a requirement to its callers (leakingRequirements),
+  chained Effect.provide (multipleEffectProvide), an inline Layer.succeed provided for
+  provideService (provideLayerSucceedToProvideService), and a Layer.mergeAll whose members depend on
+  each other (layerMergeAllWithDependencies).
+  Schema and APIs: Schema.Struct with a _tag field for TaggedStruct (schemaStructWithTag),
+  Schema.Number for Finite (schemaNumber), and any Effect 3 API name (outdatedApi).
 - The Biome GritQL plugin (plugin/biome-plugins/effect-native-predicates.grit): \`x instanceof Error\`
   for Predicate.isError, and a switch default holding a \`const _: never\` exhaustiveness guard for
   Match.value(...).pipe(Match.discriminatorsExhaustive(...)).
 These are NOT linted here, so they ARE yours to report: Date.now/new Date, console, fetch,
-setTimeout/setInterval, Math.random, process.env, JSON.parse/stringify, new Promise, async functions,
-node: built-in imports, classes extending Error, and E typed unknown.
+setTimeout/setInterval, Math.random, crypto.randomUUID, process.env, JSON.parse/stringify, new Promise,
+async functions, node: built-in imports, classes extending Error, E typed unknown, a *Sync Schema decode
+outside a generator, an \`as\` cast narrowing an Effect's E or R, \`instanceof\` on a Schema class, and
+Effect.provide away from the app's entry point.
 Your value is the duplication, shape, representation and policy a per-line linter is blind to.`
 
 const FINDING_FIELDS = {
@@ -341,7 +384,7 @@ const FINDING_FIELDS = {
   line: { type: 'number', description: 'first line of the rolled-our-own block' },
   kind: { type: 'string', enum: ['native-replacement', 'idiom', 'structural', 'modelling', 'behaviour'] },
   rolled: { type: 'string', description: 'what our code does today — the rolled helper, or for kind=structural the current OOP/imperative shape, or for kind=modelling the current data/state representation, or for kind=behaviour the current concurrency/failure/trust behaviour' },
-  native: { type: 'string', description: 'the Effect form it maps to — a helper like Schedule.exponential, or for kind=structural the Effect-native shape (make Effect, Tag+Layer, acquireRelease...), or for kind=modelling the honest representation (Option, Data.taggedEnum, branded type...), or for kind=behaviour the native dynamic form (Effect.all { concurrency }, forkScoped, Schema.decodeUnknown, tagged E)' },
+  native: { type: 'string', description: 'the Effect form it maps to — a helper like Schedule.exponential, or for kind=structural the Effect-native shape (make Effect, Context.Service+Layer, acquireRelease...), or for kind=modelling the honest representation (Option, Data.taggedEnum, branded type...), or for kind=behaviour the native dynamic form (Effect.all { concurrency }, forkScoped, Schema.decodeUnknownEffect, tagged E)' },
   confidence: { type: 'string', enum: ['high', 'low'] },
   why: { type: 'string', description: 'docs-grounded justification that the swap/rewrite preserves behaviour' },
   sourceRef: { type: 'string', description: 'Effect source path + export, or for kind=structural/modelling/behaviour the native API the shape uses' },
@@ -356,7 +399,7 @@ const FINDINGS_SCHEMA = {
   properties: {
     domain: { type: 'string' },
     inventorySize: { type: 'number', description: 'count of exports surveyed for this module' },
-    fellBackToFetch: { type: 'boolean', description: 'true if the local clone was absent and source was fetched from GitHub' },
+    fellBackToFetch: { type: 'boolean', description: 'true if plugin/node_modules was absent and source was fetched from unpkg, or the docs were read from GitHub' },
     findings: {
       type: 'array',
       items: {
@@ -375,7 +418,7 @@ const STRUCTURAL_FINDINGS_SCHEMA = {
   additionalProperties: false,
   properties: {
     smell: { type: 'string', description: 'the structural smell key scanned for' },
-    fellBackToFetch: { type: 'boolean', description: 'true if the local docs clone was absent and docs were fetched from effect.website' },
+    fellBackToFetch: { type: 'boolean', description: 'true if no local docs checkout was given and the docs were read from GitHub' },
     findings: {
       type: 'array',
       items: {
@@ -434,39 +477,44 @@ function splitSurvivors(survivors) {
   }
 }
 
-// Where a docs slug is read from: the local checkout when args.docsDir names one, else the tag on GitHub.
+// Where a docs slug is read from: the local checkout when args.docsDir names one, else GitHub.
 function docsLocation(slug) {
   if (DOCS_DIR) return `${DOCS_DIR}/${slug}`
-  return `Effect-TS/website at tag ${DOCS_TAG}, path ${DOCS_PATH}/${slug} — read a page with
-   curl -sfL https://raw.githubusercontent.com/Effect-TS/website/${DOCS_TAG}/${DOCS_PATH}/${slug}.mdx
+  return `Effect-TS/website at ${DOCS_REF}, path ${DOCS_PATH}/${slug} — read a page with
+   curl -sfL https://raw.githubusercontent.com/Effect-TS/website/${DOCS_REF}/${DOCS_PATH}/${slug}.mdx
    and list a section with
-   gh api 'repos/Effect-TS/website/contents/${DOCS_PATH}/${slug}?ref=${DOCS_TAG}' --jq '.[].name'`
+   gh api 'repos/Effect-TS/website/contents/${DOCS_PATH}/${slug}?ref=${DOCS_REF}' --jq '.[].name'`
 }
 
 // Shared docs-grounding instruction. A slug resolves to a page (.mdx) or a section directory (read
 // every .mdx inside). null = the module is API-reference only, no prose.
 function docsInstruction(slug) {
+  const guide = `Read Effect's idiom guide too, ${IDIOM_GUIDE}: it ships with the installed
+   package, so it is the pinned version's statement of how Effect 4 code is written.`
   if (!slug) {
     return `This module is API-reference only — there is no prose docs page. Ground the when/why in
-   the source inventory + JSDoc @example blocks.`
+   the source inventory + JSDoc @example blocks. ${guide}`
   }
-  return `read the Effect 3 docs at ${docsLocation(slug)}
+  return `read the Effect 4 docs at ${docsLocation(slug)}
    — the design rationale (the *when & why*).
    That slug is EITHER a single page (${slug}.mdx) OR a section DIRECTORY: if it is a directory,
    read EVERY .mdx inside — those are the section's pages, and reading only the intro is NOT reading
    the docs (e.g. stream/ is creating + consuming + operations + error-handling + resourceful;
    requirements-management/ is services + layers + default-services + layer-memoization).
-   Do NOT read effect.website or the website's main branch: they document Effect 4. Where the docs
-   name an API the installed source lacks, the source wins. Set fellBackToFetch=true if you read
-   the docs from GitHub. The docs tell you WHEN a tool is right and when it is NOT.`
+   Do NOT read the unprefixed effect.website pages or any other docs path: they are Effect 3's.
+   ${guide} Where the docs or the guide name an API the installed source lacks, the source wins.
+   Set fellBackToFetch=true if you read the docs from GitHub. The docs tell you WHEN a tool is right
+   and when it is NOT.`
 }
 
-// What a refuter reads its evidence from: the same pinned source and Effect 3 docs the finders read.
+// What a refuter reads its evidence from: the same pinned source and Effect 4 docs the finders read.
 function verifierGrounding() {
   return `Read Effect's source from the installed packages, ${SOURCE}/<package>/src/. If ${SOURCE} is
 absent, fetch the version plugin/package.json pins from https://unpkg.com/<package>@<version>/.
-Read each docs slug the finding cites at ${docsLocation('<slug>')}.
-Do NOT read effect.website, the website's main branch or Effect's main branch: they are Effect 4.
+Read each docs slug the finding cites at ${docsLocation('<slug>')}, and the idiom guide at
+${IDIOM_GUIDE}. Where a finding rests on how Effect 4 changed an idiom (equality, forking, error
+handling, services), the migration notes are ${MIGRATION_NOTES}.
+Do NOT read the unprefixed effect.website pages, Effect 3's docs or Effect's main branch.
 Where the docs and the installed source disagree, the source wins.`
 }
 
@@ -480,9 +528,11 @@ WORK INVENTORY-FIRST. Do not look at our code until you hold the module's full v
 1. INVENTORY (the *what*): list the module's complete export surface from the installed source:
        ${srcList}
    grep -nE '^export ' each file, AND read every \`export { ... }\` block in full: Effect re-exports
-   names there, often renamed (\`_void as void\`, \`URL$ as URL\`), so a grep for
-   \`^export (const|function|...)\` alone misses Effect.void, Data.case, Schema.URL and
-   Schema.decodeUnknownSync.
+   names there, often renamed (\`void_ as void\`, \`catch_ as catch\`, \`try_ as try\`,
+   \`ArraySchema as Array\`), so a grep for \`^export (const|function|...)\` alone misses
+   Effect.void, Effect.catch, Effect.try and Schema.Array. Follow every \`export * from "<module>"\`
+   to the module it names and inventory that too: the @effect/platform-node modules are mostly
+   re-exports of @effect/platform-node-shared.
    ${SOURCE_FALLBACK}
    Read JSDoc + @example blocks for the non-obvious helpers so you know what each one does.
 
@@ -583,7 +633,7 @@ ${verifierGrounding()}
 
 REFUTE (refuted=true) only when one of these holds — the smell is not real:
 - The finder MISREAD the code — it is not that shape (e.g. the "class" is a Schema class, a
-  Data.TaggedError, or a Context.Tag subclass — those are idiomatic, not a class-as-service; the
+  tagged error, or a Context.Service subclass — those are idiomatic, not a class-as-service; the
   "throw" is a genuine DEFECT for a violated invariant that SHOULD stay a defect; the "mutable
   state" is a pure local accumulator that never crosses an Effect boundary; the run* IS the single
   app-edge call).
@@ -611,7 +661,7 @@ function modellingFinderPrompt(s) {
 
 This axis is NOT about a missing helper (substitution) or an imperative effect/DI/resource spine
 (structural). It is about how DATA and STATE are REPRESENTED: a type or shape that throws away a
-guarantee Effect's data types (Option, Either, Data tagged unions, branded/refined Schema types,
+guarantee Effect's data types (Option, Result, Data tagged unions, branded/refined Schema types,
 persistent collections, Equal) would give you for free. The dishonesty is in the TYPE, not in a
 function call and not in the effect spine — the cited design doc below is your framing.
 
@@ -754,14 +804,15 @@ REFUTE (refuted=true) only when one of these holds — the smell is not real. Th
   This is THE common false positive — verify the dependency before confirming.
 - unbounded-fanout: refute if the collection is provably small/fixed, or the concurrent work touches
   no shared/contended resource (no rate-limit hazard).
-- unsupervised-fork: refute if the fiber's failure IS observed (joined, awaited, or an error handler)
-  AND its lifetime matches its job. A bare Effect.fork is bound to its parent fiber and interrupted
-  with it, so do not accept "unmanaged lifetime" for one unless the work must outlive that parent.
+- unsupervised-fork: refute if the fiber's failure IS observed (joined, awaited, or its Exit read)
+  AND its lifetime matches its job. A plain Effect.forkChild is bound to its parent fiber and
+  interrupted with it, so do not accept "unmanaged lifetime" for one unless the work must outlive
+  that parent.
 - unvalidated-boundary: refute if the data source is genuinely trusted/internal (already decoded
   upstream), the cast is to a type the program owns end-to-end, OR a *Sync decode actually exists
   (then it is the STRUCTURAL internal-bridge smell — note the reclassification, still real).
 - untyped-error-channel: refute if the broad E is a deliberate top-level convergence to one report,
-  or the catchAll genuinely HANDLES (recovers + continues) rather than swallows.
+  or the Effect.catch genuinely HANDLES (recovers + continues) rather than swallows.
 
 Do NOT refute for any of these — they are HUMAN-GATE concerns, NOT grounds to discard a real smell:
 - "Possible but maybe not worth it" / "adds ceremony" / "the input is usually small in practice".
