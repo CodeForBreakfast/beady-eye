@@ -129,6 +129,11 @@ impl ShimmedGitHub {
         self.answers_with(&format!("{asked}.refused"), said);
     }
 
+    fn stops_refusing(&self, asked: &str) {
+        std::fs::remove_file(self.answers.join(format!("{asked}.refused")))
+            .expect("the refusal was ours to write");
+    }
+
     fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(&self.called)
             .unwrap_or_default()
@@ -515,12 +520,33 @@ fn a_listening_bdi_gates_answers_a_readiness_probe() {
 
     let settling = Settling::listening(&home, &tracker, &github);
 
-    assert_eq!(
-        answered(
-            settling.address(),
-            "GET /healthz HTTP/1.1\r\nHost: bdi\r\nConnection: close\r\n\r\n"
-        ),
-        200
+    assert_eq!(answered(settling.address(), PROBED), 200);
+}
+
+const PROBED: &str = "GET /healthz HTTP/1.1\r\nHost: bdi\r\nConnection: close\r\n\r\n";
+
+/// GitHub refuses the query a look asks about both pull requests, as it does
+/// for a token that has expired, and then answers it again.
+#[test]
+fn a_readiness_probe_fails_while_every_read_of_github_is_refused_and_passes_once_one_is_not() {
+    let home = a_home_naming("unhealthy", &["arkham"]);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED_OPEN);
+    github.refuses_with(&queried(), "HTTP 401: Bad credentials\n");
+
+    let settling = Settling::listening(&home, &tracker, &github);
+    let address = settling.address();
+    until(
+        || answered(address, PROBED) == 503,
+        "the probe failing while GitHub refuses every read",
+    );
+
+    github.stops_refusing(&queried());
+    until(
+        || answered(address, PROBED) == 200,
+        "the probe passing once GitHub answers a read",
     );
 }
 

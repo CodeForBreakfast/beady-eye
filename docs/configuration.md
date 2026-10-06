@@ -944,7 +944,13 @@ delivery is answered before it is settled:
 | a delivery with no `Content-Length`, such as a chunked one | `411`, and a line on stdout |
 | any request while eight are already being answered, or a signed `pull_request` delivery while 64 wait to be settled | `503`. GitHub does not send it again, so the next look settles it |
 | a request that has not arrived in full within ten seconds | the connection is closed unanswered |
-| `GET /healthz` | `200`, for a readiness probe |
+| `GET /healthz` | `200`, for a readiness probe, or `503` while GitHub refuses every read it is asked |
+
+The probe fails once a look or a delivery has asked GitHub about pull requests
+and been refused every time, whether the login's token has expired or been
+revoked, or GitHub is holding it to a rate limit. It passes again once GitHub
+answers a read. A look that asks GitHub nothing, because no gate waits on a
+pull request, leaves the answer as it was.
 
 Deliveries and looks are settled one at a time, on one thread, so a delivery
 arriving during a look waits for it, and the two never act on one gate

@@ -5,13 +5,14 @@
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 
-use crate::app::gates::{delivered, look, Found};
+use crate::app::gates::{delivered, look, Found, Read};
 use crate::collect::bd;
 use crate::collect::environment::EnvironmentCache;
 use crate::collect::gates::Done;
@@ -67,11 +68,13 @@ pub(super) fn settle(
     let projects: Vec<Project> = cfg.read().cloned().collect();
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
     let (to_settle, delivered_for) = mpsc::sync_channel(webhook::MOST_WAITING);
+    let reading_github = Arc::new(AtomicBool::new(true));
     let listening = match (listen, secret) {
         (Some(address), Some(secret)) => Some(webhook::listen(
             address,
             secret,
             to_settle.clone(),
+            Arc::clone(&reading_github),
             |heard| {
                 if let Some(said) = refused(heard) {
                     println!("{said}");
@@ -87,10 +90,10 @@ pub(super) fn settle(
     let mut rate_limited_until = Instant::now();
     loop {
         let now = Instant::now();
-        let found = if now >= next_look {
-            let found = look(&trackers, &RealRunner, &projects, &cfg.gates);
+        let settling = if now >= next_look {
+            let settling = look(&trackers, &RealRunner, &projects, &cfg.gates);
             next_look = Instant::now() + cfg.gates.poll();
-            found
+            settling
         } else {
             match delivered_for.recv_timeout(next_look - now) {
                 Ok(pull_request) if Instant::now() < rate_limited_until => {
@@ -109,7 +112,12 @@ pub(super) fn settle(
                 Err(_) => continue,
             }
         };
-        for found in found {
+        match settling.github {
+            Read::Answered => reading_github.store(true, Ordering::SeqCst),
+            Read::Refused => reading_github.store(false, Ordering::SeqCst),
+            Read::Unasked => {}
+        }
+        for found in settling.found {
             if let Found::RateLimited { resets, .. } = found {
                 rate_limited_until = waited_out(resets);
                 next_look = next_look.max(rate_limited_until);
