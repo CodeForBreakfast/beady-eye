@@ -52,8 +52,10 @@ fn started(gates: &Gates, projects: usize) -> String {
     } else {
         format!("repositories owned by {}", gates.owners.join(", "))
     };
+    let plural = if projects == 1 { "" } else { "s" };
     format!(
-        "bdi gates: settling the gh:pr gates of {projects} projects, for {owners}, every {}s",
+        "bdi gates: settling the gh:pr gates of {projects} project{plural}, for {owners}, every \
+         {}s",
         gates.poll_seconds
     )
 }
@@ -106,5 +108,89 @@ fn fault(fault: &Fault) -> String {
         Fault::NoRepo => "it names no repo".to_string(),
         Fault::NoAwaitId => "it has no await id".to_string(),
         Fault::AwaitIdNotANumber(id) => format!("its await id “{id}” is not a number"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collect::gates::PullRequest;
+    use crate::model::snapshot::TrackerFailure;
+
+    fn told(done: Result<Done, TrackerFailure>) -> Option<String> {
+        reported(&Found::Settling {
+            pull_request: PullRequest {
+                repo: "example/ark".to_string(),
+                number: 7,
+            },
+            project: "arkham".to_string(),
+            bead: "ark-2ud".to_string(),
+            done,
+        })
+    }
+
+    #[test]
+    fn a_bead_told_its_pull_request_closed_unmerged_is_reported_once() {
+        assert_eq!(
+            told(Ok(Done::Commented)).as_deref(),
+            Some("example/ark#7 closed unmerged: arkham told ark-2ud")
+        );
+        assert_eq!(told(Ok(Done::AlreadyCommented)), None);
+    }
+
+    #[test]
+    fn a_write_that_failed_is_reported_against_its_bead() {
+        assert_eq!(
+            told(Err(TrackerFailure::Unavailable)).as_deref(),
+            Some("example/ark#7: arkham could not settle ark-2ud: the tracker did not answer")
+        );
+    }
+
+    #[test]
+    fn a_gate_naming_no_pull_request_is_reported_with_every_reason() {
+        assert_eq!(
+            reported(&Found::NoPullRequest {
+                project: "arkham".to_string(),
+                gate: "ark-tg0".to_string(),
+                faults: vec![
+                    Fault::NoRepo,
+                    Fault::AwaitIdNotANumber("the-ninth".to_string())
+                ],
+            })
+            .as_deref(),
+            Some(
+                "arkham: gate ark-tg0 names no pull request to settle: it names no repo, and its \
+                 await id “the-ninth” is not a number"
+            )
+        );
+        assert_eq!(
+            reported(&Found::NoPullRequest {
+                project: "arkham".to_string(),
+                gate: "ark-g1".to_string(),
+                faults: vec![Fault::NoAwaitId],
+            })
+            .as_deref(),
+            Some("arkham: gate ark-g1 names no pull request to settle: it has no await id")
+        );
+    }
+
+    #[test]
+    fn starting_says_how_many_projects_whose_repositories_and_how_often() {
+        assert_eq!(
+            started(&Gates::default(), 1),
+            "bdi gates: settling the gh:pr gates of 1 project, for every owner's repositories, \
+             every 60s"
+        );
+        assert_eq!(
+            started(
+                &Gates {
+                    poll_seconds: 300,
+                    owners: vec!["example".to_string(), "miskatonic".to_string()],
+                },
+                2
+            ),
+            "bdi gates: settling the gh:pr gates of 2 projects, for repositories owned by \
+             example, miskatonic, every 300s"
+        );
     }
 }

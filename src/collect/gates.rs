@@ -158,11 +158,7 @@ fn each_project(
             .map(|project| ProjectSettled {
                 project: project.name.clone(),
                 acts: cli.settling(project).and_then(|tracker| {
-                    let waiting: Vec<PrGate> = tracker
-                        .pr_gates()?
-                        .into_iter()
-                        .filter(|gate| gate.awaits.as_ref().is_ok_and(|awaits| awaits.is(pr)))
-                        .collect();
+                    let waiting = tracker.pr_gates_awaiting(pr)?;
                     Ok(act(&tracker, &waiting))
                 }),
             })
@@ -569,6 +565,26 @@ mod tests {
 
         assert_eq!(acts(settled), [act("ark-0i5", Done::Resolved)]);
         assert_eq!(writes(&runner), [resolving_42("arkham")]);
+    }
+
+    /// A gate left open behind a pull request closed unmerged is settled
+    /// again on every look, so a settling that asked after every gate's
+    /// beads would cost each look the square of the gates.
+    #[test]
+    fn settling_asks_which_beads_are_held_back_only_of_the_gates_waiting_on_the_pull_request() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(42), MERGED)
+            .with(&resolving_42("arkham"), "");
+
+        settled(&runner, &[project("arkham")], &pr(42));
+
+        let asked_after: Vec<String> = runner
+            .calls()
+            .into_iter()
+            .map(|call| call.argv)
+            .filter(|argv| argv.contains(" dep list "))
+            .collect();
+        assert_eq!(asked_after, [held_back_by("arkham", "ark-0i5")]);
     }
 
     #[test]

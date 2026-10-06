@@ -19,7 +19,7 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
-use crate::collect::gates::PrGate;
+use crate::collect::gates::{PrGate, PullRequest};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
@@ -416,7 +416,7 @@ impl Cli<'_> {
 
     /// Every open gh:pr gate `project`'s tracker holds.
     pub fn pr_gates(&self, project: &Project) -> Result<Vec<PrGate>, OpenFailure> {
-        Ok(self.reader(project)?.pr_gates()?)
+        Ok(self.reader(project)?.pr_gates(|_| true)?)
     }
 
     /// `project`'s tracker, opened once to settle the gh:pr gates waiting on
@@ -434,9 +434,10 @@ impl Cli<'_> {
 pub struct Settling<'r>(Reader<'r>);
 
 impl Settling<'_> {
-    /// Every open gh:pr gate the tracker holds.
-    pub fn pr_gates(&self) -> Result<Vec<PrGate>, RunFailure> {
-        self.0.pr_gates()
+    /// Every open gh:pr gate the tracker holds waiting on `pr`.
+    pub fn pr_gates_awaiting(&self, pr: &PullRequest) -> Result<Vec<PrGate>, RunFailure> {
+        self.0
+            .pr_gates(|gate| gate.awaits.as_ref().is_ok_and(|awaits| awaits.is(pr)))
     }
 
     /// The text of every comment on `bead`, oldest first.
@@ -651,18 +652,21 @@ impl Reader<'_> {
         Ok(beads)
     }
 
-    /// Every open gh:pr gate, each with the beads it holds back.
+    /// Every open gh:pr gate `wanted` holds of, each with the beads it holds
+    /// back.
     ///
     /// `bd list` leaves gates out, and neither `bd gate list` nor `bd show`
     /// carries the beads a gate holds back. `bd dep list` takes several ids
     /// but answers one flat array that does not say which bead hangs on which
-    /// id, so it is asked once per gate.
-    fn pr_gates(&self) -> Result<Vec<PrGate>, RunFailure> {
+    /// id, so it is asked once per gate, and only of a gate that is wanted.
+    fn pr_gates(&self, wanted: impl Fn(&PrGate) -> bool) -> Result<Vec<PrGate>, RunFailure> {
         let listed = self.asked(&["gate", "list", "--limit", "0", "--json"])?;
         rows(&listed, "gate", false)?
             .into_iter()
             .filter(gate::awaits_a_pull_request)
-            .map(|gate| {
+            .map(|gate| PrGate::of(&gate, Vec::new()))
+            .filter(|gate| wanted(gate))
+            .map(|mut gate| {
                 let held = self.asked(&[
                     "dep",
                     "list",
@@ -672,11 +676,11 @@ impl Reader<'_> {
                     "blocks",
                     "--json",
                 ])?;
-                let blocks = rows(&held, "dep", false)?
+                gate.blocks = rows(&held, "dep", false)?
                     .into_iter()
                     .map(|bead| bead.id)
                     .collect();
-                Ok(PrGate::of(&gate, blocks))
+                Ok(gate)
             })
             .collect()
     }
