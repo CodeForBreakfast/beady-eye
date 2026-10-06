@@ -783,7 +783,8 @@ fn unlistable(kind: FailureKind) -> ProviderState {
         | FailureKind::Parse
         | FailureKind::Unsupported
         | FailureKind::UnknownFlag
-        | FailureKind::Pruned(_) => ProviderState::NotAnswering,
+        | FailureKind::Pruned(_)
+        | FailureKind::RateLimited => ProviderState::NotAnswering,
     }
 }
 

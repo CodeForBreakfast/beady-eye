@@ -683,7 +683,8 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
         | FailureKind::Parse
         | FailureKind::Unsupported
         | FailureKind::UnknownFlag
-        | FailureKind::Pruned(_) => "that pane could not be read",
+        | FailureKind::Pruned(_)
+        | FailureKind::RateLimited => "that pane could not be read",
     }
 }
 
@@ -1626,7 +1627,8 @@ mod tests {
                 | FailureKind::Parse
                 | FailureKind::Unsupported
                 | FailureKind::UnknownFlag
-                | FailureKind::Pruned(_) => "could not be read",
+                | FailureKind::Pruned(_)
+                | FailureKind::RateLimited => "could not be read",
             };
 
             says(pane_unreadable(kind), words);

@@ -56,6 +56,9 @@ pub enum FailureKind {
     UnknownFlag,
     /// bd's events journal no longer holds the record a read started from.
     Pruned(Retained),
+    /// GitHub refused gh for the rate limit of the login it runs as, so the
+    /// same call answers only once the limit resets.
+    RateLimited,
 }
 
 /// The seqs a pruned events journal still holds, from `floor` to `head`.
@@ -121,6 +124,15 @@ const NOT_KNOWN: [&str; 3] = [
 /// credential command or direnv says the same words to a flag it lacks, and
 /// neither is answered by a newer bd.
 const BD: &str = "bd";
+
+/// The one program a rate limit is reported by.
+const GH: &str = "gh";
+
+/// What GitHub says for its primary rate limit, `API rate limit exceeded` or
+/// `API rate limit already exceeded`, and for a secondary one, `You have
+/// exceeded a secondary rate limit`. gh 2.102.0 prints the message inside
+/// `GraphQL: …` or `HTTP 403: … (<url>)`, exit 1.
+const RATE_LIMIT: &str = "rate limit";
 
 /// What bd 1.3.0 says to `bd events tail --since <seq>` below what it still
 /// holds, exit 1: `Error: events journal truncated: checkpoint 0 is below the
@@ -484,6 +496,11 @@ impl RunFailure {
             .flatten()
         {
             return Self::pruned(window);
+        } else if program == GH && said.contains(RATE_LIMIT) {
+            (
+                FailureKind::RateLimited,
+                format!("{program} was refused for GitHub's rate limit"),
+            )
         } else if said.contains(NO_SUCH_PANE) {
             (
                 FailureKind::Gone,
@@ -789,7 +806,8 @@ pub mod testing {
             FailureKind::Parse => Some(FailureKind::Unsupported),
             FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
             FailureKind::UnknownFlag => Some(FailureKind::Pruned(Retained { floor: 1, head: 1 })),
-            FailureKind::Pruned(_) => None,
+            FailureKind::Pruned(_) => Some(FailureKind::RateLimited),
+            FailureKind::RateLimited => None,
         })
     }
 }
@@ -933,6 +951,42 @@ mod tests {
     fn a_statement_the_tracker_cannot_run_is_told_apart_from_an_unanswered_one() {
         assert_eq!(failing_command(EMBEDDED).kind, FailureKind::Unsupported);
         assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
+    }
+
+    /// What gh 2.102.0 printed, exit 1, for GitHub's primary rate limit on
+    /// GraphQL, on REST, and for a secondary rate limit. gh's framing is
+    /// measured against a stand-in for GitHub's API; the words inside it are
+    /// GitHub's documented responses, with an invented user and request id.
+    const RATE_LIMITED: [&str; 3] = [
+        "GraphQL: API rate limit already exceeded for user ID 1234567.\n",
+        "HTTP 403: API rate limit exceeded for user ID 1234567. If you reach out to GitHub \
+         Support for help, please include the request ID 0000:0000:0000000:0000000:00000000. \
+         (https://api.github.com/graphql)\n",
+        "HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before \
+         you try again. If you reach out to GitHub Support for help, please include the request \
+         ID 0000:0000:0000000:0000000:00000000. (https://api.github.com/graphql)\n",
+    ];
+
+    /// A rate limit is a wait, which no other refusal of gh's is: the same
+    /// call answers once the limit resets.
+    #[test]
+    fn a_gh_refused_for_a_rate_limit_is_told_apart_from_one_refused_for_anything_else() {
+        for said in RATE_LIMITED {
+            assert_eq!(
+                RunFailure::from_exit("gh", Some(1), said).kind,
+                FailureKind::RateLimited,
+                "on {said:?}"
+            );
+        }
+        assert_eq!(
+            RunFailure::from_exit("gh", Some(1), "HTTP 404: Not Found\n").kind,
+            FailureKind::Unavailable
+        );
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), RATE_LIMITED[0]).kind,
+            FailureKind::Unavailable,
+            "only GitHub's rate limit is gh's to report"
+        );
     }
 
     /// A bd that does not know a flag or subcommand bdi uses refuses the

@@ -871,12 +871,20 @@ dunwich/arkham#7 closed unmerged: arkham told ark-2ud
 kadath: its gh:pr gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
 arkham: gate ark-6pp names no pull request to settle: it names no repo
+dunwich/arkham#41: GitHub refused it for the rate limit of the login gh runs as, so GitHub is asked nothing more until the limit resets at 2026-01-01 00:30:00 UTC
 ```
 
 A failure stops nothing. The next look tries again. A `gh` that GitHub refuses
 leaves every gate waiting on that pull request as it was. On an organisation
 that enforces single sign-on, a lapsed authorisation is the usual cause, and
 `gh auth refresh` is the cure.
+
+A rate limit is the exception, because the login `gh` runs as may be shared
+with whoever else uses it. Once GitHub refuses a pull request for one, that
+look asks nothing more, and `gh api rate_limit`, which costs nothing, says when
+the limit resets. The next look waits until then. A secondary limit's end is not
+said, so the next look waits at least a minute. A delivery during the wait is
+not settled, and the next look settles it.
 
 A systemd user unit, at `~/.config/systemd/user/bdi-gates.service`:
 

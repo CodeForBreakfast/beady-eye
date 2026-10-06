@@ -530,7 +530,8 @@ pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
         | FailureKind::Gone
         | FailureKind::Busy
         | FailureKind::Unsupported
-        | FailureKind::Pruned(_) => TrackerFailure::Unavailable,
+        | FailureKind::Pruned(_)
+        | FailureKind::RateLimited => TrackerFailure::Unavailable,
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,

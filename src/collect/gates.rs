@@ -116,15 +116,17 @@ const PULL_REQUESTS_PER_QUERY: usize = 100;
 /// query for each [`PULL_REQUESTS_PER_QUERY`] of them, then settle each as
 /// [`settled`] does, in the order given. A query that fails leaves the
 /// others' pull requests settled.
-pub fn settle_together(
-    cli: &Cli,
-    gh: &dyn Runner,
-    projects: &[Project],
-    prs: &[PullRequest],
-) -> Vec<Settled> {
+///
+/// Nothing is asked until it is wanted, so a caller that stops early asks
+/// GitHub about none of the pull requests after where it stopped.
+pub fn settle_together<'a>(
+    cli: &'a Cli,
+    gh: &'a dyn Runner,
+    projects: &'a [Project],
+    prs: &'a [PullRequest],
+) -> impl Iterator<Item = Settled> + 'a {
     prs.chunks(PULL_REQUESTS_PER_QUERY)
-        .flat_map(|asked| settle_asked_together(cli, gh, projects, asked))
-        .collect()
+        .flat_map(move |asked| settle_asked_together(cli, gh, projects, asked))
 }
 
 /// Re-read every one of `prs` in one query, then settle each.
@@ -135,28 +137,27 @@ pub fn settle_together(
 /// have: measured on gh 2.102.0, it says so rather than refusing the query.
 /// Each pull request in a repository the query cannot name is read
 /// on its own too.
-fn settle_asked_together(
-    cli: &Cli,
-    gh: &dyn Runner,
-    projects: &[Project],
-    prs: &[PullRequest],
-) -> Vec<Settled> {
+fn settle_asked_together<'a>(
+    cli: &'a Cli,
+    gh: &'a dyn Runner,
+    projects: &'a [Project],
+    prs: &'a [PullRequest],
+) -> impl Iterator<Item = Settled> + 'a {
     let numbers: Vec<u64> = prs.iter().map(|pr| pr.number).collect();
     let together = prs
         .first()
         .and_then(|pr| gate::repository(&pr.repo))
         .map(|repo| github::states(gh, &repo, &numbers));
-    let states: Vec<Result<State, RunFailure>> = match together {
-        Some(Ok(states)) => states.into_iter().map(Ok).collect(),
+    let states: Box<dyn Iterator<Item = Result<State, RunFailure>> + 'a> = match together {
+        Some(Ok(states)) => Box::new(states.into_iter().map(Ok)),
         Some(Err(failure)) if failure.kind != FailureKind::Gone || prs.len() == 1 => {
-            prs.iter().map(|_| Err(failure.clone())).collect()
+            Box::new(prs.iter().map(move |_| Err(failure.clone())))
         }
-        _ => prs.iter().map(|pr| github::state(gh, pr)).collect(),
+        _ => Box::new(prs.iter().map(move |pr| github::state(gh, pr))),
     };
     prs.iter()
         .zip(states)
-        .map(|(pr, state)| settled(cli, projects, pr, state))
-        .collect()
+        .map(move |(pr, state)| settled(cli, projects, pr, state))
 }
 
 /// Settle every open gh:pr gate waiting on `pr` in each of `projects`, as
@@ -903,7 +904,7 @@ mod tests {
     }
 
     fn settled_together(runner: &FakeRunner, prs: &[PullRequest]) -> Vec<Settled> {
-        settle_together(&Cli::new(runner), runner, &[project("arkham")], prs)
+        settle_together(&Cli::new(runner), runner, &[project("arkham")], prs).collect()
     }
 
     /// The runner panics on any call it was not given, so asking again would
@@ -979,5 +980,18 @@ mod tests {
         expected.push(Settled::Open);
         assert_eq!(settled_together(&runner, &prs), expected);
         assert_eq!(runner.calls().len(), 2);
+    }
+
+    /// The runner panics on any call it was not given, so asking about #101
+    /// would fail the test.
+    #[test]
+    fn a_caller_that_stops_early_asks_about_no_more_pull_requests() {
+        let runner = FakeRunner::default().with(&queried(1..=100), r#"{"data":{"repository":{}}}"#);
+        let prs: Vec<PullRequest> = (1..=101).map(pr).collect();
+
+        let first = settle_together(&Cli::new(&runner), &runner, &[project("arkham")], &prs).next();
+
+        assert!(matches!(first, Some(Settled::Unread(_))), "{first:?}");
+        assert_eq!(runner.calls().len(), 1);
     }
 }

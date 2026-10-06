@@ -1,0 +1,1 @@
+{"resources":{"core":{"limit":5000,"used":31,"remaining":4969,"reset":1767228000},"search":{"limit":30,"used":30,"remaining":0,"reset":1767225660},"graphql":{"limit":5000,"used":212,"remaining":4788,"reset":1767227400},"code_search":{"limit":10,"used":0,"remaining":10,"reset":1767225660}},"rate":{"limit":5000,"used":31,"remaining":4969,"reset":1767228000}}
