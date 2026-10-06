@@ -105,10 +105,11 @@ decode call happens to be present at some line. EVIDENCE REQUIRED: name the spec
 the role there demands the stronger type: which required fields, brands or refinement, and what defends
 the gap today.`,
     boundary: `Borders effect-native-audit's unvalidated-boundary (a missing Schema.decodeUnknown at a
-trust edge) and internal-bridge (a decodeUnknownSync bridge that does exist at a seam). L4 is
+trust edge) and the language service's schemaSyncInEffect (a *Sync decode inside an Effect). L4 is
 model-level: the type's role demands a strong parsed representation whether or not any decode call
-exists. If the finding is really "a decode call is missing here" or "there is a *Sync bridge here", it
-belongs to effect-native-audit, not to L4. State the type-role reason to stay on this side of the border.`,
+exists. If the finding is really "a decode call is missing here" or "a *Sync decode runs inside an
+Effect here", it belongs to one of those, not to L4. State the type-role reason to stay on this side of
+the border.`,
   },
 ]
 // --- end LENSES ---
@@ -340,8 +341,9 @@ REFUTE (refuted=true) only when one of these holds:
   with no specific boundary and type-role reason. "This feels off" is taste; refute it.
 - MISREAD: the type does not have the claimed shape. The optional is genuinely optional in every role,
   the two roles are one role, the primitive has no domain constraint, or the boundary is internal or
-  already parsed upstream. Or the finding belongs to effect-native-audit: an L4 that is really a missing
-  decodeUnknown call or a *Sync bridge. Say so and refute it here.
+  already parsed upstream. Or the finding belongs to another check: an L4 that is really a missing
+  decodeUnknown call (effect-native-audit) or a *Sync decode inside an Effect (the language service).
+  Say so and refute it here.
 
 Never refute because:
 - the remodelling's blast radius is large. Whether it is worth doing is decided after the audit; a real

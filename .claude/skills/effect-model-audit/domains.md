@@ -89,11 +89,12 @@ a finding. A real illegal state stays a finding however far it ripples.
   Neither suppresses a finding because the other might see it. Synthesis merges
   them by `file:line`. L3 runs even when L1 found nothing, because a type can be
   honest field by field and dishonest across its census.
-- **L4 borders effect-native-audit.** Its `unvalidated-boundary` smell is a
-  missing `Schema.decodeUnknown` at a trust edge. Its `internal-bridge` smell
-  is a `decodeUnknownSync` bridge that does exist at a seam. L4 is about the
-  shape the type's role demands, whatever decode calls exist. A finding that is
-  really one of those two belongs to effect-native-audit.
+- **L4 borders two other checks.** effect-native-audit's
+  `unvalidated-boundary` smell is a missing `Schema.decodeUnknown` at a trust
+  edge. The language service's `schemaSyncInEffect` rule is a `*Sync` decode
+  inside an Effect. L4 is about the shape the type's role demands, whatever
+  decode calls exist. A finding that is really one of those two belongs to its
+  own check.
 
 ## Out of scope
 
