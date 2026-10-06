@@ -289,9 +289,8 @@ $ bd gate create --type=gh:pr --blocks dun-7 --await-id=12
 The gate names its repository in `repo` metadata, as `OWNER/REPO`.
 `bd gate create` copies it from the bead the gate blocks, and where that bead
 has none, `bd update <gate> --set-metadata repo=dunwich/arkham` sets it. The
-eye draws the gate under the bead it blocks. A badge in your config links the
-gate to its pull request, because `bdi` itself knows nothing of where a pull
-request lives:
+eye draws the gate under the bead it blocks, and links it to its pull request
+only through a badge in your config:
 
 ```toml
 [[badges]]

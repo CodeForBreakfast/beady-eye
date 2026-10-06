@@ -321,9 +321,6 @@ pub struct Badge {
     pub when: BTreeMap<String, Pattern>,
     /// Fields of the bead, each with a pattern, read as `when` reads them.
     /// The badge does not draw where any one matches.
-    ///
-    /// Its own table rather than a negated pattern, because the patterns have
-    /// no lookahead to write "not" with.
     #[serde(default)]
     pub unless: BTreeMap<String, Pattern>,
     pub render: String,
