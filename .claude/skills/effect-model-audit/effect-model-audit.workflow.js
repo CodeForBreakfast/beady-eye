@@ -35,14 +35,17 @@ const PRINCIPLES = `- Make invalid states unrepresentable: a type's admitted val
 - A finite set of values is a union of literals, not a string.
 - A value with a domain constraint is a brand, not a bare primitive.
 - A field present in some states and absent in others is a discriminated union, not an optional.`
-const VOCABULARY = `Effect's data types are the vocabulary for the honest representation: Option, Either,
-Data.taggedEnum, Data.TaggedError, Schema.Struct with required fields, Schema.brand, Schema.filter,
-Schema.TaggedStruct, Schema.Union of Schema.Literal. The plugin pins Effect 3 in plugin/package.json.
-Name only an API that the installed copy under plugin/node_modules/effect exports (run \`bun install\`
-in plugin/ first if it is absent), and propose nothing from another major version. For the reasoning
-behind a data type, read its page under https://effect.website/docs/ — data-types/option,
-data-types/either, data-types/data, code-style/branded-types, code-style/pattern-matching,
-schema/introduction.`
+const VOCABULARY = `Effect's data types are the vocabulary for the honest representation: Option, Result,
+Data.taggedEnum, Data.TaggedError, Schema.Struct with required fields, Schema.optionalKey for a key that
+may be absent, Schema.brand, Schema.check with a filter such as Schema.isPattern, Schema.refine,
+Schema.Literals, Schema.TaggedStruct, and Schema.TaggedUnion or Schema.Union([...]) piped through
+Schema.toTaggedUnion. The plugin pins Effect 4 in plugin/package.json. Name only an API that the
+installed copy under plugin/node_modules/effect exports (run \`bun install\` in plugin/ first if it is
+absent), and propose nothing from another major version: Effect 4 has no Either, Schema.filter or
+Schema.decodeUnknown. For the reasoning behind a data type, read its page under
+https://effect.website/docs/v4/ — data-types/option, data-types/result, data-types/data,
+code-style/branded-types, code-style/pattern-matching, schema/introduction, schema/filters. The
+unprefixed https://effect.website/docs/ pages document Effect 3, so do not read them.`
 
 // ---------------------------------------------------------------------------
 // LENSES — the authoritative lens catalogue. domains.md mirrors it for people;
@@ -104,8 +107,9 @@ boundary should produce a strong type that then flows unchecked. Judge the type'
 decode call happens to be present at some line. EVIDENCE REQUIRED: name the specific boundary and why
 the role there demands the stronger type: which required fields, brands or refinement, and what defends
 the gap today.`,
-    boundary: `Borders effect-native-audit's unvalidated-boundary (a missing Schema.decodeUnknown at a
-trust edge) and the language service's schemaSyncInEffect (a *Sync decode inside an Effect). L4 is
+    boundary: `Borders effect-native-audit's unvalidated-boundary (untrusted data reaching the plugin
+with no Schema decode at the trust edge) and the language service's schemaSyncInEffect (a *Sync decode
+inside an Effect generator). L4 is
 model-level: the type's role demands a strong parsed representation whether or not any decode call
 exists. If the finding is really "a decode call is missing here" or "a *Sync decode runs inside an
 Effect here", it belongs to one of those, not to L4. State the type-role reason to stay on this side of
@@ -343,7 +347,7 @@ REFUTE (refuted=true) only when one of these holds:
 - MISREAD: the type does not have the claimed shape. The optional is genuinely optional in every role,
   the two roles are one role, the primitive has no domain constraint, or the boundary is internal or
   already parsed upstream. Or the finding belongs to another check: an L4 that is really a missing
-  decodeUnknown call (effect-native-audit) or a *Sync decode inside an Effect (the language service).
+  Schema decode call (effect-native-audit) or a *Sync decode inside an Effect (the language service).
   Say so and refute it here.
 
 Never refute because:
