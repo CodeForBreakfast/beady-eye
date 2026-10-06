@@ -114,8 +114,9 @@ The workflow reports findings and changes no code.
 - **`domains.md` holds the lens catalogue,** the modelling principles the
   lenses rest on, and where L4 ends and effect-native-audit begins.
 - **The pinned Effect is the authority on its API.** `plugin/package.json` pins
-  Effect 3. An agent names only an API that the installed copy under
-  `plugin/node_modules/effect` exports.
+  Effect 4. An agent names only an API that the installed copy under
+  `plugin/node_modules/effect` exports, and reads effect.website's `docs/v4/`
+  pages, since the unprefixed ones document Effect 3.
 - **The `LENSES` array in the workflow is the authoritative lens catalogue,**
   because the workflow cannot read files. `domains.md` mirrors it for people,
   so change the two together.
