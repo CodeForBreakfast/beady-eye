@@ -32,7 +32,7 @@
 #                               pane it asked for. An `agent focus` appends
 #                               `focus <session> <pane>` to the same file and
 #                               answers in place of the herdr this shadows, so
-#                               a test can see the only write `bdi` performs
+#                               a test can see the only write `bdi` makes to herdr
 #                               without a real session to move.
 #   BDI_SHIM_HERDR_READ_DELAY   seconds to wait before `agent read`, for
 #                               measuring a herdr that is slow rather than

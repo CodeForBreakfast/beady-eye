@@ -208,7 +208,7 @@ fn agent_read(runner: &dyn Runner, pane: &PaneKey, lines: u16) -> Result<Vec<Str
 }
 
 /// `herdr --session <session> agent focus <pane>` — the only write `bdi`
-/// performs.
+/// makes to herdr.
 fn agent_focus(runner: &dyn Runner, pane: &PaneKey) -> Result<(), RunFailure> {
     runner.run(
         "herdr",

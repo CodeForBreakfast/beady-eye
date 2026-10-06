@@ -6,7 +6,7 @@
 //! the id a bead names is a pane only together with the session holding it —
 //! and the tail reads a pane through herdr by id, so a read that named no
 //! session would read whichever session `bdi` sits in. A focus is the same
-//! hazard with a worse ending: it is the only write `bdi` performs, so one
+//! hazard with a worse ending: it is the only write `bdi` makes to herdr, so one
 //! that named no session would move somebody else's terminal. The shim here
 //! runs three sessions: one holding nothing, one holding the seat the bead
 //! names, and one that will not answer at all.

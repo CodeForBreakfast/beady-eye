@@ -22,8 +22,11 @@ foot is what the selected one's pane is saying.
 claimed it, herdr has no pane for that agent, and the eye says so. It has seen
 a pane die on a Tuesday before.
 
-The eye only looks, but for one errand: it will carry a person's answer to a
-bead that asked for one. Changing the work is still `bd`'s job, and the eye
+The eye only looks. When there is something it must do, it grows a pseudopod
+for the job, the way a shoggoth grows a limb from its own body, and so far it
+has grown two. One carries a person's answer to the bead that asked for it.
+The other closes a bead's wait on a pull request once GitHub says the pull
+request has merged. Changing the work itself is still `bd`'s job, and the eye
 finds this arrangement acceptable.
 
 ## Summoning
@@ -159,14 +162,6 @@ Each project is read with its own `bd`, entered the way you would enter it
 yourself. An `.envrc` and direnv need nothing said. Anything else, say it with
 `environment_command`.
 
-`bdi bd <project> human respond <bead> <response>` is the errand. It records a
-person's answer in the tracker of a project the config names, by running that
-project's own `bd` the way the eye reads it, so whatever asks needs no map of
-trackers or credentials. No other `bd` command is passed, and no flag but
-`-r`/`--response`. A response that starts with a dash goes after `--`. Nothing
-after the project can pick another tracker, so a permission rule on
-`bdi bd <project>` holds a caller to that one project.
-
 `bdi watch` reads every configured project and holds what it read, polling as
 the eye does and taking the same reports on a socket of its own. Run one per
 machine under whatever supervises your processes, such as a systemd user unit or
@@ -257,6 +252,43 @@ $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
 what a bead carries, credentials, extra roots, intervals, the light theme, and
 the socket you can poke to say a tracker changed so the eye stops polling it.
+
+## Pseudopods
+
+Each pseudopod does one job in a tracker the config names, with that project's
+own `bd`, and nothing else.
+
+`bdi bd <project> human respond <bead> <response>` carries a person's answer
+to a bead that asked for one. It runs that project's `bd` the way the eye reads
+it, so whatever asks needs no map of trackers or credentials. No other `bd`
+command is passed, and no flag but `-r`/`--response`. A response that starts
+with a dash goes after `--`. Nothing after the project can pick another
+tracker, so a permission rule on `bdi bd <project>` holds a caller to that one
+project.
+
+`bdi gates` settles the beads waiting on pull requests. Whoever opens the pull
+request records the wait as a beads gate on its number, and `bdi gates` never
+creates one:
+
+```console
+$ bd gate create --type=gh:pr --blocks dun-7 --await-id=12
+```
+
+The gate names its repository in `repo` metadata, as `OWNER/REPO`.
+`bd gate create` copies it from the bead the gate blocks, and where that bead
+has none, `bd update <gate> --set-metadata repo=dunwich/arkham` sets it. The
+eye draws the gate under the bead it blocks, linked to the pull request.
+
+`bdi gates` looks at every configured project's open gh:pr gates and asks
+GitHub, through `gh`, where each pull request stands. A merge closes the gate,
+so the bead it held back becomes ready. A close without a merge leaves the gate
+open and comments once on that bead, so whoever waits on it hears. Then it
+looks again a minute later, until it is stopped. Run it under whatever
+supervises your processes, as you would the watcher. Given `--listen` and the
+webhook's secret, it also takes GitHub's `pull_request` deliveries, and settles
+a pull request when GitHub says it moved rather than at the next look.
+"Settling pull-request gates" in [docs/configuration.md](docs/configuration.md)
+has a unit to run it under, the webhook, and every line it prints.
 
 ## Being seen
 

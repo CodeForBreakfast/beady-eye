@@ -106,6 +106,7 @@ coin one — and say so.**
 | gate, resolve | beads (`bd gate`) | a bead that blocks another until something outside the tracker happens, and closing one. A gh:pr gate waits on a pull request, and `bdi gates` is named for these |
 | delivery | GitHub (webhooks) | one webhook request GitHub sends, with its event and signature in headers. `bdi gates --listen` takes a `pull_request` delivery as a trigger to settle the pull request it names, and nothing more |
 | **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has finished: resolve the gate on a merge, and on a close without one comment on the beads it holds back, once each. beads has `bd gate check`, which resolves on a merge alone and acts on a close through an escalation `bdi` does not make |
+| **pseudopod** | *coined* | one thing `bdi` does in the world rather than reads from it: a limb grown for one job, the way a shoggoth grows one from its own body. There are two: `bdi bd`'s `human respond`, which carries a person's answer to the bead that asked, and `bdi gates`, which settles gh:pr gates. Changing the work itself stays `bd`'s. Neither project names it: beads writes for whoever runs `bd`, and herdr writes to no tracker. |
 | **cell** | *coined* | one named thing a bead's row draws, in whichever block the row's layout puts it: a built-in — `glyph`, `id`, `title`, `badges`, `progress`, `agent`, `anomalies` — or one badge as `badge.<key>`. Notes and the fold's counts are not cells; they trail the state whatever the layout says. Neither project names the parts of a drawn row. |
 
 ### Three different things are called "blocked"
@@ -136,8 +137,10 @@ Anything workflow-specific is expressed as configuration, not code. See
 
 ## Non-goals for v1
 
-- **No writes to bd.** It surfaces drift; you act. A viewer that also repairs
-  state is a second writer racing whatever else manages these beads.
+- **No repairs to bd.** It surfaces drift; you act. A viewer that also repairs
+  state is a second writer racing whatever else manages these beads. Its
+  pseudopods write only what someone outside `bdi` has already decided: a
+  person's answer, and what GitHub says became of a pull request.
 - **No Noctalia widget.** The JSON contract is specified here; no widget ships
   until the TUI has proved the data model.
 - **No cross-machine view.** One box. `herdr --remote` is a later consumer of
@@ -617,7 +620,7 @@ session, so the collector remembers which session it asked.
 
 `herdr --session <session> agent read <pane>` gives terminal output for the
 tail pane, and `herdr --session <session> agent focus <pane>` is the only
-write `bdi` performs, and it writes to herdr, not to any system of record.
+write `bdi` makes to herdr, and herdr is not a system of record.
 Both name the session, because a read that named none would read whichever
 session `bdi` sits in and draw that session's pane of the same id.
 
@@ -1366,11 +1369,11 @@ environment_command = "nix develop -c"
   does not rest on it, and reaches the same answer for less: it looks for the
   `.envrc` and runs nothing where there is none, so the pass-through is a
   property `bdi` no longer needs rather than one it relies on.
-- **Every command line `bdi` spells is a read except in two ways it writes,
-  and that is a property of the subcommands `collect/` composes and of nothing
-  beside them.** The first is `bdi bd`'s `bd human respond`, which records a
-  person's answer in the tracker of the project it names, without
-  `--readonly`. The second is settling a gh:pr gate: `bd gate resolve` on a
+- **Every command line `bdi` spells is a read except where a pseudopod
+  writes, and that is a property of the subcommands `collect/` composes and of
+  nothing beside them.** The first pseudopod is `bdi bd`'s `bd human respond`,
+  which records a person's answer in the tracker of the project it names,
+  without `--readonly`. The second is settling a gh:pr gate: `bd gate resolve` on a
   merge, and `bd comments add` on the beads it holds back on a close without
   one. That the rest are
   reads is not a no-writes rule. bd writes on its own account on the way to
@@ -1667,7 +1670,7 @@ measurements above were taken against throwaway embedded stores, and this one
 cannot be taken against a live tracker.
 
 So `bdi` claims what it can hold: every command line it spells is a read, bar
-the write `bdi bd` passes through and the writes that settle a gh:pr gate. It
+the writes its two pseudopods make. It
 does not claim a tracker comes back
 unchanged. The pinned bd leaves its lock
 files behind even on a read it answers, and a bd older than 1.3.0 migrates
@@ -3060,8 +3063,8 @@ its answer is thrown away when it finally arrives, and none is asked while one
 is still out, so a wedged herdr costs one waiting thread rather than one per
 poll.
 
-`f` focuses the selected pane in herdr — the only write `bdi` performs, and
-it writes to herdr rather than to any system of record. On a row with no pane
+`f` focuses the selected pane in herdr — the only write `bdi` makes to herdr,
+which is not a system of record. On a row with no pane
 it is a no-op, not an error: there is nothing to focus and nothing has gone
 wrong. On a pane that will not come, the tail says so where the tail is. From
 the bead view, `Enter` does the same — see *The bead*.
