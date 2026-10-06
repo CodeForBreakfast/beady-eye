@@ -496,6 +496,11 @@ impl RunFailure {
             .flatten()
         {
             return Self::pruned(window);
+        } else if program == GH && said.contains(NOT_ON_GITHUB) {
+            (
+                FailureKind::Gone,
+                format!("{program} found no such repository or pull request on GitHub"),
+            )
         } else if program == GH && said.contains(RATE_LIMIT) {
             (
                 FailureKind::RateLimited,
@@ -510,11 +515,6 @@ impl RunFailure {
             (
                 FailureKind::Busy,
                 format!("{program} cannot read that pane while it is busy"),
-            )
-        } else if said.contains(NOT_ON_GITHUB) {
-            (
-                FailureKind::Gone,
-                format!("{program} found no such repository or pull request on GitHub"),
             )
         } else {
             let detail = match code {
@@ -1140,10 +1140,28 @@ mod tests {
              (repository.pullRequest)",
             "gh: Could not resolve to a Repository with the name 'example/arc'.",
         ] {
-            let failure = failing_command(said);
+            let failure = RunFailure::from_exit("gh", Some(1), said);
             assert_eq!(failure.kind, FailureKind::Gone, "{said}");
             assert!(!failure.detail.contains("arc"), "{}", failure.detail);
         }
+    }
+
+    /// GitHub echoes the name it could not find, and a gate's writer chose
+    /// that name, so its words are not GitHub's own: read as a rate limit,
+    /// they would stop every look at that gate.
+    #[test]
+    fn a_name_github_does_not_have_is_gone_whatever_it_says() {
+        let said = "gh: Could not resolve to a Repository with the name 'example/rate limit'.\n";
+
+        assert_eq!(
+            RunFailure::from_exit("gh", Some(1), said).kind,
+            FailureKind::Gone
+        );
+        assert_eq!(
+            RunFailure::from_exit("bd", Some(1), said).kind,
+            FailureKind::Unavailable,
+            "only GitHub's answer is gh's to report"
+        );
     }
 
     /// herdr's failures name the pane, its workspace and the command asked of
