@@ -195,7 +195,11 @@ fn each_project(
 
 /// Comment `told` on `bead` unless it already carries it.
 fn tell(tracker: &Settling, bead: &str, told: &str) -> Result<Done, RunFailure> {
-    if tracker.comments(bead)?.iter().any(|comment| comment == told) {
+    if tracker
+        .comments(bead)?
+        .iter()
+        .any(|comment| comment == told)
+    {
         return Ok(Done::AlreadyCommented);
     }
     tracker.comment(bead, told).map(|()| Done::Commented)
@@ -795,11 +799,7 @@ mod tests {
             .with(&viewed(42), MERGED)
             .with(&resolving_42("dunwich"), "");
 
-        let settled = settled(
-            &runner,
-            &[project("arkham"), project("dunwich")],
-            &pr(42),
-        );
+        let settled = settled(&runner, &[project("arkham"), project("dunwich")], &pr(42));
 
         assert_eq!(
             settled,

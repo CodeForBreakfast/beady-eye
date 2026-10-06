@@ -86,7 +86,9 @@ mod tests {
     #[test]
     fn a_merged_pull_request_is_read_with_its_merge_commit() {
         assert_eq!(
-            answering(include_str!("../../tests/fixtures/gh_2.102.0_pr_view_merged.json")),
+            answering(include_str!(
+                "../../tests/fixtures/gh_2.102.0_pr_view_merged.json"
+            )),
             Ok(State::Merged {
                 commit: Some("5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff".to_string())
             })
@@ -96,7 +98,9 @@ mod tests {
     #[test]
     fn a_pull_request_closed_without_a_merge_is_read_as_closed() {
         assert_eq!(
-            answering(include_str!("../../tests/fixtures/gh_2.102.0_pr_view_closed.json")),
+            answering(include_str!(
+                "../../tests/fixtures/gh_2.102.0_pr_view_closed.json"
+            )),
             Ok(State::Closed)
         );
     }
@@ -104,7 +108,9 @@ mod tests {
     #[test]
     fn an_open_pull_request_is_read_as_open() {
         assert_eq!(
-            answering(include_str!("../../tests/fixtures/gh_2.102.0_pr_view_open.json")),
+            answering(include_str!(
+                "../../tests/fixtures/gh_2.102.0_pr_view_open.json"
+            )),
             Ok(State::Open)
         );
     }
