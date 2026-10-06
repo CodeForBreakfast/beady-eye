@@ -3400,13 +3400,22 @@ and a second line"
           EOF
         '';
 
-        # bdi as homelab runs it, with the gh and bd it shells out to. The bd is
-        # the flake's own pin, so the image moves with that pin and with
-        # nothing else. It is built for Linux hosts only, because the cluster
-        # that runs it is amd64.
+        # bdi as homelab runs it, with what it shells out to: gh and bd, git for
+        # finding a project's worktrees, and a shell with coreutils for a
+        # `credential_command`. The bd is the flake's own pin, so the image
+        # moves with that pin and with nothing else. It is built for Linux
+        # hosts only, because the cluster that runs it is amd64.
         imageRoot = pkgs.buildEnv {
           name = "beady-eye-image-root";
-          paths = [ beady-eye pkgs.gh beads.packages.${system}.bd pkgs.cacert ];
+          paths = [
+            beady-eye
+            pkgs.gh
+            beads.packages.${system}.bd
+            pkgs.gitMinimal
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.cacert
+          ];
         };
 
         image = pkgs.dockerTools.buildLayeredImage {
@@ -3424,14 +3433,17 @@ and a second line"
         };
 
         # Building the image proves only that it has layers. What a pod needs
-        # is the three commands on the PATH the image sets, so they are run
-        # from the root the image is made of.
+        # is every command bdi spawns on the PATH the image sets, so each is
+        # run from the root the image is made of, with nothing else on PATH.
         imageTest = pkgs.runCommand "image-test" { } ''
           set -eu
           export HOME="$TMPDIR"
-          ${imageRoot}/bin/bdi --version
-          ${imageRoot}/bin/gh --version
-          ${imageRoot}/bin/bd --version
+          export PATH=${imageRoot}/bin
+          bdi --version
+          gh --version
+          bd --version
+          git --version
+          sh -c 'cat /dev/null'
           test -e ${image}
           touch $out
         '';
