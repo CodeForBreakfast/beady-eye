@@ -74,9 +74,10 @@ pub fn state(runner: &dyn Runner, pr: &PullRequest) -> Result<State, RunFailure>
 }
 
 /// Each of `numbers` in `repo` as GitHub has it now, in the order asked, read
-/// in one query however many there are. The owner and name go to `gh` as
-/// variables rather than into the query, since a gate's writer chose them.
-/// `gh` picks the host for a `repo` that names none, as [`state`] has it.
+/// in one query, so the caller bounds how many there are. The owner and name
+/// go to `gh` as variables rather than into the query, since a gate's writer
+/// chose them. `gh` picks the host for a `repo` that names none, as [`state`]
+/// has it.
 pub fn states(
     runner: &dyn Runner,
     repo: &Repository,

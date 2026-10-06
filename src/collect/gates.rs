@@ -108,14 +108,34 @@ pub fn settle(cli: &Cli, gh: &dyn Runner, projects: &[Project], pr: &PullRequest
     settled(cli, projects, pr, github::state(gh, pr))
 }
 
+/// The most pull requests one query asks about. The query is one argument to
+/// `gh`, and an argument has a length limit of its own on Linux.
+const PULL_REQUESTS_PER_QUERY: usize = 100;
+
 /// Re-read every one of `prs`, which share a repository, from GitHub in one
-/// query, then settle each as [`settled`] does, in the order given.
+/// query for each [`PULL_REQUESTS_PER_QUERY`] of them, then settle each as
+/// [`settled`] does, in the order given. A query that fails leaves the
+/// others' pull requests settled.
+pub fn settle_together(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    prs: &[PullRequest],
+) -> Vec<Settled> {
+    prs.chunks(PULL_REQUESTS_PER_QUERY)
+        .flat_map(|asked| settle_asked_together(cli, gh, projects, asked))
+        .collect()
+}
+
+/// Re-read every one of `prs` in one query, then settle each.
 ///
 /// A query naming one pull request or repository GitHub does not have fails
 /// as a whole, so then each is read on its own and the rest are still
-/// settled. Each pull request in a repository the query cannot name is read
+/// settled. A number past GraphQL's 32-bit `Int` is one GitHub does not
+/// have: measured on gh 2.102.0, it says so rather than refusing the query.
+/// Each pull request in a repository the query cannot name is read
 /// on its own too.
-pub fn settle_together(
+fn settle_asked_together(
     cli: &Cli,
     gh: &dyn Runner,
     projects: &[Project],
@@ -272,6 +292,7 @@ mod tests {
     use crate::collect::bd::parse_beads;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{FailureKind, RunFailure};
+    use std::ops::RangeInclusive;
     use std::path::PathBuf;
 
     const GATE_LIST: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list.json");
@@ -921,6 +942,42 @@ mod tests {
             settled_together(&runner, &[unnamed(7), unnamed(42)]),
             [Settled::Open, Settled::Open]
         );
+        assert_eq!(runner.calls().len(), 2);
+    }
+
+    /// The query about each of `numbers` in example/ark.
+    fn queried(numbers: RangeInclusive<u64>) -> String {
+        let asked: Vec<String> = numbers
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state mergeCommit{{oid}}}}"))
+            .collect();
+        format!(
+            "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
+             $name:String!){{repository(owner:$owner,name:$name){{{}}}}}",
+            asked.join(" ")
+        )
+    }
+
+    #[test]
+    fn a_repository_with_more_pull_requests_than_one_query_asks_about_is_asked_in_several() {
+        let unavailable = RunFailure {
+            kind: FailureKind::Unavailable,
+            program: "gh".to_string(),
+            detail: "gh exited 1 for a reason bdi cannot place".to_string(),
+            unreadable: None,
+        };
+        let runner = FakeRunner::default()
+            .failing(&queried(1..=100), unavailable.clone())
+            .with(
+                &queried(101..=101),
+                r#"{"data":{"repository":{"pr101":{"state":"OPEN","mergeCommit":null}}}}"#,
+            );
+        let prs: Vec<PullRequest> = (1..=101).map(pr).collect();
+
+        let mut expected: Vec<Settled> = (1..=100)
+            .map(|_| Settled::Unread(unavailable.clone()))
+            .collect();
+        expected.push(Settled::Open);
+        assert_eq!(settled_together(&runner, &prs), expected);
         assert_eq!(runner.calls().len(), 2);
     }
 }
