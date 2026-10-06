@@ -40,7 +40,8 @@ The fourth is **dynamic**: it catches native-but-misused or policy code.
   `@example`. It is read from `plugin/node_modules`, which `bun install` fills with
   the versions `plugin/package.json` pins, so the inventory is the installed
   Effect's. Each package ships its TypeScript under `src/`. Without
-  `node_modules`, a finder fetches the pinned version from unpkg. It never reads
+  `node_modules`, a finder fetches the version `plugin/bun.lock` resolves from
+  unpkg. It never reads
   Effect's GitHub `main`, which moves on past the pinned version. Effect
   re-exports many names inside `export { … }` blocks, some renamed
   (`catch_ as catch`), and `@effect/platform-node` mostly re-exports

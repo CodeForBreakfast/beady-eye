@@ -35,8 +35,8 @@ Report every hit by its repo-relative path (e.g. plugin/src/watcher.ts, plugin/h
 // pinned version's and not whatever a branch happens to hold. `bun install` in plugin/ puts each
 // package's TypeScript source under <package>/src/. A domain's `src` is a path under this root.
 const SOURCE = 'plugin/node_modules'
-const SOURCE_FALLBACK = `If ${SOURCE} is absent, read each package's pinned version from plugin/package.json and
-   fetch https://unpkg.com/<package>@<version>/<path under the package> instead (e.g.
+const SOURCE_FALLBACK = `If ${SOURCE} is absent, read each package's resolved version from plugin/bun.lock, which
+   also pins the transitive @effect/platform-node-shared, and fetch https://unpkg.com/<package>@<version>/<path under the package> instead (e.g.
    https://unpkg.com/effect@<version>/src/Array.ts), and set fellBackToFetch=true. Never read Effect
    from GitHub's main branch or any unpinned copy: main moves on past the pinned version.`
 
@@ -501,7 +501,7 @@ function docsInstruction(slug) {
    read EVERY .mdx inside — those are the section's pages, and reading only the intro is NOT reading
    the docs (e.g. stream/ is creating + consuming + operations + error-handling + resourceful;
    requirements-management/ is services + layers + default-services + layer-memoization).
-   Do NOT read the unprefixed effect.website pages or any other docs path: they are Effect 3's.
+   Do NOT read the unprefixed effect.website pages or the website's v3 docs: they are Effect 3's.
    ${guide} Where the docs or the guide name an API the installed source lacks, the source wins.
    Set fellBackToFetch=true if you read the docs from GitHub. The docs tell you WHEN a tool is right
    and when it is NOT.`
@@ -510,7 +510,7 @@ function docsInstruction(slug) {
 // What a refuter reads its evidence from: the same pinned source and Effect 4 docs the finders read.
 function verifierGrounding() {
   return `Read Effect's source from the installed packages, ${SOURCE}/<package>/src/. If ${SOURCE} is
-absent, fetch the version plugin/package.json pins from https://unpkg.com/<package>@<version>/.
+absent, fetch the version plugin/bun.lock resolves from https://unpkg.com/<package>@<version>/.
 Read each docs slug the finding cites at ${docsLocation('<slug>')}, and the idiom guide at
 ${IDIOM_GUIDE}. Where a finding rests on how Effect 4 changed an idiom (equality, forking, error
 handling, services), the migration notes are ${MIGRATION_NOTES}.
