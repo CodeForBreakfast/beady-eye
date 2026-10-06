@@ -41,7 +41,11 @@ pub(super) fn settle(
     listen: Option<&str>,
     secret_file: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
-    let secret = listen.map(|_| secret(secret_file)).transpose()?;
+    let from_environment = std::env::var(SECRET_VARIABLE).ok();
+    std::env::remove_var(SECRET_VARIABLE);
+    let secret = listen
+        .map(|_| secret(secret_file, from_environment))
+        .transpose()?;
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,
@@ -55,7 +59,7 @@ pub(super) fn settle(
     .config;
     let projects: Vec<Project> = cfg.read().cloned().collect();
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
-    let (hearing, heard) = mpsc::channel();
+    let (hearing, heard) = mpsc::sync_channel(webhook::MOST_WAITING);
     let listening = match (listen, secret) {
         (Some(address), Some(secret)) => Some(webhook::listen(address, secret, hearing.clone())?),
         _ => None,
@@ -90,24 +94,21 @@ pub(super) fn settle(
     }
 }
 
-/// The secret, from `file` where one is named and from [`SECRET_VARIABLE`]
-/// otherwise. The variable is taken out of the environment once read, so no
-/// `bd` or `gh` this run starts is handed it. That is done before any thread
-/// starts, which is when changing the environment is sound.
-fn secret(file: Option<&Path>) -> anyhow::Result<Secret> {
-    let text = match file {
-        Some(file) => std::fs::read_to_string(file)
+/// The secret, from `file` where one is named and from what
+/// [`SECRET_VARIABLE`] held otherwise.
+///
+/// The caller takes the variable out of the environment before any thread
+/// starts, which is when changing the environment is sound, and whether or
+/// not it is used, so no `bd` or `gh` this run starts is handed it.
+fn secret(file: Option<&Path>, from_environment: Option<String>) -> anyhow::Result<Secret> {
+    let text = match (file, from_environment) {
+        (Some(file), _) => std::fs::read_to_string(file)
             .with_context(|| format!("reading the webhook secret from {}", file.display()))?,
-        None => {
-            let text = std::env::var(SECRET_VARIABLE).with_context(|| {
-                format!(
-                    "--listen needs the secret GitHub signs deliveries with, from \
-                     --webhook-secret-file or {SECRET_VARIABLE}"
-                )
-            })?;
-            std::env::remove_var(SECRET_VARIABLE);
-            text
-        }
+        (None, Some(text)) => text,
+        (None, None) => anyhow::bail!(
+            "--listen needs the secret GitHub signs deliveries with, from \
+             --webhook-secret-file or {SECRET_VARIABLE}"
+        ),
     };
     Secret::new(&text).context("the webhook secret is empty")
 }

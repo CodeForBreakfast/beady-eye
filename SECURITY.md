@@ -74,11 +74,14 @@ tracker the config does not name is worth a report.
 network address, which may face the internet, and it is the one part of `bdi`
 that does. It speaks plain HTTP and expects TLS to be ended in front of it. It
 reads at most 1 MiB of a body before checking its signature, gives each request
-ten seconds to arrive, and answers at most eight at once. A delivery is taken
-only where its `X-Hub-Signature-256` is the HMAC-SHA256 of its body under the
-configured secret, compared in constant time, and only a `pull_request`
-delivery is acted on. All it reads from one is a repository and
-a number, which it settles exactly as a gate naming them would be settled:
+ten seconds to arrive, answers at most eight at once, and keeps at most 64
+waiting to be settled or reported. A sender that keeps it at those limits
+delays deliveries until the next look, which settles them anyway, so that alone
+is not a vulnerability. A delivery is taken only where its
+`X-Hub-Signature-256` is the HMAC-SHA256 of its body under the configured
+secret, compared in constant time, and only a `pull_request` delivery is acted
+on. All it reads from one is a repository and a number, which it settles
+exactly as a gate naming them would be settled:
 GitHub is asked where that pull request stands, and only the gates a
 configured tracker already holds for it are touched. The secret is read from a
 file or the environment, and taken out of the environment before any `bd` or

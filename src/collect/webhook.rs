@@ -5,7 +5,7 @@
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -36,6 +36,15 @@ const MOST_HEADERS: usize = 64;
 /// The most requests answered at once, which with [`LARGEST_DELIVERY`]
 /// bounds the memory every request in flight can hold between them.
 const MOST_AT_ONCE: usize = 8;
+
+/// The most of what was heard that waits to be settled or reported, which
+/// bounds what requests can leave behind them while settling is slow. Where
+/// it is full, a delivery to settle is told to come back later, and a refusal
+/// goes unreported.
+pub const MOST_WAITING: usize = 64;
+
+/// How a request is told to come back later.
+const BUSY: (&str, &str) = ("503 Service Unavailable", "busy\n");
 
 /// How long a request has to arrive in full, which is how long a sender that
 /// goes quiet holds one of the [`MOST_AT_ONCE`]. GitHub itself gives up on an
@@ -86,10 +95,17 @@ pub enum Heard {
 }
 
 impl Heard {
-    /// The status line and text the request is answered with.
-    fn answer(&self) -> (&'static str, &'static str) {
+    /// Whether what was heard goes on to be settled or reported.
+    fn handed_on(&self) -> bool {
+        !matches!(self, Heard::Healthy | Heard::Unknown)
+    }
+
+    /// The status line and text the request is answered with, given whether
+    /// what was heard found room to be handed on.
+    fn answer(&self, room: bool) -> (&'static str, &'static str) {
         match self {
             Heard::Healthy => ("200 OK", "ok\n"),
+            Heard::Settle(_) if !room => BUSY,
             Heard::Settle(_) => ("202 Accepted", "settling\n"),
             Heard::Ignored => ("202 Accepted", "ignored\n"),
             Heard::Unsigned | Heard::Forged => ("401 Unauthorized", "signature refused\n"),
@@ -162,13 +178,17 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Take requests on `address`, each on a thread of its own, answer each at
-/// once, and only then hand `heard` what it was, unless it was a health check
-/// or nothing the listener answers. A request arriving while
+/// Take requests on `address`, each on a thread of its own, hand `heard` what
+/// each was, unless it was a health check or nothing the listener answers,
+/// and answer it at once. A request arriving while
 /// [`MOST_AT_ONCE`] are being answered is told to come back later. Gives back
 /// the address taken, which names the port where `address` left it to the
 /// system.
-pub fn listen(address: &str, secret: Secret, heard: Sender<Heard>) -> anyhow::Result<SocketAddr> {
+pub fn listen(
+    address: &str,
+    secret: Secret,
+    heard: SyncSender<Heard>,
+) -> anyhow::Result<SocketAddr> {
     let listener = TcpListener::bind(address).with_context(|| format!("listening on {address}"))?;
     let taken = listener
         .local_addr()
@@ -180,7 +200,7 @@ pub fn listen(address: &str, secret: Secret, heard: Sender<Heard>) -> anyhow::Re
             let Ok(stream) = stream else { continue };
             if answering.fetch_add(1, Ordering::SeqCst) >= MOST_AT_ONCE {
                 answering.fetch_sub(1, Ordering::SeqCst);
-                reply(&stream, "503 Service Unavailable", "busy\n");
+                reply(&stream, BUSY);
                 close(stream, Instant::now() + LINGER);
                 continue;
             }
@@ -207,7 +227,7 @@ impl Drop for Answering {
 
 /// Read one request from `stream` and answer it, or close it unanswered
 /// where it never arrives in full or is not HTTP.
-fn answer(stream: TcpStream, secret: &Secret, heard: &Sender<Heard>) {
+fn answer(stream: TcpStream, secret: &Secret, heard: &SyncSender<Heard>) {
     let mut stream = Patient {
         stream,
         deadline: Instant::now() + PATIENCE,
@@ -215,15 +235,12 @@ fn answer(stream: TcpStream, secret: &Secret, heard: &Sender<Heard>) {
     let Some(said) = read(&mut stream, secret) else {
         return;
     };
-    let (status, text) = said.answer();
-    reply(&stream.stream, status, text);
-    if !matches!(said, Heard::Healthy | Heard::Unknown) {
-        let _ = heard.send(said);
-    }
+    let room = said.handed_on() && heard.try_send(said.clone()).is_ok();
+    reply(&stream.stream, said.answer(room));
     close(stream.stream, stream.deadline);
 }
 
-fn reply(mut stream: &TcpStream, status: &str, text: &str) {
+fn reply(mut stream: &TcpStream, (status, text): (&str, &str)) {
     let _ = stream.set_write_timeout(Some(PATIENCE));
     let _ = stream.write_all(
         format!(
@@ -563,5 +580,90 @@ mod tests {
         assert_eq!(heard(b"POST /hook HTTP/1.1\r\nHost: bdi\r\n"), None);
         let endless = format!("GET / HTTP/1.1\r\nX-Padding: {}", "a".repeat(LONGEST_HEAD));
         assert_eq!(heard(endless.as_bytes()), None);
+    }
+
+    /// A connection to read as the listener does, with `patience` to arrive
+    /// in, and the sending end of it.
+    fn connected(patience: Duration) -> (Patient, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+        let sender = TcpStream::connect(listener.local_addr().expect("its address"))
+            .expect("the connection");
+        let (stream, _) = listener.accept().expect("the other end");
+        let reader = Patient {
+            stream,
+            deadline: Instant::now() + patience,
+        };
+        (reader, sender)
+    }
+
+    /// The body is a signed delivery that would settle #42, but for its last
+    /// byte, which the sender never sends.
+    #[test]
+    fn a_sender_that_goes_quiet_before_its_delivery_is_whole_is_not_answered() {
+        let (mut reader, mut sender) = connected(Duration::from_millis(200));
+        let sent = posted(
+            &format!(
+                "Content-Length: {}\r\nX-GitHub-Event: pull_request\r\nX-Hub-Signature-256: {}\r\n",
+                CLOSED_42.len(),
+                signature(CLOSED_42.as_bytes())
+            ),
+            CLOSED_42,
+        );
+        sender
+            .write_all(&sent[..sent.len() - 1])
+            .expect("all but the last byte");
+
+        let began = Instant::now();
+        assert_eq!(read(&mut reader, &secret()), None);
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            began.elapsed()
+        );
+    }
+
+    /// Each byte comes well inside the time one read may wait, so only a
+    /// deadline on the whole request stops it.
+    #[test]
+    fn a_sender_dripping_its_delivery_past_the_deadline_is_not_answered() {
+        let (mut reader, sender) = connected(Duration::from_millis(300));
+        let dripping = thread::spawn(move || {
+            let mut sender = sender;
+            for byte in b"POST /hook HTTP/1.1\r\nHost: bdi\r\nX-Padding: "
+                .iter()
+                .cycle()
+            {
+                if sender.write_all(&[*byte]).is_err() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let began = Instant::now();
+        assert_eq!(read(&mut reader, &secret()), None);
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            began.elapsed()
+        );
+        drop(reader);
+        dripping
+            .join()
+            .expect("the sender stops once the reader has gone");
+    }
+
+    #[test]
+    fn a_delivery_to_settle_with_no_room_to_wait_is_told_to_come_back_and_a_refusal_is_not() {
+        let settle = Heard::Settle(PullRequest {
+            repo: "example/ark".to_string(),
+            number: 42,
+        });
+        assert_eq!(settle.answer(true).0, "202 Accepted");
+        assert_eq!(settle.answer(false), BUSY);
+        assert_eq!(Heard::Forged.answer(false).0, "401 Unauthorized");
+        assert!(!Heard::Healthy.handed_on());
+        assert!(!Heard::Unknown.handed_on());
+        assert!(Heard::Unsigned.handed_on());
     }
 }

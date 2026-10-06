@@ -932,7 +932,7 @@ delivery is answered before it is settled:
 | a signed `pull_request` delivery naming no repository and number | `400`, and a line on stdout |
 | a body over 1 MiB, far more than any `pull_request` delivery | `413`, and a line on stdout |
 | a delivery with no `Content-Length`, such as a chunked one | `411`, and a line on stdout |
-| any request while eight are already being answered | `503`. GitHub does not send it again, so the next look settles it |
+| any request while eight are already being answered, or a signed `pull_request` delivery while 64 wait to be settled | `503`. GitHub does not send it again, so the next look settles it |
 | a request that has not arrived in full within ten seconds | the connection is closed unanswered |
 | `GET /healthz` | `200`, for a readiness probe |
 

@@ -459,46 +459,151 @@ fn a_listening_bdi_gates_answers_a_readiness_probe() {
     );
 }
 
-/// A body at the limit is read and its signature checked. One byte over is
-/// refused for its size.
+/// A listening `bdi gates` whose first look has asked GitHub about both pull
+/// requests the captured gates wait on, each still open, and settled nothing.
+struct Listening {
+    github: ShimmedGitHub,
+    settling: Settling,
+    address: SocketAddr,
+    _tracker: ShimmedTracker,
+}
+
+impl Listening {
+    fn after_its_first_look(named: &str) -> Self {
+        let home = a_home_looking_every(named, &["arkham"], 3600);
+        let tracker = ShimmedTracker::beside(&home);
+        holds_the_captured_gates(&tracker, "arkham");
+        let github = ShimmedGitHub::beside(&home);
+        github.answers_with(&viewed(42), OPEN);
+        github.answers_with(&viewed(7), OPEN);
+        let settling = Settling::listening(&home, &tracker, &github);
+        let address = settling.address();
+        until(|| github.calls().len() == 2, "the first look");
+        Self {
+            github,
+            settling,
+            address,
+            _tracker: tracker,
+        }
+    }
+
+    /// Wait until all that was heard before now has been dealt with. What
+    /// was heard is dealt with in turn, so a forged delivery being reported
+    /// means everything handed on before it has been too.
+    fn caught_up(&self) {
+        let reported = || {
+            self.settling
+                .said()
+                .lines()
+                .filter(|line| *line == FORGED)
+                .count()
+        };
+        let before = reported();
+        assert_eq!(
+            delivered(
+                self.address,
+                "pull_request",
+                Some(&signed("hunter2", DELIVERED_42)),
+                DELIVERED_42
+            ),
+            401
+        );
+        until(|| reported() > before, "the forged delivery reported");
+    }
+}
+
+const FORGED: &str = "a delivery was refused: its X-Hub-Signature-256 is not the secret's";
+
+/// [`DELIVERED_42`] with spaces after it to make `size` bytes, which JSON
+/// reads as the same delivery.
+fn padded(size: usize) -> String {
+    DELIVERED_42.to_string() + &" ".repeat(size - DELIVERED_42.len())
+}
+
+/// A body at the limit is read and settled. One byte over is refused for its
+/// size, though it is signed with the secret, and GitHub is never asked.
 #[test]
-fn a_body_over_a_mebibyte_is_refused_unread() {
-    let home = a_home_looking_every("large", &["arkham"], 3600);
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&viewed(42), OPEN);
-    github.answers_with(&viewed(7), OPEN);
+fn a_signed_delivery_over_a_mebibyte_is_refused_and_settles_nothing() {
+    let listening = Listening::after_its_first_look("large");
+    let at_the_limit = padded(1024 * 1024);
+    let over_it = padded(1024 * 1024 + 1);
 
-    let settling = Settling::listening(&home, &tracker, &github);
-    let address = settling.address();
-
-    let at_the_limit = " ".repeat(1024 * 1024);
-    assert_eq!(delivered(address, "pull_request", None, &at_the_limit), 401);
     assert_eq!(
-        delivered(address, "pull_request", None, &format!("{at_the_limit} ")),
+        delivered(
+            listening.address,
+            "pull_request",
+            Some(&signed(SECRET, &at_the_limit)),
+            &at_the_limit
+        ),
+        202
+    );
+    listening.caught_up();
+    assert_eq!(
+        listening.github.calls(),
+        [viewed(7), viewed(42), viewed(42)]
+    );
+
+    assert_eq!(
+        delivered(
+            listening.address,
+            "pull_request",
+            Some(&signed(SECRET, &over_it)),
+            &over_it
+        ),
         413
     );
-    settling.says("a delivery was refused: it is larger than any pull_request delivery");
+    listening
+        .settling
+        .says("a delivery was refused: it is larger than any pull_request delivery");
+    listening.caught_up();
+    assert_eq!(
+        listening.github.calls(),
+        [viewed(7), viewed(42), viewed(42)]
+    );
+}
+
+/// The body sent is the whole of a signed delivery, so reading to the end of
+/// what arrived, rather than to the length it gives, would settle it.
+#[test]
+fn a_signed_delivery_ending_before_its_length_is_closed_unanswered_and_settles_nothing() {
+    let listening = Listening::after_its_first_look("short");
+    let mut stream = TcpStream::connect(listening.address).expect("bdi gates takes it");
+    stream
+        .set_read_timeout(Some(GIVING_UP))
+        .expect("a timeout is ours to set");
+    stream
+        .write_all(
+            format!(
+                "POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: {}\r\nX-GitHub-Event: \
+                 pull_request\r\nX-Hub-Signature-256: {}\r\n\r\n{DELIVERED_42}",
+                DELIVERED_42.len() + 1,
+                signed(SECRET, DELIVERED_42)
+            )
+            .as_bytes(),
+        )
+        .expect("the request is sent");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("the sending side is ours to close");
+
+    let mut answer = String::new();
+    stream
+        .read_to_string(&mut answer)
+        .expect("bdi gates closes the connection");
+    assert_eq!(answer, "");
+    listening.caught_up();
+    assert_eq!(listening.github.calls(), [viewed(7), viewed(42)]);
 }
 
 /// Eight senders that give their headers and never their body hold every
-/// answer there is, and the ninth request is turned away. Once they go,
-/// requests are answered again.
+/// answer there is, so a ninth request, signed with the secret, is turned
+/// away and never reaches GitHub. Once they go, deliveries are taken again.
 #[test]
-fn a_request_beyond_eight_at_once_is_turned_away_until_one_finishes() {
-    let home = a_home_looking_every("busy", &["arkham"], 3600);
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&viewed(42), OPEN);
-    github.answers_with(&viewed(7), OPEN);
-
-    let settling = Settling::listening(&home, &tracker, &github);
-    let address = settling.address();
+fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
+    let listening = Listening::after_its_first_look("busy");
     let stalled: Vec<TcpStream> = (0..8)
         .map(|_| {
-            let mut stream = TcpStream::connect(address).expect("bdi gates takes it");
+            let mut stream = TcpStream::connect(listening.address).expect("bdi gates takes it");
             stream
                 .write_all(
                     b"POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: 2048\r\nX-GitHub-Event: \
@@ -509,14 +614,62 @@ fn a_request_beyond_eight_at_once_is_turned_away_until_one_finishes() {
         })
         .collect();
 
-    until(
-        || delivered(address, "pull_request", None, DELIVERED_42) == 503,
-        "a ninth request turned away",
-    );
+    let ninth = || {
+        delivered(
+            listening.address,
+            "pull_request",
+            Some(&signed(SECRET, DELIVERED_42)),
+            DELIVERED_42,
+        )
+    };
+    assert_eq!(ninth(), 503);
     drop(stalled);
     until(
-        || delivered(address, "pull_request", None, DELIVERED_42) == 401,
+        || delivered(listening.address, "pull_request", None, DELIVERED_42) == 401,
         "a request answered once the eight have gone",
+    );
+    listening.caught_up();
+    assert_eq!(listening.github.calls(), [viewed(7), viewed(42)]);
+
+    assert_eq!(ninth(), 202);
+    listening.caught_up();
+    assert_eq!(
+        listening.github.calls(),
+        [viewed(7), viewed(42), viewed(42)]
+    );
+}
+
+/// The `gh` shim refuses a call made with the secret's variable in its
+/// environment, so a secret handed on would leave #42 unsettled.
+#[test]
+fn the_secret_reaches_no_program_bdi_gates_starts_even_where_a_file_gives_it() {
+    let home = a_home_looking_every("secret", &["arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&viewed(42), MERGED);
+    github.answers_with(&viewed(7), OPEN);
+    let file = home.join("secret");
+    std::fs::write(&file, format!("{SECRET}\n")).expect("the file is ours to write");
+
+    let mut command = gates(&home, &tracker, &github);
+    command
+        .args(["--listen", "127.0.0.1:0", "--webhook-secret-file"])
+        .arg(&file)
+        .env("BDI_GATES_WEBHOOK_SECRET", "not the one in the file");
+    let settling = Settling::spawned(&home, command);
+
+    settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
+    assert_eq!(
+        delivered(
+            settling.address(),
+            "pull_request",
+            Some(&signed(SECRET, DELIVERED_42)),
+            DELIVERED_42
+        ),
+        202,
+        "the file's secret is the one taken"
     );
 }
 
@@ -535,8 +688,7 @@ fn listening_with_no_secret_refuses_to_start() {
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
         "Error: --listen needs the secret GitHub signs deliveries with, from \
-         --webhook-secret-file or BDI_GATES_WEBHOOK_SECRET\n\nCaused by:\n    environment \
-         variable not found\n"
+         --webhook-secret-file or BDI_GATES_WEBHOOK_SECRET\n"
     );
     assert_eq!(tracker.calls(), Vec::<String>::new());
 }
