@@ -13,7 +13,7 @@ const config = join(homedir(), '.config', 'beady-eye', 'config.toml')
 /** Claude Code starts the server with its session's id, so a server started
  * again under a sleeping session watches its beads before any tool is
  * called. */
-const bootSession = Config.option(Config.string('CLAUDE_CODE_SESSION_ID')).pipe(
+const bootSession = Config.option(Config.String('CLAUDE_CODE_SESSION_ID')).pipe(
   Effect.orElseSucceed(() => Option.none<string>()),
   Effect.map(Option.getOrUndefined),
 )
@@ -21,7 +21,7 @@ const bootSession = Config.option(Config.string('CLAUDE_CODE_SESSION_ID')).pipe(
 /** Settles when the session closes the server's input, which is how a
  * session lets its server go. */
 const sessionCloses = (input: NodeJS.ReadableStream) =>
-  Effect.async<void>((resume) => {
+  Effect.callback<void>((resume) => {
     const closed = () => resume(Effect.void)
     input.once('end', closed)
     input.once('close', closed)
@@ -41,5 +41,4 @@ NodeRuntime.runMain(
     yield* Effect.promise(() => buildServer(watches).connect(new StdioServerTransport()))
     yield* sessionCloses(process.stdin)
   }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
-  { disablePrettyLogger: true },
 )

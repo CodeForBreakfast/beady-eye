@@ -1,9 +1,8 @@
 import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, lstatSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { FileSystem } from '@effect/platform'
 import { NodeFileSystem } from '@effect/platform-node'
-import { Chunk, ConfigProvider, Effect, Fiber, Option, Queue, Stream } from 'effect'
+import { ConfigProvider, Effect, Fiber, type FileSystem, Option, Queue, Stream } from 'effect'
 import { aPrivateDirectory, aWatcherAt, cleanUp, cleanUpAfterEach, said } from './test-watcher'
 import {
   askAbout,
@@ -49,7 +48,7 @@ const freshness = {
 const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)))
 
-const at = (path: string | undefined) => Effect.succeed(Option.fromNullable(path))
+const at = (path: string | undefined) => Effect.succeed(Option.fromNullishOr(path))
 
 /** A watcher killed where it stood, which leaves its socket at the path with
  * nothing listening. One that closes its server removes the socket. */
@@ -81,29 +80,24 @@ const watching = (path: string | undefined, watchTiming = timing) => {
   return {
     stop,
     next: () => Effect.runPromise(Queue.take(told)),
-    heard: () => Chunk.toArray(Effect.runSync(Queue.takeAll(told))),
+    heard: () => Effect.runSync(Queue.clear(told)),
   }
 }
 
 /** What a session that stops after hearing `count` things is told. */
 const firstHeard = (path: string, count: number) =>
-  run(
-    watchBead(bead, at(path), timing).pipe(
-      Stream.take(count),
-      Stream.runCollect,
-      Effect.map(Chunk.toArray),
-    ),
-  )
+  run(watchBead(bead, at(path), timing).pipe(Stream.take(count), Stream.runCollect))
 
 const pause = (millis: number) => new Promise((resolve) => setTimeout(resolve, millis))
 
 const whereWith = (config: string, runtimeDirectory: string | undefined) =>
   run(
     whereTheWatcherIs(config).pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(runtimeDirectory === undefined ? [] : [['XDG_RUNTIME_DIR', runtimeDirectory]]),
-        ),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({
+          env: runtimeDirectory === undefined ? {} : { XDG_RUNTIME_DIR: runtimeDirectory },
+        }),
       ),
       Effect.map(Option.getOrUndefined),
     ),

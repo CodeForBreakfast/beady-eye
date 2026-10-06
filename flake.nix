@@ -3551,9 +3551,9 @@ and a second line"
         # from nixpkgs, at the versions commy pins, because their npm
         # packages carry a binary per platform and a fixed-output hash cannot
         # be one value on all four systems. For the same reason bun leaves out
-        # optional packages, which is where Effect's dependencies keep their
-        # native builds. What bun installs is only the plugin's pure
-        # JavaScript, so the one hash holds everywhere.
+        # optional packages, which is where a dependency keeps its native
+        # builds. What bun installs is only the plugin's pure JavaScript, so
+        # the one hash holds everywhere.
         pluginSource = sourceOf [ ./plugin ];
 
         pluginModules = pkgs.stdenvNoCC.mkDerivation {
@@ -3571,7 +3571,7 @@ and a second line"
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-2U6hdVkMDSpfQ+l0ptMFvyYyKUVsxkWOvKMUHIRd4Q4=";
+          outputHash = "sha256-ZCJ2ZMfDUOj7avprqaImRepFVlS3pRdaRlNxhVMmBOw=";
         };
 
         # commy type-checks with Effect's build of tsc, which adds the Effect

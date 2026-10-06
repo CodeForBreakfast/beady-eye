@@ -89,7 +89,7 @@ export const buildServer = (watches: Watches): Server => {
   server.oninitialized = () =>
     Effect.runFork(
       Stream.runForEach(watches.news, ({ content, meta, told }) =>
-        tellSession(server, content, meta).pipe(Effect.zipRight(told), Effect.ignore),
+        tellSession(server, content, meta).pipe(Effect.andThen(told), Effect.ignore),
       ),
     )
   server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
@@ -97,7 +97,7 @@ export const buildServer = (watches: Watches): Server => {
     return Effect.runPromise(
       watches
         .learn(typeof args['session_id'] === 'string' ? args['session_id'] : undefined)
-        .pipe(Effect.zipRight(call(watches, params.name, args)), Effect.map(answering)),
+        .pipe(Effect.andThen(call(watches, params.name, args)), Effect.map(answering)),
     )
   })
   return server

@@ -4,8 +4,19 @@
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { FileSystem } from '@effect/platform'
-import { Config, Deferred, Effect, Fiber, Option, Queue, Schema, type Scope, Stream } from 'effect'
+import {
+  Config,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Option,
+  Queue,
+  Schema,
+  type Scope,
+  Semaphore,
+  Stream,
+} from 'effect'
 import {
   askAbout,
   type Bead,
@@ -38,17 +49,17 @@ export interface News {
   readonly told: Effect.Effect<void>
 }
 
-const Told = Schema.Union(
+const Told = Schema.Union([
   Schema.Struct({
     is: Schema.Literal('bead'),
     title: Schema.String,
     status: Schema.String,
     ready: Schema.Boolean,
-    comments: Schema.optional(Schema.Number),
+    comments: Schema.optional(Schema.Finite),
     closeReason: Schema.optional(Schema.String),
   }),
   Schema.Struct({ is: Schema.Literal('gone') }),
-)
+])
 
 /** What the session was last told of a bead, which is what the watcher last
  * said of it but for a refusal. */
@@ -87,19 +98,19 @@ interface Watch {
   /** Done once the watcher has answered, been found down, or the watch has
    * stopped. */
   readonly firstHeard: Deferred.Deferred<void>
-  readonly connection: Fiber.RuntimeFiber<void>
+  readonly connection: Fiber.Fiber<void>
 }
 
-const SessionId = Schema.UUID
+const SessionId = Schema.String.check(Schema.isUUID())
 
-const watchesDirectory = Config.nonEmptyString('XDG_STATE_HOME').pipe(
+const watchesDirectory = Config.NonEmptyString('XDG_STATE_HOME').pipe(
   Config.withDefault(join(homedir(), '.local', 'state')),
   Config.map((state) => join(state, 'beady-eye', 'watches')),
 )
 
 const FILENAME_SAFE = /[^a-zA-Z0-9._-]/g
 
-const KeptWatches = Schema.parseJson(
+const KeptWatches = Schema.fromJsonString(
   Schema.Array(
     Schema.Struct({
       project: Schema.String,
@@ -351,7 +362,7 @@ export const makeWatches = <R>(
     const session = yield* Deferred.make<string>()
     /** The session's file, once its watches are back. */
     const file = yield* Deferred.make<string>()
-    const keeping = yield* Effect.makeSemaphore(1)
+    const keeping = yield* Semaphore.make(1)
     const watches = new Map<string, Watch>()
     const news = yield* Queue.unbounded<News>()
     yield* Effect.addFinalizer(() => Queue.shutdown(news))
@@ -397,7 +408,7 @@ export const makeWatches = <R>(
     /** Run `check` once the watcher or a tracker has had a minute to come
      * back. */
     const inAMinute = (check: Effect.Effect<void>) =>
-      Effect.sleep(timing.quietFor).pipe(Effect.zipRight(check), Effect.forkIn(scope))
+      Effect.sleep(timing.quietFor).pipe(Effect.andThen(check), Effect.forkIn(scope))
 
     let outages = 0
 
@@ -510,7 +521,7 @@ export const makeWatches = <R>(
           })
         const hear = (heard: Heard) =>
           ('down' in heard ? goDown(heard.down) : hearBatch(heard.batch)).pipe(
-            Effect.zipRight(Deferred.succeed(firstHeard, undefined)),
+            Effect.andThen(Deferred.succeed(firstHeard, undefined)),
           )
         const connection = yield* watchBead(bead, settings.findWatcher, timing).pipe(
           Stream.runForEach(hear),
@@ -531,9 +542,9 @@ export const makeWatches = <R>(
           unreachable.delete(project)
         }
       }).pipe(
-        Effect.zipRight(Fiber.interrupt(watch.connection)),
-        Effect.zipRight(Deferred.succeed(watch.firstHeard, undefined)),
-        Effect.zipRight(tellBackOnceAllAre),
+        Effect.andThen(Fiber.interrupt(watch.connection)),
+        Effect.andThen(Deferred.succeed(watch.firstHeard, undefined)),
+        Effect.andThen(tellBackOnceAllAre),
       )
 
     const persist = keeping.withPermits(1)(
@@ -554,8 +565,8 @@ export const makeWatches = <R>(
                 return fs
                   .makeDirectory(directory, { recursive: true })
                   .pipe(
-                    Effect.zipRight(fs.writeFileString(written, JSON.stringify(beads))),
-                    Effect.zipRight(fs.rename(written, path)),
+                    Effect.andThen(fs.writeFileString(written, JSON.stringify(beads))),
+                    Effect.andThen(fs.rename(written, path)),
                   )
               }),
           }),
@@ -568,7 +579,7 @@ export const makeWatches = <R>(
       Effect.gen(function* () {
         const path = join(directory, `${id.replace(FILENAME_SAFE, '_')}.json`)
         const kept = yield* fs.readFileString(path).pipe(
-          Effect.flatMap(Schema.decodeUnknown(KeptWatches)),
+          Effect.flatMap(Schema.decodeEffect(KeptWatches)),
           Effect.orElseSucceed(() => []),
         )
         for (const { told: lastTold, ...bead } of kept) {
@@ -632,9 +643,15 @@ export const makeWatches = <R>(
         Effect.gen(function* () {
           const id = Schema.decodeUnknownOption(SessionId)(given)
           if (Option.isSome(id) && (yield* Deferred.succeed(session, id.value))) {
-            yield* restore(id.value)
+            return yield* restore(id.value)
           }
-          if (yield* Deferred.isDone(session)) yield* Deferred.await(file)
+          if (yield* Deferred.isDone(session)) {
+            yield* Deferred.await(file)
+            // Completing `file` resumes this call at once, inside the call
+            // that restored the watches. Yielding lets that call, which
+            // arrived first, run until it next waits.
+            yield* Effect.yieldNow
+          }
         }),
 
       watch: (id, project) =>
