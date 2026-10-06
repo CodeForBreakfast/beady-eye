@@ -4,7 +4,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 use std::thread;
@@ -17,7 +17,8 @@ use sha2::Sha256;
 
 use crate::collect::gates::PullRequest;
 
-/// The path a readiness probe asks, answered whatever the secret.
+/// The path a readiness probe asks, answered whatever the secret, and
+/// answered as failing while the settling reads nothing from GitHub.
 pub const HEALTH: &str = "/healthz";
 
 /// The most of a body read before its signature is checked, so the most an
@@ -95,9 +96,11 @@ pub enum Heard {
 
 impl Heard {
     /// The status line and text the request is answered with, given whether
-    /// a delivery to settle found room to wait.
-    fn answer(&self, room: bool) -> (&'static str, &'static str) {
+    /// a delivery to settle found room to wait, and whether the settling is
+    /// reading GitHub.
+    fn answer(&self, room: bool, reading: bool) -> (&'static str, &'static str) {
         match self {
+            Heard::Healthy if !reading => ("503 Service Unavailable", "not reading GitHub\n"),
             Heard::Healthy => ("200 OK", "ok\n"),
             Heard::Settle(_) if !room => BUSY,
             Heard::Settle(_) => ("202 Accepted", "settling\n"),
@@ -195,7 +198,8 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
 
 /// Take requests on `address`, each on a thread of its own, and answer each
 /// at once. The pull request a signed delivery names goes to `settle`, and
-/// `told` is then given what every request came to. A request arriving while
+/// `told` is then given what every request came to. A readiness probe passes
+/// while `reading` holds. A request arriving while
 /// [`MOST_AT_ONCE`] are being answered is told to come back later. Gives back
 /// the address taken, which names the port where `address` left it to the
 /// system.
@@ -203,6 +207,7 @@ pub fn listen(
     address: &str,
     secret: Secret,
     settle: SyncSender<PullRequest>,
+    reading: Arc<AtomicBool>,
     told: impl Fn(&Heard) + Send + Sync + 'static,
 ) -> anyhow::Result<SocketAddr> {
     let listener = TcpListener::bind(address).with_context(|| format!("listening on {address}"))?;
@@ -225,8 +230,9 @@ pub fn listen(
             let secret = Arc::clone(&secret);
             let settle = settle.clone();
             let told = Arc::clone(&told);
+            let reading = Arc::clone(&reading);
             thread::spawn(move || {
-                answer(stream, &secret, &settle, told.as_ref());
+                answer(stream, &secret, &settle, &reading, told.as_ref());
                 drop(answered);
             });
         }
@@ -249,6 +255,7 @@ fn answer(
     stream: TcpStream,
     secret: &Secret,
     settle: &SyncSender<PullRequest>,
+    reading: &AtomicBool,
     told: &dyn Fn(&Heard),
 ) {
     let mut stream = Patient {
@@ -262,7 +269,10 @@ fn answer(
         Heard::Settle(pull_request) => settle.try_send(pull_request.clone()).is_ok(),
         _ => true,
     };
-    reply(&stream.stream, said.answer(room));
+    reply(
+        &stream.stream,
+        said.answer(room, reading.load(Ordering::SeqCst)),
+    );
     told(&said);
     close(stream.stream, stream.deadline);
 }
@@ -727,9 +737,19 @@ mod tests {
             repo: "example/ark".to_string(),
             number: 42,
         });
-        assert_eq!(settle.answer(true).0, "202 Accepted");
-        assert_eq!(settle.answer(false), BUSY);
-        assert_eq!(Heard::Forged.answer(false).0, "401 Unauthorized");
+        assert_eq!(settle.answer(true, true).0, "202 Accepted");
+        assert_eq!(settle.answer(false, true), BUSY);
+        assert_eq!(Heard::Forged.answer(false, true).0, "401 Unauthorized");
+    }
+
+    #[test]
+    fn a_readiness_probe_fails_only_while_the_settling_is_not_reading_github() {
+        assert_eq!(Heard::Healthy.answer(true, true).0, "200 OK");
+        assert_eq!(
+            Heard::Healthy.answer(true, false).0,
+            "503 Service Unavailable"
+        );
+        assert_eq!(Heard::Forged.answer(true, false).0, "401 Unauthorized");
     }
 
     #[test]
@@ -751,7 +771,13 @@ mod tests {
             .shutdown(Shutdown::Write)
             .expect("nothing more to send");
 
-        answer(reader.stream, &secret(), &full, &|_: &Heard| {});
+        answer(
+            reader.stream,
+            &secret(),
+            &full,
+            &AtomicBool::new(true),
+            &|_: &Heard| {},
+        );
         let mut answered = String::new();
         sender.read_to_string(&mut answered).expect("the answer");
         assert!(answered.starts_with("HTTP/1.1 503 "), "{answered}");

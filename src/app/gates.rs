@@ -51,12 +51,33 @@ pub enum Found {
     },
 }
 
+/// What GitHub made of the reads one settling asked of it, taken together:
+/// one it answered outweighs any it refused.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Read {
+    /// GitHub was asked nothing.
+    #[default]
+    Unasked,
+    /// GitHub refused every read it was asked, whether for its rate limit or
+    /// for any other reason.
+    Refused,
+    /// GitHub answered at least one read.
+    Answered,
+}
+
+/// What one settling, a look or a delivery, came to.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Settling {
+    pub found: Vec<Found>,
+    pub github: Read,
+}
+
 /// Read every open gh:pr gate across `projects`, then settle each pull
 /// request one of them waits on, once however many gates wait on it, asking
 /// GitHub about each repository's together, until GitHub refuses one for its
 /// rate limit. A gate whose repository `settles` leaves to another
 /// `bdi gates` is passed over without a word.
-pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Vec<Found> {
+pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Settling {
     let mut found = Vec::new();
     let mut awaited: Vec<Vec<PullRequest>> = Vec::new();
     let settled_here = |gate: &PrGate| settles.settles(gate.repo.as_deref().and_then(gate::owner));
@@ -82,16 +103,19 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
             }
         }
     }
+    let mut github = Read::Unasked;
     for repository in &awaited {
         let settled = gates::settle_together(cli, gh, projects, repository);
         for (pull_request, settled) in repository.iter().zip(settled) {
-            found.extend(findings(gh, pull_request.clone(), settled));
+            let each = findings(gh, pull_request.clone(), settled);
+            found.extend(each.found);
+            github = github.max(each.github);
             if matches!(found.last(), Some(Found::RateLimited { .. })) {
-                return found;
+                return Settling { found, github };
             }
         }
     }
-    found
+    Settling { found, github }
 }
 
 /// Add `pull_request` to the ones awaited in its repository, unless it is
@@ -117,17 +141,21 @@ pub fn delivered(
     projects: &[Project],
     settles: &Gates,
     pull_request: PullRequest,
-) -> Vec<Found> {
+) -> Settling {
     if !settles.settles(gate::owner(&pull_request.repo)) {
-        return Vec::new();
+        return Settling::default();
     }
     let settled = gates::settle(cli, gh, projects, &pull_request);
     findings(gh, pull_request, settled)
 }
 
-/// What settling `pull_request` found to report.
-fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Vec<Found> {
-    match settled {
+/// What settling `pull_request` found to report, and whether GitHub answered.
+fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Settling {
+    let github = match settled {
+        Settled::Unread(_) => Read::Refused,
+        Settled::Open | Settled::Finished(_) => Read::Answered,
+    };
+    let found = match settled {
         Settled::Open => Vec::new(),
         Settled::Unread(failure) if failure.kind == FailureKind::RateLimited => {
             let resets = github::spent_until(gh, gate::host(&pull_request.repo));
@@ -158,7 +186,8 @@ fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Vec
                     .collect(),
             })
             .collect(),
-    }
+    };
+    Settling { found, github }
 }
 
 #[cfg(test)]
@@ -299,7 +328,7 @@ mod tests {
         }
     }
 
-    fn looked(runner: &FakeRunner, projects: &[Project], settles: &Gates) -> Vec<Found> {
+    fn looked(runner: &FakeRunner, projects: &[Project], settles: &Gates) -> Settling {
         look(&Cli::new(runner), runner, projects, settles)
     }
 
@@ -323,7 +352,8 @@ mod tests {
             &runner,
             &[project("arkham"), project("dunwich")],
             &Gates::default(),
-        );
+        )
+        .found;
 
         assert_eq!(asked_github(&runner), [queried("ark")]);
         assert_eq!(
@@ -345,10 +375,12 @@ mod tests {
     fn a_gate_whose_owner_this_bdi_gates_does_not_settle_for_is_passed_over_without_a_word() {
         let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST);
 
-        let found = looked(&runner, &[project("arkham")], &owners(&["miskatonic"]));
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &owners(&["miskatonic"]));
 
         assert_eq!(found, []);
         assert_eq!(asked_github(&runner), Vec::<String>::new());
+        assert_eq!(github, Read::Unasked);
     }
 
     #[test]
@@ -357,7 +389,7 @@ mod tests {
             .with(&queried("ark"), QUERIED)
             .with(&resolving_42("arkham"), "");
 
-        let found = looked(&runner, &[project("arkham")], &owners(&["Example"]));
+        let found = looked(&runner, &[project("arkham")], &owners(&["Example"])).found;
 
         assert_eq!(
             found,
@@ -366,7 +398,7 @@ mod tests {
         );
     }
 
-    fn delivered_here(runner: &FakeRunner, settles: &Gates, number: u64) -> Vec<Found> {
+    fn delivered_here(runner: &FakeRunner, settles: &Gates, number: u64) -> Settling {
         delivered(
             &Cli::new(runner),
             runner,
@@ -382,7 +414,7 @@ mod tests {
             .with(&viewed(42), MERGED)
             .with(&resolving_42("arkham"), "");
 
-        let found = delivered_here(&runner, &owners(&["example"]), 42);
+        let found = delivered_here(&runner, &owners(&["example"]), 42).found;
 
         assert_eq!(found, [settling("arkham")]);
         assert_eq!(asked_github(&runner), [viewed(42)]);
@@ -395,20 +427,22 @@ mod tests {
     fn a_delivery_for_a_merged_pull_request_no_gate_waits_on_writes_nothing() {
         let runner = captured(FakeRunner::default(), "arkham").with(&viewed(9), MERGED);
 
-        let found = delivered_here(&runner, &Gates::default(), 9);
+        let Settling { found, github } = delivered_here(&runner, &Gates::default(), 9);
 
         assert_eq!(found, []);
         assert_eq!(asked_github(&runner), [viewed(9)]);
+        assert_eq!(github, Read::Answered);
     }
 
     #[test]
     fn a_delivery_whose_owner_this_bdi_gates_does_not_settle_for_is_passed_over_without_a_word() {
         let runner = FakeRunner::default();
 
-        let found = delivered_here(&runner, &owners(&["miskatonic"]), 42);
+        let Settling { found, github } = delivered_here(&runner, &owners(&["miskatonic"]), 42);
 
         assert_eq!(found, []);
         assert_eq!(runner.calls(), []);
+        assert_eq!(github, Read::Unasked);
     }
 
     fn unavailable(program: &str) -> RunFailure {
@@ -438,7 +472,8 @@ mod tests {
             &runner,
             &[project("arkham"), project("dunwich")],
             &owners(&["example"]),
-        );
+        )
+        .found;
 
         assert_eq!(asked_github(&runner), [queried("ark"), queried("vault")]);
         assert_eq!(
@@ -458,7 +493,8 @@ mod tests {
         let runner =
             captured(FakeRunner::default(), "arkham").failing(&queried("ark"), unavailable("gh"));
 
-        let found = looked(&runner, &[project("arkham")], &owners(&["example"]));
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &owners(&["example"]));
 
         let unread = |number| Found::GitHubUnread {
             pull_request: pr(number),
@@ -466,6 +502,7 @@ mod tests {
         };
         assert_eq!(found, [no_number("arkham"), unread(7), unread(42)]);
         assert_eq!(asked_github(&runner), [queried("ark")]);
+        assert_eq!(github, Read::Refused);
     }
 
     fn gone() -> RunFailure {
@@ -485,7 +522,8 @@ mod tests {
             .with(&viewed(42), MERGED)
             .with(&resolving_42("arkham"), "");
 
-        let found = looked(&runner, &[project("arkham")], &owners(&["example"]));
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &owners(&["example"]));
 
         assert_eq!(
             found,
@@ -501,6 +539,11 @@ mod tests {
         assert_eq!(
             asked_github(&runner),
             [queried("ark"), viewed(7), viewed(42)]
+        );
+        assert_eq!(
+            github,
+            Read::Answered,
+            "one read answered outweighs one refused"
         );
     }
 
@@ -529,7 +572,7 @@ mod tests {
         .failing(&queried("ark"), rate_limited())
         .with(RATE_LIMIT, GRAPHQL_SPENT);
 
-        let found = looked(
+        let Settling { found, github } = looked(
             &runner,
             &[project("arkham"), project("dunwich")],
             &owners(&["example"]),
@@ -550,6 +593,7 @@ mod tests {
             asked_github(&runner),
             [queried("ark"), RATE_LIMIT.to_string()]
         );
+        assert_eq!(github, Read::Refused);
     }
 
     #[test]
@@ -558,7 +602,7 @@ mod tests {
             .failing(&viewed(42), rate_limited())
             .failing(RATE_LIMIT, unavailable("gh"));
 
-        let found = delivered_here(&runner, &owners(&["example"]), 42);
+        let found = delivered_here(&runner, &owners(&["example"]), 42).found;
 
         assert_eq!(
             found,
@@ -580,7 +624,8 @@ mod tests {
             &runner,
             &[project("arkham"), project("dunwich")],
             &owners(&["example"]),
-        );
+        )
+        .found;
 
         let arkham_unread = || Found::TrackerUnread {
             project: "arkham".to_string(),
