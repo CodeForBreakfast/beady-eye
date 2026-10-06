@@ -3,8 +3,7 @@
 Human-readable mirror of the sweep's **four axes**. **The authoritative copies are
 the `DOMAINS`, `STRUCTURAL_SMELLS`, `MODELLING_SMELLS`, and `BEHAVIOUR_SMELLS`
 arrays in `effect-native-audit.workflow.js`.** The workflow script cannot read
-files, so it drives the finders from those arrays directly. This page exists so a
-human can review and refresh the sets without reading JS. Keep them in sync.
+files, so it drives the finders from those arrays directly. Keep them in sync.
 
 The first three axes are **static**: they catch non-native code that is *present*.
 The fourth is **dynamic**: it catches native-but-misused or policy code.
@@ -45,8 +44,6 @@ The fourth is **dynamic**: it catches native-but-misused or policy code.
   Effect's GitHub `main`, which is a different major version. Effect re-exports
   many names inside `export { … }` blocks, some renamed (`_void as void`), so the
   inventory reads those blocks as well as the `export const` lines.
-  Non-negotiable for substitution: grep-then-guess misses the copy-of-behaviour
-  cases that matter most.
 - **Docs** — the *when & why*, from Effect 3's docs. `Effect-TS/website`'s main
   branch and effect.website now document Effect 4. The Effect 3 docs are kept at
   the tag `pre-website-v2-migration`, under `content/src/content/docs/docs/`. A
@@ -114,10 +111,9 @@ are lazy *descriptions*, not eagerly-executed state-deriving constructors.
 Same shape as the structural finders: grep an anchor, read the design doc for the
 honest representation and its justified exceptions, confirm by reading the site.
 They hunt the *type* of data and state rather than the effect, DI or resource
-spine. Verify defaults to **surfaced**, as structural does: a surfaced false
-positive is cut cheaply when findings are reviewed, while a refuted true smell is
-invisible. Each finding carries `blastRadius`, because a representation change
-ripples to every producer and consumer of the value.
+spine. Verify defaults to **surfaced**, as structural does. Each finding carries
+`blastRadius`, because a representation change ripples to every producer and
+consumer of the value.
 
 | Smell | What it is | Native representation | Docs slug |
 |---|---|---|---|

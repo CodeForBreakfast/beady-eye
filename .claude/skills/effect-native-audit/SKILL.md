@@ -18,8 +18,7 @@ Three axes are **static** and find non-native code that is *present*. One is
   Effect: a `new`-able class doing DI, a `throw` inside an Effect-returning
   function, a dependency threaded as a config field instead of declared in `R`,
   a `try/finally` that wants `acquireRelease`. *Effect used inside functions ≠ an
-  Effect-native program.* The substitution axis is blind here, because no
-  module's export inventory is named "don't write a class that does DI".
+  Effect-native program.*
 - **Modelling** (nouns) — data and state whose **type** throws away a guarantee
   an Effect data type would give for free: `T | null` that wants `Option`, a
   sentinel or pure `throw` that wants `Either`, booleans + optional fields that
@@ -46,9 +45,9 @@ language service fails the check on floating Effects, an unnecessary
 substitutions precise enough to flag deterministically, and leaves the
 judgment-heavy axes to this sweep. Neither sees that a 40-line block is a
 combinator that exists, that a module is shaped like an OOP service, that a type
-lets the caller forget the absent case, or that a fan-out is unbounded. **Never
-re-report what either linter already catches.** `domains.md` lists both sets,
-and the global-API rules this repo leaves off, which the sweep does report.
+lets the caller forget the absent case, or that a fan-out is unbounded. The
+finders do not re-report what either linter catches. `domains.md` lists both
+sets, and the global-API rules this repo leaves off, which the sweep does report.
 
 ## How it works
 
@@ -110,8 +109,7 @@ verdicts**, because their failure modes are opposite:
 A synthesis agent writes the report, deduping cross-axis sightings as it writes.
 The confirmed / low-confidence partition is NOT trusted to that agent. The
 workflow derives it deterministically from each survivor's own confidence: dedup
-by `file:line`, highest confidence wins, then split. An LLM asked to re-split
-survivors losslessly drops and misfiles them.
+by `file:line`, highest confidence wins, then split.
 
 ## Running it
 
@@ -163,15 +161,10 @@ made separately and test-first, not as a batch.
 A substitution that recurs and is mechanical enough to flag deterministically
 belongs as a rule in the grit file, so the linter catches the next one.
 
-## Notes
+## Refreshing it
 
-- **Source AND docs are both mandatory.** For substitution, source gives the
-  inventory and docs give the judgment. For structural, modelling and behaviour,
-  the design docs ARE the ground. A finder with only one over-suggests or
-  mis-verifies. Where they disagree, the installed source wins.
-- **Refresh on Effect bumps.** Source paths and docs slugs drift with releases,
-  and so does which language-service rules are on. `domains.md` carries the
-  checklist. The authoritative sets are the `DOMAINS`, `STRUCTURAL_SMELLS`,
-  `MODELLING_SMELLS`, and `BEHAVIOUR_SMELLS` arrays and `LINT_OWNED` in the
-  workflow script, and `domains.md` mirrors them for humans.
-- **No auto-fix.** Findings become tracked work, not an automated diff.
+Source paths and docs slugs drift with Effect releases, and the language-service
+rules that are on drift with effect-tsgo releases. `domains.md` carries the
+checklist. The authoritative sets are the `DOMAINS`, `STRUCTURAL_SMELLS`,
+`MODELLING_SMELLS` and `BEHAVIOUR_SMELLS` arrays and `LINT_OWNED` in the
+workflow script, and `domains.md` mirrors them for humans.
