@@ -46,6 +46,11 @@ anyhow = "1.0.104"
 base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4.6.6", features = ["derive"] }
+# The signature GitHub puts on each webhook delivery is an HMAC-SHA256 of its
+# body, and nothing in `std` computes one. RustCrypto's pair, the 0.12/0.10
+# line because sha2 0.10 is already in the tree, and `verify_slice` compares in
+# constant time.
+hmac = "0.12.1"
 # Which user this run is, which nothing in `std` will say and the socket's way
 # down has to be judged against. It is also the pty a test drives bdi through,
 # which is what it was here for while it was a dev-dependency. Named for the
@@ -62,10 +67,15 @@ ratatui = "0.30.2"
 regex-lite = "0.1.9"
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = "1.0.151"
+sha2 = "0.10.9"
 # Named directly, though crossterm already compiles it for its own resize
 # plumbing: a crate reached only through another crate's tree is not one
 # this code may `use`, and would go the day crossterm changed its mind.
 signal-hook = "0.4.4"
+# `bdi gates --listen` takes GitHub's webhook deliveries over HTTP. The
+# smallest server that does: blocking, so no async runtime comes with it, and
+# four small crates under it.
+tiny_http = "0.12.0"
 toml = "1.1.5"
 
 [features]

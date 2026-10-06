@@ -1,6 +1,7 @@
 //! One look at every configured project's gh:pr gates, which `bdi gates`
 //! takes on its poll: each pull request they wait on is settled once, where
-//! its repository's owner is one this `bdi gates` settles for.
+//! its repository's owner is one this `bdi gates` settles for. A delivery
+//! from GitHub settles the one pull request it names, by the same rule.
 
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
@@ -75,31 +76,59 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
         }
     }
     for pull_request in awaited {
-        match gates::settle(cli, gh, projects, &pull_request) {
-            Settled::Open => {}
-            Settled::Unread(failure) => found.push(Found::GitHubUnread {
-                pull_request,
-                failure,
-            }),
-            Settled::Finished(each) => {
-                for settled in each {
-                    match settled.acts {
-                        Err(failure) => found.push(Found::TrackerUnread {
-                            project: settled.project,
-                            failure: open_failure(&failure),
-                        }),
-                        Ok(acts) => found.extend(acts.into_iter().map(|act| Found::Settling {
-                            pull_request: pull_request.clone(),
-                            project: settled.project.clone(),
-                            bead: act.bead,
-                            done: act.done.map_err(|failure| tracker_failure(&failure)),
-                        })),
-                    }
-                }
-            }
-        }
+        found.extend(settled(cli, gh, projects, pull_request));
     }
     found
+}
+
+/// Settle the one pull request a delivery named, as a look settles each one
+/// it finds. A pull request whose repository `settles` leaves to another
+/// `bdi gates` is passed over without a word.
+pub fn delivered(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    settles: &Gates,
+    pull_request: PullRequest,
+) -> Vec<Found> {
+    if !settles.settles(gate::owner(&pull_request.repo)) {
+        return Vec::new();
+    }
+    settled(cli, gh, projects, pull_request)
+}
+
+/// What settling `pull_request` across `projects` found to report.
+fn settled(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    pull_request: PullRequest,
+) -> Vec<Found> {
+    match gates::settle(cli, gh, projects, &pull_request) {
+        Settled::Open => Vec::new(),
+        Settled::Unread(failure) => vec![Found::GitHubUnread {
+            pull_request,
+            failure,
+        }],
+        Settled::Finished(each) => each
+            .into_iter()
+            .flat_map(|settled| match settled.acts {
+                Err(failure) => vec![Found::TrackerUnread {
+                    project: settled.project,
+                    failure: open_failure(&failure),
+                }],
+                Ok(acts) => acts
+                    .into_iter()
+                    .map(|act| Found::Settling {
+                        pull_request: pull_request.clone(),
+                        project: settled.project.clone(),
+                        bead: act.bead,
+                        done: act.done.map_err(|failure| tracker_failure(&failure)),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +319,51 @@ mod tests {
             [no_number("arkham"), settling("arkham")],
             "ark-6pp names no repo, so no owner, and is left to a bdi gates settling every owner's"
         );
+    }
+
+    fn delivered_here(runner: &FakeRunner, settles: &Gates, number: u64) -> Vec<Found> {
+        delivered(
+            &Cli::new(runner),
+            runner,
+            &[project("arkham")],
+            settles,
+            pr(number),
+        )
+    }
+
+    #[test]
+    fn a_delivery_settles_the_pull_request_it_names_and_no_other() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(42), MERGED)
+            .with(&resolving_42("arkham"), "");
+
+        let found = delivered_here(&runner, &owners(&["example"]), 42);
+
+        assert_eq!(found, [settling("arkham")]);
+        assert_eq!(asked_github(&runner), [viewed(42)]);
+    }
+
+    /// GitHub is asked about it, as the settling of any pull request asks
+    /// first, and the tracker is asked which gates wait on it. The runner
+    /// panics on any call it was not given, so a write would fail the test.
+    #[test]
+    fn a_delivery_for_a_merged_pull_request_no_gate_waits_on_writes_nothing() {
+        let runner = captured(FakeRunner::default(), "arkham").with(&viewed(9), MERGED);
+
+        let found = delivered_here(&runner, &Gates::default(), 9);
+
+        assert_eq!(found, []);
+        assert_eq!(asked_github(&runner), [viewed(9)]);
+    }
+
+    #[test]
+    fn a_delivery_whose_owner_this_bdi_gates_does_not_settle_for_is_passed_over_without_a_word() {
+        let runner = FakeRunner::default();
+
+        let found = delivered_here(&runner, &owners(&["miskatonic"]), 42);
+
+        assert_eq!(found, []);
+        assert_eq!(runner.calls(), []);
     }
 
     fn unavailable(program: &str) -> RunFailure {

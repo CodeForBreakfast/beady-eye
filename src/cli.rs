@@ -151,6 +151,15 @@ enum Passing {
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
         config: Option<String>,
+        /// Also take GitHub's pull_request webhook deliveries over HTTP on
+        /// this address, such as 0.0.0.0:8080, and settle the pull request
+        /// each one names as it arrives. The secret they are signed with is
+        /// read from --webhook-secret-file, or from BDI_GATES_WEBHOOK_SECRET.
+        #[arg(long, value_name = "ADDRESS")]
+        listen: Option<String>,
+        /// Read the secret GitHub signs each delivery with from this file.
+        #[arg(long, value_name = "PATH", requires = "listen")]
+        webhook_secret_file: Option<PathBuf>,
     },
 }
 
@@ -262,9 +271,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return watch(socket.clone(), &config);
         }
-        Some(Passing::Gates { config }) => {
+        Some(Passing::Gates {
+            config,
+            listen,
+            webhook_secret_file,
+        }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return gates::settle_on_a_poll(&config);
+            return gates::settle(&config, listen.as_deref(), webhook_secret_file.as_deref());
         }
         None => {}
     }
