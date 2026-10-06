@@ -457,6 +457,15 @@ function docsInstruction(slug) {
    the docs from GitHub. The docs tell you WHEN a tool is right and when it is NOT.`
 }
 
+// What a refuter reads its evidence from: the same pinned source and Effect 3 docs the finders read.
+function verifierGrounding() {
+  return `Read Effect's source from the installed packages, ${SOURCE}/<package>/src/. If ${SOURCE} is
+absent, fetch the version plugin/package.json pins from https://unpkg.com/<package>@<version>/.
+Read each docs slug the finding cites at ${docsLocation('<slug>')}.
+Do NOT read effect.website, the website's main branch or Effect's main branch: they are Effect 4.
+Where the docs and the installed source disagree, the source wins.`
+}
+
 function finderPrompt(d) {
   const srcList = d.src.map((s) => `${SOURCE}/${s}`).join('\n       ')
   return `You are auditing ONE Effect domain — **${d.key}** — for places this codebase hand-rolled
@@ -502,6 +511,7 @@ function refutePrompt(f) {
   docs:       ${f.docsRef}
 
 Read the actual code at ${f.file} around line ${f.line}, and check the Effect source/docs cited.
+${verifierGrounding()}
 Try hard to prove the swap is WRONG: a false twin (looks equivalent but differs in laziness,
 error channel, ordering, short-circuit, or null/undefined handling), changes observable behaviour,
 loses a needed edge case, or the native helper does not actually exist with that signature.
@@ -565,6 +575,7 @@ i.e. NOT actually a non-Effect-native shape worth surfacing? Refute (refuted=tru
   docs:          ${f.docsRef}
 
 Read the actual code at ${f.file} around line ${f.line} and the cited design docs.
+${verifierGrounding()}
 
 REFUTE (refuted=true) only when one of these holds — the smell is not real:
 - The finder MISREAD the code — it is not that shape (e.g. the "class" is a Schema class, a
@@ -644,6 +655,7 @@ i.e. is the current representation actually fine, or did the finder misread it? 
   docs:          ${f.docsRef}
 
 Read the actual code at ${f.file} around line ${f.line} and the cited design docs.
+${verifierGrounding()}
 
 REFUTE (refuted=true) only when one of these holds — the smell is not real:
 - The finder MISREAD the code — e.g. the "T | undefined" is an unchangeable external/library boundary
@@ -728,6 +740,7 @@ misread it? Refute (refuted=true) ONLY if so.
   docs:          ${f.docsRef}
 
 Read the actual code at ${f.file} around line ${f.line} and the cited design docs.
+${verifierGrounding()}
 
 REFUTE (refuted=true) only when one of these holds — the smell is not real. The per-smell guards:
 - sequential-not-concurrent: refute if the effects are genuinely DATA-DEPENDENT (each consumes a
