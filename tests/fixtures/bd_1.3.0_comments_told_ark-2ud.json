@@ -1,0 +1,16 @@
+[
+  {
+    "id": "c4b9794c-6b86-538b-b2d0-f10967b39c9a",
+    "issue_id": "ark-2ud",
+    "author": "bdi",
+    "text": "the harbour chart is half drawn",
+    "created_at": "2026-10-06T09:20:18Z"
+  },
+  {
+    "id": "84c0aae0-4f9f-5895-bb41-2126f95d3ed6",
+    "issue_id": "ark-2ud",
+    "author": "bdi",
+    "text": "Pull request example/ark#7 closed without being merged, so the gh:pr gate waiting on it stays open.",
+    "created_at": "2026-10-06T09:20:19Z"
+  }
+]
