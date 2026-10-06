@@ -607,8 +607,12 @@ mod tests {
     #[test]
     fn a_delivery_that_does_not_give_its_length_up_front_is_unmeasured() {
         assert_eq!(
-            heard(&posted("Transfer-Encoding: chunked\r\n", "0\r\n\r\n")),
-            Some(Heard::Unmeasured)
+            heard(&posted(
+                "Transfer-Encoding: chunked\r\nContent-Length: 5\r\n",
+                "0\r\n\r\n"
+            )),
+            Some(Heard::Unmeasured),
+            "a chunked body, whatever length it also gives"
         );
         assert_eq!(heard(&posted("", "")), Some(Heard::Unmeasured));
     }
@@ -630,11 +634,20 @@ mod tests {
     }
 
     #[test]
-    fn what_is_not_http_or_never_finishes_its_head_is_not_answered() {
+    fn what_is_not_http_or_ends_before_its_head_does_is_not_answered() {
         assert_eq!(heard(b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03"), None);
         assert_eq!(heard(b"POST /hook HTTP/1.1\r\nHost: bdi\r\n"), None);
-        let endless = format!("GET / HTTP/1.1\r\nX-Padding: {}", "a".repeat(LONGEST_HEAD));
-        assert_eq!(heard(endless.as_bytes()), None);
+    }
+
+    /// The head would end just past the limit, so a read that went on would
+    /// answer it.
+    #[test]
+    fn a_head_still_going_at_its_limit_is_not_answered_and_no_more_is_read() {
+        let line = "GET /healthz HTTP/1.1\r\nX-Padding: ";
+        let sent = format!("{line}{}\r\n\r\n", "a".repeat(LONGEST_HEAD - line.len()));
+        let mut from = std::io::Cursor::new(sent.as_bytes());
+        assert_eq!(read(&mut from, &secret()), None);
+        assert_eq!(from.position(), LONGEST_HEAD as u64);
     }
 
     /// A connection to read as the listener does, with `patience` to arrive
@@ -717,5 +730,30 @@ mod tests {
         assert_eq!(settle.answer(true).0, "202 Accepted");
         assert_eq!(settle.answer(false), BUSY);
         assert_eq!(Heard::Forged.answer(false).0, "401 Unauthorized");
+    }
+
+    #[test]
+    fn a_signed_delivery_that_finds_every_place_to_wait_taken_is_answered_busy() {
+        let (full, _settling) = std::sync::mpsc::sync_channel(0);
+        let (reader, mut sender) = connected(PATIENCE);
+        sender
+            .write_all(&posted(
+                &format!(
+                    "Content-Length: {}\r\nX-GitHub-Event: pull_request\r\nX-Hub-Signature-256: \
+                     {}\r\n",
+                    CLOSED_42.len(),
+                    signature(CLOSED_42.as_bytes())
+                ),
+                CLOSED_42,
+            ))
+            .expect("the delivery");
+        sender
+            .shutdown(Shutdown::Write)
+            .expect("nothing more to send");
+
+        answer(reader.stream, &secret(), &full, &|_: &Heard| {});
+        let mut answered = String::new();
+        sender.read_to_string(&mut answered).expect("the answer");
+        assert!(answered.starts_with("HTTP/1.1 503 "), "{answered}");
     }
 }

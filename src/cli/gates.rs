@@ -302,6 +302,26 @@ mod tests {
     }
 
     #[test]
+    fn a_delivery_passed_over_or_refused_says_why_and_one_taken_says_nothing() {
+        assert_eq!(
+            refused(&Heard::NamesNoPullRequest),
+            Some("a signed pull_request delivery was passed over: it names no pull request")
+        );
+        assert_eq!(
+            refused(&Heard::Unmeasured),
+            Some("a delivery was refused: it does not give its Content-Length up front")
+        );
+        assert_eq!(
+            refused(&Heard::Settle(PullRequest {
+                repo: "example/ark".to_string(),
+                number: 7,
+            })),
+            None
+        );
+        assert_eq!(refused(&Heard::Ignored), None);
+    }
+
+    #[test]
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
             started(&Gates::default(), 1, None),

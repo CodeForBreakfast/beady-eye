@@ -597,7 +597,9 @@ fn a_signed_delivery_ending_before_its_length_is_closed_unanswered_and_settles_n
 
 /// Eight senders that give their headers and never their body hold every
 /// answer there is, so a ninth request, signed with the secret, is turned
-/// away and never reaches GitHub. Once they go, deliveries are taken again.
+/// away and never reaches GitHub. Its body is as large as a delivery may be,
+/// so it is still being sent when the answer comes. Once they go, deliveries
+/// are taken again.
 #[test]
 fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
     let listening = Listening::after_its_first_look("busy");
@@ -614,12 +616,13 @@ fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
         })
         .collect();
 
+    let largest = padded(1024 * 1024);
     let ninth = || {
         delivered(
             listening.address,
             "pull_request",
-            Some(&signed(SECRET, DELIVERED_42)),
-            DELIVERED_42,
+            Some(&signed(SECRET, &largest)),
+            &largest,
         )
     };
     assert_eq!(ninth(), 503);
