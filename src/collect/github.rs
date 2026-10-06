@@ -1,5 +1,9 @@
-//! What GitHub says of a pull request now, read through `gh`.
+//! What GitHub says of a pull request now, and of the rate limit asking
+//! spends, read through `gh`.
 
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::collect::gates::PullRequest;
@@ -66,11 +70,71 @@ pub fn state(runner: &dyn Runner, pr: &PullRequest) -> Result<State, RunFailure>
     }
 }
 
+/// The limits `bdi gates` spends: GraphQL for `gh pr view`, and REST.
+const SPENT_BY_GATES: [&str; 2] = ["graphql", "core"];
+
+/// What `gh api rate_limit` prints, cut to what this reads. Measured on gh
+/// 2.102.0: `resources` holds one limit per API, each with `remaining` and
+/// `reset` in seconds since the epoch.
+#[derive(Deserialize)]
+struct RateLimits {
+    resources: BTreeMap<String, RateLimit>,
+}
+
+#[derive(Deserialize)]
+struct RateLimit {
+    remaining: u64,
+    reset: i64,
+}
+
+/// When the login gh runs as can ask GitHub again: the latest reset among
+/// the limits `bdi gates` spends that are used up, or `None` where neither
+/// is, which is GitHub's secondary limit, whose end it does not say. Asking
+/// costs nothing against any limit.
+pub fn spent_until(runner: &dyn Runner) -> Result<Option<DateTime<Utc>>, RunFailure> {
+    let out = runner.run("gh", &["api", "rate_limit"], None, &Env::new())?;
+    let limits: RateLimits = serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
+    Ok(SPENT_BY_GATES
+        .iter()
+        .filter_map(|name| limits.resources.get(*name))
+        .filter(|limit| limit.remaining == 0)
+        .map(|limit| limit.reset)
+        .max()
+        .and_then(|reset| DateTime::from_timestamp(reset, 0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::FailureKind;
+
+    const RATE_LIMIT: &str = "gh api rate_limit";
+
+    #[test]
+    fn a_spent_graphql_limit_is_waited_out_until_it_resets() {
+        let runner = FakeRunner::default().with(
+            RATE_LIMIT,
+            include_str!("../../tests/fixtures/gh_2.102.0_api_rate_limit_graphql_spent.json"),
+        );
+
+        assert_eq!(
+            spent_until(&runner),
+            Ok(DateTime::from_timestamp(1767227400, 0))
+        );
+    }
+
+    /// A search limit spent by someone else sharing the login is not one
+    /// `bdi gates` waits on.
+    #[test]
+    fn with_no_limit_bdi_gates_spends_used_up_github_does_not_say_when_to_ask_again() {
+        let runner = FakeRunner::default().with(
+            RATE_LIMIT,
+            include_str!("../../tests/fixtures/gh_2.102.0_api_rate_limit_unspent.json"),
+        );
+
+        assert_eq!(spent_until(&runner), Ok(None));
+    }
 
     const VIEW: &str = "gh pr view 42 --repo example/ark --json state,mergeCommit";
 

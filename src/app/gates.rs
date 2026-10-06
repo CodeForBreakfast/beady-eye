@@ -3,10 +3,13 @@
 //! its repository's owner is one this `bdi gates` settles for. A delivery
 //! from GitHub settles the one pull request it names, by the same rule.
 
+use chrono::{DateTime, Utc};
+
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
 use crate::collect::gates::{self, Done, PrGate, PullRequest, Settled};
-use crate::collect::run::{RunFailure, Runner};
+use crate::collect::github;
+use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::config::{Gates, Project};
 use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
@@ -31,6 +34,13 @@ pub enum Found {
         pull_request: PullRequest,
         failure: RunFailure,
     },
+    /// GitHub refused to say where a pull request stands for the rate limit
+    /// of the login gh runs as, so nothing more is asked of it until
+    /// `resets`, or for a while where GitHub does not say when that is.
+    RateLimited {
+        pull_request: PullRequest,
+        resets: Option<DateTime<Utc>>,
+    },
     /// A write settling a finished pull request asked of one bead, and what
     /// came of it.
     Settling {
@@ -42,9 +52,9 @@ pub enum Found {
 }
 
 /// Read every open gh:pr gate across `projects`, then settle each pull
-/// request one of them waits on, once however many gates wait on it. A gate
-/// whose repository `settles` leaves to another `bdi gates` is passed over
-/// without a word.
+/// request one of them waits on, once however many gates wait on it, until
+/// GitHub refuses one for its rate limit. A gate whose repository `settles`
+/// leaves to another `bdi gates` is passed over without a word.
 pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Vec<Found> {
     let mut found = Vec::new();
     let mut awaited: Vec<PullRequest> = Vec::new();
@@ -77,6 +87,9 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
     }
     for pull_request in awaited {
         found.extend(settled(cli, gh, projects, pull_request));
+        if matches!(found.last(), Some(Found::RateLimited { .. })) {
+            break;
+        }
     }
     found
 }
@@ -106,6 +119,12 @@ fn settled(
 ) -> Vec<Found> {
     match gates::settle(cli, gh, projects, &pull_request) {
         Settled::Open => Vec::new(),
+        Settled::Unread(failure) if failure.kind == FailureKind::RateLimited => {
+            vec![Found::RateLimited {
+                pull_request,
+                resets: github::spent_until(gh).ok().flatten(),
+            }]
+        }
         Settled::Unread(failure) => vec![Found::GitHubUnread {
             pull_request,
             failure,
@@ -135,7 +154,6 @@ fn settled(
 mod tests {
     use super::*;
     use crate::collect::run::testing::FakeRunner;
-    use crate::collect::run::FailureKind;
     use std::path::PathBuf;
 
     const GATE_LIST: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list.json");
@@ -394,6 +412,59 @@ mod tests {
                 },
                 settling("arkham"),
             ]
+        );
+    }
+
+    fn rate_limited() -> RunFailure {
+        RunFailure {
+            kind: FailureKind::RateLimited,
+            program: "gh".to_string(),
+            detail: "gh was refused for GitHub's rate limit".to_string(),
+            unreadable: None,
+        }
+    }
+
+    const RATE_LIMIT: &str = "gh api rate_limit";
+    const GRAPHQL_SPENT: &str =
+        include_str!("../../tests/fixtures/gh_2.102.0_api_rate_limit_graphql_spent.json");
+
+    /// The runner panics on any call it was not given, so asking GitHub about
+    /// #42 after #7 was refused would fail the test.
+    #[test]
+    fn a_look_refused_for_a_rate_limit_asks_github_nothing_more_and_says_when_it_resets() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .failing(&viewed(7), rate_limited())
+            .with(RATE_LIMIT, GRAPHQL_SPENT);
+
+        let found = looked(&runner, &[project("arkham")], &owners(&["example"]));
+
+        assert_eq!(
+            found,
+            [
+                no_number("arkham"),
+                Found::RateLimited {
+                    pull_request: pr(7),
+                    resets: DateTime::from_timestamp(1767227400, 0),
+                },
+            ]
+        );
+        assert_eq!(asked_github(&runner), [viewed(7), RATE_LIMIT.to_string()]);
+    }
+
+    #[test]
+    fn a_rate_limit_github_does_not_say_the_end_of_is_reported_without_one() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .failing(&viewed(42), rate_limited())
+            .failing(RATE_LIMIT, unavailable("gh"));
+
+        let found = delivered_here(&runner, &owners(&["example"]), 42);
+
+        assert_eq!(
+            found,
+            [Found::RateLimited {
+                pull_request: pr(42),
+                resets: None,
+            }]
         );
     }
 

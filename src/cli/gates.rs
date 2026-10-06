@@ -6,9 +6,10 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 
 use crate::app::gates::{delivered, look, Found};
 use crate::collect::bd;
@@ -26,10 +27,16 @@ use super::{read_config, Launch, Reading};
 /// is named for it.
 const SECRET_VARIABLE: &str = "BDI_GATES_WEBHOOK_SECRET";
 
+/// How long GitHub is left alone after a rate limit it does not say the end
+/// of, which is the least GitHub asks of a client refused for a secondary
+/// limit.
+const UNSAID_WAIT: Duration = Duration::from_secs(60);
+
 /// Look at the gates, report, and look again `[gates] poll_seconds` later,
 /// until a signal ends the process. Listening on `listen`, settle the pull
 /// request each delivery names in between. Nothing a settling finds stops the
-/// next one.
+/// next one, though a rate limit puts it off: GitHub is asked nothing until
+/// the limit resets, and a delivery in the meantime is left to the look after.
 ///
 /// Every settling runs on this one thread, one after another, which is what
 /// keeps a delivery and a look arriving together from closing a gate twice
@@ -75,6 +82,7 @@ pub(super) fn settle(
     };
     println!("{}", started(&cfg.gates, projects.len(), listening));
     let mut next_look = Instant::now();
+    let mut rate_limited_until = Instant::now();
     loop {
         let now = Instant::now();
         let found = if now >= next_look {
@@ -83,6 +91,16 @@ pub(super) fn settle(
             found
         } else {
             match delivered_for.recv_timeout(next_look - now) {
+                Ok(pull_request) if Instant::now() < rate_limited_until => {
+                    println!(
+                        "{}",
+                        spelled_out(&format!(
+                            "{pull_request}: a delivery came while GitHub's rate limit is waited \
+                             out, so the next look settles it"
+                        ))
+                    );
+                    continue;
+                }
                 Ok(pull_request) => {
                     delivered(&trackers, &RealRunner, &projects, &cfg.gates, pull_request)
                 }
@@ -90,11 +108,25 @@ pub(super) fn settle(
             }
         };
         for found in found {
+            if let Found::RateLimited { resets, .. } = found {
+                rate_limited_until = waited_out(resets);
+                next_look = next_look.max(rate_limited_until);
+            }
             if let Some(said) = reported(&found) {
                 println!("{said}");
             }
         }
     }
+}
+
+/// When GitHub may be asked again after a rate limit that `resets` then, or
+/// that GitHub did not say the end of.
+fn waited_out(resets: Option<DateTime<Utc>>) -> Instant {
+    let wait = match resets {
+        Some(resets) => (resets - Utc::now()).to_std().unwrap_or(Duration::ZERO),
+        None => UNSAID_WAIT,
+    };
+    Instant::now() + wait
 }
 
 /// The secret, from `file` where one is named and from what
@@ -179,6 +211,22 @@ fn reported(found: &Found) -> Option<String> {
             "{pull_request}: GitHub did not say where it stands, so no gate waiting on it was \
              touched: {failure}"
         ),
+        Found::RateLimited {
+            pull_request,
+            resets: Some(resets),
+        } => format!(
+            "{pull_request}: GitHub refused it for the rate limit of the login gh runs as, so \
+             GitHub is asked nothing more until the limit resets at {}",
+            resets.format("%Y-%m-%d %H:%M:%S UTC")
+        ),
+        Found::RateLimited {
+            pull_request,
+            resets: None,
+        } => format!(
+            "{pull_request}: GitHub refused it for a rate limit without saying when it resets, \
+             so GitHub is asked nothing more for at least {}s",
+            UNSAID_WAIT.as_secs()
+        ),
         Found::Settling {
             pull_request,
             project,
@@ -254,6 +302,24 @@ mod tests {
         assert_eq!(
             told(Err(TrackerFailure::Unavailable)).as_deref(),
             Some("example/ark#7: arkham could not settle ark-2ud: the tracker did not answer")
+        );
+    }
+
+    #[test]
+    fn a_rate_limit_github_does_not_say_the_end_of_is_reported_with_the_least_wait() {
+        assert_eq!(
+            reported(&Found::RateLimited {
+                pull_request: PullRequest {
+                    repo: "example/ark".to_string(),
+                    number: 7,
+                },
+                resets: None,
+            })
+            .as_deref(),
+            Some(
+                "example/ark#7: GitHub refused it for a rate limit without saying when it \
+                 resets, so GitHub is asked nothing more for at least 60s"
+            )
         );
     }
 
