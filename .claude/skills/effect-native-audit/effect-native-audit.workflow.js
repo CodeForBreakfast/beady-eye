@@ -285,11 +285,11 @@ const BEHAVIOUR_SMELLS = [
   },
   {
     key: 'unsupervised-fork',
-    grep: "Effect.forkChild / forkDetach / forkScoped / forkIn / runFork whose Fiber is never joined or awaited and whose exit nothing reads, or whose lifetime does not match the work it serves",
+    grep: "Effect.forkChild / forkDetach / forkScoped / forkIn / runFork whose Fiber is never joined or awaited, whose exit nothing reads and whose forked effect handles none of its own failures, or whose lifetime does not match the work it serves",
     smell:
-      'A forked fiber whose failure nothing observes (never joined or awaited, its Exit never read), so it fails silently; or a fork whose lifetime does not match its job. A plain `Effect.forkChild` is auto-supervised: it is interrupted, finalizers included, when its PARENT FIBER ends. That is a bug only when the work must outlive the parent, such as a listener forked from a short-lived handler. forkDetach is the opposite bug when the work should end with its owner.',
+      'A forked fiber whose failure nothing observes (never joined or awaited, its Exit never read, no handler inside the forked effect), so it fails silently; or a fork whose lifetime does not match its job. A plain `Effect.forkChild` is auto-supervised: it is interrupted, finalizers included, when its PARENT FIBER ends. That is a bug only when the work must outlive the parent, such as a listener forked from a short-lived handler. forkDetach is the opposite bug when the work should end with its owner.',
     nativeShape:
-      'Observe the failure: Fiber.join / Fiber.await (Effect 4 has no forkWithErrorHandler), or Effect.all/race when the fork was only ever concurrency. Match the lifetime: keep Effect.forkChild when the parent fiber is the right owner, Effect.forkScoped / Effect.forkIn when a Scope owns it, a FiberSet / FiberMap / FiberHandle when an owner tracks many or replaceable fibers, Effect.forkDetach only for genuinely global work. NOTE: a fork whose lifetime matches its job and whose failures are observed is fine, whichever variant it uses.',
+      'Observe the failure: Fiber.join / Fiber.await, or handle it inside the forked effect with Effect.catch / catchCause / tapCause before forking (Effect 4 has no forkWithErrorHandler), or Effect.all/race when the fork was only ever concurrency. Match the lifetime: keep Effect.forkChild when the parent fiber is the right owner, Effect.forkScoped / Effect.forkIn when a Scope owns it, a FiberSet / FiberMap / FiberHandle when an owner tracks many or replaceable fibers, Effect.forkDetach only for genuinely global work. NOTE: a fork whose lifetime matches its job and whose failures are observed is fine, whichever variant it uses.',
     docs: 'concurrency/fibers',
     nativeRef: 'Effect.forkChild, Effect.forkScoped, Effect.forkIn, Effect.forkDetach, FiberSet/FiberMap/FiberHandle, Fiber.join/await, Effect.all/race',
   },
@@ -804,7 +804,8 @@ REFUTE (refuted=true) only when one of these holds — the smell is not real. Th
   This is THE common false positive — verify the dependency before confirming.
 - unbounded-fanout: refute if the collection is provably small/fixed, or the concurrent work touches
   no shared/contended resource (no rate-limit hazard).
-- unsupervised-fork: refute if the fiber's failure IS observed (joined, awaited, or its Exit read)
+- unsupervised-fork: refute if the fiber's failure IS observed (joined, awaited, its Exit read, or
+  handled inside the forked effect)
   AND its lifetime matches its job. A plain Effect.forkChild is bound to its parent fiber and
   interrupted with it, so do not accept "unmanaged lifetime" for one unless the work must outlive
   that parent.

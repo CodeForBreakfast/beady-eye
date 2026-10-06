@@ -169,7 +169,7 @@ flagging.
 |---|---|---|---|
 | `sequential-not-concurrent` | independent effects run one-after-another (latency = sum, not max) | `Effect.all`/`forEach` with `{ concurrency }` — *only* when genuinely independent | concurrency/basic-concurrency |
 | `unbounded-fanout` | `concurrency:"unbounded"` / fork-per-item over an externally-sized collection on a shared resource | a **bounded** `{ concurrency: n }` / a shared `Semaphore.make` | concurrency/basic-concurrency |
-| `unsupervised-fork` | a fork whose failure nothing observes, or whose lifetime is wrong for its job (`forkChild` ends with its parent fiber, `forkDetach` never does) | `Fiber.join`/`await`; `forkChild` / `forkScoped` / `forkIn` / `FiberSet` / `forkDetach` matched to the owner; often `Effect.all`/`race` | concurrency/fibers |
+| `unsupervised-fork` | a fork whose failure nothing observes, or whose lifetime is wrong for its job (`forkChild` ends with its parent fiber, `forkDetach` never does) | `Fiber.join`/`await`, or a handler inside the forked effect; `forkChild` / `forkScoped` / `forkIn` / `FiberSet` / `forkDetach` matched to the owner; often `Effect.all`/`race` | concurrency/fibers |
 | `unvalidated-boundary` | untrusted external data via `as`/`JSON.parse` with **no** decode | `Schema.decodeUnknownEffect` or `Schema.fromJsonString` at the edge | schema/getting-started |
 | `untyped-error-channel` | `E` is `unknown`/string, or `Effect.catch`/`orDie`/`ignore` swallows a recoverable typed failure | tagged error union + `catchTag`/`catchReason`/`Match`; handle, don't downgrade | error-management/two-error-types |
 
