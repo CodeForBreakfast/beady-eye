@@ -45,22 +45,25 @@ vocabulary for the fix:
 - A field present in some states and absent in others calls for a
   discriminated union.
 
-The plugin pins Effect 3. Name only an API that `plugin/node_modules/effect`
-exports. These effect.website pages give the reasoning behind each data type:
+The plugin pins Effect 4. Name only an API that `plugin/node_modules/effect`
+exports. Effect 4 has no `Either`, `Schema.filter` or `Schema.decodeUnknown`.
+These effect.website pages give the reasoning behind each data type. The pages
+without the `v4/` prefix document Effect 3.
 
-- [`data-types/option`](https://effect.website/docs/data-types/option/)
-- [`data-types/either`](https://effect.website/docs/data-types/either/)
-- [`data-types/data`](https://effect.website/docs/data-types/data/)
-- [`code-style/branded-types`](https://effect.website/docs/code-style/branded-types/)
-- [`code-style/pattern-matching`](https://effect.website/docs/code-style/pattern-matching/)
-- [`schema/introduction`](https://effect.website/docs/schema/introduction/)
+- [`data-types/option`](https://effect.website/docs/v4/data-types/option/)
+- [`data-types/result`](https://effect.website/docs/v4/data-types/result/)
+- [`data-types/data`](https://effect.website/docs/v4/data-types/data/)
+- [`code-style/branded-types`](https://effect.website/docs/v4/code-style/branded-types/)
+- [`code-style/pattern-matching`](https://effect.website/docs/v4/code-style/pattern-matching/)
+- [`schema/introduction`](https://effect.website/docs/v4/schema/introduction/)
+- [`schema/filters`](https://effect.website/docs/v4/schema/filters/)
 
 ## The four lenses
 
 | Lens | Question | Honest representation | Principle |
 |---|---|---|---|
-| **L1** Illegal-representable | Can this type represent a value that is invalid in the domain? | narrow the type until its values are the domain's: required over optional, a branded or filtered Schema over a bare primitive, `Data.taggedEnum` over a pair of booleans | invalid states unrepresentable; `data-types/data` |
-| **L2** Under-expressive | Is there a legal domain state this type cannot represent? | widen honestly: add the missing variant to a union, use `Option` where a field is genuinely optional, use a tagged case instead of a sentinel | finite set as a union; `data-types/option`, `data-types/either` |
+| **L1** Illegal-representable | Can this type represent a value that is invalid in the domain? | narrow the type until its values are the domain's: required over optional, `Schema.brand` or `Schema.check` over a bare primitive, `Schema.Literals` over a string, `Data.taggedEnum` or `Schema.TaggedUnion` over a pair of booleans | invalid states unrepresentable; `data-types/data`, `schema/filters` |
+| **L2** Under-expressive | Is there a legal domain state this type cannot represent? | widen honestly: add the missing variant to a union, use `Option` or `Schema.optionalKey` where a field is genuinely optional, use a tagged case instead of a sentinel | finite set as a union; `data-types/option`, `data-types/result` |
 | **L3** Role coherence | Do all producers and consumers mean the same thing, or is it two roles under one name? | split the roles: an address type apart from an observation type, a request apart from a response, a trusted form apart from an untrusted one | parse at boundaries |
 | **L4** Boundary honesty | At a trust boundary, does the type's role demand a parsed-once strong type it lacks? | a `Schema.Struct` with required fields, branded members or a refinement, which the boundary decodes once and which then flows unchecked | parse at boundaries, trust inside; `schema/introduction` |
 
@@ -90,9 +93,9 @@ a finding. A real illegal state stays a finding however far it ripples.
   findings of the same defect. L3 runs even when L1 found nothing, because a type can be
   honest field by field and dishonest across its census.
 - **L4 borders two other checks.** effect-native-audit's
-  `unvalidated-boundary` smell is a missing `Schema.decodeUnknown` at a trust
-  edge. The language service's `schemaSyncInEffect` rule is a `*Sync` decode
-  inside an Effect. L4 is about the shape the type's role demands, whatever
+  `unvalidated-boundary` smell is untrusted data reaching the plugin with no
+  Schema decode at the trust edge. The language service's `schemaSyncInEffect`
+  rule is a `*Sync` decode inside an Effect generator. L4 is about the shape the type's role demands, whatever
   decode calls exist. A finding that is really one of those two belongs to its
   own check.
 
@@ -107,8 +110,9 @@ a finding. A real illegal state stays a finding however far it ripples.
 1. When the plugin's files move, check that `SURFACE`, `EXCLUDED` and the
    enumeration command in the workflow still name its domain types.
 2. When the plugin moves to a new Effect major, check every API the lenses and
-   the vocabulary name against the new version, and the effect.website pages
-   above.
+   the vocabulary name against the new version, move the effect.website links
+   to that major's pages, and check that `schemaSyncInEffect` still exists in
+   the effect-tsgo the flake pins.
 3. Add a lens only for a new value-space question that reaches a different
    defect by a different path, and edit the `LENSES` array and this table
    together.
