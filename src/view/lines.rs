@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::model::badges::Badged;
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
     Counts, FailedProject, LoosePane, Node, TrackerState, Tree, UnconfiguredPane,
@@ -531,14 +532,15 @@ pub(crate) fn progress_of(tree: &Tree, at: usize, above: &[usize]) -> Option<Pro
     })
 }
 
-/// What one line says of the tree beneath its bead, answered together: the
-/// four questions above, each asked of the same bead by the same way down.
+/// What one line says of the tree beneath its bead, answered together, each
+/// asked of the same bead by the same way down.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BeadFacts {
     pub progress: Option<Progress>,
     pub beneath: Counts,
     pub opens_a_fold: bool,
     pub finished: bool,
+    pub blockers: Vec<Badged>,
 }
 
 pub(crate) fn facts_of(tree: &Tree, at: usize, above: &[usize]) -> BeadFacts {
@@ -547,7 +549,21 @@ pub(crate) fn facts_of(tree: &Tree, at: usize, above: &[usize]) -> BeadFacts {
         beneath: counts_beneath(tree, at, above),
         opens_a_fold: opens_a_fold(tree, at, above),
         finished: finished(tree, at, above),
+        blockers: blockers_badges(tree, at, above),
     }
+}
+
+/// The badges of the open beads that block `at`, in the order they hang
+/// beneath it: what its line draws while its fold keeps theirs off the
+/// screen.
+fn blockers_badges(tree: &Tree, at: usize, above: &[usize]) -> Vec<Badged> {
+    links_below(tree, at, above)
+        .into_iter()
+        .filter(|link| link.edge == Edge::Blocks)
+        .map(|link| &tree.beads[link.bead])
+        .filter(|blocker| !blocker.status.is_closed())
+        .flat_map(|blocker| blocker.badges.iter().cloned())
+        .collect()
 }
 
 /// What a run stands for: its own beads and everything beneath them.

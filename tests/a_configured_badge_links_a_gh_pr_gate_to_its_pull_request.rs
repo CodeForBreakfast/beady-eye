@@ -11,7 +11,10 @@ use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project_settled, ENTER_ALTERNATE_SCREEN};
+use terminal::{
+    a_home_naming_one_project_settled, contains, row_of, rows_drawn, rows_of,
+    ENTER_ALTERNATE_SCREEN,
+};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -70,4 +73,51 @@ fn the_readmes_entry_links_a_gh_pr_gate_to_its_pull_request() {
     let id = link_id(to);
     let clickable = format!("{OSC_8}id={id};{to}{ST}⇢ arkham #12{OSC_8};{ST}");
     bdi.read_until(clickable.as_bytes(), GIVING_UP);
+}
+
+/// `C`, which shuts every fold in the forest, so each gate is folded away
+/// beneath the bead it blocks.
+const COLLAPSE_THE_FOREST: &[u8] = b"C";
+
+/// `l`, which opens the selected line's fold. The project's line is selected
+/// once the forest is collapsed, and opening it draws its beads still shut.
+const EXPAND: &[u8] = b"l";
+
+#[test]
+fn a_bead_shut_over_its_gate_draws_the_gates_pull_request_link_on_its_own_row() {
+    let home = a_home_naming_one_project_settled("gated", THE_READMES_ENTRY);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(GH_PR_GATES);
+
+    let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &tracker.environment());
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(SHOW_EVERY_TREE);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(COLLAPSE_THE_FOREST);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    bdi.send(EXPAND);
+    bdi.settle(A_SILENCE, GIVING_UP);
+    let repainted = bdi.resize(ROWS, COLS + 1);
+    let screen = bdi.answer_to(repainted, GIVING_UP);
+    let frame = rows_drawn(&screen).join("\n");
+
+    let waiting = row_of(&screen, b"dun-bz4")
+        .unwrap_or_else(|| panic!("the bead the gate holds back is drawn once, on:\n{frame}"));
+    assert_eq!(
+        rows_of(&screen, b"dun-auk"),
+        Vec::<u16>::new(),
+        "the gate is folded away beneath the bead it blocks, on:\n{frame}"
+    );
+    assert_eq!(
+        rows_of(&screen, "⇢ arkham #12".as_bytes()),
+        vec![waiting],
+        "the gate's badge is drawn on the row of the bead it blocks, on:\n{frame}"
+    );
+    let to = "https://github.com/dunwich/arkham/pull/12";
+    let linked = format!("{OSC_8}id={};{to}{ST}", link_id(to));
+    assert!(
+        contains(&screen, linked.as_bytes()),
+        "the badge keeps its link to the pull request, on:\n{frame}"
+    );
 }

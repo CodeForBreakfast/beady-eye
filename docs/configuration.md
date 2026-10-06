@@ -209,6 +209,11 @@ A key naming a value the bead does not hold draws no badge and says nothing. So
 does one naming a whole object rather than a value inside it, and one naming a
 list.
 
+**A line resting shut also draws the badges of the open beads that block it,**
+after its own. A blocker hangs under the bead it blocks, so the fold keeps the
+blocker's line off the screen, and what that line carries is often why the bead
+waits.
+
 `[join]`'s `pane_key` is a metadata key on its own, with no field in front of
 it. A pane id is only ever written in metadata, so there is nowhere else it
 could be read from.
@@ -423,7 +428,8 @@ $ bd update dun-9 --set-metadata repo=dunwich/arkham
 ```
 
 This badge draws `⇢ arkham #12` on the gate, linked to
-`https://github.com/dunwich/arkham/pull/12`. A narrow row draws `⇢ #12`.
+`https://github.com/dunwich/arkham/pull/12`. A narrow row draws `⇢ #12`. While
+`dun-7` rests shut over the gate, `dun-7`'s own row draws the badge.
 
 ```toml
 [[badges]]

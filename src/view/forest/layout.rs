@@ -27,7 +27,7 @@ use crate::view::lines::{
     links_below, marker, notes_of, prefix, root_key, run_size, way_below, BeadFacts, Content,
     Group, GroupKind, Item, Line, Note, Place, ProjectLine, Unread, INDENT,
 };
-use crate::view::row::{self, Widths};
+use crate::view::row::{self, Shut, Widths};
 
 use super::drawn::{left_out, Beneath, Count, Counted, Drawn, Ground, Node, Undrawn};
 use super::facts::{Facts, TreeFacts, Uniform};
@@ -48,8 +48,9 @@ enum Child<'a> {
     Elided(Vec<&'a Link>),
 }
 
-/// The work a line resting shut is hiding: `beneath` it, the beads under it
-/// that its fold keeps off the screen, counted once each.
+/// The work a line resting shut is hiding: the beads `bead` stands over,
+/// counted once each, and the badges of the open beads among them that block
+/// it.
 ///
 /// Nothing where the line is open or has nothing under it, because what it
 /// stands over is then drawn on rows of its own.
@@ -61,8 +62,11 @@ enum Child<'a> {
 /// The same reading answers a root drawn behind the line the mode puts the
 /// rest of the forest behind: the bead the forest is rooted at is beneath
 /// that root and drawn at the top of the screen, and this count holds it.
-fn shut_over(beneath: Counts, folded: Option<bool>) -> Option<Counts> {
-    (folded == Some(false)).then_some(beneath)
+fn shut_over(bead: &BeadFacts, folded: Option<bool>) -> Option<Shut> {
+    (folded == Some(false)).then(|| Shut {
+        over: bead.beneath.clone(),
+        blockers: bead.blockers.clone(),
+    })
 }
 
 /// Every line the snapshot draws, in render order. `facts` is what the
@@ -1300,7 +1304,7 @@ fn bead_line(
                 .filter(|parent| parent.project == node.project)
                 .map(|parent| parent.id.as_str()),
             bead.progress,
-            shut_over(bead.beneath.clone(), folded),
+            shut_over(bead, folded),
         )),
     }
 }
@@ -1380,6 +1384,7 @@ fn count(
     let mut total = Count {
         rows: 1,
         widths: Widths::default(),
+        shut: kids && !open,
     };
     if open || beneath_shut {
         total.rows += orphaned;
@@ -1427,6 +1432,7 @@ fn count_run(
     let mut total = Count {
         rows: 1,
         widths: Widths::default(),
+        shut: false,
     };
     if open || beneath_shut {
         for link in members {
@@ -1448,8 +1454,9 @@ fn count_run(
 /// What one child of a counted bead adds up to, its own line's widths among
 /// the widths beneath its parent.
 ///
-/// The line is made to be measured, as it would be to be drawn: what is
-/// shut over it is not, because nothing in the identity says so.
+/// The line is made to be measured as it would be drawn, shut or open, because
+/// a shut line draws its blockers' badges and the layout can put a badge in
+/// the identity.
 fn count_child(
     kept: &mut Kept,
     tree: &Tree,
@@ -1465,11 +1472,12 @@ fn count_child(
         ..parent
     };
     let mut count = count(kept, tree, answers, beneath_shut, row, child);
+    let facts = answers.bead(link.bead);
     let own = row::cells(
         &tree.beads[link.bead],
         Some(&tree.beads[parent.at].id),
-        answers.bead(link.bead).progress,
-        None,
+        facts.progress,
+        shut_over(facts, Some(!count.shut)),
     );
     count.widths.merge(&identity_widths(&own, row));
     count
