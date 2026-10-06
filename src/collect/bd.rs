@@ -511,10 +511,16 @@ impl Reader<'_> {
         self.asked(&["query", EPHEMERAL, "--all", "--limit", "0", "--json"])
     }
 
-    /// Every bead the tracker holds, wisps among them.
+    /// Every bead the tracker holds, wisps and gates among them.
+    ///
+    /// Every listing asks for gates by name, because `bd list` leaves them
+    /// out otherwise: on a throwaway bd 1.3.0 tracker holding three beads
+    /// and a `gh:pr` gate on each, `bd list --all` answered the three beads
+    /// and `--include-gates` all six. A gate is a bead the work waits on, so
+    /// a tree drawn without it says the work waits on nothing.
     fn every_bead(&self) -> Result<Vec<Bead>, RunFailure> {
         let (listed, wisps) = together(
-            || self.asked(&["list", "--all", "--limit", "0", "--json"]),
+            || self.asked(&["list", "--all", "--include-gates", "--limit", "0", "--json"]),
             || self.wisps(),
         );
         let mut beads = rows(&listed?, "list", self.keeping_rows)?;
@@ -537,8 +543,18 @@ impl Reader<'_> {
         let ((unfinished, briefly), wisps) = together(
             || {
                 together(
-                    || self.asked(&["list", "--limit", "0", "--json"]),
-                    || self.asked(&["list", "--all", "--brief", "--limit", "0", "--json"]),
+                    || self.asked(&["list", "--include-gates", "--limit", "0", "--json"]),
+                    || {
+                        self.asked(&[
+                            "list",
+                            "--all",
+                            "--include-gates",
+                            "--brief",
+                            "--limit",
+                            "0",
+                            "--json",
+                        ])
+                    },
                 )
             },
             || self.wisps(),
@@ -1413,7 +1429,7 @@ mod tests {
     /// The one call a project's whole forest is drawn from, spelled as bd
     /// takes it. `--all` is what makes it the whole tracker rather than its
     /// open beads.
-    const TRACKER_CALL: &str = "list --all --limit 0 --json";
+    const TRACKER_CALL: &str = "list --all --include-gates --limit 0 --json";
 
     /// The second call the same forest needs, because `bd list` answers
     /// about the permanent table only.
@@ -1780,8 +1796,8 @@ mod tests {
     /// What a reader for unfinished work asks for in place of the whole
     /// listing: the unfinished beads whole, and every bead without its free
     /// text.
-    const UNFINISHED_CALL: &str = "list --limit 0 --json";
-    const BRIEF_CALL: &str = "list --all --brief --limit 0 --json";
+    const UNFINISHED_CALL: &str = "list --include-gates --limit 0 --json";
+    const BRIEF_CALL: &str = "list --all --include-gates --brief --limit 0 --json";
 
     fn reading_unfinished_work(runner: &FakeRunner) -> Reader<'_> {
         Reader {

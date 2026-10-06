@@ -835,6 +835,7 @@ mod tests {
             }),
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
+            pull_request: None,
             description: "Point it at the new bird.\n\nThe old one is gone.".into(),
             notes: "The crane is booked for Tuesday.".into(),
             created_by: Some("kim".to_string()),
