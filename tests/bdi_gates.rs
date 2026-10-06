@@ -353,6 +353,71 @@ fn a_github_refusing_for_lapsed_single_sign_on_is_reported_closes_nothing_and_is
     );
 }
 
+/// What gh 2.102.0 prints, exit 1, when GitHub refuses a GraphQL query for
+/// the primary rate limit. The user id is invented.
+const RATE_LIMITED: &str = "GraphQL: API rate limit already exceeded for user ID 1234567.\n";
+
+/// `gh api rate_limit` with the GraphQL limit spent until 2100-01-01, far
+/// enough off that no look in the test can come after it.
+const GRAPHQL_SPENT_UNTIL_2100: &str = r#"{"resources":{"core":{"limit":5000,"used":31,"remaining":4969,"reset":4102444800},"graphql":{"limit":5000,"used":5000,"remaining":0,"reset":4102444800}},"rate":{"limit":5000,"used":31,"remaining":4969,"reset":4102444800}}"#;
+
+const WAITING_UNTIL_2100: &str = "example/ark#7: GitHub refused it for the rate limit of the \
+                                  login gh runs as, so GitHub is asked nothing more until the \
+                                  limit resets at 2100-01-01 00:00:00 UTC";
+
+/// A home whose gates wait on example/ark#7 and #42, with a GitHub that
+/// refuses #7 for a rate limit spent until 2100.
+fn rate_limited(named: &str) -> (PathBuf, ShimmedTracker, ShimmedGitHub) {
+    let home = a_home_naming(named, &["arkham"]);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.refuses_with(&viewed(7), RATE_LIMITED);
+    github.answers_with("api rate_limit", GRAPHQL_SPENT_UNTIL_2100);
+    (home, tracker, github)
+}
+
+/// The poll is a second, so three seconds without a second look is the
+/// limit being waited out rather than a look that has not come yet.
+#[test]
+fn a_look_github_refuses_for_a_rate_limit_waits_until_the_limit_resets_and_says_so() {
+    let (home, tracker, github) = rate_limited("rate-limited");
+
+    let settling = Settling::started(&home, &tracker, &github);
+
+    settling.says(WAITING_UNTIL_2100);
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(
+        github.calls(),
+        [viewed(7), "api rate_limit".to_string()],
+        "#42 is never asked after, and no look follows the first"
+    );
+}
+
+#[test]
+fn a_delivery_while_a_rate_limit_is_waited_out_asks_github_nothing() {
+    let (home, tracker, github) = rate_limited("rate-limited-delivery");
+
+    let settling = Settling::listening(&home, &tracker, &github);
+    let address = settling.address();
+    settling.says(WAITING_UNTIL_2100);
+
+    assert_eq!(
+        delivered(
+            address,
+            "pull_request",
+            Some(&signed(SECRET, DELIVERED_42)),
+            DELIVERED_42
+        ),
+        202
+    );
+    settling.says(
+        "example/ark#42: a delivery came while GitHub's rate limit is waited out, so the next \
+         look settles it",
+    );
+    assert_eq!(github.calls(), [viewed(7), "api rate_limit".to_string()]);
+}
+
 /// The dunwich tracker has no answers written down, so the shim refuses
 /// every call to it as a tracker that is not there does.
 #[test]

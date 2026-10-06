@@ -482,7 +482,8 @@ mod tests {
             FailureKind::Parse => Some(FailureKind::Unsupported),
             FailureKind::Unsupported => Some(FailureKind::UnknownFlag),
             FailureKind::UnknownFlag => Some(FailureKind::Pruned(Retained { floor: 1, head: 1 })),
-            FailureKind::Pruned(_) => None,
+            FailureKind::Pruned(_) => Some(FailureKind::RateLimited),
+            FailureKind::RateLimited => None,
         })
     }
 
