@@ -1027,8 +1027,8 @@ empty one, refuses to start.
 
 On GitHub, give the webhook the address `bdi gates` is reached at, the content
 type `application/json`, the same secret, and the *Pull requests*, *Pull request
-reviews*, *Issue comments*, *Check suites* and *Statuses* events. A delivery is a trigger only.
-`bdi gates` reads the repository and number out of it and settles that pull
+reviews*, *Issue comments*, *Check suites* and *Statuses* events. A delivery is
+a trigger only. `bdi gates` reads the repository and number out of it and settles that pull
 request exactly as a look would, asking GitHub where it stands, and passes it
 over without a word where [`[gates]`](#gates) leaves its owner to another
 `bdi gates`. A check suite or status names a commit and no pull request, so
