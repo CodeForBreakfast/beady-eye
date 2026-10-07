@@ -257,6 +257,15 @@ mod tests {
         }
     }
 
+    /// A seat that opens its pull request as a draft waits to hear its
+    /// checks fail as much as one that opens it ready.
+    #[test]
+    fn a_draft_whose_head_commit_failed_its_checks_is_told() {
+        let draft =
+            head_commit("a1b2c3", r#"{"state":"FAILURE"}"#).replacen('{', r#"{"isDraft":true,"#, 1);
+        assert!(told_on(State::Open, &draft).is_some());
+    }
+
     #[test]
     fn a_head_commit_whose_checks_have_not_failed_is_not_told() {
         for rollup in [

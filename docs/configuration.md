@@ -943,8 +943,8 @@ on, and acts on what GitHub says:
 | closed without being merged | leaves each gate open, and comments once on each bead a gate holds back |
 | open and ready for review | closes each gate waiting on it with `awaits=ready_for_review` in its metadata, and leaves the rest open |
 | open and approved | closes each gate waiting on it with `awaits=approved` in its metadata, and leaves the rest open |
-| open, and its head commit has failing checks | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a fix that fails again is told again |
-| a draft | nothing |
+| open or a draft, and its head commit has failing checks | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a fix that fails again is told again |
+| a draft with no failing checks | nothing |
 
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
 as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
