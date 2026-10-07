@@ -328,6 +328,13 @@ mod tests {
         }
     }
 
+    fn excluding(owners: &[&str]) -> Gates {
+        Gates {
+            excluded_owners: owners.iter().map(|owner| owner.to_string()).collect(),
+            ..Gates::default()
+        }
+    }
+
     fn looked(runner: &FakeRunner, projects: &[Project], settles: &Gates) -> Settling {
         look(&Cli::new(runner), runner, projects, settles)
     }
@@ -398,6 +405,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_bdi_gates_leaving_out_one_owner_settles_the_gates_of_an_owner_it_was_never_told_about() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&queried("ark"), QUERIED)
+            .with(&resolving_42("arkham"), "");
+
+        let found = looked(&runner, &[project("arkham")], &excluding(&["miskatonic"])).found;
+
+        assert_eq!(
+            found,
+            [
+                no_pull_request("arkham", "ark-6pp", Fault::NoRepo),
+                no_number("arkham"),
+                settling("arkham"),
+            ],
+            "ark-6pp names no owner, so none is left out and it is settled here"
+        );
+    }
+
+    #[test]
+    fn a_gate_whose_owner_is_left_out_is_passed_over_without_a_word() {
+        let runner = captured(FakeRunner::default(), "arkham");
+
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &excluding(&["Example"]));
+
+        assert_eq!(
+            found,
+            [no_pull_request("arkham", "ark-6pp", Fault::NoRepo)],
+            "ark-6pp names no owner, so none is left out and it is reported here"
+        );
+        assert_eq!(asked_github(&runner), Vec::<String>::new());
+        assert_eq!(github, Read::Unasked);
+    }
+
     fn delivered_here(runner: &FakeRunner, settles: &Gates, number: u64) -> Settling {
         delivered(
             &Cli::new(runner),
@@ -439,6 +481,17 @@ mod tests {
         let runner = FakeRunner::default();
 
         let Settling { found, github } = delivered_here(&runner, &owners(&["miskatonic"]), 42);
+
+        assert_eq!(found, []);
+        assert_eq!(runner.calls(), []);
+        assert_eq!(github, Read::Unasked);
+    }
+
+    #[test]
+    fn a_delivery_whose_owner_is_left_out_is_passed_over_without_a_word() {
+        let runner = FakeRunner::default();
+
+        let Settling { found, github } = delivered_here(&runner, &excluding(&["example"]), 42);
 
         assert_eq!(found, []);
         assert_eq!(runner.calls(), []);

@@ -159,11 +159,17 @@ fn secret(file: Option<&Path>, from_environment: Option<String>) -> anyhow::Resu
 }
 
 fn started(gates: &Gates, projects: usize, listening: Option<SocketAddr>) -> String {
-    let owners = if gates.owners.is_empty() {
+    let mut owners = if gates.owners.is_empty() {
         "every owner's repositories".to_string()
     } else {
         format!("repositories owned by {}", gates.owners.join(", "))
     };
+    if !gates.excluded_owners.is_empty() {
+        owners += &format!(
+            " except those owned by {}",
+            gates.excluded_owners.join(", ")
+        );
+    }
     let plural = if projects == 1 { "" } else { "s" };
     let deliveries = match listening {
         Some(address) => format!(", and on GitHub's deliveries to {address}"),
@@ -409,12 +415,25 @@ mod tests {
                 &Gates {
                     poll_seconds: 300,
                     owners: vec!["example".to_string(), "miskatonic".to_string()],
+                    ..Gates::default()
                 },
                 2,
                 None
             ),
             "bdi gates: settling the gh:pr gates of 2 projects, for repositories owned by \
              example, miskatonic, every 300s"
+        );
+        assert_eq!(
+            started(
+                &Gates {
+                    excluded_owners: vec!["miskatonic".to_string()],
+                    ..Gates::default()
+                },
+                1,
+                None
+            ),
+            "bdi gates: settling the gh:pr gates of 1 project, for every owner's repositories \
+             except those owned by miskatonic, every 60s"
         );
     }
 }

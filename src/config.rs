@@ -637,6 +637,10 @@ pub struct Gates {
     /// GitHub as different accounts each name their own owners, and each
     /// leaves the other's gates alone.
     pub owners: Vec<String>,
+    /// The repository owners whose pull requests this `bdi gates` leaves to
+    /// another, in any case, whatever `owners` says. One instance can settle
+    /// every owner's but those a second instance names in its `owners`.
+    pub excluded_owners: Vec<String>,
 }
 
 impl Default for Gates {
@@ -644,6 +648,7 @@ impl Default for Gates {
         Self {
             poll_seconds: 60,
             owners: Vec::new(),
+            excluded_owners: Vec::new(),
         }
     }
 }
@@ -654,15 +659,19 @@ impl Gates {
     }
 
     /// Whether this `bdi gates` settles the pull requests `owner` holds. A
-    /// repository whose owner cannot be read is settled only where every
-    /// owner's is.
+    /// repository whose owner cannot be read is settled only where `owners`
+    /// is empty, since no owner it might have is left out.
     pub fn settles(&self, owner: Option<&str>) -> bool {
-        self.owners.is_empty()
-            || owner.is_some_and(|owner| {
-                self.owners
-                    .iter()
-                    .any(|settled| settled.eq_ignore_ascii_case(owner))
-            })
+        let named = |owners: &[String], owner: &str| {
+            owners.iter().any(|named| named.eq_ignore_ascii_case(owner))
+        };
+        match owner {
+            Some(owner) => {
+                (self.owners.is_empty() || named(&self.owners, owner))
+                    && !named(&self.excluded_owners, owner)
+            }
+            None => self.owners.is_empty(),
+        }
     }
 }
 
@@ -1269,6 +1278,7 @@ socket = "/var/folders/T/beady-eye/watcher.sock"
 [gates]
 poll_seconds = 300
 owners = ["example", "miskatonic"]
+excluded_owners = ["dunwich"]
 
 [tui]
 refresh_seconds = 5
@@ -1412,6 +1422,7 @@ path = "/home/user/dev/cinder"
         );
         assert_eq!(cfg.gates.poll(), Duration::from_secs(300));
         assert_eq!(cfg.gates.owners, ["example", "miskatonic"]);
+        assert_eq!(cfg.gates.excluded_owners, ["dunwich"]);
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
@@ -1776,6 +1787,7 @@ path = "/home/user/dev/kadath"
         assert_eq!(cfg.changes.covered_for_seconds, 60);
         assert_eq!(cfg.gates.poll_seconds, 60);
         assert!(cfg.gates.owners.is_empty());
+        assert!(cfg.gates.excluded_owners.is_empty());
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);
