@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use crate::app::gates::{delivered, look, Found, Read};
 use crate::collect::bd;
 use crate::collect::environment::EnvironmentCache;
-use crate::collect::gates::Done;
+use crate::collect::gates::{Done, Told};
 use crate::collect::run::RealRunner;
 use crate::collect::webhook::{self, Heard, Secret};
 use crate::config::{Gates, Project};
@@ -88,10 +88,11 @@ pub(super) fn settle(
     // ponytail: one wait for every host. Wait per host if one `bdi gates`
     // ever settles for logins on two hosts at once.
     let mut rate_limited_until = Instant::now();
+    let told = Told::default();
     loop {
         let now = Instant::now();
         let settling = if now >= next_look {
-            let settling = look(&trackers, &RealRunner, &projects, &cfg.gates);
+            let settling = look(&trackers, &RealRunner, &projects, &cfg.gates, &told);
             next_look = Instant::now() + cfg.gates.poll();
             settling
         } else {
@@ -106,9 +107,14 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(pull_request) => {
-                    delivered(&trackers, &RealRunner, &projects, &cfg.gates, pull_request)
-                }
+                Ok(pull_request) => delivered(
+                    &trackers,
+                    &RealRunner,
+                    &projects,
+                    &cfg.gates,
+                    pull_request,
+                    &told,
+                ),
                 Err(_) => continue,
             }
         };
@@ -245,17 +251,15 @@ fn reported(found: &Found) -> Option<String> {
         ),
         Found::Settling {
             pull_request,
+            happening,
             project,
             bead,
             done,
         } => match done {
-            Ok(Done::Resolved) => format!("{pull_request} merged: {project} closed gate {bead}"),
-            Ok(Done::ResolvedForReview) => {
-                format!("{pull_request} is ready for review: {project} closed gate {bead}")
+            Ok(Done::Resolved) => {
+                format!("{pull_request} {happening}: {project} closed gate {bead}")
             }
-            Ok(Done::Commented) => {
-                format!("{pull_request} closed unmerged: {project} told {bead}")
-            }
+            Ok(Done::Commented) => format!("{pull_request} {happening}: {project} told {bead}"),
             Ok(Done::AlreadyCommented) => return None,
             Err(failure) => format!(
                 "{pull_request}: {project} could not settle {bead}: {}",
@@ -298,12 +302,13 @@ mod tests {
     use crate::collect::gates::PullRequest;
     use crate::model::snapshot::TrackerFailure;
 
-    fn told(done: Result<Done, TrackerFailure>) -> Option<String> {
+    fn told(happening: &'static str, done: Result<Done, TrackerFailure>) -> Option<String> {
         reported(&Found::Settling {
             pull_request: PullRequest {
                 repo: "example/ark".to_string(),
                 number: 7,
             },
+            happening,
             project: "arkham".to_string(),
             bead: "ark-2ud".to_string(),
             done,
@@ -313,16 +318,24 @@ mod tests {
     #[test]
     fn a_bead_told_its_pull_request_closed_unmerged_is_reported_once() {
         assert_eq!(
-            told(Ok(Done::Commented)).as_deref(),
+            told("closed unmerged", Ok(Done::Commented)).as_deref(),
             Some("example/ark#7 closed unmerged: arkham told ark-2ud")
         );
-        assert_eq!(told(Ok(Done::AlreadyCommented)), None);
+        assert_eq!(told("closed unmerged", Ok(Done::AlreadyCommented)), None);
+    }
+
+    #[test]
+    fn a_gate_closed_on_a_merge_is_reported_as_merged() {
+        assert_eq!(
+            told("merged", Ok(Done::Resolved)).as_deref(),
+            Some("example/ark#7 merged: arkham closed gate ark-2ud")
+        );
     }
 
     #[test]
     fn a_write_that_failed_is_reported_against_its_bead() {
         assert_eq!(
-            told(Err(TrackerFailure::Unavailable)).as_deref(),
+            told("closed unmerged", Err(TrackerFailure::Unavailable)).as_deref(),
             Some("example/ark#7: arkham could not settle ark-2ud: the tracker did not answer")
         );
     }
@@ -388,7 +401,7 @@ mod tests {
     #[test]
     fn a_gate_closed_because_its_pull_request_left_draft_is_reported_as_ready_for_review() {
         assert_eq!(
-            told(Ok(Done::ResolvedForReview)).as_deref(),
+            told("is ready for review", Ok(Done::Resolved)).as_deref(),
             Some("example/ark#7 is ready for review: arkham closed gate ark-2ud")
         );
     }

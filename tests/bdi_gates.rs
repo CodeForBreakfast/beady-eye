@@ -26,8 +26,8 @@ use terminal::shims::ShimmedTracker;
 const GIVING_UP: Duration = Duration::from_secs(10);
 
 const GATE_LIST: &str = include_str!("fixtures/bd_1.3.0_gate_list.json");
-const MERGED: &str = include_str!("fixtures/gh_2.102.0_pr_view_merged.json");
-const OPEN: &str = include_str!("fixtures/gh_2.102.0_pr_view_open.json");
+const MERGED: &str = r#"{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}"#;
+const OPEN: &str = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null}"#;
 
 /// Each gh:pr gate in `GATE_LIST`, beside what `bd dep list` answers for the
 /// beads it holds back. ark-0i5 waits on example/ark#42 and ark-eb1 on
@@ -54,8 +54,18 @@ const HELD_BACK: [(&str, &str); 4] = [
 const RESOLVING_42: &str = "gate resolve ark-0i5 --reason Pull request example/ark#42 merged \
                             as 5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff.";
 
+/// The query a delivery about #`number` asks.
 fn viewed(number: u64) -> String {
-    format!("pr view {number} --repo example/ark --json state,isDraft,mergeCommit")
+    format!(
+        "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
+         {{repository(owner:$owner,name:$name){{pr{number}:pullRequest(number:{number})\
+         {{state isDraft mergeCommit{{oid}}}}}}}}"
+    )
+}
+
+/// GitHub's answer to [`viewed`]: #`number` with `fields`.
+fn answer(number: u64, fields: &str) -> String {
+    format!(r#"{{"data":{{"repository":{{"pr{number}":{fields}}}}}}}"#)
 }
 
 /// #7 open and #42 merged, as the one query a look asks reads them.
@@ -456,7 +466,7 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
     tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
     let github = ShimmedGitHub::beside(&home);
     github.refuses_with(&queried(), "HTTP 502\n");
-    github.answers_with(&viewed(42), MERGED);
+    github.answers_with(&viewed(42), &answer(42, MERGED));
 
     let settling = Settling::listening(&home, &tracker, &github);
     let address = settling.address();
@@ -566,8 +576,8 @@ impl Listening {
         holds_the_captured_gates(&tracker, "arkham");
         let github = ShimmedGitHub::beside(&home);
         github.answers_with(&queried(), QUERIED_OPEN);
-        github.answers_with(&viewed(42), OPEN);
-        github.answers_with(&viewed(7), OPEN);
+        github.answers_with(&viewed(42), &answer(42, OPEN));
+        github.answers_with(&viewed(7), &answer(7, OPEN));
         let settling = Settling::listening(&home, &tracker, &github);
         let address = settling.address();
         until(|| github.calls().len() == 1, "the first look");
@@ -745,7 +755,7 @@ fn the_secret_reaches_no_program_bdi_gates_starts_even_where_a_file_gives_it() {
     tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
     let github = ShimmedGitHub::beside(&home);
     github.answers_with(&queried(), QUERIED);
-    github.answers_with(&viewed(42), MERGED);
+    github.answers_with(&viewed(42), &answer(42, MERGED));
     let file = home.join("secret");
     std::fs::write(&file, format!("{SECRET}\n")).expect("the file is ours to write");
 
