@@ -205,7 +205,7 @@ impl Walk<'_> {
                 }
             }
             Cell::Badge(key) => {
-                if let Some(badge) = row.badges.iter().find(|badge| badge.key == *key) {
+                for badge in row.badges.iter().filter(|badge| badge.key == *key) {
                     walked.badge(badge, &row.status);
                 }
             }
@@ -370,6 +370,7 @@ mod tests {
     use crate::model::badges::Undrawn;
     use crate::view::fitted::hyperlink;
 
+    use crate::config::DrawnOn;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::join::AgentRef;
@@ -736,6 +737,7 @@ mod tests {
             link: Some(somewhere.into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let layout = Layout {
             state: vec![Cell::Badge("delivery_pr".into()), Cell::Agent],
@@ -752,6 +754,48 @@ mod tests {
                 &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
             ),
             "the badge lost its link when the agent was said briefly: {said:?}"
+        );
+    }
+
+    /// A shut line draws its blockers' badges after its own, so a row can hold
+    /// several badges on one key, and the cell the layout names for that key
+    /// draws each of them with where it points.
+    #[test]
+    fn a_badge_cell_draws_every_badge_on_its_key() {
+        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
+        let mut held = captioned("teach the elided run to fold back open on a keypress");
+        held.badges = vec![
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #11".into(),
+                link: None,
+                short: None,
+                colour: None,
+                drawn_on: DrawnOn::Own,
+            },
+            Badged {
+                key: "delivery_pr".into(),
+                text: "⇢ #12".into(),
+                link: Some(somewhere.into()),
+                short: None,
+                colour: None,
+                drawn_on: DrawnOn::Own,
+            },
+        ];
+        let layout = Layout {
+            state: vec![Cell::Badge("delivery_pr".into()), Cell::Agent],
+            ..Layout::default()
+        };
+
+        let drawn = Painted::of(bead_line(&row(&held), LAST, &ids(4), &layout), 120, 1).rows();
+        let said = symbols(bead_line(&row(&held), LAST, &ids(4), &layout), 120);
+
+        assert!(drawn[0].contains("⇢ #11  ⇢ #12  ◍"), "{drawn:?}");
+        assert!(
+            said.contains(
+                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
+            ),
+            "the second badge on the key lost its link: {said:?}"
         );
     }
 
@@ -861,6 +905,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -868,6 +913,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
         let drawn = Painted::of(
@@ -898,6 +944,7 @@ mod tests {
                 link: Some(somewhere.into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "jira".into(),
@@ -905,6 +952,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
         let mut epic = row(&badged);
@@ -949,6 +997,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let unbadged = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Open);
         let layout = Layout {
@@ -985,6 +1034,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let layout = Layout {
             identity: vec![Cell::Glyph, Cell::Badge("issue_type".into()), Cell::Id],
@@ -1014,6 +1064,7 @@ mod tests {
                 link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -1021,6 +1072,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
@@ -1056,6 +1108,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: Some(Colour::Status),
+                drawn_on: DrawnOn::Own,
             }];
             let painted = Painted::of(
                 bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
@@ -1095,6 +1148,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let row = row(&badged);
 
@@ -1121,6 +1175,7 @@ mod tests {
             link: Some("https://forge.invalid/browse/ARKHAM-19".into()),
             short: None,
             colour: Some(Colour::Status),
+            drawn_on: DrawnOn::Own,
         }];
 
         let painted = Painted::of(
@@ -1178,6 +1233,7 @@ mod tests {
             link: Some("https://forge.invalid/dunwich\u{1b}]0;owned\u{7}/pull/12".into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
 
         let painted = Painted::of(
@@ -1211,6 +1267,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         let linked = Badged {
             link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
@@ -1261,6 +1318,7 @@ mod tests {
                 link: to.map(str::to_string),
                 short: None,
                 colour: Some(Colour::Status),
+                drawn_on: DrawnOn::Own,
             }];
             let painted = Painted::of(
                 bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
@@ -1307,6 +1365,7 @@ mod tests {
             link: Some(somewhere.into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
 
         let said = symbols(
@@ -1348,6 +1407,7 @@ mod tests {
                 link: Some(somewhere.into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }];
             let mut unremarked = row(&badged);
             unremarked.notes = Vec::new();
@@ -1381,6 +1441,7 @@ mod tests {
             link: link.map(str::to_string),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         let said = |badge: Badged| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
@@ -1413,6 +1474,7 @@ mod tests {
             short: Some("⇢ #12".into()),
             link: to.map(str::to_string),
             colour: None,
+            drawn_on: DrawnOn::Own,
         }
     }
 

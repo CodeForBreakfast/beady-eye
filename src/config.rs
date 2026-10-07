@@ -346,6 +346,24 @@ pub struct Badge {
     /// What the badge is drawn in, for one whose config names a colour. A
     /// badge that names none is drawn in the tone of the row it sits on.
     pub colour: Option<Colour>,
+    #[serde(default)]
+    pub drawn_on: DrawnOn,
+}
+
+/// The rows a badge is drawn on.
+///
+/// Only an entry knows whether its badge means anything on another bead's
+/// row: a blocker's ticket drawn there unasked would read as the row's own.
+/// A name rather than a flag, so rows further away can be named later.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DrawnOn {
+    /// Its bead's own row alone.
+    #[default]
+    Own,
+    /// Its bead's row, and the row of each bead its bead blocks directly
+    /// while that row rests shut and its bead is open.
+    Blocked,
 }
 
 /// A colour a badge may be drawn in: a slot of `bdi`'s own palette, or a
@@ -1335,6 +1353,7 @@ path = "/home/user/dev/cinder"
                         link: None,
                         short: None,
                         colour: None,
+                        drawn_on: DrawnOn::Own,
                     }],
                     worktrees: Vec::new(),
                 },
@@ -1365,6 +1384,7 @@ path = "/home/user/dev/cinder"
                     link: None,
                     short: None,
                     colour: None,
+                    drawn_on: DrawnOn::Own,
                 },
                 Badge {
                     when: Default::default(),
@@ -1375,6 +1395,7 @@ path = "/home/user/dev/cinder"
                     link: None,
                     short: None,
                     colour: None,
+                    drawn_on: DrawnOn::Own,
                 },
             ]
         );
@@ -1613,6 +1634,7 @@ title = ["title", "badge.metadata.jira", "badges"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }
     }
 
@@ -1734,7 +1756,7 @@ path = "/home/user/dev/kadath"
         assert_eq!(
             said.trim_end(),
             "unknown field `path`, expected one of `key`, `match`, `when`, `unless`, `render`, \
-             `short`, `link`, `colour`\n\
+             `short`, `link`, `colour`, `drawn_on`\n\
              in `projects.badges`"
         );
         assert!(!said.contains("missing field"), "{said}");
@@ -2472,6 +2494,7 @@ metadata_keys = ["working_topic"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("owner/repo#7", &no_fields()),
@@ -2490,6 +2513,7 @@ metadata_keys = ["working_topic"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("human", &no_fields()),
@@ -2529,6 +2553,7 @@ metadata_keys = ["working_topic"]
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             };
             for candidate in values.iter().flat_map(|v| anything_near(v)) {
                 assert_eq!(
@@ -2551,6 +2576,7 @@ metadata_keys = ["working_topic"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("owner/arkham#7", &no_fields()),
@@ -2570,6 +2596,7 @@ metadata_keys = ["working_topic"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("owner/repo#7", &no_fields()),
@@ -2590,6 +2617,7 @@ metadata_keys = ["working_topic"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("{topic}/arkham", &no_fields()),
@@ -2611,6 +2639,7 @@ metadata_keys = ["working_topic"]
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("dunwich/arkham#7", &no_fields()),
@@ -2639,6 +2668,7 @@ metadata_keys = ["working_topic"]
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".to_string()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(b.apply("12", &no_fields()), Some("⇢ #12".to_string()));
         assert_eq!(b.link_for("12", &no_fields()), None);
@@ -2661,6 +2691,7 @@ metadata_keys = ["working_topic"]
             link: Some("https://forge.invalid/{repo}/pull/{number}".to_string()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(b.link_for("12", &no_fields()), None);
     }
@@ -2676,6 +2707,7 @@ metadata_keys = ["working_topic"]
             link: Some("https://forge.invalid/waiting".to_string()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.link_for("human", &no_fields()),
@@ -2695,6 +2727,7 @@ metadata_keys = ["working_topic"]
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(b.link_for("dunwich/arkham#7", &no_fields()), None);
     }
@@ -2712,6 +2745,7 @@ metadata_keys = ["working_topic"]
             short: Some("⇢ #{number}".to_string()),
             link: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("dunwich/arkham#7", &no_fields()),
@@ -2739,6 +2773,7 @@ metadata_keys = ["working_topic"]
             short: Some("⇢ {owner} #{number}".to_string()),
             link: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(
             b.apply("arkham#12", &no_fields()),
@@ -2762,6 +2797,7 @@ metadata_keys = ["working_topic"]
             short: None,
             link: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(b.short_for("dunwich/arkham#7", &no_fields()), None);
     }
@@ -2780,6 +2816,7 @@ metadata_keys = ["working_topic"]
             short: Some("⏸".to_string()),
             link: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         assert_eq!(b.short_for("human", &no_fields()), Some("⏸".to_string()));
         assert_eq!(b.short_for("dependency", &no_fields()), None);
@@ -2946,6 +2983,42 @@ colour = "chartreuse"
         .unwrap_err();
 
         assert!(err.to_string().contains("chartreuse"), "got: {err}");
+    }
+
+    #[test]
+    fn a_badge_names_the_rows_it_is_drawn_on_and_is_kept_to_its_own_by_default() {
+        for (written, drawn_on) in [
+            ("", DrawnOn::Own),
+            ("drawn_on = \"own\"", DrawnOn::Own),
+            ("drawn_on = \"blocked\"", DrawnOn::Blocked),
+        ] {
+            let cfg = Config::from_toml(&format!(
+                r#"{ONE_PROJECT}
+[[badges]]
+key    = "metadata.repo"
+render = "{{}}"
+{written}
+"#
+            ))
+            .unwrap_or_else(|err| panic!("{written:?} reads: {err}"));
+
+            assert_eq!(cfg.badges[0].drawn_on, drawn_on, "{written:?}");
+        }
+    }
+
+    #[test]
+    fn rows_a_badge_cannot_be_drawn_on_refuse_the_config() {
+        let err = Config::from_toml(&format!(
+            r#"{ONE_PROJECT}
+[[badges]]
+key      = "metadata.repo"
+render   = "{{}}"
+drawn_on = "blockers"
+"#
+        ))
+        .unwrap_err();
+
+        assert!(err.to_string().contains("blockers"), "got: {err}");
     }
 
     /// The working trees a project occupies are git's answer about a

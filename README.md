@@ -294,12 +294,13 @@ only through a badge in your config:
 
 ```toml
 [[badges]]
-key    = "metadata.repo"
-when   = { await_type = "gh:pr", await_id = "[0-9]+" }
-match  = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
-render = "⇢ {name} #{await_id}"
-short  = "⇢ #{await_id}"
-link   = "https://github.com/{owner}/{name}/pull/{await_id}"
+key      = "metadata.repo"
+when     = { await_type = "gh:pr", await_id = "[0-9]+" }
+match    = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render   = "⇢ {name} #{await_id}"
+short    = "⇢ #{await_id}"
+link     = "https://github.com/{owner}/{name}/pull/{await_id}"
+drawn_on = "blocked"
 ```
 
 `bdi gates` looks at every configured project's open gh:pr gates and asks
