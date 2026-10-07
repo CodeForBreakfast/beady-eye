@@ -120,7 +120,10 @@ pub fn open_pull_requests_headed_by(
     repo: &Repository,
     sha: &str,
 ) -> Result<Vec<u64>, RunFailure> {
-    let path = format!("repos/{}/{}/commits/{sha}/pulls", repo.owner, repo.name);
+    let path = format!(
+        "repos/{}/{}/commits/{sha}/pulls?per_page=100",
+        repo.owner, repo.name
+    );
     let mut args = vec!["api", &path];
     if let Some(host) = repo.host {
         args.extend(["--hostname", host]);
@@ -205,7 +208,7 @@ mod tests {
 
     const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
     const COMMIT_PULLS: &str =
-        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls";
+        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls?per_page=100";
 
     /// #7 open with the commit as its head, #8 open with the commit only in
     /// its history, #9 closed with the commit as its head.

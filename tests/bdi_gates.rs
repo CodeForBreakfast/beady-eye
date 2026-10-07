@@ -516,7 +516,7 @@ fn a_signed_check_suite_or_status_delivery_settles_the_open_pull_requests_the_co
         let github = ShimmedGitHub::beside(&home);
         github.refuses_with(&queried(), "HTTP 502\n");
         github.answers_with(
-            &format!("api repos/example/ark/commits/{SHA}/pulls"),
+            &format!("api repos/example/ark/commits/{SHA}/pulls?per_page=100"),
             LISTED_FOR_SHA,
         );
         github.answers_with(&viewed(42), &answer(42, MERGED));
@@ -537,7 +537,7 @@ fn a_signed_check_suite_or_status_delivery_settles_the_open_pull_requests_the_co
             github.calls(),
             [
                 queried(),
-                format!("api repos/example/ark/commits/{SHA}/pulls"),
+                format!("api repos/example/ark/commits/{SHA}/pulls?per_page=100"),
                 viewed(42)
             ],
             "{event}"
