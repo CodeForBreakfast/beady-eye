@@ -6,10 +6,10 @@
 # GitHub to ask.
 #
 #   BDI_SHIM_GH_ANSWERS  directory holding one file per call, named by the
-#                        call as bdi asks it: `pr view 42 --repo example/ark
-#                        --json state,mergeCommit`, where the `/` makes
-#                        `pr view 42 --repo example` a directory. A call with
-#                        a file there is answered with it. A file named for the
+#                        call as bdi asks it: `api rate_limit`, where a `/`
+#                        in a call would make a directory of what comes
+#                        before it. A call with a file there is answered
+#                        with it. A file named for the
 #                        call with `.refused` after it refuses the call
 #                        instead: it goes to stderr and the shim exits 1, as
 #                        gh does.

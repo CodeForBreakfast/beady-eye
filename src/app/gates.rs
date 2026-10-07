@@ -7,11 +7,12 @@ use chrono::{DateTime, Utc};
 
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
-use crate::collect::gates::{self, Done, PrGate, PullRequest, Settled};
+use crate::collect::gates::{self, Awaited, Done, PrGate, PullRequest, Settled, Told, Waiting};
 use crate::collect::github;
+use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::config::{Gates, Project};
-use crate::model::gate::{self, Fault, Until};
+use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
 
 /// Something a look at the gates found to report.
@@ -42,10 +43,11 @@ pub enum Found {
         pull_request: PullRequest,
         resets: Option<DateTime<Utc>>,
     },
-    /// A write settling a finished pull request asked of one bead, and what
-    /// came of it.
+    /// A write settling a pull request asked of one bead, for what the pull
+    /// request did, and what came of it.
     Settling {
         pull_request: PullRequest,
+        happening: &'static str,
         project: String,
         bead: String,
         done: Result<Done, TrackerFailure>,
@@ -77,12 +79,18 @@ pub struct Settling {
 /// request one of them waits on, once however many gates wait on it, asking
 /// GitHub about each repository's together, until GitHub refuses one for its
 /// rate limit. A gate whose repository `settles` leaves to another
-/// `bdi gates` is passed over without a word. No tracker is asked about an
-/// open pull request that no gate waits on to leave draft.
-pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Settling {
+/// `bdi gates` is passed over without a word. No tracker is asked about a
+/// pull request that has done nothing new to the gates waiting on it, which
+/// `told` says of the beads they hold back.
+pub fn look(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    settles: &Gates,
+    told: &Told,
+) -> Settling {
     let mut found = Vec::new();
-    let mut awaited: Vec<Vec<PullRequest>> = Vec::new();
-    let mut for_review: Vec<PullRequest> = Vec::new();
+    let mut awaited: Vec<Vec<Awaited>> = Vec::new();
     let settled_here = |gate: &PrGate| settles.settles(gate.repo.as_deref().and_then(gate::owner));
     for read in gates::across(cli, projects, settled_here) {
         let open = match read.gates {
@@ -102,22 +110,23 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
                     gate: gate.id,
                     faults,
                 }),
-                Ok(wait) => {
-                    if wait.until == Until::ReadyForReview {
-                        for_review.push(wait.pull_request.clone());
-                    }
-                    awaiting(&mut awaited, wait.pull_request)
-                }
+                Ok(wait) => awaiting(
+                    &mut awaited,
+                    wait.pull_request,
+                    Waiting {
+                        project: read.project.clone(),
+                        until: wait.until,
+                        blocks: gate.blocks,
+                    },
+                ),
             }
         }
     }
-    let awaited_for_review =
-        |pull_request: &PullRequest| for_review.iter().any(|seen| seen.is(pull_request));
     let mut github = Read::Unasked;
     for repository in &awaited {
-        let settled = gates::settle_together(cli, gh, projects, repository, &awaited_for_review);
-        for (pull_request, settled) in repository.iter().zip(settled) {
-            let each = findings(gh, pull_request.clone(), settled);
+        let settled = gates::settle_together(cli, gh, projects, &EVENTS, repository, told);
+        for (each, settled) in repository.iter().zip(settled) {
+            let each = findings(gh, each.pull_request.clone(), settled);
             found.extend(each.found);
             github = github.max(each.github);
             if matches!(found.last(), Some(Found::RateLimited { .. })) {
@@ -128,17 +137,31 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
     Settling { found, github }
 }
 
-/// Add `pull_request` to the ones awaited in its repository, unless it is
-/// there already. GitHub reads a repository's name in any case, so neither
-/// comparison heeds it.
-fn awaiting(awaited: &mut Vec<Vec<PullRequest>>, pull_request: PullRequest) {
-    match awaited
+/// Add `gate` to those waiting on `pull_request`, grouped by repository.
+/// GitHub reads a repository's name in any case, so neither comparison heeds
+/// it.
+fn awaiting(awaited: &mut Vec<Vec<Awaited>>, pull_request: PullRequest, gate: Waiting) {
+    let repository = match awaited.iter().position(|repository| {
+        repository[0]
+            .pull_request
+            .repo
+            .eq_ignore_ascii_case(&pull_request.repo)
+    }) {
+        Some(at) => &mut awaited[at],
+        None => {
+            awaited.push(Vec::new());
+            awaited.last_mut().expect("one was just pushed")
+        }
+    };
+    match repository
         .iter_mut()
-        .find(|repository| repository[0].repo.eq_ignore_ascii_case(&pull_request.repo))
+        .find(|seen| seen.pull_request.is(&pull_request))
     {
-        Some(repository) if repository.iter().any(|seen| seen.is(&pull_request)) => {}
-        Some(repository) => repository.push(pull_request),
-        None => awaited.push(vec![pull_request]),
+        Some(seen) => seen.waiting.push(gate),
+        None => repository.push(Awaited {
+            pull_request,
+            waiting: vec![gate],
+        }),
     }
 }
 
@@ -151,11 +174,12 @@ pub fn delivered(
     projects: &[Project],
     settles: &Gates,
     pull_request: PullRequest,
+    told: &Told,
 ) -> Settling {
     if !settles.settles(gate::owner(&pull_request.repo)) {
         return Settling::default();
     }
-    let settled = gates::settle(cli, gh, projects, &pull_request);
+    let settled = gates::settle(cli, gh, projects, &EVENTS, &pull_request, told);
     findings(gh, pull_request, settled)
 }
 
@@ -163,10 +187,10 @@ pub fn delivered(
 fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Settling {
     let github = match settled {
         Settled::Unread(_) => Read::Refused,
-        Settled::Open | Settled::Acted(_) => Read::Answered,
+        Settled::NothingNew | Settled::Acted(_) => Read::Answered,
     };
     let found = match settled {
-        Settled::Open => Vec::new(),
+        Settled::NothingNew => Vec::new(),
         Settled::Unread(failure) if failure.kind == FailureKind::RateLimited => {
             let resets = github::spent_until(gh, gate::host(&pull_request.repo));
             vec![Found::RateLimited {
@@ -189,6 +213,7 @@ fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Set
                     .into_iter()
                     .map(|act| Found::Settling {
                         pull_request: pull_request.clone(),
+                        happening: act.happening,
                         project: settled.project.clone(),
                         bead: act.bead,
                         done: act.done.map_err(|failure| tracker_failure(&failure)),
@@ -207,7 +232,7 @@ mod tests {
     use std::path::PathBuf;
 
     const GATE_LIST: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list.json");
-    const MERGED: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_merged.json");
+    const MERGED: &str = r#"{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}"#;
     /// #7 open and #42 merged, as the one query a look asks reads them.
     const QUERIED: &str =
         include_str!("../../tests/fixtures/gh_2.102.0_api_graphql_ark_42_merged.json");
@@ -279,8 +304,18 @@ mod tests {
         )
     }
 
+    /// The query a settling of #`number` alone asks.
     fn viewed(number: u64) -> String {
-        format!("gh pr view {number} --repo example/ark --json state,isDraft,mergeCommit")
+        format!(
+            "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
+             $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
+             (number:{number}){{state isDraft mergeCommit{{oid}}}}}}}}"
+        )
+    }
+
+    /// GitHub's answer to [`viewed`]: #`number` with `fields`.
+    fn answer(number: u64, fields: &str) -> String {
+        format!(r#"{{"data":{{"repository":{{"pr{number}":{fields}}}}}}}"#)
     }
 
     /// The one query a look asks about #7 and #42 in `example/<name>`.
@@ -309,6 +344,7 @@ mod tests {
     fn settling(project: &str) -> Found {
         Found::Settling {
             pull_request: pr(42),
+            happening: "merged",
             project: project.to_string(),
             bead: "ark-0i5".to_string(),
             done: Ok(Done::Resolved),
@@ -346,7 +382,13 @@ mod tests {
     }
 
     fn looked(runner: &FakeRunner, projects: &[Project], settles: &Gates) -> Settling {
-        look(&Cli::new(runner), runner, projects, settles)
+        look(
+            &Cli::new(runner),
+            runner,
+            projects,
+            settles,
+            &Told::default(),
+        )
     }
 
     fn asked_github(runner: &FakeRunner) -> Vec<String> {
@@ -431,9 +473,10 @@ mod tests {
                 no_number("arkham"),
                 Found::Settling {
                     pull_request: pr(7),
+                    happening: "is ready for review",
                     project: "arkham".to_string(),
                     bead: "ark-eb1".to_string(),
-                    done: Ok(Done::ResolvedForReview),
+                    done: Ok(Done::Resolved),
                 },
                 settling("arkham"),
             ]
@@ -511,13 +554,14 @@ mod tests {
             &[project("arkham")],
             settles,
             pr(number),
+            &Told::default(),
         )
     }
 
     #[test]
     fn a_delivery_settles_the_pull_request_it_names_and_no_other() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
 
         let found = delivered_here(&runner, &owners(&["example"]), 42).found;
@@ -531,7 +575,7 @@ mod tests {
     /// panics on any call it was not given, so a write would fail the test.
     #[test]
     fn a_delivery_for_a_merged_pull_request_no_gate_waits_on_writes_nothing() {
-        let runner = captured(FakeRunner::default(), "arkham").with(&viewed(9), MERGED);
+        let runner = captured(FakeRunner::default(), "arkham").with(&viewed(9), &answer(9, MERGED));
 
         let Settling { found, github } = delivered_here(&runner, &Gates::default(), 9);
 
@@ -636,7 +680,7 @@ mod tests {
         let runner = captured(FakeRunner::default(), "arkham")
             .failing(&queried("ark"), gone())
             .failing(&viewed(7), gone())
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
 
         let Settling { found, github } =
@@ -758,5 +802,66 @@ mod tests {
             ],
             "settling #42 asks arkham again, and arkham is unread again"
         );
+    }
+
+    /// #7 closed unmerged and #42 open, as the one query a look asks reads
+    /// them.
+    fn queried_7_closed() -> String {
+        include_str!("../../tests/fixtures/gh_2.102.0_api_graphql_ark_open.json")
+            .replace(r#""pr7":{"state":"OPEN""#, r#""pr7":{"state":"CLOSED""#)
+    }
+
+    fn telling_7(bead: &str) -> String {
+        format!(
+            "bd -C /nowhere/arkham comments add {bead} Pull request example/ark#7 closed without \
+             being merged, so the gh:pr gate waiting on it stays open."
+        )
+    }
+
+    fn told_7(bead: &str) -> Found {
+        Found::Settling {
+            pull_request: pr(7),
+            happening: "closed unmerged",
+            project: "arkham".to_string(),
+            bead: bead.to_string(),
+            done: Ok(Done::Commented),
+        }
+    }
+
+    /// The runner panics on any call it was not given, and is given no
+    /// comments to read the second time, so a second look that asked any
+    /// bead for its comments would fail the test.
+    #[test]
+    fn a_second_look_at_a_pull_request_closed_unmerged_asks_no_bead_for_its_comments() {
+        let no_comments = include_str!("../../tests/fixtures/bd_1.3.0_comments_none.json");
+        let first = captured(FakeRunner::default(), "arkham")
+            .with(&queried("ark"), &queried_7_closed())
+            .with(&read("arkham", "comments ark-2ud --json"), no_comments)
+            .with(&read("arkham", "comments ark-45c --json"), no_comments)
+            .with(&telling_7("ark-2ud"), "")
+            .with(&telling_7("ark-45c"), "");
+        let second =
+            captured(FakeRunner::default(), "arkham").with(&queried("ark"), &queried_7_closed());
+        let told = Told::default();
+        let look_with = |runner: &FakeRunner| {
+            look(
+                &Cli::new(runner),
+                runner,
+                &[project("arkham")],
+                &owners(&["example"]),
+                &told,
+            )
+            .found
+        };
+
+        let found_first = look_with(&first);
+        let found_second = look_with(&second);
+
+        assert_eq!(
+            found_first,
+            [no_number("arkham"), told_7("ark-2ud"), told_7("ark-45c")]
+        );
+        assert_eq!(found_second, [no_number("arkham")]);
+        assert_eq!(gate_lists_read(&second), 1);
     }
 }
