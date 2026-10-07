@@ -336,10 +336,9 @@ const NO_SUCH_PANE: &str = "agent_not_found";
 const PANE_BUSY: &str = "agent_not_idle";
 
 /// What gh says when GitHub has no repository or pull request by the name
-/// asked. Measured against gh 2.102.0 on 2026-10-06: `GraphQL: Could not
-/// resolve to a PullRequest with the number of <n>.` from `gh pr view`, and
-/// `gh: Could not resolve to a Repository with the name '<repo>'.` from `gh
-/// api graphql`.
+/// asked. Measured against gh 2.102.0 on `gh api graphql`: `gh: Could not
+/// resolve to a PullRequest with the number of <n>.` and `gh: Could not
+/// resolve to a Repository with the name '<repo>'.`
 const NOT_ON_GITHUB: &str = "could not resolve to a";
 
 impl RunFailure {

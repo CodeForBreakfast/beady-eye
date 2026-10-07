@@ -6,8 +6,9 @@
 //! one for what it works out where nothing configured it, one for the pane
 //! text a tail shows, one for the socket a setup pokes to say a project's
 //! work changed, one for what a running watcher says of each tracker, one for
-//! the pull requests each tracker's gates wait on, and one for GitHub's
-//! webhook deliveries about them.
+//! the pull requests each tracker's gates wait on, one for what each thing a
+//! pull request does means to those gates, and one for GitHub's webhook
+//! deliveries about them.
 
 pub mod agents;
 pub mod bd;
@@ -18,6 +19,7 @@ pub mod gates;
 pub mod github;
 pub mod herdr;
 pub mod panes;
+pub mod pr_events;
 pub mod run;
 pub mod tracker;
 pub mod watched;

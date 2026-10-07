@@ -6,11 +6,13 @@
 //! gate's `repo` metadata. This reads those gates, and settles the ones
 //! waiting on a pull request GitHub says has done what they wait for.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::collect::bd::{Cli, Settling};
-use crate::collect::github::{self, State};
+use crate::collect::github::{self, Observed};
+use crate::collect::pr_events::{self, Event, Outcome};
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::config::Project;
@@ -77,11 +79,11 @@ pub enum Settled {
     /// GitHub did not say where the pull request stands, so no tracker was
     /// asked anything.
     Unread(RunFailure),
-    /// The pull request is still open, and no gate waiting on it could be
-    /// settled by that, so no tracker was asked anything.
-    Open,
-    /// The pull request merged, closed, or left draft for gates that may
-    /// wait for that, and this is what each configured project did about it.
+    /// Nothing the pull request has done is new to a gate waiting on it, so
+    /// no tracker was asked anything.
+    NothingNew,
+    /// The pull request did something new to a gate waiting on it, and this
+    /// is what each configured project did about it.
     Acted(Vec<ProjectSettled>),
 }
 
@@ -97,38 +99,94 @@ pub struct ProjectSettled {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Act {
     pub bead: String,
+    /// What the pull request did that asked for the write, as the event
+    /// says it.
+    pub happening: &'static str,
     /// What was done, or the failed call that left the bead as it was.
     pub done: Result<Done, RunFailure>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Done {
-    /// The gate was closed on the merge, so the beads it held back are free
-    /// of it.
+    /// The gate was closed, so the beads it held back are free of it.
     Resolved,
-    /// The gate was closed because its pull request is ready for review.
-    ResolvedForReview,
-    /// The waiting bead was told the pull request closed unmerged.
+    /// The waiting bead was told what the pull request did.
     Commented,
     /// The waiting bead had already been told, by an earlier settling.
     AlreadyCommented,
 }
 
-/// Re-read `pr` from GitHub, then settle it as [`settled`] does, as a pull
-/// request a gate may wait on to leave draft.
-pub fn settle(cli: &Cli, gh: &dyn Runner, projects: &[Project], pr: &PullRequest) -> Settled {
-    settled(cli, projects, pr, github::state(gh, pr), true)
+/// A pull request a look found gates waiting on, and those gates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Awaited {
+    pub pull_request: PullRequest,
+    pub waiting: Vec<Waiting>,
+}
+
+/// One gate a look found waiting on a pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    pub project: String,
+    pub until: Until,
+    /// The beads the gate holds back.
+    pub blocks: Vec<String>,
+}
+
+/// Which bead has been told what, as far as this process knows. A bead it
+/// has not told is asked for its comments before it is told, so a process
+/// that starts afresh tells no bead twice, and one that keeps this between
+/// settlings asks no tracker about a bead it has told.
+// ponytail: nothing is forgotten, at one entry per bead told each thing.
+// Forget the beads no look finds held back if a process ever lives long
+// enough for that to matter.
+#[derive(Debug, Default)]
+pub struct Told(RefCell<BTreeSet<(String, String, String)>>);
+
+impl Told {
+    /// Whether `bead` in `project` is known to carry `text`. The comparison
+    /// ignores case because `text` names the repository as a gate spelt it,
+    /// which can differ from one settling to the next.
+    fn knows(&self, project: &str, bead: &str, text: &str) -> bool {
+        self.0.borrow().contains(&told(project, bead, text))
+    }
+
+    fn learn(&self, project: &str, bead: &str, text: &str) {
+        self.0.borrow_mut().insert(told(project, bead, text));
+    }
+}
+
+fn told(project: &str, bead: &str, text: &str) -> (String, String, String) {
+    (
+        project.to_string(),
+        bead.to_string(),
+        text.to_ascii_lowercase(),
+    )
+}
+
+/// Re-read `pr` from GitHub, then settle it as [`settled`] does, acting on
+/// everything `events` say it has done, since no look said which gates wait
+/// on it.
+pub fn settle(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    events: &[Event],
+    pr: &PullRequest,
+    told: &Told,
+) -> Settled {
+    let observed = observe(gh, pr, &pr_events::fields(events));
+    settled(cli, projects, events, pr, observed, None, told)
 }
 
 /// The most pull requests one query asks about. The query is one argument to
 /// `gh`, and an argument has a length limit of its own on Linux.
 const PULL_REQUESTS_PER_QUERY: usize = 100;
 
-/// Re-read every one of `prs`, which share a repository, from GitHub in one
-/// query for each [`PULL_REQUESTS_PER_QUERY`] of them, then settle each as
-/// [`settled`] does, in the order given. A query that fails leaves the
-/// others' pull requests settled. `awaited_for_review` says which of them
-/// a gate may wait on to leave draft.
+/// Re-read every one of `awaited`, which share a repository, from GitHub in
+/// one query for each [`PULL_REQUESTS_PER_QUERY`] of them, then settle each
+/// as [`settled`] does, in the order given, acting only on what is new to
+/// the gates the look found waiting. A query that fails leaves the others'
+/// pull requests settled.
 ///
 /// Nothing is asked until it is wanted, so a caller that stops early asks
 /// GitHub about none of the pull requests after where it stopped.
@@ -136,50 +194,81 @@ pub fn settle_together<'a>(
     cli: &'a Cli,
     gh: &'a dyn Runner,
     projects: &'a [Project],
-    prs: &'a [PullRequest],
-    awaited_for_review: &'a dyn Fn(&PullRequest) -> bool,
+    events: &'a [Event],
+    awaited: &'a [Awaited],
+    told: &'a Told,
 ) -> impl Iterator<Item = Settled> + 'a {
-    prs.chunks(PULL_REQUESTS_PER_QUERY)
-        .flat_map(move |asked| settle_asked_together(cli, gh, projects, asked, awaited_for_review))
+    awaited
+        .chunks(PULL_REQUESTS_PER_QUERY)
+        .flat_map(move |asked| settle_asked_together(cli, gh, projects, events, asked, told))
 }
 
-/// Re-read every one of `prs` in one query, then settle each.
+/// Re-read every one of `asked` in one query, then settle each.
 ///
 /// A query naming one pull request or repository GitHub does not have fails
 /// as a whole, so then each is read on its own and the rest are still
 /// settled. A number past GraphQL's 32-bit `Int` is one GitHub does not
 /// have: measured on gh 2.102.0, it says so rather than refusing the query.
-/// Each pull request in a repository the query cannot name is read
-/// on its own too.
+/// Each pull request in a repository the query cannot name is read on its
+/// own too.
 fn settle_asked_together<'a>(
     cli: &'a Cli,
     gh: &'a dyn Runner,
     projects: &'a [Project],
-    prs: &'a [PullRequest],
-    awaited_for_review: &'a dyn Fn(&PullRequest) -> bool,
+    events: &'a [Event],
+    asked: &'a [Awaited],
+    told: &'a Told,
 ) -> impl Iterator<Item = Settled> + 'a {
-    let numbers: Vec<u64> = prs.iter().map(|pr| pr.number).collect();
-    let together = prs
+    let fields = pr_events::fields(events);
+    let numbers: Vec<u64> = asked.iter().map(|each| each.pull_request.number).collect();
+    let together = asked
         .first()
-        .and_then(|pr| gate::repository(&pr.repo))
-        .map(|repo| github::states(gh, &repo, &numbers));
-    let states: Box<dyn Iterator<Item = Result<State, RunFailure>> + 'a> = match together {
-        Some(Ok(states)) => Box::new(states.into_iter().map(Ok)),
-        Some(Err(failure)) if failure.kind != FailureKind::Gone || prs.len() == 1 => {
-            Box::new(prs.iter().map(move |_| Err(failure.clone())))
+        .and_then(|each| gate::repository(&each.pull_request.repo))
+        .map(|repo| github::pull_requests(gh, &repo, &numbers, &fields));
+    let observed: Box<dyn Iterator<Item = Result<Observed, RunFailure>> + 'a> = match together {
+        Some(Ok(observed)) => Box::new(observed.into_iter().map(Ok)),
+        Some(Err(failure)) if failure.kind != FailureKind::Gone || asked.len() == 1 => {
+            Box::new(asked.iter().map(move |_| Err(failure.clone())))
         }
-        _ => Box::new(prs.iter().map(move |pr| github::state(gh, pr))),
+        _ => Box::new(
+            asked
+                .iter()
+                .map(move |each| observe(gh, &each.pull_request, &fields)),
+        ),
     };
-    prs.iter()
-        .zip(states)
-        .map(move |(pr, state)| settled(cli, projects, pr, state, awaited_for_review(pr)))
+    asked.iter().zip(observed).map(move |(each, observed)| {
+        settled(
+            cli,
+            projects,
+            events,
+            &each.pull_request,
+            observed,
+            Some(&each.waiting),
+            told,
+        )
+    })
 }
 
-/// Settle every open gh:pr gate waiting on `pr` in each of `projects`, as
-/// GitHub said it stands. A merge closes each gate, and a close without one
-/// leaves each open and comments once on every bead it holds back. Leaving
-/// draft closes each gate waiting for that, where `awaited_for_review` says
-/// one may be.
+/// `pr` as GitHub has it, asked `fields` beside its state.
+fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, RunFailure> {
+    let repo = gate::repository(&pr.repo).ok_or_else(|| RunFailure {
+        kind: FailureKind::Gone,
+        program: "gh".to_string(),
+        detail: format!(
+            "{} is not OWNER/REPO or HOST/OWNER/REPO, so GitHub has no such repository",
+            pr.repo
+        ),
+        unreadable: None,
+    })?;
+    let mut observed = github::pull_requests(gh, &repo, &[pr.number], fields)?;
+    Ok(observed.remove(0))
+}
+
+/// Settle every open gh:pr gate waiting on `pr` in each of `projects`, doing
+/// what each of `events` asks of what GitHub said. Where a look found the
+/// gates `waiting` on `pr`, an event's outcome is acted on only where it is
+/// new to them: a gate waiting for it, or a bead held back that has not been
+/// told it.
 ///
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. A pull request GitHub did not
@@ -187,109 +276,135 @@ fn settle_asked_together<'a>(
 fn settled(
     cli: &Cli,
     projects: &[Project],
+    events: &[Event],
     pr: &PullRequest,
-    state: Result<State, RunFailure>,
-    awaited_for_review: bool,
+    observed: Result<Observed, RunFailure>,
+    waiting: Option<&[Waiting]>,
+    told: &Told,
 ) -> Settled {
-    match state {
-        Err(failure) => Settled::Unread(failure),
-        Ok(State::Open { draft: false }) if awaited_for_review => {
-            let reason = format!("Pull request {pr} is ready for review.");
-            each_project(
-                cli,
-                projects,
-                pr,
-                |until| until == Until::ReadyForReview,
-                |tracker, waiting| resolve_each(tracker, waiting, &reason, Done::ResolvedForReview),
-            )
-        }
-        Ok(State::Open { .. }) => Settled::Open,
-        Ok(State::Merged { commit }) => {
-            let reason = match commit {
-                Some(commit) => format!("Pull request {pr} merged as {commit}."),
-                None => format!("Pull request {pr} merged."),
-            };
-            each_project(
-                cli,
-                projects,
-                pr,
-                |_| true,
-                |tracker, waiting| resolve_each(tracker, waiting, &reason, Done::Resolved),
-            )
-        }
-        Ok(State::Closed) => {
-            let told = format!(
-                "Pull request {pr} closed without being merged, so the gh:pr gate waiting on \
-                 it stays open."
-            );
-            each_project(
-                cli,
-                projects,
-                pr,
-                |_| true,
-                |tracker, waiting| {
-                    let held_back: BTreeSet<&String> =
-                        waiting.iter().flat_map(|gate| &gate.blocks).collect();
-                    held_back
-                        .into_iter()
-                        .map(|bead| Act {
-                            bead: bead.clone(),
-                            done: tell(tracker, bead, &told),
-                        })
-                        .collect()
-                },
-            )
-        }
+    let outcomes = match observed.and_then(|observed| outcomes(events, pr, &observed)) {
+        Ok(outcomes) => outcomes,
+        Err(failure) => return Settled::Unread(failure),
+    };
+    let new: Vec<(&'static str, Outcome)> = outcomes
+        .into_iter()
+        .filter(|(_, outcome)| waiting.is_none_or(|waiting| is_new(outcome, waiting, told)))
+        .collect();
+    if new.is_empty() {
+        return Settled::NothingNew;
     }
-}
-
-/// What each of `projects` did with the open gates waiting on `pr` for what
-/// `until` wants, read afresh from its tracker.
-fn each_project(
-    cli: &Cli,
-    projects: &[Project],
-    pr: &PullRequest,
-    until: impl Fn(Until) -> bool,
-    act: impl Fn(&Settling, &[PrGate]) -> Vec<Act>,
-) -> Settled {
     Settled::Acted(
         projects
             .iter()
             .map(|project| ProjectSettled {
                 project: project.name.clone(),
                 acts: cli.settling(project).and_then(|tracker| {
-                    let waiting = tracker
-                        .pr_gates_waiting(|wait| wait.pull_request.is(pr) && until(wait.until))?;
-                    Ok(act(&tracker, &waiting))
+                    let gates = tracker.pr_gates_waiting(|wait| {
+                        wait.pull_request.is(pr)
+                            && new.iter().any(|(_, outcome)| outcome.concerns(wait.until))
+                    })?;
+                    Ok(acted(&tracker, &project.name, &gates, &new, told))
                 }),
             })
             .collect(),
     )
 }
 
-/// Close each of `waiting` with `reason`, done as `done` says.
-fn resolve_each(tracker: &Settling, waiting: &[PrGate], reason: &str, done: Done) -> Vec<Act> {
-    waiting
+/// What each of `events` makes of `pr`, beside what it did, as the event
+/// says it.
+fn outcomes(
+    events: &[Event],
+    pr: &PullRequest,
+    observed: &Observed,
+) -> Result<Vec<(&'static str, Outcome)>, RunFailure> {
+    events
         .iter()
-        .map(|gate| Act {
-            bead: gate.id.clone(),
-            done: tracker.resolve(&gate.id, reason).map(|()| done),
+        .filter_map(|event| match (event.outcome)(pr, observed) {
+            Ok(outcome) => outcome.map(|outcome| Ok((event.happening, outcome))),
+            Err(e) => Some(Err(RunFailure::parse("gh", e))),
         })
         .collect()
 }
 
-/// Comment `told` on `bead` unless it already carries it. The comparison
-/// ignores case because `told` names the repository as the caller spelt it,
-/// which can differ from one settling to the next.
-fn tell(tracker: &Settling, bead: &str, told: &str) -> Result<Done, RunFailure> {
-    if tracker
-        .comments(bead)?
-        .iter()
-        .any(|comment| comment.eq_ignore_ascii_case(told))
-    {
+/// Whether `outcome` asks anything not yet done of the gates `waiting`.
+fn is_new(outcome: &Outcome, waiting: &[Waiting], told: &Told) -> bool {
+    waiting.iter().any(|gate| match outcome {
+        Outcome::Resolve { awaited, .. } => awaited(gate.until),
+        Outcome::Tell(text) => gate
+            .blocks
+            .iter()
+            .any(|bead| !told.knows(&gate.project, bead, text)),
+    })
+}
+
+/// Do each of `outcomes` to `gates`, read afresh from `project`'s tracker.
+/// A gate one outcome closed is not closed again by the next.
+fn acted(
+    tracker: &Settling,
+    project: &str,
+    gates: &[PrGate],
+    outcomes: &[(&'static str, Outcome)],
+    told: &Told,
+) -> Vec<Act> {
+    let mut resolved = BTreeSet::new();
+    let mut acts = Vec::new();
+    for (happening, outcome) in outcomes {
+        let concerned = gates.iter().filter(|gate| {
+            gate.awaits
+                .as_ref()
+                .is_ok_and(|wait| outcome.concerns(wait.until))
+        });
+        match outcome {
+            Outcome::Resolve { reason, .. } => {
+                for gate in concerned.filter(|gate| resolved.insert(gate.id.clone())) {
+                    acts.push(Act {
+                        bead: gate.id.clone(),
+                        happening,
+                        done: tracker.resolve(&gate.id, reason).map(|()| Done::Resolved),
+                    });
+                }
+            }
+            Outcome::Tell(text) => {
+                let held_back: BTreeSet<&String> =
+                    concerned.flat_map(|gate| &gate.blocks).collect();
+                for bead in held_back {
+                    acts.push(Act {
+                        bead: bead.clone(),
+                        happening,
+                        done: tell(tracker, project, bead, text, told),
+                    });
+                }
+            }
+        }
+    }
+    acts
+}
+
+/// Comment `text` on `bead` unless it already carries it, asking the
+/// tracker only where `told` does not know.
+fn tell(
+    tracker: &Settling,
+    project: &str,
+    bead: &str,
+    text: &str,
+    told: &Told,
+) -> Result<Done, RunFailure> {
+    if told.knows(project, bead, text) {
         return Ok(Done::AlreadyCommented);
     }
-    tracker.comment(bead, told).map(|()| Done::Commented)
+    let carried = tracker
+        .comments(bead)?
+        .iter()
+        .any(|comment| comment.eq_ignore_ascii_case(text));
+    if !carried {
+        tracker.comment(bead, text)?;
+    }
+    told.learn(project, bead, text);
+    Ok(if carried {
+        Done::AlreadyCommented
+    } else {
+        Done::Commented
+    })
 }
 
 impl PullRequest {
@@ -341,6 +456,7 @@ impl PrGate {
 mod tests {
     use super::*;
     use crate::collect::bd::parse_beads;
+    use crate::collect::pr_events::EVENTS;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::{FailureKind, RunFailure};
     use std::ops::RangeInclusive;
@@ -585,10 +701,10 @@ mod tests {
         }
     }
 
-    const MERGED: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_merged.json");
-    const CLOSED: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_closed.json");
-    const OPEN: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_open.json");
-    const DRAFT: &str = include_str!("../../tests/fixtures/gh_2.102.0_pr_view_draft.json");
+    const MERGED: &str = r#"{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}"#;
+    const CLOSED: &str = r#"{"state":"CLOSED","isDraft":false,"mergeCommit":null}"#;
+    const OPEN: &str = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null}"#;
+    const DRAFT: &str = r#"{"state":"OPEN","isDraft":true,"mergeCommit":null}"#;
     const NO_COMMENTS: &str = include_str!("../../tests/fixtures/bd_1.3.0_comments_none.json");
     /// ark-2ud's comments once it has been told example/ark#7 closed
     /// unmerged, beside a comment of its own.
@@ -605,8 +721,23 @@ mod tests {
         }
     }
 
+    /// The query about #`number` in `repo`, asking what [`EVENTS`] read.
+    fn viewed_in(repo: &str, number: u64) -> String {
+        let (owner, name) = repo.split_once('/').expect("the repo names its owner");
+        format!(
+            "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
+             $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
+             (number:{number}){{state isDraft mergeCommit{{oid}}}}}}}}"
+        )
+    }
+
     fn viewed(number: u64) -> String {
-        format!("gh pr view {number} --repo example/ark --json state,isDraft,mergeCommit")
+        viewed_in("example/ark", number)
+    }
+
+    /// GitHub's answer to [`viewed`]: #`number` with `fields`.
+    fn answer(number: u64, fields: &str) -> String {
+        format!(r#"{{"data":{{"repository":{{"pr{number}":{fields}}}}}}}"#)
     }
 
     /// A write to `project`'s tracker, as the runner spells it.
@@ -645,7 +776,14 @@ mod tests {
     }
 
     fn settled(runner: &FakeRunner, projects: &[Project], pr: &PullRequest) -> Settled {
-        settle(&Cli::new(runner), runner, projects, pr)
+        settle(
+            &Cli::new(runner),
+            runner,
+            projects,
+            &EVENTS,
+            pr,
+            &Told::default(),
+        )
     }
 
     /// Every bd call that was not a read.
@@ -670,22 +808,31 @@ mod tests {
         }
     }
 
-    fn act(bead: &str, done: Done) -> Act {
+    fn act(bead: &str, happening: &'static str, done: Done) -> Act {
         Act {
             bead: bead.to_string(),
+            happening,
             done: Ok(done),
         }
+    }
+
+    fn merged(bead: &str) -> Act {
+        act(bead, "merged", Done::Resolved)
+    }
+
+    fn closed(bead: &str, done: Done) -> Act {
+        act(bead, "closed unmerged", done)
     }
 
     #[test]
     fn a_merge_closes_the_gate_waiting_on_it_with_a_reason_naming_the_merge() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "✓ Gate resolved: ark-0i5\n");
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(acts(settled), [act("ark-0i5", Done::Resolved)]);
+        assert_eq!(acts(settled), [merged("ark-0i5")]);
         assert_eq!(writes(&runner), [resolving_42("arkham")]);
     }
 
@@ -695,25 +842,28 @@ mod tests {
     #[test]
     fn settling_asks_which_beads_are_held_back_only_of_the_gates_waiting_on_the_pull_request() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
 
         settled(&runner, &[project("arkham")], &pr(42));
 
-        let asked_after: Vec<String> = runner
+        assert_eq!(dep_lists_read(&runner), [held_back_by("arkham", "ark-0i5")]);
+    }
+
+    fn dep_lists_read(runner: &FakeRunner) -> Vec<String> {
+        runner
             .calls()
             .into_iter()
             .map(|call| call.argv)
             .filter(|argv| argv.contains(" dep list "))
-            .collect();
-        assert_eq!(asked_after, [held_back_by("arkham", "ark-0i5")]);
+            .collect()
     }
 
     #[test]
     fn a_merge_settled_again_writes_nothing_because_its_gate_is_closed() {
         let runner = captured(FakeRunner::default(), "arkham")
             .with(&gate_list("arkham"), &gate_list_without("ark-0i5"))
-            .with(&viewed(42), MERGED);
+            .with(&viewed(42), &answer(42, MERGED));
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
@@ -730,20 +880,23 @@ mod tests {
         let runner = captured(FakeRunner::default(), "arkham")
             .with(
                 &viewed(42),
-                r#"{"isDraft":false,"mergeCommit":null,"state":"MERGED"}"#,
+                &answer(
+                    42,
+                    r#"{"state":"MERGED","isDraft":false,"mergeCommit":null}"#,
+                ),
             )
             .with(&reason, "");
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(acts(settled), [act("ark-0i5", Done::Resolved)]);
+        assert_eq!(acts(settled), [merged("ark-0i5")]);
         assert_eq!(writes(&runner), [reason]);
     }
 
     #[test]
     fn a_close_without_a_merge_comments_on_each_held_back_bead_and_leaves_the_gate_open() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(7), CLOSED)
+            .with(&viewed(7), &answer(7, CLOSED))
             .with(&comments_on("arkham", "ark-2ud"), OWN)
             .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
             .with(&telling("arkham", "ark-2ud"), "Comment added to ark-2ud\n")
@@ -754,8 +907,8 @@ mod tests {
         assert_eq!(
             acts(settled),
             [
-                act("ark-2ud", Done::Commented),
-                act("ark-45c", Done::Commented)
+                closed("ark-2ud", Done::Commented),
+                closed("ark-45c", Done::Commented)
             ]
         );
         assert_eq!(
@@ -767,7 +920,7 @@ mod tests {
     #[test]
     fn a_close_settled_again_adds_no_second_comment() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(7), CLOSED)
+            .with(&viewed(7), &answer(7, CLOSED))
             .with(&comments_on("arkham", "ark-2ud"), TOLD)
             .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
             .with(&telling("arkham", "ark-45c"), "Comment added to ark-45c\n");
@@ -777,11 +930,84 @@ mod tests {
         assert_eq!(
             acts(settled),
             [
-                act("ark-2ud", Done::AlreadyCommented),
-                act("ark-45c", Done::Commented)
+                closed("ark-2ud", Done::AlreadyCommented),
+                closed("ark-45c", Done::Commented)
             ]
         );
         assert_eq!(writes(&runner), [telling("arkham", "ark-45c")]);
+    }
+
+    fn comments_read(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .into_iter()
+            .filter(|call| call.argv.contains(" comments ") && call.argv.contains(" --readonly "))
+            .count()
+    }
+
+    /// The second settling reads the gates afresh, as every settling that
+    /// acts does, and asks no bead for its comments.
+    #[test]
+    fn a_bead_this_process_told_is_not_asked_for_its_comments_again() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(7), &answer(7, CLOSED))
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), TOLD)
+            .with(&telling("arkham", "ark-2ud"), "");
+        let told = Told::default();
+        let settle_7 = || {
+            settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &pr(7),
+                &told,
+            )
+        };
+
+        settle_7();
+        let again = settle_7();
+
+        assert_eq!(
+            acts(again),
+            [
+                closed("ark-2ud", Done::AlreadyCommented),
+                closed("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(comments_read(&runner), 2);
+        assert_eq!(writes(&runner), [telling("arkham", "ark-2ud")]);
+    }
+
+    /// A comment bd failed to add is one nobody was told, so the next
+    /// settling looks again.
+    #[test]
+    fn a_bead_whose_comment_failed_is_asked_for_its_comments_again() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(7), &answer(7, CLOSED))
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), TOLD)
+            .failing(&telling("arkham", "ark-2ud"), unavailable("bd"));
+        let told = Told::default();
+
+        for _ in 0..2 {
+            settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &pr(7),
+                &told,
+            );
+        }
+
+        let asked_2ud = runner
+            .calls()
+            .into_iter()
+            .filter(|call| call.argv == comments_on("arkham", "ark-2ud"))
+            .count();
+        assert_eq!(asked_2ud, 2);
     }
 
     /// The captured gate list with ark-eb1 waiting on #42 to leave draft,
@@ -809,13 +1035,21 @@ mod tests {
                 &gate_list("arkham"),
                 &gate_list_with_42_awaited_for_review(),
             )
-            .with(&viewed(42), OPEN)
+            .with(&viewed(42), &answer(42, OPEN))
             .with(&resolving, "✓ Gate resolved: ark-eb1\n");
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(acts(settled), [act("ark-eb1", Done::ResolvedForReview)]);
+        assert_eq!(
+            acts(settled),
+            [act("ark-eb1", "is ready for review", Done::Resolved)]
+        );
         assert_eq!(writes(&runner), [resolving]);
+        assert_eq!(
+            dep_lists_read(&runner),
+            [held_back_by("arkham", "ark-eb1")],
+            "the gate waiting for the merge is not asked what it holds back"
+        );
     }
 
     #[test]
@@ -829,19 +1063,13 @@ mod tests {
                 &gate_list("arkham"),
                 &gate_list_with_42_awaited_for_review(),
             )
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_eb1, "")
             .with(&resolving_42("arkham"), "");
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(
-            acts(settled),
-            [
-                act("ark-eb1", Done::Resolved),
-                act("ark-0i5", Done::Resolved)
-            ]
-        );
+        assert_eq!(acts(settled), [merged("ark-eb1"), merged("ark-0i5")]);
         assert_eq!(writes(&runner), [resolving_eb1, resolving_42("arkham")]);
     }
 
@@ -849,12 +1077,12 @@ mod tests {
     /// anything at all fails the test.
     #[test]
     fn a_draft_asks_no_tracker_anything_however_often_it_is_settled() {
-        let runner = FakeRunner::default().with(&viewed(42), DRAFT);
+        let runner = FakeRunner::default().with(&viewed(42), &answer(42, DRAFT));
 
         for _ in 0..2 {
             assert_eq!(
                 settled(&runner, &[project("arkham")], &pr(42)),
-                Settled::Open
+                Settled::NothingNew
             );
         }
     }
@@ -864,17 +1092,17 @@ mod tests {
     /// tracker for each. The runner panics on any call it was not given.
     #[test]
     fn a_look_asks_no_tracker_about_an_open_pull_request_no_gate_waits_on_for_review() {
-        let runner = FakeRunner::default().with(
-            &queried(42..=42),
-            r#"{"data":{"repository":{"pr42":{"state":"OPEN","isDraft":false,"mergeCommit":null}}}}"#,
-        );
+        let runner = FakeRunner::default().with(&queried(42..=42), &answer(42, OPEN));
 
-        assert_eq!(settled_together(&runner, &[pr(42)]), [Settled::Open]);
+        assert_eq!(
+            settled_together(&runner, &[awaited(42, Until::Merged, &["ark-qca"])]),
+            [Settled::NothingNew]
+        );
     }
 
     #[test]
     fn an_open_pull_request_settled_on_its_own_asks_the_trackers_whether_a_gate_waits_for_review() {
-        let runner = captured(FakeRunner::default(), "arkham").with(&viewed(42), OPEN);
+        let runner = captured(FakeRunner::default(), "arkham").with(&viewed(42), &answer(42, OPEN));
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
@@ -897,10 +1125,7 @@ mod tests {
     #[test]
     fn a_gate_naming_its_repository_in_another_case_still_waits_on_the_pull_request() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(
-                "gh pr view 42 --repo Example/Ark --json state,isDraft,mergeCommit",
-                MERGED,
-            )
+            .with(&viewed_in("Example/Ark", 42), &answer(42, MERGED))
             .with(
                 &written(
                     "arkham",
@@ -919,16 +1144,13 @@ mod tests {
             },
         );
 
-        assert_eq!(acts(settled), [act("ark-0i5", Done::Resolved)]);
+        assert_eq!(acts(settled), [merged("ark-0i5")]);
     }
 
     #[test]
     fn a_close_settled_again_under_another_case_of_its_repository_adds_no_second_comment() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(
-                "gh pr view 7 --repo Example/Ark --json state,isDraft,mergeCommit",
-                CLOSED,
-            )
+            .with(&viewed_in("Example/Ark", 7), &answer(7, CLOSED))
             .with(&comments_on("arkham", "ark-2ud"), TOLD)
             .with(&comments_on("arkham", "ark-45c"), TOLD);
 
@@ -944,8 +1166,8 @@ mod tests {
         assert_eq!(
             acts(settled),
             [
-                act("ark-2ud", Done::AlreadyCommented),
-                act("ark-45c", Done::AlreadyCommented)
+                closed("ark-2ud", Done::AlreadyCommented),
+                closed("ark-45c", Done::AlreadyCommented)
             ]
         );
     }
@@ -970,9 +1192,22 @@ mod tests {
     }
 
     #[test]
+    fn a_pull_request_with_a_field_an_event_cannot_read_is_reported_and_no_tracker_is_asked() {
+        let runner = FakeRunner::default().with(
+            &viewed(42),
+            &answer(42, r#"{"state":"OPEN","isDraft":"no","mergeCommit":null}"#),
+        );
+
+        match settled(&runner, &[project("arkham")], &pr(42)) {
+            Settled::Unread(failure) => assert_eq!(failure.kind, FailureKind::Parse),
+            settled => panic!("settling came to {settled:?}"),
+        }
+    }
+
+    #[test]
     fn a_gate_bd_fails_to_close_is_reported() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .failing(&resolving_42("arkham"), unavailable("bd"));
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
@@ -981,6 +1216,7 @@ mod tests {
             acts(settled),
             [Act {
                 bead: "ark-0i5".to_string(),
+                happening: "merged",
                 done: Err(unavailable("bd")),
             }]
         );
@@ -989,7 +1225,7 @@ mod tests {
     #[test]
     fn a_bead_whose_comments_bd_cannot_read_is_reported_and_not_commented_on() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(7), CLOSED)
+            .with(&viewed(7), &answer(7, CLOSED))
             .failing(&comments_on("arkham", "ark-2ud"), unavailable("bd"))
             .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
             .with(&telling("arkham", "ark-45c"), "");
@@ -1001,9 +1237,10 @@ mod tests {
             [
                 Act {
                     bead: "ark-2ud".to_string(),
+                    happening: "closed unmerged",
                     done: Err(unavailable("bd")),
                 },
-                act("ark-45c", Done::Commented)
+                closed("ark-45c", Done::Commented)
             ]
         );
         assert_eq!(writes(&runner), [telling("arkham", "ark-45c")]);
@@ -1012,7 +1249,7 @@ mod tests {
     #[test]
     fn a_comment_bd_fails_to_add_is_reported() {
         let runner = captured(FakeRunner::default(), "arkham")
-            .with(&viewed(7), CLOSED)
+            .with(&viewed(7), &answer(7, CLOSED))
             .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
             .with(&comments_on("arkham", "ark-45c"), TOLD)
             .failing(&telling("arkham", "ark-2ud"), unavailable("bd"));
@@ -1024,9 +1261,10 @@ mod tests {
             [
                 Act {
                     bead: "ark-2ud".to_string(),
+                    happening: "closed unmerged",
                     done: Err(unavailable("bd")),
                 },
-                act("ark-45c", Done::AlreadyCommented)
+                closed("ark-45c", Done::AlreadyCommented)
             ]
         );
     }
@@ -1035,7 +1273,7 @@ mod tests {
     fn a_tracker_that_does_not_say_which_gates_wait_is_reported_and_the_others_are_settled() {
         let runner = captured(FakeRunner::default(), "dunwich")
             .failing(&gate_list("arkham"), unavailable("bd"))
-            .with(&viewed(42), MERGED)
+            .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("dunwich"), "");
 
         let settled = settled(&runner, &[project("arkham"), project("dunwich")], &pr(42));
@@ -1049,20 +1287,34 @@ mod tests {
                 },
                 ProjectSettled {
                     project: "dunwich".to_string(),
-                    acts: Ok(vec![act("ark-0i5", Done::Resolved)]),
+                    acts: Ok(vec![merged("ark-0i5")]),
                 },
             ])
         );
         assert_eq!(writes(&runner), [resolving_42("dunwich")]);
     }
 
-    fn settled_together(runner: &FakeRunner, prs: &[PullRequest]) -> Vec<Settled> {
+    /// #`number` in example/ark, as a look found a gate in arkham waiting on
+    /// it for `until` and holding back `blocks`.
+    fn awaited(number: u64, until: Until, blocks: &[&str]) -> Awaited {
+        Awaited {
+            pull_request: pr(number),
+            waiting: vec![Waiting {
+                project: "arkham".to_string(),
+                until,
+                blocks: blocks.iter().map(|bead| bead.to_string()).collect(),
+            }],
+        }
+    }
+
+    fn settled_together(runner: &FakeRunner, awaited: &[Awaited]) -> Vec<Settled> {
         settle_together(
             &Cli::new(runner),
             runner,
             &[project("arkham")],
-            prs,
-            &|_| false,
+            &EVENTS,
+            awaited,
+            &Told::default(),
         )
         .collect()
     }
@@ -1077,33 +1329,39 @@ mod tests {
             detail: "gh found no such repository or pull request on GitHub".to_string(),
             unreadable: None,
         };
-        let runner = FakeRunner::default().failing(
-            "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
-             $name:String!){repository(owner:$owner,name:$name){pr7:pullRequest(number:7)\
-             {state isDraft mergeCommit{oid}}}}",
-            gone.clone(),
-        );
-
-        assert_eq!(settled_together(&runner, &[pr(7)]), [Settled::Unread(gone)]);
-    }
-
-    #[test]
-    fn a_repository_the_query_cannot_name_is_asked_about_a_pull_request_at_a_time() {
-        let unnamed = |number| PullRequest {
-            repo: "ark".to_string(),
-            number,
-        };
-        let viewed_in_ark =
-            |number| format!("gh pr view {number} --repo ark --json state,isDraft,mergeCommit");
-        let runner = FakeRunner::default()
-            .with(&viewed_in_ark(7), OPEN)
-            .with(&viewed_in_ark(42), OPEN);
+        let runner = FakeRunner::default().failing(&queried(7..=7), gone.clone());
 
         assert_eq!(
-            settled_together(&runner, &[unnamed(7), unnamed(42)]),
-            [Settled::Open, Settled::Open]
+            settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
+            [Settled::Unread(gone)]
         );
-        assert_eq!(runner.calls().len(), 2);
+    }
+
+    /// The runner panics on any call it was not given, so asking GitHub
+    /// would fail the test.
+    #[test]
+    fn a_pull_request_in_a_repository_no_query_can_name_is_unread_without_asking_github() {
+        let unnamed = |number| Awaited {
+            pull_request: PullRequest {
+                repo: "ark".to_string(),
+                number,
+            },
+            waiting: Vec::new(),
+        };
+        let runner = FakeRunner::default();
+
+        let settled = settled_together(&runner, &[unnamed(7), unnamed(42)]);
+
+        assert_eq!(settled.len(), 2);
+        for each in settled {
+            match each {
+                Settled::Unread(failure) => {
+                    assert_eq!(failure.kind, FailureKind::Gone);
+                    assert!(failure.detail.contains("ark"), "{}", failure.detail);
+                }
+                settled => panic!("settling came to {settled:?}"),
+            }
+        }
     }
 
     /// The query about each of `numbers` in example/ark.
@@ -1128,17 +1386,16 @@ mod tests {
         };
         let runner = FakeRunner::default()
             .failing(&queried(1..=100), unavailable.clone())
-            .with(
-                &queried(101..=101),
-                r#"{"data":{"repository":{"pr101":{"state":"OPEN","isDraft":false,"mergeCommit":null}}}}"#,
-            );
-        let prs: Vec<PullRequest> = (1..=101).map(pr).collect();
+            .with(&queried(101..=101), &answer(101, OPEN));
+        let awaited: Vec<Awaited> = (1..=101)
+            .map(|number| awaited(number, Until::Merged, &[]))
+            .collect();
 
         let mut expected: Vec<Settled> = (1..=100)
             .map(|_| Settled::Unread(unavailable.clone()))
             .collect();
-        expected.push(Settled::Open);
-        assert_eq!(settled_together(&runner, &prs), expected);
+        expected.push(Settled::NothingNew);
+        assert_eq!(settled_together(&runner, &awaited), expected);
         assert_eq!(runner.calls().len(), 2);
     }
 
@@ -1147,18 +1404,181 @@ mod tests {
     #[test]
     fn a_caller_that_stops_early_asks_about_no_more_pull_requests() {
         let runner = FakeRunner::default().with(&queried(1..=100), r#"{"data":{"repository":{}}}"#);
-        let prs: Vec<PullRequest> = (1..=101).map(pr).collect();
+        let awaited: Vec<Awaited> = (1..=101)
+            .map(|number| awaited(number, Until::Merged, &[]))
+            .collect();
 
         let first = settle_together(
             &Cli::new(&runner),
             &runner,
             &[project("arkham")],
-            &prs,
-            &|_| false,
+            &EVENTS,
+            &awaited,
+            &Told::default(),
         )
         .next();
 
         assert!(matches!(first, Some(Settled::Unread(_))), "{first:?}");
         assert_eq!(runner.calls().len(), 1);
+    }
+
+    /// An event no `bdi gates` has, which tells each bead held back by a
+    /// gate on an open pull request its head commit, as an event for
+    /// failing checks would.
+    const HEAD: Event = Event {
+        fields: "headRefOid",
+        happening: "has a new head",
+        outcome: |pr, observed| {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Fields {
+                head_ref_oid: String,
+            }
+            let Fields { head_ref_oid } = serde::Deserialize::deserialize(&observed.fields)?;
+            Ok((observed.state == github::State::Open)
+                .then(|| Outcome::Tell(format!("Pull request {pr} is at {head_ref_oid}."))))
+        },
+    };
+
+    fn head_queried() -> String {
+        "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
+         $name:String!){repository(owner:$owner,name:$name){pr7:pullRequest(number:7)\
+         {state headRefOid}}}"
+            .to_string()
+    }
+
+    fn at(head: &str) -> String {
+        answer(7, &format!(r#"{{"state":"OPEN","headRefOid":"{head}"}}"#))
+    }
+
+    fn telling_head(bead: &str, head: &str) -> String {
+        written(
+            "arkham",
+            &format!("comments add {bead} Pull request example/ark#7 is at {head}."),
+        )
+    }
+
+    /// A runner answering for arkham with the captured tracker, GitHub
+    /// saying #7 is at `head`, and every bead #7's gate holds back without
+    /// a comment and taking one about `head`.
+    fn head_runner(head: &str) -> FakeRunner {
+        captured(FakeRunner::default(), "arkham")
+            .with(&head_queried(), &at(head))
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(&telling_head("ark-2ud", head), "")
+            .with(&telling_head("ark-45c", head), "")
+    }
+
+    fn looked_at_head(runner: &FakeRunner, told: &Told) -> Vec<Settled> {
+        settle_together(
+            &Cli::new(runner),
+            runner,
+            &[project("arkham")],
+            &[HEAD],
+            &[awaited(7, Until::Merged, &["ark-2ud", "ark-45c"])],
+            told,
+        )
+        .collect()
+    }
+
+    #[test]
+    fn an_event_asks_github_for_its_own_fields_and_tells_each_held_back_bead() {
+        let runner = head_runner("c0ffee");
+
+        let settled = looked_at_head(&runner, &Told::default());
+
+        assert_eq!(settled.len(), 1);
+        let told: Vec<Act> = acts(settled.into_iter().next().expect("one was settled"));
+        assert_eq!(
+            told,
+            [
+                act("ark-2ud", "has a new head", Done::Commented),
+                act("ark-45c", "has a new head", Done::Commented)
+            ]
+        );
+    }
+
+    /// The runner panics on any call it was not given, so a look that asked
+    /// any tracker anything the second time would fail the test.
+    #[test]
+    fn a_look_with_nothing_new_to_tell_asks_no_tracker_anything() {
+        let told = Told::default();
+        let first = head_runner("c0ffee");
+        looked_at_head(&first, &told);
+        let second = FakeRunner::default().with(&head_queried(), &at("c0ffee"));
+
+        assert_eq!(looked_at_head(&second, &told), [Settled::NothingNew]);
+    }
+
+    #[test]
+    fn a_new_key_for_the_same_event_is_told_again() {
+        let told = Told::default();
+        looked_at_head(&head_runner("c0ffee"), &told);
+        let moved = head_runner("decade");
+
+        let settled = looked_at_head(&moved, &told);
+
+        assert_eq!(
+            writes(&moved),
+            [
+                telling_head("ark-2ud", "decade"),
+                telling_head("ark-45c", "decade")
+            ]
+        );
+        assert_eq!(settled.len(), 1);
+    }
+
+    /// An event no `bdi gates` has, which closes every gate on a merge, as
+    /// the merge does.
+    const ALSO_ON_MERGE: Event = Event {
+        fields: "",
+        happening: "merged again",
+        outcome: |_, observed| {
+            Ok(
+                (observed.state == github::State::Merged).then(|| Outcome::Resolve {
+                    awaited: |_| true,
+                    reason: "Merged again.".to_string(),
+                }),
+            )
+        },
+    };
+
+    /// The runner panics on any call it was not given, so a second close of
+    /// ark-0i5 would fail the test.
+    #[test]
+    fn a_gate_two_events_would_close_is_closed_once() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(42), &answer(42, MERGED))
+            .with(&resolving_42("arkham"), "");
+        let events = [EVENTS[0], EVENTS[1], EVENTS[2], ALSO_ON_MERGE];
+
+        let settled = settle(
+            &Cli::new(&runner),
+            &runner,
+            &[project("arkham")],
+            &events,
+            &pr(42),
+            &Told::default(),
+        );
+
+        assert_eq!(acts(settled), [merged("ark-0i5")]);
+    }
+
+    /// A bead the look found held back that this process has not told is
+    /// enough to act, even where another bead behind the same gate was told.
+    #[test]
+    fn a_look_tells_a_bead_newly_held_back_behind_a_gate_already_told() {
+        let told = Told::default();
+        told.learn(
+            "arkham",
+            "ark-2ud",
+            "Pull request example/ark#7 is at c0ffee.",
+        );
+        let runner = head_runner("c0ffee");
+
+        looked_at_head(&runner, &told);
+
+        assert_eq!(writes(&runner), [telling_head("ark-45c", "c0ffee")]);
     }
 }
