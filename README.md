@@ -310,7 +310,8 @@ its metadata closes sooner, once the pull request leaves draft, and so does
 one with `awaits=approved`, once GitHub's review decision is approved. A close
 without a merge leaves the gate open and comments once on that bead, so whoever
 waits on it hears. So do failing checks on the pull request's head commit, once
-for each commit, and each review submitted, once for each review. Then it looks again a minute later, until it is stopped. Run
+for each commit, each review submitted, once for each review, and each
+comment on the pull request's conversation, once for each comment. Then it looks again a minute later, until it is stopped. Run
 it under whatever supervises your processes, as you would the watcher. Given
 `--listen` and the webhook's secret, it also takes GitHub's `pull_request`
 deliveries, and settles a pull request when GitHub says it moved rather than at

@@ -739,7 +739,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} comments(last:5){{nodes{{url author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -1335,6 +1335,174 @@ mod tests {
         assert_eq!(again, [Settled::NothingNew]);
     }
 
+    /// An open pull request with a conversation comment from each of
+    /// `comments`, as `(author, comment number)`.
+    fn commented_by(comments: &[(&str, u32)]) -> String {
+        let nodes: Vec<String> = comments
+            .iter()
+            .map(|(login, id)| {
+                format!(
+                    r#"{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-{id}","author":{{"login":"{login}"}}}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"comments":{{"nodes":[{}]}}}}"#,
+            nodes.join(",")
+        )
+    }
+
+    fn comment_telling(bead: &str, login: &str, id: u32) -> String {
+        written(
+            "arkham",
+            &format!(
+                "comments add {bead} {login} commented on pull request example/ark#7. \
+                 https://forge.invalid/example/ark/pull/7#issuecomment-{id}"
+            ),
+        )
+    }
+
+    fn commented(bead: &str, done: Done) -> Act {
+        act(bead, "was commented on", done)
+    }
+
+    #[test]
+    fn each_comment_comments_once_on_each_held_back_bead_and_leaves_the_gate_open() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &viewed(7),
+                &answer(7, &commented_by(&[("alice", 11), ("bob", 12)])),
+            )
+            .with(&comments_on("arkham", "ark-2ud"), OWN)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &comment_telling("ark-2ud", "alice", 11),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &comment_telling("ark-45c", "alice", 11),
+                "Comment added to ark-45c\n",
+            )
+            .with(
+                &comment_telling("ark-2ud", "bob", 12),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &comment_telling("ark-45c", "bob", 12),
+                "Comment added to ark-45c\n",
+            );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            acts(settled),
+            [
+                commented("ark-2ud", Done::Commented),
+                commented("ark-45c", Done::Commented),
+                commented("ark-2ud", Done::Commented),
+                commented("ark-45c", Done::Commented),
+            ]
+        );
+        assert_eq!(
+            writes(&runner),
+            [
+                comment_telling("ark-2ud", "alice", 11),
+                comment_telling("ark-45c", "alice", 11),
+                comment_telling("ark-2ud", "bob", 12),
+                comment_telling("ark-45c", "bob", 12),
+            ]
+        );
+    }
+
+    /// A comment made since the last look is the only one told, and a look
+    /// that finds nothing new writes nothing.
+    #[test]
+    fn a_comment_is_told_once_and_a_repeat_writes_nothing() {
+        let told = Told::default();
+        let settle_7 = |comments: &[(&str, u32)]| {
+            let mut runner = captured(FakeRunner::default(), "arkham")
+                .with(&viewed(7), &answer(7, &commented_by(comments)))
+                .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+                .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS);
+            for (login, id) in comments {
+                for bead in ["ark-2ud", "ark-45c"] {
+                    runner = runner.with(
+                        &comment_telling(bead, login, *id),
+                        &format!("Comment added to {bead}\n"),
+                    );
+                }
+            }
+            let settled = settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &pr(7),
+                &told,
+            );
+            (acts(settled), writes(&runner))
+        };
+        let first_comment = ("alice", 11);
+
+        let (_, first) = settle_7(&[first_comment]);
+        let (same, same_writes) = settle_7(&[first_comment]);
+        let (_, later) = settle_7(&[first_comment, ("alice", 12)]);
+
+        assert_eq!(first.len(), 2);
+        assert_eq!(
+            same,
+            [
+                commented("ark-2ud", Done::AlreadyCommented),
+                commented("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(same_writes, Vec::<String>::new());
+        assert_eq!(
+            later,
+            [
+                comment_telling("ark-2ud", "alice", 12),
+                comment_telling("ark-45c", "alice", 12)
+            ]
+        );
+    }
+
+    /// The sweep already knows what it told, so a pull request whose comments
+    /// every held-back bead has been told asks no tracker anything.
+    #[test]
+    fn comments_every_held_back_bead_has_been_told_ask_no_tracker_anything() {
+        let told = Told::default();
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&queried(7..=7), &answer(7, &commented_by(&[("alice", 11)])))
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &comment_telling("ark-2ud", "alice", 11),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &comment_telling("ark-45c", "alice", 11),
+                "Comment added to ark-45c\n",
+            );
+        let awaiting = [awaited(7, Until::Merged, &["ark-2ud", "ark-45c"])];
+        let sweep = || {
+            settle_together(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &awaiting,
+                &told,
+            )
+            .collect::<Vec<_>>()
+        };
+
+        let first = sweep();
+        let again = sweep();
+
+        assert!(matches!(first[0], Settled::Acted(_)));
+        assert_eq!(again, [Settled::NothingNew]);
+    }
+
     fn comments_read(runner: &FakeRunner) -> usize {
         runner
             .calls()
@@ -1846,7 +2014,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} comments(last:5){{nodes{{url author{{login}}}}}}}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
