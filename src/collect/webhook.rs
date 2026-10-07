@@ -82,8 +82,8 @@ pub enum Heard {
     Unsigned,
     /// A delivery whose signature the secret did not make.
     Forged,
-    /// A signed pull_request delivery whose payload names no repository and
-    /// number.
+    /// A signed pull_request or pull_request_review delivery whose payload
+    /// names no repository and number.
     NamesNoPullRequest,
     /// A body larger than any pull_request delivery.
     TooLarge,
@@ -131,6 +131,7 @@ pub fn delivery(
     }
     match event {
         Some("pull_request") => pull_request(body),
+        Some("pull_request_review") => pull_request_review(body),
         _ => Heard::Ignored,
     }
 }
@@ -151,6 +152,29 @@ fn pull_request(body: &[u8]) -> Heard {
 struct PullRequestEvent {
     number: u64,
     repository: Repository,
+}
+
+/// What a signed pull_request_review delivery comes to.
+fn pull_request_review(body: &[u8]) -> Heard {
+    match serde_json::from_slice::<PullRequestReviewEvent>(body) {
+        Ok(event) => Heard::Settle(PullRequest {
+            repo: event.repository.named(),
+            number: event.pull_request.number,
+        }),
+        Err(_) => Heard::NamesNoPullRequest,
+    }
+}
+
+/// The fields of a pull_request_review delivery that name its pull request.
+#[derive(Deserialize)]
+struct PullRequestReviewEvent {
+    pull_request: PullRequestNumber,
+    repository: Repository,
+}
+
+#[derive(Deserialize)]
+struct PullRequestNumber {
+    number: u64,
 }
 
 #[derive(Deserialize)]
@@ -421,6 +445,10 @@ mod tests {
     /// what it does not.
     const CLOSED_42: &str = r#"{"action":"closed","number":42,"pull_request":{"merged":true},"repository":{"full_name":"example/ark"}}"#;
 
+    /// A pull_request_review delivery cut down the same way. Its number is
+    /// inside the pull request, not beside it.
+    const SUBMITTED_42: &str = r#"{"action":"submitted","review":{"state":"approved"},"pull_request":{"number":42},"repository":{"full_name":"example/ark"}}"#;
+
     fn secret() -> Secret {
         Secret::new("swordfish").expect("a secret")
     }
@@ -486,6 +514,78 @@ mod tests {
         assert_eq!(named("https://github.com/example/ark"), repo("example/ark"));
         assert_eq!(named("https://GitHub.com/example/ark"), repo("example/ark"));
         assert_eq!(named("not an address"), repo("example/ark"));
+    }
+
+    #[test]
+    fn a_signed_pull_request_review_delivery_names_the_pull_request_to_settle() {
+        let body = SUBMITTED_42.as_bytes();
+        assert_eq!(
+            delivery(
+                &secret(),
+                Some("pull_request_review"),
+                Some(&signature(body)),
+                body
+            ),
+            Heard::Settle(PullRequest {
+                repo: "example/ark".to_string(),
+                number: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn a_pull_request_review_delivery_from_another_host_names_its_repository_with_the_host() {
+        let body = br#"{"pull_request":{"number":42},"repository":{"full_name":"example/ark","html_url":"https://forge.invalid/example/ark"}}"#;
+        assert_eq!(
+            delivery(
+                &secret(),
+                Some("pull_request_review"),
+                Some(&signature(body)),
+                body
+            ),
+            Heard::Settle(PullRequest {
+                repo: "forge.invalid/example/ark".to_string(),
+                number: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn a_signed_pull_request_review_delivery_naming_no_pull_request_says_so() {
+        for body in [
+            &br#"{"action":"submitted","repository":{"full_name":"example/ark"}}"#[..],
+            br#"{"number":42,"repository":{"full_name":"example/ark"}}"#,
+            br#"{"pull_request":{"number":42}}"#,
+        ] {
+            assert_eq!(
+                delivery(
+                    &secret(),
+                    Some("pull_request_review"),
+                    Some(&signature(body)),
+                    body
+                ),
+                Heard::NamesNoPullRequest
+            );
+        }
+    }
+
+    #[test]
+    fn a_pull_request_review_delivery_with_no_or_a_wrong_signature_is_refused() {
+        let body = SUBMITTED_42.as_bytes();
+        let other = Secret::new("hunter2").expect("a secret");
+        assert_eq!(
+            delivery(&secret(), Some("pull_request_review"), None, body),
+            Heard::Unsigned
+        );
+        assert_eq!(
+            delivery(
+                &other,
+                Some("pull_request_review"),
+                Some(&signature(body)),
+                body
+            ),
+            Heard::Forged
+        );
     }
 
     #[test]
