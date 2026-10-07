@@ -5,8 +5,8 @@ root, annotated with the live agent on each node. The eye only looks, and
 each thing it does in the world is a pseudopod, a limb grown for one job. It
 has two: `bdi bd` passes `bd human respond` through to carry a person's answer
 to a bead, and `bdi gates` settles a gh:pr gate once GitHub says its pull
-request has merged or closed. Every other bd command line `bdi` spells is a
-read, and `collect/` spells all of them.
+request has merged, closed, or left draft. Every other bd command line `bdi`
+spells is a read, and `collect/` spells all of them.
 `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
 measurements.
 

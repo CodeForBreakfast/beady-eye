@@ -11,7 +11,7 @@ use crate::collect::gates::{self, Done, PrGate, PullRequest, Settled};
 use crate::collect::github;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::config::{Gates, Project};
-use crate::model::gate::{self, Fault};
+use crate::model::gate::{self, Fault, Until};
 use crate::model::snapshot::TrackerFailure;
 
 /// Something a look at the gates found to report.
@@ -22,8 +22,9 @@ pub enum Found {
         project: String,
         failure: TrackerFailure,
     },
-    /// A gate cannot name the pull request it waits on, so nothing settles it.
-    NoPullRequest {
+    /// A gate cannot name the pull request it waits on, or what it waits for
+    /// that pull request to do, so nothing settles it.
+    Unsettleable {
         project: String,
         gate: String,
         faults: Vec<Fault>,
@@ -76,10 +77,12 @@ pub struct Settling {
 /// request one of them waits on, once however many gates wait on it, asking
 /// GitHub about each repository's together, until GitHub refuses one for its
 /// rate limit. A gate whose repository `settles` leaves to another
-/// `bdi gates` is passed over without a word.
+/// `bdi gates` is passed over without a word. No tracker is asked about an
+/// open pull request that no gate waits on to leave draft.
 pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -> Settling {
     let mut found = Vec::new();
     let mut awaited: Vec<Vec<PullRequest>> = Vec::new();
+    let mut for_review: Vec<PullRequest> = Vec::new();
     let settled_here = |gate: &PrGate| settles.settles(gate.repo.as_deref().and_then(gate::owner));
     for read in gates::across(cli, projects, settled_here) {
         let open = match read.gates {
@@ -94,18 +97,25 @@ pub fn look(cli: &Cli, gh: &dyn Runner, projects: &[Project], settles: &Gates) -
         };
         for gate in open {
             match gate.awaits {
-                Err(faults) => found.push(Found::NoPullRequest {
+                Err(faults) => found.push(Found::Unsettleable {
                     project: read.project.clone(),
                     gate: gate.id,
                     faults,
                 }),
-                Ok(pull_request) => awaiting(&mut awaited, pull_request),
+                Ok(wait) => {
+                    if wait.until == Until::ReadyForReview {
+                        for_review.push(wait.pull_request.clone());
+                    }
+                    awaiting(&mut awaited, wait.pull_request)
+                }
             }
         }
     }
+    let awaited_for_review =
+        |pull_request: &PullRequest| for_review.iter().any(|seen| seen.is(pull_request));
     let mut github = Read::Unasked;
     for repository in &awaited {
-        let settled = gates::settle_together(cli, gh, projects, repository);
+        let settled = gates::settle_together(cli, gh, projects, repository, &awaited_for_review);
         for (pull_request, settled) in repository.iter().zip(settled) {
             let each = findings(gh, pull_request.clone(), settled);
             found.extend(each.found);
@@ -153,7 +163,7 @@ pub fn delivered(
 fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Settling {
     let github = match settled {
         Settled::Unread(_) => Read::Refused,
-        Settled::Open | Settled::Finished(_) => Read::Answered,
+        Settled::Open | Settled::Acted(_) => Read::Answered,
     };
     let found = match settled {
         Settled::Open => Vec::new(),
@@ -168,7 +178,7 @@ fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Set
             pull_request,
             failure,
         }],
-        Settled::Finished(each) => each
+        Settled::Acted(each) => each
             .into_iter()
             .flat_map(|settled| match settled.acts {
                 Err(failure) => vec![Found::TrackerUnread {
@@ -270,7 +280,7 @@ mod tests {
     }
 
     fn viewed(number: u64) -> String {
-        format!("gh pr view {number} --repo example/ark --json state,mergeCommit")
+        format!("gh pr view {number} --repo example/ark --json state,isDraft,mergeCommit")
     }
 
     /// The one query a look asks about #7 and #42 in `example/<name>`.
@@ -278,7 +288,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7)\
-             {{state mergeCommit{{oid}}}} pr42:pullRequest(number:42){{state mergeCommit{{oid}}}}}}}}"
+             {{state isDraft mergeCommit{{oid}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}}}}}}}}"
         )
     }
 
@@ -305,8 +315,8 @@ mod tests {
         }
     }
 
-    fn no_pull_request(project: &str, gate: &str, fault: Fault) -> Found {
-        Found::NoPullRequest {
+    fn unsettleable(project: &str, gate: &str, fault: Fault) -> Found {
+        Found::Unsettleable {
             project: project.to_string(),
             gate: gate.to_string(),
             faults: vec![fault],
@@ -314,7 +324,7 @@ mod tests {
     }
 
     fn no_number(project: &str) -> Found {
-        no_pull_request(
+        unsettleable(
             project,
             "ark-tg0",
             Fault::AwaitIdNotANumber("the-ninth".to_string()),
@@ -366,12 +376,66 @@ mod tests {
         assert_eq!(
             found,
             [
-                no_pull_request("arkham", "ark-6pp", Fault::NoRepo),
+                unsettleable("arkham", "ark-6pp", Fault::NoRepo),
                 no_number("arkham"),
-                no_pull_request("dunwich", "ark-6pp", Fault::NoRepo),
+                unsettleable("dunwich", "ark-6pp", Fault::NoRepo),
                 no_number("dunwich"),
                 settling("arkham"),
                 settling("dunwich"),
+            ]
+        );
+    }
+
+    fn gate_lists_read(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .into_iter()
+            .filter(|call| call.argv == gate_list("arkham"))
+            .count()
+    }
+
+    /// #7 is open and ready for review, and no gate waits for that.
+    #[test]
+    fn a_look_reads_the_gates_again_only_for_the_pull_request_that_merged() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&queried("ark"), QUERIED)
+            .with(&resolving_42("arkham"), "");
+
+        looked(&runner, &[project("arkham")], &Gates::default());
+
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    #[test]
+    fn a_look_closes_a_gate_waiting_for_its_pull_request_to_leave_draft() {
+        let mut rows: Vec<serde_json::Value> =
+            serde_json::from_str(GATE_LIST).expect("the capture parses");
+        for row in rows.iter_mut().filter(|row| row["id"] == "ark-eb1") {
+            row["metadata"][gate::AWAITS] = "ready_for_review".into();
+        }
+        let gates = serde_json::to_string(&rows).expect("the rows print");
+        let resolving_7 = "bd -C /nowhere/arkham gate resolve ark-eb1 --reason Pull request \
+                           example/ark#7 is ready for review.";
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&gate_list("arkham"), &gates)
+            .with(&queried("ark"), QUERIED)
+            .with(resolving_7, "")
+            .with(&resolving_42("arkham"), "");
+
+        let found = looked(&runner, &[project("arkham")], &Gates::default()).found;
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-6pp", Fault::NoRepo),
+                no_number("arkham"),
+                Found::Settling {
+                    pull_request: pr(7),
+                    project: "arkham".to_string(),
+                    bead: "ark-eb1".to_string(),
+                    done: Ok(Done::ResolvedForReview),
+                },
+                settling("arkham"),
             ]
         );
     }
@@ -416,7 +480,7 @@ mod tests {
         assert_eq!(
             found,
             [
-                no_pull_request("arkham", "ark-6pp", Fault::NoRepo),
+                unsettleable("arkham", "ark-6pp", Fault::NoRepo),
                 no_number("arkham"),
                 settling("arkham"),
             ],
@@ -433,7 +497,7 @@ mod tests {
 
         assert_eq!(
             found,
-            [no_pull_request("arkham", "ark-6pp", Fault::NoRepo)],
+            [unsettleable("arkham", "ark-6pp", Fault::NoRepo)],
             "ark-6pp names no owner, so none is left out and it is reported here"
         );
         assert_eq!(asked_github(&runner), Vec::<String>::new());

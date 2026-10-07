@@ -479,6 +479,18 @@ A gate with no `repo`, or one whose await id is not a number, draws neither.
 [`bdi gates`](#settling-pull-request-gates) closes the gate once the pull
 request merges, so the bead it blocks becomes ready.
 
+A gate can instead wait for its pull request to leave draft, such as one
+holding back a review that starts once the author marks the pull request ready
+for review. Write `awaits=ready_for_review` into the gate's metadata:
+
+```console
+$ bd update dun-9 --set-metadata awaits=ready_for_review
+```
+
+`bdi gates` closes that gate once the pull request is ready for review, or once
+it merges. `ready_for_review` is the only value it knows. It reports a gate with
+any other `awaits` value and leaves the gate open.
+
 ### An issue tracker key
 
 A bead carrying `jira = "HELIO-412"`:
@@ -914,7 +926,8 @@ on, and acts on what GitHub says:
 |---|---|
 | merged | closes each gate waiting on it with `bd gate resolve`, naming the merge commit, so the beads it blocked become ready |
 | closed without being merged | leaves each gate open, and comments once on each bead a gate holds back |
-| open | nothing |
+| open and ready for review | closes each gate waiting on it with `awaits=ready_for_review` in its metadata, and leaves the rest open |
+| a draft | nothing |
 
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
 as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
@@ -935,9 +948,10 @@ each failure:
 ```
 dunwich/arkham#12 merged: arkham closed gate ark-0i5
 dunwich/arkham#7 closed unmerged: arkham told ark-2ud
+dunwich/arkham#15 is ready for review: arkham closed gate ark-eb1
 kadath: its gh:pr gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
-arkham: gate ark-6pp names no pull request to settle: it names no repo
+arkham: gate ark-6pp cannot be settled: it names no repo
 dunwich/arkham#41: GitHub refused it for the rate limit of the login gh runs as, so GitHub is asked nothing more until the limit resets at 2026-01-01 00:30:00 UTC
 ```
 

@@ -13,22 +13,23 @@ use crate::model::gate::Repository;
 /// Where a pull request stands on GitHub.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
-    Open,
+    /// Open, and still a draft or ready for review.
+    Open { draft: bool },
     /// Merged, as the commit the merge made where GitHub names one.
-    Merged {
-        commit: Option<String>,
-    },
+    Merged { commit: Option<String> },
     /// Closed without being merged.
     Closed,
 }
 
-/// What `gh pr view --json state,mergeCommit` prints, and what [`states`]'
-/// query asks of each pull request. Measured on gh 2.102.0: `state` is
-/// `OPEN`, `CLOSED` or `MERGED`, and `mergeCommit` is null until a merge.
+/// What `gh pr view --json state,isDraft,mergeCommit` prints, and what
+/// [`states`]' query asks of each pull request. Measured on gh 2.102.0:
+/// `state` is `OPEN`, `CLOSED` or `MERGED`, `isDraft` is always there, and
+/// `mergeCommit` is null until a merge.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Viewed {
     state: String,
+    is_draft: bool,
     merge_commit: Option<MergeCommit>,
 }
 
@@ -66,7 +67,7 @@ pub fn state(runner: &dyn Runner, pr: &PullRequest) -> Result<State, RunFailure>
             "--repo",
             &pr.repo,
             "--json",
-            "state,mergeCommit",
+            "state,isDraft,mergeCommit",
         ],
         None,
         &Env::new(),
@@ -88,7 +89,7 @@ pub fn states(
     let asked: Vec<String> = numbers
         .iter()
         .map(|number| {
-            format!("pr{number}:pullRequest(number:{number}){{state mergeCommit{{oid}}}}")
+            format!("pr{number}:pullRequest(number:{number}){{state isDraft mergeCommit{{oid}}}}")
         })
         .collect();
     let query = format!(
@@ -125,7 +126,9 @@ pub fn states(
 impl Viewed {
     fn state(self) -> Result<State, RunFailure> {
         match self.state.as_str() {
-            "OPEN" => Ok(State::Open),
+            "OPEN" => Ok(State::Open {
+                draft: self.is_draft,
+            }),
             "MERGED" => Ok(State::Merged {
                 commit: self.merge_commit.map(|commit| commit.oid),
             }),
@@ -225,7 +228,7 @@ mod tests {
         assert_eq!(spent_until(&runner, None), Ok(None));
     }
 
-    const VIEW: &str = "gh pr view 42 --repo example/ark --json state,mergeCommit";
+    const VIEW: &str = "gh pr view 42 --repo example/ark --json state,isDraft,mergeCommit";
 
     fn pr() -> PullRequest {
         PullRequest {
@@ -261,18 +264,28 @@ mod tests {
     }
 
     #[test]
-    fn an_open_pull_request_is_read_as_open() {
+    fn an_open_pull_request_ready_for_review_is_read_as_open_and_no_draft() {
         assert_eq!(
             answering(include_str!(
                 "../../tests/fixtures/gh_2.102.0_pr_view_open.json"
             )),
-            Ok(State::Open)
+            Ok(State::Open { draft: false })
+        );
+    }
+
+    #[test]
+    fn a_draft_pull_request_is_read_as_open_and_a_draft() {
+        assert_eq!(
+            answering(include_str!(
+                "../../tests/fixtures/gh_2.102.0_pr_view_draft.json"
+            )),
+            Ok(State::Open { draft: true })
         );
     }
 
     const QUERY: &str = "query=query($owner:String!,$name:String!){repository(owner:$owner,\
-                         name:$name){pr7:pullRequest(number:7){state mergeCommit{oid}} \
-                         pr42:pullRequest(number:42){state mergeCommit{oid}}}}";
+                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid}} \
+                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid}}}}";
 
     fn ark(host: Option<&'static str>) -> Repository<'static> {
         Repository {
@@ -296,7 +309,7 @@ mod tests {
         assert_eq!(
             queried(&runner, None),
             Ok(vec![
-                State::Open,
+                State::Open { draft: false },
                 State::Merged {
                     commit: Some("5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff".to_string())
                 }
@@ -311,12 +324,12 @@ mod tests {
             &format!(
                 "gh api graphql --hostname git.example.com -f owner=example -f name=ark -f {QUERY}"
             ),
-            r#"{"data":{"repository":{"pr7":{"state":"CLOSED","mergeCommit":null},"pr42":{"state":"OPEN","mergeCommit":null}}}}"#,
+            r#"{"data":{"repository":{"pr7":{"state":"CLOSED","isDraft":false,"mergeCommit":null},"pr42":{"state":"OPEN","isDraft":true,"mergeCommit":null}}}}"#,
         );
 
         assert_eq!(
             queried(&runner, Some("git.example.com")),
-            Ok(vec![State::Closed, State::Open])
+            Ok(vec![State::Closed, State::Open { draft: true }])
         );
     }
 
@@ -324,7 +337,7 @@ mod tests {
     fn an_answer_missing_a_pull_request_asked_about_is_a_failure_to_read() {
         let runner = FakeRunner::default().with(
             &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
-            r#"{"data":{"repository":{"pr7":{"state":"OPEN","mergeCommit":null},"pr42":null}}}"#,
+            r#"{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null},"pr42":null}}}"#,
         );
 
         let failure = queried(&runner, None).expect_err("#42 is not in the answer");
@@ -334,7 +347,7 @@ mod tests {
 
     #[test]
     fn a_state_gh_has_not_printed_before_is_a_failure_to_read() {
-        let failure = answering(r#"{"mergeCommit":null,"state":"DRAFT"}"#)
+        let failure = answering(r#"{"isDraft":false,"mergeCommit":null,"state":"DRAFT"}"#)
             .expect_err("DRAFT is not a state bdi knows");
         assert_eq!(failure.kind, FailureKind::Parse);
         assert!(failure.detail.contains("DRAFT"), "{}", failure.detail);

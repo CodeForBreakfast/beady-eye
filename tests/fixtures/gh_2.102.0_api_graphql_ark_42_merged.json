@@ -1,1 +1,1 @@
-{"data":{"repository":{"pr7":{"state":"OPEN","mergeCommit":null},"pr42":{"state":"MERGED","mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}}}}
+{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null},"pr42":{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}}}}

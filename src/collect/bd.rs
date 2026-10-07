@@ -19,7 +19,7 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
-use crate::collect::gates::{PrGate, PullRequest};
+use crate::collect::gates::{PrGate, Wait};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::Project;
@@ -458,10 +458,13 @@ impl Cli<'_> {
 pub struct Settling<'r>(Reader<'r>);
 
 impl Settling<'_> {
-    /// Every open gh:pr gate the tracker holds waiting on `pr`.
-    pub fn pr_gates_awaiting(&self, pr: &PullRequest) -> Result<Vec<PrGate>, RunFailure> {
+    /// Every open gh:pr gate the tracker holds whose wait is `wanted`.
+    pub fn pr_gates_waiting(
+        &self,
+        wanted: impl Fn(&Wait) -> bool,
+    ) -> Result<Vec<PrGate>, RunFailure> {
         self.0
-            .pr_gates(|gate| gate.awaits.as_ref().is_ok_and(|awaits| awaits.is(pr)))
+            .pr_gates(|gate| gate.awaits.as_ref().is_ok_and(&wanted))
     }
 
     /// The text of every comment on `bead`, oldest first.
