@@ -116,8 +116,8 @@ pub enum Heard {
     Unsigned,
     /// A delivery whose signature the secret did not make.
     Forged,
-    /// A signed pull_request, pull_request_review, check_suite or status
-    /// delivery whose payload names no repository and pull request or commit.
+    /// A signed pull_request, pull_request_review, issue_comment, check_suite
+    /// or status delivery whose payload names no repository and pull request or commit.
     NamesNoPullRequest,
     /// A body larger than any pull_request delivery.
     TooLarge,
@@ -166,6 +166,7 @@ pub fn delivery(
     match event {
         Some("pull_request") => pull_request(body),
         Some("pull_request_review") => pull_request_review(body),
+        Some("issue_comment") => issue_comment(body),
         Some("check_suite") => check_suite(body),
         Some("status") => status(body),
         _ => Heard::Ignored,
@@ -211,6 +212,33 @@ struct PullRequestReviewEvent {
 #[derive(Deserialize)]
 struct PullRequestNumber {
     number: u64,
+}
+
+/// What a signed issue_comment delivery comes to. A comment on a plain issue
+/// is none of bdi's business.
+fn issue_comment(body: &[u8]) -> Heard {
+    match serde_json::from_slice::<IssueCommentEvent>(body) {
+        Ok(event) if event.issue.pull_request.is_none() => Heard::Ignored,
+        Ok(event) => Heard::Settle(PullRequest {
+            repo: event.repository.named(),
+            number: event.issue.number,
+        }),
+        Err(_) => Heard::NamesNoPullRequest,
+    }
+}
+
+/// The fields of an issue_comment delivery that name its pull request, if it
+/// is on one.
+#[derive(Deserialize)]
+struct IssueCommentEvent {
+    issue: Issue,
+    repository: Repository,
+}
+
+#[derive(Deserialize)]
+struct Issue {
+    number: u64,
+    pull_request: Option<serde::de::IgnoredAny>,
 }
 
 /// What a signed check_suite delivery comes to.
@@ -669,6 +697,73 @@ mod tests {
                 Some(&signature(body)),
                 body
             ),
+            Heard::Forged
+        );
+    }
+
+    /// An issue_comment delivery on a pull request. The pull request is the
+    /// issue's `pull_request` key, and its number is the issue's.
+    const COMMENT_ON_PULL_REQUEST_42: &str = r#"{"action":"created","issue":{"number":42,"pull_request":{"url":"https://api.github.invalid/repos/example/ark/pulls/42"}},"comment":{"body":"looks fine"},"repository":{"full_name":"example/ark"}}"#;
+
+    /// An issue_comment delivery on a plain issue, which has no `pull_request`.
+    const COMMENT_ON_ISSUE_42: &str = r#"{"action":"created","issue":{"number":42},"comment":{"body":"looks fine"},"repository":{"full_name":"example/ark"}}"#;
+
+    #[test]
+    fn a_signed_issue_comment_delivery_on_a_pull_request_names_the_pull_request_to_settle() {
+        assert_eq!(
+            heard_as("issue_comment", COMMENT_ON_PULL_REQUEST_42),
+            Heard::Settle(PullRequest {
+                repo: "example/ark".to_string(),
+                number: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn an_issue_comment_delivery_on_a_pull_request_from_another_host_names_its_repository_with_the_host(
+    ) {
+        let body = r#"{"issue":{"number":42,"pull_request":{}},"repository":{"full_name":"example/ark","html_url":"https://forge.invalid/example/ark"}}"#;
+        assert_eq!(
+            heard_as("issue_comment", body),
+            Heard::Settle(PullRequest {
+                repo: "forge.invalid/example/ark".to_string(),
+                number: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn a_signed_issue_comment_delivery_on_a_plain_issue_is_ignored() {
+        assert_eq!(
+            heard_as("issue_comment", COMMENT_ON_ISSUE_42),
+            Heard::Ignored
+        );
+        let null =
+            COMMENT_ON_ISSUE_42.replace(r#""number":42}"#, r#""number":42,"pull_request":null}"#);
+        assert_eq!(heard_as("issue_comment", &null), Heard::Ignored);
+    }
+
+    #[test]
+    fn a_signed_issue_comment_delivery_naming_no_pull_request_says_so() {
+        for body in [
+            r#"{"action":"created","repository":{"full_name":"example/ark"}}"#,
+            r#"{"issue":{"pull_request":{}},"repository":{"full_name":"example/ark"}}"#,
+            r#"{"issue":{"number":42,"pull_request":{}}}"#,
+        ] {
+            assert_eq!(heard_as("issue_comment", body), Heard::NamesNoPullRequest);
+        }
+    }
+
+    #[test]
+    fn an_issue_comment_delivery_with_no_or_a_wrong_signature_is_refused() {
+        let body = COMMENT_ON_PULL_REQUEST_42.as_bytes();
+        let other = Secret::new("hunter2").expect("a secret");
+        assert_eq!(
+            delivery(&secret(), Some("issue_comment"), None, body),
+            Heard::Unsigned
+        );
+        assert_eq!(
+            delivery(&other, Some("issue_comment"), Some(&signature(body)), body),
             Heard::Forged
         );
     }
