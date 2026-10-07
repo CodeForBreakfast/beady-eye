@@ -495,6 +495,63 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
     assert_eq!(github.calls(), [queried(), viewed(42)]);
 }
 
+const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
+
+/// What GitHub lists of a commit: #42 open with it as head, #43 open without
+/// it, #44 closed with it.
+const LISTED_FOR_SHA: &str = r#"[
+    {"number":42,"state":"open","head":{"sha":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}},
+    {"number":43,"state":"open","head":{"sha":"0badc0de0badc0de0badc0de0badc0de0badc0de"}},
+    {"number":44,"state":"closed","head":{"sha":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}
+]"#;
+
+/// The checks on a commit finishing settles the open pull requests it heads,
+/// whichever event says so.
+#[test]
+fn a_signed_check_suite_or_status_delivery_settles_the_open_pull_requests_the_commit_heads() {
+    let check_suite = format!(
+        r#"{{"action":"completed","check_suite":{{"head_sha":"{SHA}"}},"repository":{{"full_name":"example/ark"}}}}"#
+    );
+    let status = format!(
+        r#"{{"state":"success","sha":"{SHA}","repository":{{"full_name":"example/ark"}}}}"#
+    );
+    for (event, body) in [("check_suite", check_suite), ("status", status)] {
+        let home = a_home_looking_every(&format!("checks-{event}"), &["arkham"], 3600);
+        let tracker = ShimmedTracker::beside(&home);
+        holds_the_captured_gates(&tracker, "arkham");
+        tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
+        let github = ShimmedGitHub::beside(&home);
+        github.refuses_with(&queried(), "HTTP 502\n");
+        github.answers_with(
+            &format!("api repos/example/ark/commits/{SHA}/pulls?per_page=100"),
+            LISTED_FOR_SHA,
+        );
+        github.answers_with(&viewed(42), &answer(42, MERGED));
+
+        let settling = Settling::listening(&home, &tracker, &github);
+        let address = settling.address();
+        settling.says(
+            "example/ark#42: GitHub did not say where it stands, so no gate waiting on it was \
+             touched: gh exited 1 for a reason bdi cannot place",
+        );
+
+        assert_eq!(
+            delivered(address, event, Some(&signed(SECRET, &body)), &body),
+            202
+        );
+        settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
+        assert_eq!(
+            github.calls(),
+            [
+                queried(),
+                format!("api repos/example/ark/commits/{SHA}/pulls?per_page=100"),
+                viewed(42)
+            ],
+            "{event}"
+        );
+    }
+}
+
 /// A delivery that is refused, or about anything but a pull request, never
 /// reaches GitHub.
 #[test]

@@ -11,6 +11,7 @@ use crate::collect::gates::{self, Awaited, Done, PrGate, PullRequest, Settled, T
 use crate::collect::github;
 use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
+use crate::collect::webhook::Commit;
 use crate::config::{Gates, Project};
 use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
@@ -36,6 +37,9 @@ pub enum Found {
         pull_request: PullRequest,
         failure: RunFailure,
     },
+    /// GitHub did not say which open pull requests a commit heads, so a
+    /// delivery about its checks settled none.
+    CommitUnread { commit: Commit, failure: RunFailure },
     /// GitHub refused to say where a pull request stands for the rate limit
     /// of the login gh runs as, so nothing more is asked of it until
     /// `resets`, or for a while where GitHub does not say when that is.
@@ -181,6 +185,52 @@ pub fn delivered(
     }
     let settled = gates::settle(cli, gh, projects, &EVENTS, &pull_request, told);
     findings(gh, pull_request, settled)
+}
+
+/// Settle the open pull requests whose head is the commit a delivery about
+/// its checks named, each as [`delivered`] settles one. A lookup the rate
+/// limit refuses is reported like any other and does not put off the asks
+/// after it, which the next one finds refused again.
+pub fn delivered_commit(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    settles: &Gates,
+    commit: Commit,
+    told: &Told,
+) -> Settling {
+    let Some(repository) = gate::repository(&commit.repo) else {
+        return Settling::default();
+    };
+    if !settles.settles(Some(repository.owner)) {
+        return Settling::default();
+    }
+    let numbers = match github::open_pull_requests_headed_by(gh, &repository, &commit.sha) {
+        Ok(numbers) => numbers,
+        Err(failure) => {
+            return Settling {
+                found: vec![Found::CommitUnread { commit, failure }],
+                github: Read::Refused,
+            }
+        }
+    };
+    let mut settling = Settling {
+        found: Vec::new(),
+        github: Read::Answered,
+    };
+    for number in numbers {
+        let pull_request = PullRequest {
+            repo: commit.repo.clone(),
+            number,
+        };
+        let each = delivered(cli, gh, projects, settles, pull_request, told);
+        settling.found.extend(each.found);
+        settling.github = settling.github.max(each.github);
+        if matches!(settling.found.last(), Some(Found::RateLimited { .. })) {
+            break;
+        }
+    }
+    settling
 }
 
 /// What settling `pull_request` found to report, and whether GitHub answered.
@@ -596,6 +646,91 @@ mod tests {
             pr(number),
             &Told::default(),
         )
+    }
+
+    const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
+    const HEADED_BY_SHA: &str =
+        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls?per_page=100";
+
+    fn commit() -> Commit {
+        Commit {
+            repo: "example/ark".to_string(),
+            sha: SHA.to_string(),
+        }
+    }
+
+    fn delivered_commit_here(runner: &FakeRunner, settles: &Gates) -> Settling {
+        delivered_commit(
+            &Cli::new(runner),
+            runner,
+            &[project("arkham")],
+            settles,
+            commit(),
+            &Told::default(),
+        )
+    }
+
+    /// #42 open with the commit as head, #43 open without it, #44 closed
+    /// with it.
+    const PULLS_OF_SHA: &str = r#"[
+        {"number":42,"state":"open","head":{"sha":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}},
+        {"number":43,"state":"open","head":{"sha":"0badc0de0badc0de0badc0de0badc0de0badc0de"}},
+        {"number":44,"state":"closed","head":{"sha":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}
+    ]"#;
+
+    #[test]
+    fn a_delivery_about_a_commit_settles_each_open_pull_request_it_heads_and_no_other() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(HEADED_BY_SHA, PULLS_OF_SHA)
+            .with(&viewed(42), &answer(42, MERGED))
+            .with(&resolving_42("arkham"), "");
+
+        let Settling { found, github } = delivered_commit_here(&runner, &owners(&["example"]));
+
+        assert_eq!(found, [settling("arkham")]);
+        assert_eq!(
+            asked_github(&runner),
+            [HEADED_BY_SHA.to_string(), viewed(42)]
+        );
+        assert_eq!(github, Read::Answered);
+    }
+
+    #[test]
+    fn a_delivery_about_a_commit_no_open_pull_request_heads_asks_nothing_more() {
+        let runner = FakeRunner::default().with(HEADED_BY_SHA, "[]");
+
+        let Settling { found, github } = delivered_commit_here(&runner, &Gates::default());
+
+        assert_eq!(found, []);
+        assert_eq!(asked_github(&runner), [HEADED_BY_SHA.to_string()]);
+        assert_eq!(github, Read::Answered);
+    }
+
+    #[test]
+    fn a_commit_github_cannot_list_the_pull_requests_of_is_reported_and_settles_nothing() {
+        let runner = FakeRunner::default().failing(HEADED_BY_SHA, unavailable("gh"));
+
+        let Settling { found, github } = delivered_commit_here(&runner, &Gates::default());
+
+        assert_eq!(
+            found,
+            [Found::CommitUnread {
+                commit: commit(),
+                failure: unavailable("gh"),
+            }]
+        );
+        assert_eq!(github, Read::Refused);
+    }
+
+    #[test]
+    fn a_delivery_about_a_commit_in_a_repository_this_bdi_gates_does_not_settle_for_asks_nothing() {
+        let runner = FakeRunner::default();
+
+        let Settling { found, github } = delivered_commit_here(&runner, &owners(&["miskatonic"]));
+
+        assert_eq!(found, []);
+        assert_eq!(runner.calls(), []);
+        assert_eq!(github, Read::Unasked);
     }
 
     #[test]
