@@ -40,7 +40,7 @@ pub enum Outcome {
 }
 
 /// Every event `bdi gates` acts on.
-pub const EVENTS: [Event; 7] = [
+pub const EVENTS: [Event; 8] = [
     Event {
         fields: "isDraft",
         happening: "is ready for review",
@@ -70,6 +70,11 @@ pub const EVENTS: [Event; 7] = [
         fields: "reviews(last:5){nodes{url state author{login}}}",
         happening: "was reviewed",
         outcome: reviewed,
+    },
+    Event {
+        fields: "mergeable headRefOid",
+        happening: "conflicts with its base",
+        outcome: conflicting,
     },
     Event {
         fields: "comments(last:5){nodes{url author{login}}}",
@@ -205,6 +210,29 @@ fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, se
         })
         .collect();
     Ok((observed.state == State::Open && !told.is_empty()).then_some(Outcome::Tell(told)))
+}
+
+fn conflicting(
+    pr: &PullRequest,
+    observed: &Observed,
+) -> Result<Option<Outcome>, serde_json::Error> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Fields {
+        mergeable: Option<String>,
+        head_ref_oid: Option<String>,
+    }
+    let Fields {
+        mergeable,
+        head_ref_oid,
+    } = Fields::deserialize(&observed.fields)?;
+    Ok(match (observed.state, mergeable.as_deref(), head_ref_oid) {
+        (State::Open, Some("CONFLICTING"), Some(oid)) => Some(Outcome::Tell(vec![format!(
+            "The head of pull request {pr}, {oid}, conflicts with its base, so the gh:pr gate \
+             waiting on it stays open."
+        )])),
+        _ => None,
+    })
 }
 
 fn commented(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, serde_json::Error> {
@@ -471,6 +499,65 @@ mod tests {
         assert_eq!(reviewed_on(State::Merged, &reviewed), Vec::<String>::new());
     }
 
+    fn conflict_told_on(state: State, fields: &str) -> Option<String> {
+        let pr = PullRequest {
+            repo: "example/ark".to_string(),
+            number: 7,
+        };
+        let observed = Observed {
+            state,
+            fields: serde_json::from_str(fields).expect("the fields parse"),
+        };
+        match conflicting(&pr, &observed).expect("the fields read") {
+            Some(Outcome::Tell(mut texts)) if texts.len() == 1 => texts.pop(),
+            Some(other) => panic!("a conflict tells once, not {other:?}"),
+            None => None,
+        }
+    }
+
+    fn mergeable(mergeable: &str, oid: &str) -> String {
+        format!(r#"{{"mergeable":"{mergeable}","headRefOid":"{oid}"}}"#)
+    }
+
+    #[test]
+    fn an_open_pull_request_whose_head_commit_conflicts_is_told_by_that_commit() {
+        let told = |oid| {
+            conflict_told_on(State::Open, &mergeable("CONFLICTING", oid))
+                .expect("a conflict is told")
+        };
+
+        assert!(told("a1b2c3").contains("a1b2c3"));
+        assert_ne!(told("a1b2c3"), told("d4e5f6"));
+    }
+
+    /// A seat that opens its pull request as a draft waits to hear it
+    /// conflicts as much as one that opens it ready.
+    #[test]
+    fn a_draft_whose_head_commit_conflicts_is_told() {
+        let draft = mergeable("CONFLICTING", "a1b2c3").replacen('{', r#"{"isDraft":true,"#, 1);
+        assert!(conflict_told_on(State::Open, &draft).is_some());
+    }
+
+    /// GitHub works mergeability out in the background, so a pull request it
+    /// has not got to yet says UNKNOWN, which is not a conflict.
+    #[test]
+    fn a_head_commit_that_merges_cleanly_or_is_not_yet_known_to_conflict_is_not_told() {
+        for answer in ["MERGEABLE", "UNKNOWN"] {
+            assert_eq!(
+                conflict_told_on(State::Open, &mergeable(answer, "a1b2c3")),
+                None,
+                "{answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pull_request_that_is_no_longer_open_is_not_told_of_a_conflict() {
+        let conflicting = mergeable("CONFLICTING", "a1b2c3");
+        assert_eq!(conflict_told_on(State::Closed, &conflicting), None);
+        assert_eq!(conflict_told_on(State::Merged, &conflicting), None);
+    }
+
     fn commented_on(state: State, fields: &str) -> Vec<String> {
         let pr = PullRequest {
             repo: "example/ark".to_string(),
@@ -560,13 +647,14 @@ mod tests {
     /// The fields today's query asks, so adding an event that reads nothing
     /// new costs GitHub nothing new.
     #[test]
-    fn the_events_read_a_draft_a_merge_commit_a_review_decision_the_head_commits_checks_and_recent_reviews_and_comments(
+    fn the_events_read_a_draft_a_merge_commit_a_review_decision_the_head_commits_checks_recent_reviews_mergeability_and_comments(
     ) {
         assert_eq!(
             fields(&EVENTS),
             "isDraft mergeCommit{oid} reviewDecision \
              commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} \
              reviews(last:5){nodes{url state author{login}}} \
+             mergeable headRefOid \
              comments(last:5){nodes{url author{login}}}"
         );
     }

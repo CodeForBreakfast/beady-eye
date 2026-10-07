@@ -945,8 +945,9 @@ on, and acts on what GitHub says:
 | open and approved | closes each gate waiting on it with `awaits=approved` in its metadata, and leaves the rest open |
 | open or a draft, and its head commit has failing checks | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a fix that fails again is told again |
 | open or a draft, and reviewed | leaves each gate open, and comments on each bead a gate holds back once for each review submitted, approving, requesting changes or commenting, naming the reviewer and the state. A dismissed review is not told. It reads the latest five reviews |
+| open or a draft, and GitHub says its head commit conflicts with its base | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a rebase that still conflicts is told again. A pull request GitHub has not yet worked out is not told |
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
-| a draft with no failing checks, no review and no comment | nothing |
+| a draft with no failing checks, no review, no conflict and no comment | nothing |
 
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
 as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
@@ -970,6 +971,7 @@ dunwich/arkham#7 closed unmerged: arkham told ark-2ud
 dunwich/arkham#15 is ready for review: arkham closed gate ark-eb1
 dunwich/arkham#18 has failing checks: arkham told ark-7mw
 dunwich/arkham#18 was reviewed: arkham told ark-7mw
+dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
 kadath: its gh:pr gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
