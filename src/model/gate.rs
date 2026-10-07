@@ -18,6 +18,10 @@ pub enum Until {
     /// `awaits=ready_for_review`, GitHub's name for the webhook action that
     /// takes a pull request out of draft.
     ReadyForReview,
+    /// Be approved or merge, whichever comes first. A gate asks for it with
+    /// `awaits=approved`. Approved is GitHub's review decision on the pull
+    /// request, which a repository that requires no reviews never gives.
+    Approved,
 }
 
 /// Why a gate cannot name the pull request it waits on, or what it waits
@@ -97,6 +101,7 @@ pub fn until(gate: &Bead) -> Result<Until, Fault> {
     match gate.metadata.get(AWAITS).map(String::as_str) {
         None => Ok(Until::Merged),
         Some("ready_for_review") => Ok(Until::ReadyForReview),
+        Some("approved") => Ok(Until::Approved),
         Some(other) => Err(Fault::UnknownAwaits(other.to_string())),
     }
 }
@@ -147,8 +152,14 @@ mod tests {
     }
 
     #[test]
+    fn a_gate_awaiting_approved_waits_for_its_pull_request_to_be_approved() {
+        let gate = gate(serde_json::json!({ "awaits": "approved" }));
+        assert_eq!(until(&gate), Ok(Until::Approved));
+    }
+
+    #[test]
     fn a_gate_awaiting_anything_else_is_faulty_rather_than_waiting_for_the_merge() {
-        for awaits in ["merged", "Ready_For_Review", ""] {
+        for awaits in ["merged", "Ready_For_Review", "Approved", ""] {
             let gate = gate(serde_json::json!({ "awaits": awaits }));
             assert_eq!(
                 until(&gate),

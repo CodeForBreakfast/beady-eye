@@ -309,7 +309,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision}}}}}}"
         )
     }
 
@@ -323,7 +323,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7)\
-             {{state isDraft mergeCommit{{oid}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}}}}}}}}"
+             {{state isDraft mergeCommit{{oid}} reviewDecision}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}} reviewDecision}}}}}}"
         )
     }
 
@@ -474,6 +474,46 @@ mod tests {
                 Found::Settling {
                     pull_request: pr(7),
                     happening: "is ready for review",
+                    project: "arkham".to_string(),
+                    bead: "ark-eb1".to_string(),
+                    done: Ok(Done::Resolved),
+                },
+                settling("arkham"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_look_closes_a_gate_waiting_for_its_pull_request_to_be_approved() {
+        let mut rows: Vec<serde_json::Value> =
+            serde_json::from_str(GATE_LIST).expect("the capture parses");
+        for row in rows.iter_mut().filter(|row| row["id"] == "ark-eb1") {
+            row["metadata"][gate::AWAITS] = "approved".into();
+        }
+        let gates = serde_json::to_string(&rows).expect("the rows print");
+        let approved_7 = include_str!("../../tests/fixtures/gh_2.102.0_api_graphql_ark_42_merged.json")
+            .replace(
+                r#""pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null"#,
+                r#""pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":"APPROVED""#,
+            );
+        let resolving_7 = "bd -C /nowhere/arkham gate resolve ark-eb1 --reason Pull request \
+                           example/ark#7 is approved.";
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&gate_list("arkham"), &gates)
+            .with(&queried("ark"), &approved_7)
+            .with(resolving_7, "")
+            .with(&resolving_42("arkham"), "");
+
+        let found = looked(&runner, &[project("arkham")], &Gates::default()).found;
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-6pp", Fault::NoRepo),
+                no_number("arkham"),
+                Found::Settling {
+                    pull_request: pr(7),
+                    happening: "is approved",
                     project: "arkham".to_string(),
                     bead: "ark-eb1".to_string(),
                     done: Ok(Done::Resolved),
