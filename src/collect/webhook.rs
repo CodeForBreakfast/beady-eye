@@ -129,9 +129,14 @@ pub fn delivery(
     if !signed(secret, signature, body) {
         return Heard::Forged;
     }
-    if event != Some("pull_request") {
-        return Heard::Ignored;
+    match event {
+        Some("pull_request") => pull_request(body),
+        _ => Heard::Ignored,
     }
+}
+
+/// What a signed pull_request delivery comes to.
+fn pull_request(body: &[u8]) -> Heard {
     match serde_json::from_slice::<PullRequestEvent>(body) {
         Ok(event) => Heard::Settle(PullRequest {
             repo: event.repository.named(),
