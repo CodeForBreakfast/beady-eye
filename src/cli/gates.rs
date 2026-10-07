@@ -302,7 +302,7 @@ fn fault(fault: &Fault) -> String {
         Fault::NoAwaitId => "it has no await id".to_string(),
         Fault::AwaitIdNotANumber(id) => format!("its await id “{id}” is not a number"),
         Fault::UnknownAwaits(awaits) => {
-            format!("it awaits “{awaits}”, which is not ready_for_review")
+            format!("it awaits “{awaits}”, which is neither ready_for_review nor approved")
         }
     }
 }
@@ -428,8 +428,8 @@ mod tests {
             })
             .as_deref(),
             Some(
-                "arkham: gate ark-g1 cannot be settled: it awaits “merged”, which is not \
-                 ready_for_review"
+                "arkham: gate ark-g1 cannot be settled: it awaits “merged”, which is neither \
+                 ready_for_review nor approved"
             )
         );
     }

@@ -488,8 +488,23 @@ $ bd update dun-9 --set-metadata awaits=ready_for_review
 ```
 
 `bdi gates` closes that gate once the pull request is ready for review, or once
-it merges. `ready_for_review` is the only value it knows. It reports a gate with
-any other `awaits` value and leaves the gate open.
+it merges.
+
+A gate can also wait for its pull request to be approved, such as one holding
+back a step that starts once the team has reviewed it. Write `awaits=approved`
+into the gate's metadata:
+
+```console
+$ bd update dun-9 --set-metadata awaits=approved
+```
+
+`bdi gates` closes that gate once GitHub's review decision on the pull request
+is approved, or once it merges. It counts no approving reviews itself.
+GitHub gives no review decision on a repository that does not require reviews,
+so a gate waiting for approval there waits for the merge.
+
+`ready_for_review` and `approved` are the only values it knows. It reports a
+gate with any other `awaits` value and leaves the gate open.
 
 ### An issue tracker key
 
@@ -927,6 +942,7 @@ on, and acts on what GitHub says:
 | merged | closes each gate waiting on it with `bd gate resolve`, naming the merge commit, so the beads it blocked become ready |
 | closed without being merged | leaves each gate open, and comments once on each bead a gate holds back |
 | open and ready for review | closes each gate waiting on it with `awaits=ready_for_review` in its metadata, and leaves the rest open |
+| open and approved | closes each gate waiting on it with `awaits=approved` in its metadata, and leaves the rest open |
 | a draft | nothing |
 
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
