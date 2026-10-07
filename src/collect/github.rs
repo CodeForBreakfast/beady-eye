@@ -287,11 +287,11 @@ mod tests {
         assert_eq!(spent_until(&runner, None), Ok(None));
     }
 
-    const FIELDS: &str = "isDraft mergeCommit{oid} reviewDecision";
+    const FIELDS: &str = "isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}";
 
     const QUERY: &str = "query=query($owner:String!,$name:String!){repository(owner:$owner,\
-                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision} \
-                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision}}}";
+                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}} \
+                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}}}";
 
     fn observed(state: State, fields: &str) -> Observed {
         Observed {

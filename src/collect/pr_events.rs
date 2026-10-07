@@ -40,7 +40,7 @@ pub enum Outcome {
 }
 
 /// Every event `bdi gates` acts on.
-pub const EVENTS: [Event; 4] = [
+pub const EVENTS: [Event; 5] = [
     Event {
         fields: "isDraft",
         happening: "is ready for review",
@@ -60,6 +60,11 @@ pub const EVENTS: [Event; 4] = [
         fields: "reviewDecision",
         happening: "is approved",
         outcome: approved,
+    },
+    Event {
+        fields: "commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}",
+        happening: "has failing checks",
+        outcome: checks_failed,
     },
 ];
 
@@ -116,6 +121,46 @@ fn approved(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, se
             },
         ),
     )
+}
+
+fn checks_failed(
+    pr: &PullRequest,
+    observed: &Observed,
+) -> Result<Option<Outcome>, serde_json::Error> {
+    #[derive(Deserialize)]
+    struct Fields {
+        #[serde(default)]
+        commits: Commits,
+    }
+    #[derive(Deserialize, Default)]
+    struct Commits {
+        nodes: Vec<Node>,
+    }
+    #[derive(Deserialize)]
+    struct Node {
+        commit: Commit,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Commit {
+        oid: String,
+        status_check_rollup: Option<Rollup>,
+    }
+    #[derive(Deserialize)]
+    struct Rollup {
+        state: String,
+    }
+    let Fields { commits } = Fields::deserialize(&observed.fields)?;
+    let failed = commits.nodes.into_iter().find_map(|Node { commit }| {
+        let rollup = commit.status_check_rollup?;
+        matches!(rollup.state.as_str(), "FAILURE" | "ERROR").then_some(commit.oid)
+    });
+    Ok(failed.filter(|_| observed.state == State::Open).map(|oid| {
+        Outcome::Tell(format!(
+            "The checks on {oid}, the head of pull request {pr}, failed, so the gh:pr gate \
+                 waiting on it stays open."
+        ))
+    }))
 }
 
 fn merged(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, serde_json::Error> {
@@ -178,10 +223,81 @@ mod tests {
         }
     }
 
+    fn told_on(state: State, fields: &str) -> Option<String> {
+        let pr = PullRequest {
+            repo: "example/ark".to_string(),
+            number: 7,
+        };
+        let observed = Observed {
+            state,
+            fields: serde_json::from_str(fields).expect("the fields parse"),
+        };
+        match checks_failed(&pr, &observed).expect("the fields read") {
+            Some(Outcome::Tell(text)) => Some(text),
+            Some(other) => panic!("a failure of checks only tells, not {other:?}"),
+            None => None,
+        }
+    }
+
+    fn head_commit(oid: &str, rollup: &str) -> String {
+        format!(
+            r#"{{"commits":{{"nodes":[{{"commit":{{"oid":"{oid}","statusCheckRollup":{rollup}}}}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn an_open_pull_request_whose_head_commit_failed_its_checks_is_told_by_that_commit() {
+        for state in ["FAILURE", "ERROR"] {
+            let rollup = format!(r#"{{"state":"{state}"}}"#);
+            let told =
+                |oid| told_on(State::Open, &head_commit(oid, &rollup)).expect("a failure is told");
+
+            assert!(told("a1b2c3").contains("a1b2c3"), "{state}");
+            assert_ne!(told("a1b2c3"), told("d4e5f6"), "{state}");
+        }
+    }
+
+    /// A seat that opens its pull request as a draft waits to hear its
+    /// checks fail as much as one that opens it ready.
+    #[test]
+    fn a_draft_whose_head_commit_failed_its_checks_is_told() {
+        let draft =
+            head_commit("a1b2c3", r#"{"state":"FAILURE"}"#).replacen('{', r#"{"isDraft":true,"#, 1);
+        assert!(told_on(State::Open, &draft).is_some());
+    }
+
+    #[test]
+    fn a_head_commit_whose_checks_have_not_failed_is_not_told() {
+        for rollup in [
+            "null",
+            r#"{"state":"SUCCESS"}"#,
+            r#"{"state":"PENDING"}"#,
+            r#"{"state":"EXPECTED"}"#,
+        ] {
+            assert_eq!(
+                told_on(State::Open, &head_commit("a1b2c3", rollup)),
+                None,
+                "{rollup}"
+            );
+        }
+        assert_eq!(told_on(State::Open, r#"{"commits":{"nodes":[]}}"#), None);
+    }
+
+    #[test]
+    fn a_pull_request_that_is_no_longer_open_is_not_told_of_failed_checks() {
+        let failed = head_commit("a1b2c3", r#"{"state":"FAILURE"}"#);
+        assert_eq!(told_on(State::Closed, &failed), None);
+        assert_eq!(told_on(State::Merged, &failed), None);
+    }
+
     /// The fields today's query asks, so adding an event that reads nothing
     /// new costs GitHub nothing new.
     #[test]
-    fn the_events_read_a_draft_a_merge_commit_and_a_review_decision_and_nothing_else() {
-        assert_eq!(fields(&EVENTS), "isDraft mergeCommit{oid} reviewDecision");
+    fn the_events_read_a_draft_a_merge_commit_a_review_decision_and_the_head_commits_checks() {
+        assert_eq!(
+            fields(&EVENTS),
+            "isDraft mergeCommit{oid} reviewDecision \
+             commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}"
+        );
     }
 }
