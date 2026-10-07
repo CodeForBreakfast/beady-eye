@@ -4,8 +4,7 @@
 
 import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
-import { FileSystem } from '@effect/platform'
-import { Chunk, Config, Data, Effect, Option, Ref, Schema, Stream } from 'effect'
+import { Cause, Config, Data, Effect, FileSystem, Option, Queue, Ref, Schema, Stream } from 'effect'
 import { parse } from 'smol-toml'
 
 /** The version of the watcher's lines this plugin reads. */
@@ -69,12 +68,12 @@ const ProjectsSection = Schema.Struct({
 })
 
 /** What the bdi config at `config` says, as `section` reads it. */
-const readIn = <A, I>(config: string, section: Schema.Schema<A, I>) =>
+const readIn = <A>(config: string, section: Schema.Codec<A, unknown>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const text = yield* fs.readFileString(config)
     const read = yield* Effect.try(() => parse(text))
-    return yield* Schema.decodeUnknown(section)(read)
+    return yield* Schema.decodeEffect(section)(read)
   }).pipe(Effect.option)
 
 const socketNamedIn = (config: string) =>
@@ -93,7 +92,7 @@ export const projectsNamedIn = (
     ),
   )
 
-const runtimeDirectory = Config.option(Config.nonEmptyString('XDG_RUNTIME_DIR')).pipe(
+const runtimeDirectory = Config.option(Config.NonEmptyString('XDG_RUNTIME_DIR')).pipe(
   Effect.orElseSucceed(() => Option.none<string>()),
 )
 
@@ -171,15 +170,14 @@ export const pauseAfter = (failures: number, timing: Timing): number =>
 
 const down = (why: Down) => new WatcherDown({ why })
 
-const SaidLine = Schema.parseJson(
-  Schema.Struct(
-    { line: Schema.String },
-    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
+const SaidLine = Schema.fromJsonString(
+  Schema.StructWithRest(Schema.Struct({ line: Schema.String }), [
+    Schema.Record(Schema.String, Schema.Unknown),
+  ]),
 )
 
 const saidIn = (line: string) =>
-  Schema.decodeUnknown(SaidLine)(line).pipe(
+  Schema.decodeEffect(SaidLine)(line).pipe(
     Effect.filterOrFail((said) => said.line !== 'freshness' || said['protocol'] === PROTOCOL),
     Effect.mapError(() => down('protocol')),
   )
@@ -187,24 +185,28 @@ const saidIn = (line: string) =>
 /** Every line the watcher sends after it is sent `asking`, until the
  * connection is down. */
 const linesFrom = (at: string, asking: readonly string[]) =>
-  Stream.async<string, WatcherDown>((emit) => {
-    const connection = createConnection(at)
-    let connected = false
-    let pending = ''
-    connection.setEncoding('utf8')
-    connection.on('connect', () => {
-      connected = true
-      connection.write(asking.map((line) => `${line}\n`).join(''))
-    })
-    connection.on('data', (chunk: string) => {
-      const lines = (pending + chunk).split('\n')
-      pending = lines.pop() ?? ''
-      if (lines.length > 0) emit.chunk(Chunk.unsafeFromArray(lines))
-    })
-    connection.on('error', () => emit.fail(down(connected ? 'closed' : 'refused')))
-    connection.on('close', () => emit.fail(down('closed')))
-    return Effect.sync(() => connection.destroy())
-  }, 'unbounded')
+  Stream.callback<string, WatcherDown>((lines) =>
+    Effect.gen(function* () {
+      const connection = createConnection(at)
+      let connected = false
+      let pending = ''
+      connection.setEncoding('utf8')
+      connection.on('connect', () => {
+        connected = true
+        connection.write(asking.map((line) => `${line}\n`).join(''))
+      })
+      connection.on('data', (chunk: string) => {
+        const arrived = (pending + chunk).split('\n')
+        pending = arrived.pop() ?? ''
+        Queue.offerAllUnsafe(lines, arrived)
+      })
+      connection.on('error', () =>
+        Queue.failCauseUnsafe(lines, Cause.fail(down(connected ? 'closed' : 'refused'))),
+      )
+      connection.on('close', () => Queue.failCauseUnsafe(lines, Cause.fail(down('closed'))))
+      yield* Effect.addFinalizer(() => Effect.sync(() => connection.destroy()))
+    }),
+  )
 
 /**
  * Connect to the watcher, send it `asking`, and read every line it sends but
@@ -221,7 +223,10 @@ const talkTo = <R>(
       if (Option.isNone(at)) return yield* down('nowhere')
       if (!(yield* onlyThisUserHolds(at.value))) return yield* down('refused')
       return linesFrom(at.value, asking).pipe(
-        Stream.timeoutFail(() => down('wedged'), timing.wedgedAfter),
+        Stream.timeoutOrElse({
+          duration: timing.wedgedAfter,
+          orElse: () => Stream.fail(down('wedged')),
+        }),
         Stream.mapEffect(saidIn),
         Stream.filter((said) => said.line !== 'alive'),
       )
@@ -233,14 +238,13 @@ const talkTo = <R>(
 const answersIn = <E, R>(lines: Stream.Stream<Said, E, R>) =>
   lines.pipe(
     Stream.mapAccum(
-      [] as readonly Said[],
+      (): readonly Said[] => [],
       (batch, said): [readonly Said[], readonly (readonly Said[])[]] => {
         if (said.line === 'refused') return [batch, [[said]]]
         if (said.line === 'freshness') return [[], [[...batch, said]]]
         return [[...batch, said], []]
       },
     ),
-    Stream.flattenIterables,
   )
 
 const watchLine = (bead: Bead) => `watch ${bead.project} ${bead.id}`
@@ -263,12 +267,12 @@ export const watchBead = <R>(
           batch.at(-1)?.line === 'freshness' ? Ref.set(failures, 0) : Effect.void,
         ),
         Stream.map((batch): Heard => ({ batch })),
-        Stream.catchAll(({ why }) => Stream.make<Heard[]>({ down: why })),
+        Stream.catch(({ why }) => Stream.make<Heard[]>({ down: why })),
       )
       const pause = Ref.updateAndGet(failures, (failed) => failed + 1).pipe(
         Effect.flatMap((failed) => Effect.sleep(pauseAfter(failed, timing))),
       )
-      return connection.pipe(Stream.concat(Stream.execute(pause)), Stream.forever)
+      return connection.pipe(Stream.concat(Stream.fromEffectDrain(pause)), Stream.forever)
     }),
   )
 
@@ -309,11 +313,11 @@ export const askAbout = <R>(
     }
   }
   return talkTo(findWatcher, [...asking.keys()], timing).pipe(
-    Stream.scan(unasked, take),
+    Stream.scan(() => unasked, take),
     Stream.takeUntil((asked) => asked.unanswered.length === 0),
-    Stream.interruptAfter(timing.answeredWithin),
+    Stream.interruptWhen(Effect.sleep(timing.answeredWithin)),
     Stream.runLast,
     Effect.map(Option.getOrElse(() => unasked)),
-    Effect.catchAll(({ why }) => Effect.succeed(why)),
+    Effect.catch(({ why }) => Effect.succeed(why)),
   )
 }

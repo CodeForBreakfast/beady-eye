@@ -21,18 +21,18 @@ Three axes are **static** and find non-native code that is *present*. One is
   Effect-native program.*
 - **Modelling** (nouns) — data and state whose **type** throws away a guarantee
   an Effect data type would give for free: `T | null` that wants `Option`, a
-  sentinel or pure `throw` that wants `Either`, booleans + optional fields that
+  sentinel or pure `throw` that wants `Result`, booleans + optional fields that
   want a `Data.taggedEnum`, a bare `string` id that wants a branded type,
   in-place array mutation that wants an immutable build, hand-rolled equality
-  that wants `Equal`/`Data`, a data-first helper that blocks clean `pipe`
+  that wants `Equal.equals`, a data-first helper that blocks clean `pipe`
   composition. The dishonesty is in the *representation*, so the substitution
   and structural axes walk past it.
 - **Behaviour** (dynamics) — how effects **run**, **fail**, and what they
   **trust**. Independent effects run sequentially that could run under
-  `Effect.all` concurrency, an unbounded fan-out onto a shared resource, a bare
-  `Effect.fork` whose fiber leaks, untrusted data crossing the edge via
-  `as`/`JSON.parse` with no `Schema` decode, an `E` channel typed `unknown`, or a
-  `catchAll` that swallows a recoverable failure. The construct is already
+  `Effect.all` concurrency, an unbounded fan-out onto a shared resource, an
+  `Effect.forkChild` whose failure nothing observes, untrusted data crossing the
+  edge via `as`/`JSON.parse` with no `Schema` decode, an `E` channel typed
+  `unknown`, or an `Effect.catch` that swallows a recoverable failure. The construct is already
   Effect-native and the smell is the *policy*. Each finder anchors on present
   code, not blanket absence ("no timeout anywhere").
 
@@ -40,7 +40,7 @@ The plugin has two per-line linters, and this sweep covers what they cannot see.
 `nix flake check` typechecks `plugin/` with Effect's tsgo build of `tsc`, whose
 language service fails the check on floating Effects, an unnecessary
 `Effect.gen`, a `*Sync` decode or a `try/catch` inside a generator, the global
-`Error` in `E`, and more. The Biome GritQL plugin
+`Error` in `E`, most one-combinator swaps, and any Effect 3 API name. The Biome GritQL plugin
 `plugin/biome-plugins/effect-native-predicates.grit` lints the mechanical
 substitutions precise enough to flag deterministically, and leaves the
 judgment-heavy axes to this sweep. Neither sees that a 40-line block is a
@@ -52,15 +52,21 @@ sets, and the global-API rules this repo leaves off, which the sweep does report
 ## How it works
 
 A `Workflow` script (`effect-native-audit.workflow.js`) fans out four kinds of
-finder (see `domains.md`), grounded in two sources pinned to the plugin's Effect:
+finder (see `domains.md`), grounded in the Effect 4 the plugin pins:
 
 - **Source** comes from `plugin/node_modules`, the packages `bun install` puts
   there at the versions `plugin/package.json` pins. Each ships its TypeScript
   under `src/`.
-- **Docs** come from Effect 3's docs, which `Effect-TS/website` keeps at the tag
-  `pre-website-v2-migration`. effect.website itself now documents Effect 4.
+- **The idiom guide** ships in the same package: `effect/AGENTS.md`, which is
+  Effect-TS/effect's `LLMS.md`, and the worked examples under `effect/ai-docs/`.
+  Effect-TS/effect's `migration/` notes, read at the tag for the pinned
+  version, say how Effect 4 changed an idiom.
+- **Docs** come from Effect 4's pages, which effect.website serves under
+  `/docs/v4/` and `Effect-TS/website` keeps on `main` under
+  `apps/web/src/content/docs/v4/`. The unprefixed effect.website pages are
+  Effect 3's.
 
-**Substitution finders** (~22, one per Effect domain) work inventory-first:
+**Substitution finders** (~23, one per Effect domain) work inventory-first:
 
 1. List the module's *complete* export inventory from source, including the
    names Effect re-exports inside `export { … }` blocks. You cannot recognise a
@@ -77,7 +83,7 @@ when the imperative shape is justified. Then they grep an anchor pattern and rea
 each candidate to confirm the shape. A grep hit is not a finding.
 
 **Modelling finders** (~7, one per representation smell) work smell-first too,
-grounded in the `code-style/*` + `data-types/*` docs (`option`, `either`,
+grounded in the `code-style/*` + `data-types/*` docs (`option`, `result`,
 `data`, `branded-types`, `chunk`, `trait/equal`, `dual`). They hunt the *type* of
 data and state. Three of them deliberately border a structural or substitution
 smell, and each finder states its boundary so the axes don't double-count.
@@ -123,12 +129,11 @@ died is returned as unverified, never as refuted.
    (cd plugin && bun install --frozen-lockfile)
    ```
 
-2. Optionally, check out the Effect 3 docs once, so ~40 finders read files
+2. Optionally, check out the Effect 4 docs once, so ~41 finders read files
    instead of fetching pages from GitHub:
 
    ```bash
-   git clone --depth 1 --branch pre-website-v2-migration \
-     https://github.com/Effect-TS/website <dir>
+   git clone --depth 1 https://github.com/Effect-TS/website <dir>
    ```
 
 3. Get today's date (`date +%F`) and launch the workflow:
@@ -136,12 +141,12 @@ died is returned as unverified, never as refuted.
    ```
    Workflow({
      scriptPath: '.claude/skills/effect-native-audit/effect-native-audit.workflow.js',
-     args: { date: '<YYYY-MM-DD>', docsDir: '<dir>/content/src/content/docs/docs' },
+     args: { date: '<YYYY-MM-DD>', docsDir: '<dir>/apps/web/src/content/docs/v4' },
    })
    ```
 
-   Leave out `docsDir` to read the docs from GitHub at the tag. The workflow runs
-   in the background: ~40 finders (22 substitution, 6 structural, 7 modelling,
+   Leave out `docsDir` to read the docs from GitHub. The workflow runs
+   in the background: ~41 finders (23 substitution, 6 structural, 7 modelling,
    5 behaviour), then a refuter per finding, then synthesis. Watch it with
    `/workflows`. To run one axis, pass `axes: ['behaviour']`. `reportPath`
    overrides where the report goes.
