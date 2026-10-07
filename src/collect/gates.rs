@@ -347,6 +347,7 @@ fn acted(
     told: &Told,
 ) -> Vec<Act> {
     let mut resolved = BTreeSet::new();
+    let mut closed = BTreeSet::new();
     let mut acts = Vec::new();
     for (happening, outcome) in outcomes {
         let concerned = gates.iter().filter(|gate| {
@@ -357,16 +358,20 @@ fn acted(
         match outcome {
             Outcome::Resolve { reason, .. } => {
                 for gate in concerned.filter(|gate| resolved.insert(gate.id.clone())) {
+                    let done = tracker.resolve(&gate.id, reason).map(|()| Done::Resolved);
+                    if done.is_ok() {
+                        closed.insert(gate.id.clone());
+                    }
                     acts.push(Act {
                         bead: gate.id.clone(),
                         happening,
-                        done: tracker.resolve(&gate.id, reason).map(|()| Done::Resolved),
+                        done,
                     });
                 }
             }
             Outcome::Tell(text) => {
                 let held_back: BTreeSet<&String> = concerned
-                    .filter(|gate| !resolved.contains(&gate.id))
+                    .filter(|gate| !closed.contains(&gate.id))
                     .flat_map(|gate| &gate.blocks)
                     .collect();
                 for bead in held_back {
@@ -1106,6 +1111,50 @@ mod tests {
                 failing_checks("ark-qca", Done::Commented)
             ]
         );
+    }
+
+    /// A gate bd failed to close is still open, so what is said of it stays
+    /// true.
+    #[test]
+    fn failed_checks_are_told_to_a_bead_held_back_by_a_gate_an_approval_failed_to_close() {
+        let resolving = written(
+            "arkham",
+            &format!("gate resolve ark-eb1 --reason {APPROVED_REASON}"),
+        );
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &gate_list("arkham"),
+                &gate_list_with_42_awaiting("approved"),
+            )
+            .with(
+                &viewed(42),
+                &answer(42, &checks_failed_deciding(r#""APPROVED""#, "a1b2c3")),
+            )
+            .failing(&resolving, unavailable("bd"))
+            .with(&comments_on("arkham", "ark-qca"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &checks_failed_telling_on(42, "arkham", "ark-qca", "a1b2c3"),
+                "Comment added to ark-qca\n",
+            )
+            .with(
+                &checks_failed_telling_on(42, "arkham", "ark-2ud", "a1b2c3"),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &checks_failed_telling_on(42, "arkham", "ark-45c", "a1b2c3"),
+                "Comment added to ark-45c\n",
+            );
+
+        let acts = acts(settled(&runner, &[project("arkham")], &pr(42)));
+
+        let told: Vec<&str> = acts
+            .iter()
+            .filter(|act| act.happening == "has failing checks")
+            .map(|act| act.bead.as_str())
+            .collect();
+        assert_eq!(told, ["ark-2ud", "ark-45c", "ark-qca"]);
     }
 
     fn comments_read(runner: &FakeRunner) -> usize {
