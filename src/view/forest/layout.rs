@@ -50,7 +50,7 @@ enum Child<'a> {
 
 /// The work a line resting shut is hiding: the beads `bead` stands over,
 /// counted once each, and the badges of the open beads among them that block
-/// it.
+/// it whose entries draw them on its row.
 ///
 /// Nothing where the line is open or has nothing under it, because what it
 /// stands over is then drawn on rows of its own.

@@ -370,6 +370,7 @@ mod tests {
     use crate::model::badges::Undrawn;
     use crate::view::fitted::hyperlink;
 
+    use crate::config::DrawnOn;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::join::AgentRef;
@@ -736,6 +737,7 @@ mod tests {
             link: Some(somewhere.into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let layout = Layout {
             state: vec![Cell::Badge("delivery_pr".into()), Cell::Agent],
@@ -769,6 +771,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "delivery_pr".into(),
@@ -776,6 +779,7 @@ mod tests {
                 link: Some(somewhere.into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
         let layout = Layout {
@@ -901,6 +905,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -908,6 +913,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
         let drawn = Painted::of(
@@ -938,6 +944,7 @@ mod tests {
                 link: Some(somewhere.into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "jira".into(),
@@ -945,6 +952,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
         let mut epic = row(&badged);
@@ -989,6 +997,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let unbadged = node("smt-4kd3p.20", "wallpaper timer calls dms", Status::Open);
         let layout = Layout {
@@ -1025,6 +1034,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let layout = Layout {
             identity: vec![Cell::Glyph, Cell::Badge("issue_type".into()), Cell::Id],
@@ -1054,6 +1064,7 @@ mod tests {
                 link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -1061,6 +1072,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
@@ -1096,6 +1108,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: Some(Colour::Status),
+                drawn_on: DrawnOn::Own,
             }];
             let painted = Painted::of(
                 bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
@@ -1135,6 +1148,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         let row = row(&badged);
 
@@ -1161,6 +1175,7 @@ mod tests {
             link: Some("https://forge.invalid/browse/ARKHAM-19".into()),
             short: None,
             colour: Some(Colour::Status),
+            drawn_on: DrawnOn::Own,
         }];
 
         let painted = Painted::of(
@@ -1218,6 +1233,7 @@ mod tests {
             link: Some("https://forge.invalid/dunwich\u{1b}]0;owned\u{7}/pull/12".into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
 
         let painted = Painted::of(
@@ -1251,6 +1267,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         let linked = Badged {
             link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
@@ -1301,6 +1318,7 @@ mod tests {
                 link: to.map(str::to_string),
                 short: None,
                 colour: Some(Colour::Status),
+                drawn_on: DrawnOn::Own,
             }];
             let painted = Painted::of(
                 bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
@@ -1347,6 +1365,7 @@ mod tests {
             link: Some(somewhere.into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
 
         let said = symbols(
@@ -1388,6 +1407,7 @@ mod tests {
                 link: Some(somewhere.into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }];
             let mut unremarked = row(&badged);
             unremarked.notes = Vec::new();
@@ -1421,6 +1441,7 @@ mod tests {
             link: link.map(str::to_string),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
         let said = |badge: Badged| {
             let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
@@ -1453,6 +1474,7 @@ mod tests {
             short: Some("⇢ #12".into()),
             link: to.map(str::to_string),
             colour: None,
+            drawn_on: DrawnOn::Own,
         }
     }
 

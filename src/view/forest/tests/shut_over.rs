@@ -1,6 +1,7 @@
 //! What a line shut over its subtree says it hides.
 
 use super::*;
+use crate::config::DrawnOn;
 use crate::model::badges::Badged;
 use pretty_assertions::assert_eq;
 
@@ -279,8 +280,9 @@ const HELD_BACK: &str = r#"[
 /// The bead `HELD_BACK` is about.
 const SURVEY: &str = "dun-19.1.1";
 
-/// `HELD_BACK`, where each of `badged` carries one badge on `key` naming it.
-fn held_back(key: &str, badged: &[&str]) -> Snapshot {
+/// `HELD_BACK`, where each of `badged` carries one badge on `key` naming it,
+/// drawn on the rows `drawn_on` says.
+fn held_back(key: &str, drawn_on: DrawnOn, badged: &[&str]) -> Snapshot {
     let mut snapshot = alone("dunwich", HELD_BACK, &panes_on(&["dun-19.1.2"]));
     for tree in snapshot.trees.iter_mut().chain(&mut snapshot.collected) {
         for bead in Arc::make_mut(tree)
@@ -294,6 +296,7 @@ fn held_back(key: &str, badged: &[&str]) -> Snapshot {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on,
             }];
         }
     }
@@ -317,7 +320,7 @@ fn badges_on(forest: &Forest, id: &str) -> Vec<String> {
 /// not a blocker.
 #[test]
 fn a_line_shut_over_its_blockers_draws_the_badges_of_the_open_ones_after_its_own() {
-    let mut forest = flatten(held_back("gate", THE_SURVEY_AND_BENEATH));
+    let mut forest = flatten(held_back("gate", DrawnOn::Blocked, THE_SURVEY_AND_BENEATH));
     select(&mut forest, &key("dunwich", SURVEY));
 
     forest.apply(Action::CollapseSubtree);
@@ -326,11 +329,24 @@ fn a_line_shut_over_its_blockers_draws_the_badges_of_the_open_ones_after_its_own
     assert_eq!(badges_on(&forest, SURVEY), ["⇢ dun-19.1.1", "⇢ dun-21"]);
 }
 
+/// Only an entry knows whether its badge means anything on another bead's
+/// row. A blocker's ticket drawn there unasked would read as the row's own.
+#[test]
+fn a_line_shut_over_its_blockers_draws_none_of_their_badges_kept_to_their_own_rows() {
+    let mut forest = flatten(held_back("gate", DrawnOn::Own, THE_SURVEY_AND_BENEATH));
+    select(&mut forest, &key("dunwich", SURVEY));
+
+    forest.apply(Action::CollapseSubtree);
+
+    assert_eq!(fold_of(&forest, SURVEY), Some(false));
+    assert_eq!(badges_on(&forest, SURVEY), ["⇢ dun-19.1.1"]);
+}
+
 /// Opened, the blocker's line draws its badges itself, and the bead's row
 /// saying them too would be the same fact twice.
 #[test]
 fn a_line_opened_over_its_blockers_draws_only_its_own_badges() {
-    let mut forest = flatten(held_back("gate", THE_SURVEY_AND_BENEATH));
+    let mut forest = flatten(held_back("gate", DrawnOn::Blocked, THE_SURVEY_AND_BENEATH));
     select(&mut forest, &key("dunwich", SURVEY));
 
     forest.apply(Action::ExpandSubtree);
@@ -346,7 +362,7 @@ fn a_line_opened_over_its_blockers_draws_only_its_own_badges() {
 #[test]
 fn a_counted_line_resting_shut_is_measured_with_the_badges_it_lifts() {
     let lifted = Cell::Badge("gate".into());
-    let mut forest = flatten(held_back("gate", &["dun-21"]));
+    let mut forest = flatten(held_back("gate", DrawnOn::Blocked, &["dun-21"]));
     forest.laid_out_to(row::Layout {
         identity: vec![Cell::Glyph, lifted.clone(), Cell::Id],
         ..row::Layout::default()

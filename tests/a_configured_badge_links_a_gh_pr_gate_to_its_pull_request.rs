@@ -29,13 +29,18 @@ const GH_PR_GATES: &str = include_str!("fixtures/bd_1.3.0_gh_pr_gates.json");
 /// The entry the README gives for a `gh:pr` gate, word for word.
 const THE_READMES_ENTRY: &str = concat!(
     "\n[[badges]]\n",
-    "key    = \"metadata.repo\"\n",
-    "when   = { await_type = \"gh:pr\", await_id = \"[0-9]+\" }\n",
-    "match  = \"(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)\"\n",
-    "render = \"⇢ {name} #{await_id}\"\n",
-    "short  = \"⇢ #{await_id}\"\n",
-    "link   = \"https://github.com/{owner}/{name}/pull/{await_id}\"\n",
+    "key      = \"metadata.repo\"\n",
+    "when     = { await_type = \"gh:pr\", await_id = \"[0-9]+\" }\n",
+    "match    = \"(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)\"\n",
+    "render   = \"⇢ {name} #{await_id}\"\n",
+    "short    = \"⇢ #{await_id}\"\n",
+    "link     = \"https://github.com/{owner}/{name}/pull/{await_id}\"\n",
+    "drawn_on = \"blocked\"\n",
 );
+
+/// The line of `THE_READMES_ENTRY` that draws its badge on the row of the
+/// bead the gate blocks.
+const DRAWN_ON_THE_BLOCKED: &str = "drawn_on = \"blocked\"\n";
 
 /// `a`, which shows every tree rather than only those with a live agent.
 const SHOW_EVERY_TREE: &[u8] = b"a";
@@ -83,9 +88,12 @@ const COLLAPSE_THE_FOREST: &[u8] = b"C";
 /// once the forest is collapsed, and opening it draws its beads still shut.
 const EXPAND: &[u8] = b"l";
 
-#[test]
-fn a_bead_shut_over_its_gate_draws_the_gates_pull_request_link_on_its_own_row() {
-    let home = a_home_naming_one_project_settled("gated", THE_READMES_ENTRY);
+/// The screen once the forest is collapsed and the project's line opened, so
+/// `dun-bz4` rests shut over the gate that holds it back, and the row
+/// `dun-bz4` is drawn on. `named` is the home's name, which a test running
+/// beside this one with another config must not share.
+fn shut_over_its_gate(named: &str, config: &str) -> (Vec<u8>, u16) {
+    let home = a_home_naming_one_project_settled(named, config);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(GH_PR_GATES);
 
@@ -109,6 +117,14 @@ fn a_bead_shut_over_its_gate_draws_the_gates_pull_request_link_on_its_own_row() 
         Vec::<u16>::new(),
         "the gate is folded away beneath the bead it blocks, on:\n{frame}"
     );
+    (screen, waiting)
+}
+
+#[test]
+fn a_bead_shut_over_its_gate_draws_the_gates_pull_request_link_on_its_own_row() {
+    let (screen, waiting) = shut_over_its_gate("gated-lifted", THE_READMES_ENTRY);
+    let frame = rows_drawn(&screen).join("\n");
+
     assert_eq!(
         rows_of(&screen, "⇢ arkham #12".as_bytes()),
         vec![waiting],
@@ -119,5 +135,20 @@ fn a_bead_shut_over_its_gate_draws_the_gates_pull_request_link_on_its_own_row() 
     assert!(
         contains(&screen, linked.as_bytes()),
         "the badge keeps its link to the pull request, on:\n{frame}"
+    );
+}
+
+/// Only an entry knows whether its badge means anything on another bead's
+/// row, so an entry that does not say draws on its own bead's row alone.
+#[test]
+fn a_bead_shut_over_its_gate_draws_no_badge_whose_entry_keeps_it_to_its_own_row() {
+    let its_own_row_alone = THE_READMES_ENTRY.replace(DRAWN_ON_THE_BLOCKED, "");
+    let (screen, _) = shut_over_its_gate("gated-kept", &its_own_row_alone);
+    let frame = rows_drawn(&screen).join("\n");
+
+    assert_eq!(
+        rows_of(&screen, "⇢".as_bytes()),
+        Vec::<u16>::new(),
+        "the gate's badge is folded away with the gate, on:\n{frame}"
     );
 }

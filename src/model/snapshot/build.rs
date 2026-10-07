@@ -292,7 +292,7 @@ pub fn build(
 mod tests {
     use super::*;
     use crate::collect::bd::parse_shared_beads;
-    use crate::config::Scope;
+    use crate::config::{DrawnOn, Scope};
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::edges::relations;
@@ -667,6 +667,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
         assert!(node(&t, "dun-7").badges.is_empty());
@@ -737,6 +738,7 @@ link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
                 link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
 
@@ -796,6 +798,7 @@ render = "⏸ waiting"
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
     }
@@ -857,6 +860,7 @@ render = "⇢ {repo} #{number}"
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }],
             "the project's own entry is the one that reads a bare number"
         );
@@ -868,6 +872,7 @@ render = "⇢ {repo} #{number}"
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }],
             "the shared entry still reads the shape the project said nothing about"
         );

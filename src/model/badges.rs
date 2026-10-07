@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
-use crate::config::{Badge, Colour};
+use crate::config::{Badge, Colour, DrawnOn};
 use crate::model::types::Bead;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -33,6 +33,7 @@ pub struct Badged {
     /// view resolves rather than a colour, so nothing here learns what the
     /// row is drawn in any more than it learns what the key means.
     pub colour: Option<Colour>,
+    pub drawn_on: DrawnOn,
 }
 
 /// A badge that drew less than its config asked for.
@@ -110,6 +111,7 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
             short,
             link,
             colour: badge.colour,
+            drawn_on: badge.drawn_on,
         });
     }
 
@@ -135,6 +137,32 @@ mod tests {
     }
 
     #[test]
+    fn a_badge_carries_the_rows_its_entry_draws_it_on() {
+        let bead = bead_with(r#"{"repo":"dunwich/arkham"}"#);
+        let cfg = vec![Badge {
+            when: Default::default(),
+            unless: Default::default(),
+            key: "metadata.repo".into(),
+            match_value: None,
+            render: "{}".into(),
+            link: None,
+            short: None,
+            colour: None,
+            drawn_on: DrawnOn::Blocked,
+        }];
+
+        let got = badges_for(&bead, &cfg);
+
+        assert_eq!(
+            got.drawn
+                .iter()
+                .map(|badge| badge.drawn_on)
+                .collect::<Vec<_>>(),
+            [DrawnOn::Blocked]
+        );
+    }
+
+    #[test]
     fn badges_render_only_where_the_key_and_match_agree() {
         let bead = bead_with(r#"{"blocked_on":"human","delivery_pr":"owner/repo#7"}"#);
         let cfg = vec![
@@ -147,6 +175,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badge {
                 when: Default::default(),
@@ -157,6 +186,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badge {
                 when: Default::default(),
@@ -167,6 +197,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
@@ -180,6 +211,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
     }
@@ -198,6 +230,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
 
         let got = badges_for(&bead, &cfg);
@@ -210,6 +243,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
     }
@@ -229,6 +263,7 @@ mod tests {
             link: None,
             short: None,
             colour: Some(Colour::Status),
+            drawn_on: DrawnOn::Own,
         }];
 
         let got = badges_for(&bead, &cfg);
@@ -241,6 +276,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: Some(Colour::Status),
+                drawn_on: DrawnOn::Own,
             }]
         );
     }
@@ -278,6 +314,7 @@ mod tests {
                 link: Some("https://jira.invalid/browse/{ticket}".into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badge {
                 when: Default::default(),
@@ -288,6 +325,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
@@ -302,6 +340,7 @@ mod tests {
                     link: Some("https://jira.invalid/browse/HELIO-412".to_string()),
                     short: None,
                     colour: None,
+                    drawn_on: DrawnOn::Own,
                 },
                 Badged {
                     key: "metadata.jira".to_string(),
@@ -309,6 +348,7 @@ mod tests {
                     link: None,
                     short: None,
                     colour: None,
+                    drawn_on: DrawnOn::Own,
                 },
             ]
         );
@@ -335,6 +375,7 @@ mod tests {
             link: Some("https://jira.invalid/browse/{}".into()),
             short: Some("{}".into()),
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
 
         // Every way bd spells an unset field, and the field left out entirely.
@@ -386,6 +427,7 @@ mod tests {
                 short: None,
                 link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
         assert_eq!(got.undrawn, Vec::new());
@@ -431,6 +473,7 @@ mod tests {
             link: Some("https://forge.invalid/{owner}/{repo}/pull/{number}".into()),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }
     }
 
@@ -450,6 +493,7 @@ mod tests {
             link: None,
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
 
         let got = badges_for(&bead, &[filter]);
@@ -495,6 +539,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
         assert_eq!(
@@ -519,6 +564,7 @@ mod tests {
                 link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
         assert_eq!(got.undrawn, Vec::new());
@@ -548,6 +594,7 @@ mod tests {
                 short: Some("⇢ #30".to_string()),
                 link: Some("https://forge.invalid/dunwich/arkham/pull/30".to_string()),
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
         assert_eq!(got.undrawn, Vec::new());
@@ -598,6 +645,7 @@ mod tests {
                 short: None,
                 link: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             }]
         );
         assert_eq!(
@@ -775,6 +823,7 @@ mod tests {
             short: Some("⏸".into()),
             link: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         };
 
         let got = badges_for(&bead, &[filter]);

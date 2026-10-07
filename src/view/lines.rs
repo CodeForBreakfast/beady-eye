@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::config::DrawnOn;
 use crate::model::badges::Badged;
 use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::{
@@ -553,16 +554,18 @@ pub(crate) fn facts_of(tree: &Tree, at: usize, above: &[usize]) -> BeadFacts {
     }
 }
 
-/// The badges of the open beads that block `at`, in the order they hang
-/// beneath it: what its line draws while its fold keeps theirs off the
-/// screen.
+/// The badges of the open beads that block `at` whose entries draw them on
+/// the blocked bead's row, in the order they hang beneath it: what its line
+/// draws while its fold keeps theirs off the screen.
 fn blockers_badges(tree: &Tree, at: usize, above: &[usize]) -> Vec<Badged> {
     links_below(tree, at, above)
         .into_iter()
         .filter(|link| link.edge == Edge::Blocks)
         .map(|link| &tree.beads[link.bead])
         .filter(|blocker| !blocker.status.is_closed())
-        .flat_map(|blocker| blocker.badges.iter().cloned())
+        .flat_map(|blocker| &blocker.badges)
+        .filter(|badge| badge.drawn_on == DrawnOn::Blocked)
+        .cloned()
         .collect()
 }
 

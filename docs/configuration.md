@@ -189,6 +189,7 @@ says what the row carries for it:
 | `short` | what the row carries instead where `render` will not fit | no |
 | `link` | where the badge points | no |
 | `colour` | what it is drawn in | no |
+| `drawn_on` | which rows it is drawn on | no |
 
 `key` names a value of the bead. A field of the bead is its own name, so
 `external_ref` reads the external reference, and whatever `bd` puts on a row is
@@ -208,11 +209,6 @@ tracker changes.
 A key naming a value the bead does not hold draws no badge and says nothing. So
 does one naming a whole object rather than a value inside it, and one naming a
 list.
-
-**A line resting shut also draws the badges of the open beads that block it,**
-after its own. A blocker hangs under the bead it blocks, so the fold keeps the
-blocker's line off the screen, and what that line carries is often why the bead
-waits.
 
 `[join]`'s `pane_key` is a metadata key on its own, with no field in front of
 it. A pane id is only ever written in metadata, so there is nowhere else it
@@ -357,6 +353,28 @@ colour = "#c71585"
 
 `bdi` has no idea what your metadata means and draws the badge as written.
 
+`drawn_on` says which rows draw the badge. `"own"`, the default, draws it on its
+bead's row alone.
+
+**`drawn_on = "blocked"` also draws it on the row of each bead its bead blocks,**
+while that row rests shut and the blocker is still open. A blocker hangs under the
+bead it blocks, so the fold keeps the blocker's row off the screen, and what
+that row carries, such as a pull request's link, is often why the bead waits.
+The badge goes after the row's own, so a bead with two such blockers draws
+both. Only a bead blocked directly draws it, and a parent never draws its
+child's.
+
+Leave it out for a badge that would read on another row as that bead's own,
+such as a ticket key.
+
+```toml
+[[badges]]
+key      = "metadata.repo"
+when     = { await_type = "gh:pr", await_id = "[0-9]+" }
+render   = "⇢ #{await_id}"
+drawn_on = "blocked"
+```
+
 ## `[[projects.badges]]`
 
 What one project draws ahead of this list, for the keys it names and no others.
@@ -387,7 +405,7 @@ opens a table of its own, so `name`, `path` or anything else written after it
 belongs to the badge, which refuses it:
 
 ```
-unknown field `path`, expected one of `key`, `match`, `when`, `unless`, `render`, `short`, `link`, `colour`
+unknown field `path`, expected one of `key`, `match`, `when`, `unless`, `render`, `short`, `link`, `colour`, `drawn_on`
 in `projects.badges`
 ```
 
@@ -433,12 +451,13 @@ This badge draws `⇢ arkham #12` on the gate, linked to
 
 ```toml
 [[badges]]
-key    = "metadata.repo"
-when   = { await_type = "gh:pr", await_id = "[0-9]+" }
-match  = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
-render = "⇢ {name} #{await_id}"
-short  = "⇢ #{await_id}"
-link   = "https://github.com/{owner}/{name}/pull/{await_id}"
+key      = "metadata.repo"
+when     = { await_type = "gh:pr", await_id = "[0-9]+" }
+match    = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render   = "⇢ {name} #{await_id}"
+short    = "⇢ #{await_id}"
+link     = "https://github.com/{owner}/{name}/pull/{await_id}"
+drawn_on = "blocked"
 ```
 
 A repository on another host takes a second entry under it, which reads the
@@ -446,12 +465,13 @@ values the first one does not:
 
 ```toml
 [[badges]]
-key    = "metadata.repo"
-when   = { await_type = "gh:pr", await_id = "[0-9]+" }
-match  = "(?<host>[A-Za-z0-9_.-]+)/(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
-render = "⇢ {name} #{await_id}"
-short  = "⇢ #{await_id}"
-link   = "https://{host}/{owner}/{name}/pull/{await_id}"
+key      = "metadata.repo"
+when     = { await_type = "gh:pr", await_id = "[0-9]+" }
+match    = "(?<host>[A-Za-z0-9_.-]+)/(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render   = "⇢ {name} #{await_id}"
+short    = "⇢ #{await_id}"
+link     = "https://{host}/{owner}/{name}/pull/{await_id}"
+drawn_on = "blocked"
 ```
 
 A gate with no `repo`, or one whose await id is not a number, draws neither.
@@ -689,9 +709,9 @@ A list left out is the default's. A list written is read as written, so
 
 `badge.<key>` takes those badges out of `badges` and puts them where you wrote
 it, so a badge can sit beside the id while the rest stay after the title. A
-row holds one badge on a key, and more only where a shut line draws its
-blockers' badges after its own. Adding
-a badge to the config needs no edit here: `badges` draws it.
+row holds one badge on a key, and more only where a shut row draws its
+blockers' badges after its own, as [`drawn_on`](#badges) says. Adding a badge
+to the config needs no edit here: `badges` draws it.
 
 The file is refused for a cell `bdi` cannot draw: a name that is none of the
 above, a `badge.<key>` whose key no `[[badges]]` or `[[projects.badges]]`

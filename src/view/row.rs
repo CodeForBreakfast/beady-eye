@@ -234,7 +234,7 @@ pub struct Shut {
     /// The beads beneath it, counted once each.
     pub over: Counts,
     /// The badges of the open beads that block it, whose own lines the fold
-    /// keeps off the screen.
+    /// keeps off the screen, where their entries draw them on this row.
     pub blockers: Vec<Badged>,
 }
 
@@ -424,6 +424,7 @@ pub fn anomaly_alone(said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DrawnOn;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::{Badged, Undrawn};
     use crate::model::join::JoinSource;
@@ -659,6 +660,7 @@ mod tests {
             link: link.map(str::to_string),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         node
     }
@@ -818,6 +820,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -825,6 +828,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
@@ -848,6 +852,7 @@ mod tests {
                 link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -855,6 +860,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
