@@ -59,7 +59,7 @@ fn viewed(number: u64) -> String {
     format!(
         "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
          {{repository(owner:$owner,name:$name){{pr{number}:pullRequest(number:{number})\
-         {{state isDraft mergeCommit{{oid}}}}}}}}"
+         {{state isDraft mergeCommit{{oid}} reviewDecision}}}}}}"
     )
 }
 
@@ -75,8 +75,8 @@ const QUERIED_OPEN: &str = include_str!("fixtures/gh_2.102.0_api_graphql_ark_ope
 /// The one query a look asks about #7 and #42 in example/ark.
 fn queried() -> String {
     "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
-     {repository(owner:$owner,name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid}} \
-     pr42:pullRequest(number:42){state isDraft mergeCommit{oid}}}}"
+     {repository(owner:$owner,name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision} \
+     pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision}}}"
         .to_string()
 }
 
@@ -128,8 +128,15 @@ impl ShimmedGitHub {
         }
     }
 
+    /// The file the shim reads `asked` from: each word of a call is a
+    /// directory under the answers, so a call is not bound by the length of
+    /// one file name.
+    fn file_for(&self, asked: &str) -> PathBuf {
+        self.answers.join(asked.replace(' ', "/"))
+    }
+
     fn answers_with(&self, asked: &str, text: &str) {
-        let answer = self.answers.join(asked);
+        let answer = self.file_for(asked);
         std::fs::create_dir_all(answer.parent().expect("an answer sits in a directory"))
             .expect("the answers are ours to write");
         std::fs::write(answer, text).expect("the answer is ours to write");
@@ -140,7 +147,7 @@ impl ShimmedGitHub {
     }
 
     fn stops_refusing(&self, asked: &str) {
-        std::fs::remove_file(self.answers.join(format!("{asked}.refused")))
+        std::fs::remove_file(self.file_for(&format!("{asked}.refused")))
             .expect("the refusal was ours to write");
     }
 

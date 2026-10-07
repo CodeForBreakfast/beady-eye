@@ -705,6 +705,8 @@ mod tests {
     const CLOSED: &str = r#"{"state":"CLOSED","isDraft":false,"mergeCommit":null}"#;
     const OPEN: &str = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null}"#;
     const DRAFT: &str = r#"{"state":"OPEN","isDraft":true,"mergeCommit":null}"#;
+    const APPROVED: &str =
+        r#"{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":"APPROVED"}"#;
     const NO_COMMENTS: &str = include_str!("../../tests/fixtures/bd_1.3.0_comments_none.json");
     /// ark-2ud's comments once it has been told example/ark#7 closed
     /// unmerged, beside a comment of its own.
@@ -727,7 +729,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision}}}}}}"
         )
     }
 
@@ -1013,11 +1015,16 @@ mod tests {
     /// The captured gate list with ark-eb1 waiting on #42 to leave draft,
     /// beside ark-0i5 waiting on it to merge.
     fn gate_list_with_42_awaited_for_review() -> String {
+        gate_list_with_42_awaiting("ready_for_review")
+    }
+
+    /// The captured gate list with ark-eb1 waiting on #42 for `awaits`.
+    fn gate_list_with_42_awaiting(awaits: &str) -> String {
         let mut rows: Vec<serde_json::Value> =
             serde_json::from_str(GATE_LIST).expect("the capture parses");
         for row in rows.iter_mut().filter(|row| row["id"] == "ark-eb1") {
             row["await_id"] = "42".into();
-            row["metadata"][gate::AWAITS] = "ready_for_review".into();
+            row["metadata"][gate::AWAITS] = awaits.into();
         }
         serde_json::to_string(&rows).expect("the rows print")
     }
@@ -1062,6 +1069,82 @@ mod tests {
             .with(
                 &gate_list("arkham"),
                 &gate_list_with_42_awaited_for_review(),
+            )
+            .with(&viewed(42), &answer(42, MERGED))
+            .with(&resolving_eb1, "")
+            .with(&resolving_42("arkham"), "");
+
+        let settled = settled(&runner, &[project("arkham")], &pr(42));
+
+        assert_eq!(acts(settled), [merged("ark-eb1"), merged("ark-0i5")]);
+        assert_eq!(writes(&runner), [resolving_eb1, resolving_42("arkham")]);
+    }
+
+    const APPROVED_REASON: &str = "Pull request example/ark#42 is approved.";
+
+    #[test]
+    fn an_approval_closes_each_gate_waiting_for_that_and_leaves_the_merge_gates_open() {
+        let resolving = written(
+            "arkham",
+            &format!("gate resolve ark-eb1 --reason {APPROVED_REASON}"),
+        );
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &gate_list("arkham"),
+                &gate_list_with_42_awaiting("approved"),
+            )
+            .with(&viewed(42), &answer(42, APPROVED))
+            .with(&resolving, "✓ Gate resolved: ark-eb1\n");
+
+        let settled = settled(&runner, &[project("arkham")], &pr(42));
+
+        assert_eq!(
+            acts(settled),
+            [act("ark-eb1", "is approved", Done::Resolved)]
+        );
+        assert_eq!(writes(&runner), [resolving]);
+    }
+
+    /// GitHub gives no review decision where reviews are not required, and
+    /// none until a review that counts has been given where they are.
+    #[test]
+    fn a_pull_request_without_an_approval_leaves_a_gate_waiting_for_one_open() {
+        for decision in ["null", r#""REVIEW_REQUIRED""#, r#""CHANGES_REQUESTED""#] {
+            let answered = format!(
+                r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":{decision}}}"#
+            );
+            let runner = FakeRunner::default().with(&queried(42..=42), &answer(42, &answered));
+
+            assert_eq!(
+                settled_together(&runner, &[awaited(42, Until::Approved, &["ark-qca"])]),
+                [Settled::NothingNew],
+                "{decision}"
+            );
+        }
+    }
+
+    /// The runner panics on any call it was not given, so a tracker asked
+    /// anything at all fails the test.
+    #[test]
+    fn an_approval_nothing_waits_for_asks_no_tracker_anything() {
+        let runner = FakeRunner::default().with(&queried(42..=42), &answer(42, APPROVED));
+
+        assert_eq!(
+            settled_together(&runner, &[awaited(42, Until::Merged, &["ark-qca"])]),
+            [Settled::NothingNew]
+        );
+    }
+
+    #[test]
+    fn a_merge_closes_a_gate_waiting_for_approval_beside_the_one_waiting_for_the_merge() {
+        let resolving_eb1 = written(
+            "arkham",
+            &format!("gate resolve ark-eb1 --reason {MERGED_REASON}"),
+        );
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &gate_list("arkham"),
+                &gate_list_with_42_awaiting("approved"),
             )
             .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_eb1, "")
@@ -1367,7 +1450,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
@@ -1551,7 +1634,7 @@ mod tests {
         let runner = captured(FakeRunner::default(), "arkham")
             .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
-        let events = [EVENTS[0], EVENTS[1], EVENTS[2], ALSO_ON_MERGE];
+        let events = [EVENTS.as_slice(), &[ALSO_ON_MERGE]].concat();
 
         let settled = settle(
             &Cli::new(&runner),

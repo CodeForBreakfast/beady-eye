@@ -6,9 +6,10 @@
 # GitHub to ask.
 #
 #   BDI_SHIM_GH_ANSWERS  directory holding one file per call, named by the
-#                        call as bdi asks it: `api rate_limit`, where a `/`
-#                        in a call would make a directory of what comes
-#                        before it. A call with a file there is answered
+#                        call as bdi asks it with each space made a `/`:
+#                        `api/rate_limit`, so that a long call is a path of
+#                        short names and not one name too long for the
+#                        filesystem. A call with a file there is answered
 #                        with it. A file named for the
 #                        call with `.refused` after it refuses the call
 #                        instead: it goes to stderr and the shim exits 1, as
@@ -23,6 +24,7 @@
 set -u
 
 asked="$*"
+answer="${BDI_SHIM_GH_ANSWERS:-}/$(printf '%s' "$asked" | tr ' ' '/')"
 
 if [ -n "${BDI_SHIM_GH_CALLED:-}" ]; then
   printf '%s\n' "$asked" >>"$BDI_SHIM_GH_CALLED"
@@ -33,13 +35,13 @@ if [ -n "${BDI_GATES_WEBHOOK_SECRET+set}" ]; then
   exit 1
 fi
 
-if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$BDI_SHIM_GH_ANSWERS/$asked.refused" ]; then
-  cat "$BDI_SHIM_GH_ANSWERS/$asked.refused" >&2
+if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$answer.refused" ]; then
+  cat "$answer.refused" >&2
   exit 1
 fi
 
-if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$BDI_SHIM_GH_ANSWERS/$asked" ]; then
-  exec cat "$BDI_SHIM_GH_ANSWERS/$asked"
+if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$answer" ]; then
+  exec cat "$answer"
 fi
 
 # Refused rather than handed on: the gh this shadows is signed in to
