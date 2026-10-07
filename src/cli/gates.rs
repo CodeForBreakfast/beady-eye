@@ -212,12 +212,12 @@ fn reported(found: &Found) -> Option<String> {
             "{project}: its gh:pr gates could not be read: {}",
             phrase::tracker_failure(failure)
         ),
-        Found::NoPullRequest {
+        Found::Unsettleable {
             project,
             gate,
             faults,
         } => format!(
-            "{project}: gate {gate} names no pull request to settle: {}",
+            "{project}: gate {gate} cannot be settled: {}",
             faults.iter().map(fault).collect::<Vec<_>>().join(", and ")
         ),
         Found::GitHubUnread {
@@ -250,6 +250,9 @@ fn reported(found: &Found) -> Option<String> {
             done,
         } => match done {
             Ok(Done::Resolved) => format!("{pull_request} merged: {project} closed gate {bead}"),
+            Ok(Done::ResolvedForReview) => {
+                format!("{pull_request} is ready for review: {project} closed gate {bead}")
+            }
             Ok(Done::Commented) => {
                 format!("{pull_request} closed unmerged: {project} told {bead}")
             }
@@ -283,6 +286,9 @@ fn fault(fault: &Fault) -> String {
         Fault::NoRepo => "it names no repo".to_string(),
         Fault::NoAwaitId => "it has no await id".to_string(),
         Fault::AwaitIdNotANumber(id) => format!("its await id “{id}” is not a number"),
+        Fault::UnknownAwaits(awaits) => {
+            format!("it awaits “{awaits}”, which is not ready_for_review")
+        }
     }
 }
 
@@ -340,9 +346,9 @@ mod tests {
     }
 
     #[test]
-    fn a_gate_naming_no_pull_request_is_reported_with_every_reason() {
+    fn a_gate_that_cannot_be_settled_is_reported_with_every_reason() {
         assert_eq!(
-            reported(&Found::NoPullRequest {
+            reported(&Found::Unsettleable {
                 project: "arkham".to_string(),
                 gate: "ark-tg0".to_string(),
                 faults: vec![
@@ -352,32 +358,52 @@ mod tests {
             })
             .as_deref(),
             Some(
-                "arkham: gate ark-tg0 names no pull request to settle: it names no repo, and its \
+                "arkham: gate ark-tg0 cannot be settled: it names no repo, and its \
                  await id “the-ninth” is not a number"
             )
         );
         assert_eq!(
-            reported(&Found::NoPullRequest {
+            reported(&Found::Unsettleable {
                 project: "arkham".to_string(),
                 gate: "ark-g1".to_string(),
                 faults: vec![Fault::NoAwaitId],
             })
             .as_deref(),
-            Some("arkham: gate ark-g1 names no pull request to settle: it has no await id")
+            Some("arkham: gate ark-g1 cannot be settled: it has no await id")
+        );
+        assert_eq!(
+            reported(&Found::Unsettleable {
+                project: "arkham".to_string(),
+                gate: "ark-g1".to_string(),
+                faults: vec![Fault::UnknownAwaits("merged".to_string())],
+            })
+            .as_deref(),
+            Some(
+                "arkham: gate ark-g1 cannot be settled: it awaits “merged”, which is not \
+                 ready_for_review"
+            )
+        );
+    }
+
+    #[test]
+    fn a_gate_closed_because_its_pull_request_left_draft_is_reported_as_ready_for_review() {
+        assert_eq!(
+            told(Ok(Done::ResolvedForReview)).as_deref(),
+            Some("example/ark#7 is ready for review: arkham closed gate ark-2ud")
         );
     }
 
     #[test]
     fn a_control_character_the_tracker_wrote_is_spelled_out_on_the_line() {
         assert_eq!(
-            reported(&Found::NoPullRequest {
+            reported(&Found::Unsettleable {
                 project: "arkham".to_string(),
                 gate: "ark-tg0".to_string(),
                 faults: vec![Fault::AwaitIdNotANumber("\u{1b}[2J\nforged".to_string())],
             })
             .as_deref(),
             Some(
-                "arkham: gate ark-tg0 names no pull request to settle: its await id \
+                "arkham: gate ark-tg0 cannot be settled: its await id \
                  “\\u{1b}[2J\\nforged” is not a number"
             )
         );

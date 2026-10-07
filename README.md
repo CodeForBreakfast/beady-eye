@@ -305,12 +305,14 @@ drawn_on = "blocked"
 
 `bdi gates` looks at every configured project's open gh:pr gates and asks
 GitHub, through `gh`, where each pull request stands. A merge closes the gate,
-so the bead it held back becomes ready. A close without a merge leaves the gate
-open and comments once on that bead, so whoever waits on it hears. Then it
-looks again a minute later, until it is stopped. Run it under whatever
-supervises your processes, as you would the watcher. Given `--listen` and the
-webhook's secret, it also takes GitHub's `pull_request` deliveries, and settles
-a pull request when GitHub says it moved rather than at the next look.
+so the bead it held back becomes ready. A gate with `awaits=ready_for_review` in
+its metadata closes sooner, once the pull request leaves draft. A close without
+a merge leaves the gate open and comments once on that bead, so whoever waits
+on it hears. Then it looks again a minute later, until it is stopped. Run it
+under whatever supervises your processes, as you would the watcher. Given
+`--listen` and the webhook's secret, it also takes GitHub's `pull_request`
+deliveries, and settles a pull request when GitHub says it moved rather than at
+the next look.
 "Settling pull-request gates" in [docs/configuration.md](docs/configuration.md)
 has a unit to run it under, the webhook, and every line it prints.
 

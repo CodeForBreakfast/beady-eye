@@ -5,7 +5,23 @@ use crate::model::types::Bead;
 /// The `await_type` bd gives a gate that waits on a pull request.
 pub const PULL_REQUEST: &str = "gh:pr";
 
-/// Why a gate cannot name the pull request it waits on.
+/// The metadata key naming what a gh:pr gate waits for its pull request to
+/// do, where that is anything but its merge.
+pub const AWAITS: &str = "awaits";
+
+/// What a gh:pr gate waits for its pull request to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Until {
+    /// Merge, which is what a gate naming nothing waits for.
+    Merged,
+    /// Leave draft or merge, whichever comes first. A gate asks for it with
+    /// `awaits=ready_for_review`, GitHub's name for the webhook action that
+    /// takes a pull request out of draft.
+    ReadyForReview,
+}
+
+/// Why a gate cannot name the pull request it waits on, or what it waits
+/// for that pull request to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fault {
     /// The gate's metadata holds no `repo`.
@@ -14,6 +30,8 @@ pub enum Fault {
     NoAwaitId,
     /// The gate's await id is not a pull request's number.
     AwaitIdNotANumber(String),
+    /// The gate's [`AWAITS`] metadata names nothing `bdi gates` waits for.
+    UnknownAwaits(String),
 }
 
 /// Whether `gate` waits on a pull request, whichever one that is.
@@ -74,9 +92,19 @@ pub fn number(gate: &Bead) -> Result<u64, Fault> {
         .map_err(|_| Fault::AwaitIdNotANumber(id.to_string()))
 }
 
+/// What `gate` waits for its pull request to do.
+pub fn until(gate: &Bead) -> Result<Until, Fault> {
+    match gate.metadata.get(AWAITS).map(String::as_str) {
+        None => Ok(Until::Merged),
+        Some("ready_for_review") => Ok(Until::ReadyForReview),
+        Some(other) => Err(Fault::UnknownAwaits(other.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::bd::parse_beads;
     #[test]
     fn a_repo_is_owned_by_the_account_before_its_name_whether_or_not_it_names_a_host() {
         assert_eq!(owner("dunwich/arkham"), Some("dunwich"));
@@ -88,6 +116,45 @@ mod tests {
         assert_eq!(host("forge.invalid/dunwich/arkham"), Some("forge.invalid"));
         for repo in ["dunwich/arkham", "arkham", "a/b/c/d"] {
             assert_eq!(host(repo), None, "{repo:?}");
+        }
+    }
+
+    fn gate(metadata: serde_json::Value) -> Bead {
+        let row = serde_json::json!([{
+            "id": "ark-g1",
+            "title": "Gate: gh:pr",
+            "status": "open",
+            "issue_type": "gate",
+            "await_type": PULL_REQUEST,
+            "await_id": "42",
+            "metadata": metadata,
+        }]);
+        parse_beads(&row.to_string())
+            .expect("the row parses")
+            .remove(0)
+    }
+
+    #[test]
+    fn a_gate_naming_nothing_it_awaits_waits_for_the_merge() {
+        let gate = gate(serde_json::json!({ "repo": "dunwich/arkham" }));
+        assert_eq!(until(&gate), Ok(Until::Merged));
+    }
+
+    #[test]
+    fn a_gate_awaiting_ready_for_review_waits_for_its_pull_request_to_leave_draft() {
+        let gate = gate(serde_json::json!({ "awaits": "ready_for_review" }));
+        assert_eq!(until(&gate), Ok(Until::ReadyForReview));
+    }
+
+    #[test]
+    fn a_gate_awaiting_anything_else_is_faulty_rather_than_waiting_for_the_merge() {
+        for awaits in ["merged", "Ready_For_Review", ""] {
+            let gate = gate(serde_json::json!({ "awaits": awaits }));
+            assert_eq!(
+                until(&gate),
+                Err(Fault::UnknownAwaits(awaits.to_string())),
+                "{awaits:?}"
+            );
         }
     }
 

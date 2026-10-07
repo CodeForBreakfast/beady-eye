@@ -55,7 +55,7 @@ const RESOLVING_42: &str = "gate resolve ark-0i5 --reason Pull request example/a
                             as 5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff.";
 
 fn viewed(number: u64) -> String {
-    format!("pr view {number} --repo example/ark --json state,mergeCommit")
+    format!("pr view {number} --repo example/ark --json state,isDraft,mergeCommit")
 }
 
 /// #7 open and #42 merged, as the one query a look asks reads them.
@@ -65,8 +65,8 @@ const QUERIED_OPEN: &str = include_str!("fixtures/gh_2.102.0_api_graphql_ark_ope
 /// The one query a look asks about #7 and #42 in example/ark.
 fn queried() -> String {
     "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
-     {repository(owner:$owner,name:$name){pr7:pullRequest(number:7){state mergeCommit{oid}} \
-     pr42:pullRequest(number:42){state mergeCommit{oid}}}}"
+     {repository(owner:$owner,name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid}} \
+     pr42:pullRequest(number:42){state isDraft mergeCommit{oid}}}}"
         .to_string()
 }
 
