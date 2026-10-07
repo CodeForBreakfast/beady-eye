@@ -120,6 +120,8 @@ pub fn open_pull_requests_headed_by(
     repo: &Repository,
     sha: &str,
 ) -> Result<Vec<u64>, RunFailure> {
+    // ponytail: the first hundred only. A commit in more pull requests than
+    // that is settled by the next look. Follow the pages if one ever is.
     let path = format!(
         "repos/{}/{}/commits/{sha}/pulls?per_page=100",
         repo.owner, repo.name
