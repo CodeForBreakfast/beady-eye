@@ -365,8 +365,10 @@ fn acted(
                 }
             }
             Outcome::Tell(text) => {
-                let held_back: BTreeSet<&String> =
-                    concerned.flat_map(|gate| &gate.blocks).collect();
+                let held_back: BTreeSet<&String> = concerned
+                    .filter(|gate| !resolved.contains(&gate.id))
+                    .flat_map(|gate| &gate.blocks)
+                    .collect();
                 for bead in held_back {
                     acts.push(Act {
                         bead: bead.clone(),
@@ -939,20 +941,30 @@ mod tests {
         assert_eq!(writes(&runner), [telling("arkham", "ark-45c")]);
     }
 
-    fn checks_failed_on(oid: &str) -> String {
+    /// An open pull request whose head commit `oid` failed its checks, with
+    /// `decision` as GitHub's review decision, a JSON value.
+    fn checks_failed_deciding(decision: &str, oid: &str) -> String {
         format!(
-            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"commits":{{"nodes":[{{"commit":{{"oid":"{oid}","statusCheckRollup":{{"state":"FAILURE"}}}}}}]}}}}"#
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":{decision},"commits":{{"nodes":[{{"commit":{{"oid":"{oid}","statusCheckRollup":{{"state":"FAILURE"}}}}}}]}}}}"#
         )
     }
 
-    fn checks_failed_telling(project: &str, bead: &str, oid: &str) -> String {
+    fn checks_failed_on(oid: &str) -> String {
+        checks_failed_deciding("null", oid)
+    }
+
+    fn checks_failed_telling_on(number: u64, project: &str, bead: &str, oid: &str) -> String {
         written(
             project,
             &format!(
                 "comments add {bead} The checks on {oid}, the head of pull request \
-                 example/ark#7, failed, so the gh:pr gate waiting on it stays open."
+                 example/ark#{number}, failed, so the gh:pr gate waiting on it stays open."
             ),
         )
+    }
+
+    fn checks_failed_telling(project: &str, bead: &str, oid: &str) -> String {
+        checks_failed_telling_on(7, project, bead, oid)
     }
 
     fn failing_checks(bead: &str, done: Done) -> Act {
@@ -1059,6 +1071,41 @@ mod tests {
                 "{rollup}"
             );
         }
+    }
+
+    /// A gate the approval closed no longer holds anything back, so a bead
+    /// only it held back is not told that it stays open.
+    #[test]
+    fn failed_checks_are_not_told_to_a_bead_held_back_by_a_gate_an_approval_just_closed() {
+        let resolving = written(
+            "arkham",
+            &format!("gate resolve ark-eb1 --reason {APPROVED_REASON}"),
+        );
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &gate_list("arkham"),
+                &gate_list_with_42_awaiting("approved"),
+            )
+            .with(
+                &viewed(42),
+                &answer(42, &checks_failed_deciding(r#""APPROVED""#, "a1b2c3")),
+            )
+            .with(&resolving, "✓ Gate resolved: ark-eb1\n")
+            .with(&comments_on("arkham", "ark-qca"), NO_COMMENTS)
+            .with(
+                &checks_failed_telling_on(42, "arkham", "ark-qca", "a1b2c3"),
+                "Comment added to ark-qca\n",
+            );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(42));
+
+        assert_eq!(
+            acts(settled),
+            [
+                act("ark-eb1", "is approved", Done::Resolved),
+                failing_checks("ark-qca", Done::Commented)
+            ]
+        );
     }
 
     fn comments_read(runner: &FakeRunner) -> usize {
