@@ -330,10 +330,11 @@ fn outcomes(
 fn is_new(outcome: &Outcome, waiting: &[Waiting], told: &Told) -> bool {
     waiting.iter().any(|gate| match outcome {
         Outcome::Resolve { awaited, .. } => awaited(gate.until),
-        Outcome::Tell(text) => gate
-            .blocks
-            .iter()
-            .any(|bead| !told.knows(&gate.project, bead, text)),
+        Outcome::Tell(texts) => gate.blocks.iter().any(|bead| {
+            texts
+                .iter()
+                .any(|text| !told.knows(&gate.project, bead, text))
+        }),
     })
 }
 
@@ -369,17 +370,19 @@ fn acted(
                     });
                 }
             }
-            Outcome::Tell(text) => {
+            Outcome::Tell(texts) => {
                 let held_back: BTreeSet<&String> = concerned
                     .filter(|gate| !closed.contains(&gate.id))
                     .flat_map(|gate| &gate.blocks)
                     .collect();
-                for bead in held_back {
-                    acts.push(Act {
-                        bead: bead.clone(),
-                        happening,
-                        done: tell(tracker, project, bead, text, told),
-                    });
+                for text in texts {
+                    for bead in &held_back {
+                        acts.push(Act {
+                            bead: (*bead).clone(),
+                            happening,
+                            done: tell(tracker, project, bead, text, told),
+                        });
+                    }
                 }
             }
         }
@@ -736,7 +739,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -1155,6 +1158,181 @@ mod tests {
             .map(|act| act.bead.as_str())
             .collect();
         assert_eq!(told, ["ark-2ud", "ark-45c", "ark-qca"]);
+    }
+
+    /// An open pull request with each of `reviews` submitted, as `(reviewer,
+    /// GitHub's state, review number)`.
+    fn reviewed_by(reviews: &[(&str, &str, u32)]) -> String {
+        let nodes: Vec<String> = reviews
+            .iter()
+            .map(|(login, state, id)| {
+                format!(
+                    r#"{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-{id}","state":"{state}","author":{{"login":"{login}"}}}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"reviews":{{"nodes":[{}]}}}}"#,
+            nodes.join(",")
+        )
+    }
+
+    fn review_telling(bead: &str, login: &str, said: &str, id: u32) -> String {
+        written(
+            "arkham",
+            &format!(
+                "comments add {bead} {login} reviewed pull request example/ark#7: {said}. \
+                 https://forge.invalid/example/ark/pull/7#pullrequestreview-{id}"
+            ),
+        )
+    }
+
+    fn reviewed(bead: &str, done: Done) -> Act {
+        act(bead, "was reviewed", done)
+    }
+
+    #[test]
+    fn each_review_comments_once_on_each_held_back_bead_and_leaves_the_gate_open() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &viewed(7),
+                &answer(
+                    7,
+                    &reviewed_by(&[("alice", "APPROVED", 11), ("bob", "CHANGES_REQUESTED", 12)]),
+                ),
+            )
+            .with(&comments_on("arkham", "ark-2ud"), OWN)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &review_telling("ark-2ud", "alice", "approved", 11),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &review_telling("ark-45c", "alice", "approved", 11),
+                "Comment added to ark-45c\n",
+            )
+            .with(
+                &review_telling("ark-2ud", "bob", "changes requested", 12),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &review_telling("ark-45c", "bob", "changes requested", 12),
+                "Comment added to ark-45c\n",
+            );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            acts(settled),
+            [
+                reviewed("ark-2ud", Done::Commented),
+                reviewed("ark-45c", Done::Commented),
+                reviewed("ark-2ud", Done::Commented),
+                reviewed("ark-45c", Done::Commented),
+            ]
+        );
+        assert_eq!(
+            writes(&runner),
+            [
+                review_telling("ark-2ud", "alice", "approved", 11),
+                review_telling("ark-45c", "alice", "approved", 11),
+                review_telling("ark-2ud", "bob", "changes requested", 12),
+                review_telling("ark-45c", "bob", "changes requested", 12),
+            ]
+        );
+    }
+
+    /// A review submitted since the last look is the only one told, and a
+    /// look that finds nothing new writes nothing.
+    #[test]
+    fn a_review_is_told_once_and_a_repeat_writes_nothing() {
+        let told = Told::default();
+        let settle_7 = |reviews: &[(&str, &str, u32)]| {
+            let mut runner = captured(FakeRunner::default(), "arkham")
+                .with(&viewed(7), &answer(7, &reviewed_by(reviews)))
+                .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+                .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS);
+            for (login, state, id) in reviews {
+                let said = state.to_ascii_lowercase().replace('_', " ");
+                for bead in ["ark-2ud", "ark-45c"] {
+                    runner = runner.with(
+                        &review_telling(bead, login, &said, *id),
+                        &format!("Comment added to {bead}\n"),
+                    );
+                }
+            }
+            let settled = settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &pr(7),
+                &told,
+            );
+            (acts(settled), writes(&runner))
+        };
+        let first_review = ("alice", "COMMENTED", 11);
+
+        let (_, first) = settle_7(&[first_review]);
+        let (same, same_writes) = settle_7(&[first_review]);
+        let (_, later) = settle_7(&[first_review, ("alice", "APPROVED", 12)]);
+
+        assert_eq!(first.len(), 2);
+        assert_eq!(
+            same,
+            [
+                reviewed("ark-2ud", Done::AlreadyCommented),
+                reviewed("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(same_writes, Vec::<String>::new());
+        assert_eq!(
+            later,
+            [
+                review_telling("ark-2ud", "alice", "approved", 12),
+                review_telling("ark-45c", "alice", "approved", 12)
+            ]
+        );
+    }
+
+    /// The sweep already knows what it told, so a pull request whose reviews
+    /// every held-back bead has been told asks no tracker anything.
+    #[test]
+    fn reviews_every_held_back_bead_has_been_told_ask_no_tracker_anything() {
+        let told = Told::default();
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &queried(7..=7),
+                &answer(7, &reviewed_by(&[("alice", "COMMENTED", 11)])),
+            )
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &review_telling("ark-2ud", "alice", "commented", 11),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &review_telling("ark-45c", "alice", "commented", 11),
+                "Comment added to ark-45c\n",
+            );
+        let awaiting = [awaited(7, Until::Merged, &["ark-2ud", "ark-45c"])];
+        let sweep = || {
+            settle_together(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &awaiting,
+                &told,
+            )
+            .collect::<Vec<_>>()
+        };
+
+        let first = sweep();
+        let again = sweep();
+
+        assert!(matches!(first[0], Settled::Acted(_)));
+        assert_eq!(again, [Settled::NothingNew]);
     }
 
     fn comments_read(runner: &FakeRunner) -> usize {
@@ -1668,7 +1846,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
@@ -1737,7 +1915,7 @@ mod tests {
             }
             let Fields { head_ref_oid } = serde::Deserialize::deserialize(&observed.fields)?;
             Ok((observed.state == github::State::Open)
-                .then(|| Outcome::Tell(format!("Pull request {pr} is at {head_ref_oid}."))))
+                .then(|| Outcome::Tell(vec![format!("Pull request {pr} is at {head_ref_oid}.")])))
         },
     };
 

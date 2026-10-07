@@ -359,7 +359,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -373,7 +373,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7)\
-             {{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}}}}}"
+             {{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}}}}}}}}"
         )
     }
 
