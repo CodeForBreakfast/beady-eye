@@ -106,7 +106,7 @@ coin one — and say so.**
 | **change source** | *coined* | what hands the watcher each project's beads, how current they are, and bd's event records where the project keeps them. The first reads trackers, and another can replace it. Distinct from a *producer*, which only says a project changed. |
 | gate, resolve | beads (`bd gate`) | a bead that blocks another until something outside the tracker happens, and closing one. A gh:pr gate waits on a pull request, and `bdi gates` is named for these |
 | delivery | GitHub (webhooks) | one webhook request GitHub sends, with its event and signature in headers. `bdi gates --listen` takes a `pull_request` delivery as a trigger to settle the pull request it names, and nothing more |
-| **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has done what the gate waits for: resolve the gate on a merge, or on leaving draft for a gate with `awaits=ready_for_review`, or on approval for a gate with `awaits=approved`, and on a close without a merge comment on the beads it holds back, once each. beads has `bd gate check`, which resolves on a merge alone and acts on a close through an escalation `bdi` does not make |
+| **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has done what the gate waits for: resolve the gate on a merge, or on leaving draft for a gate with `awaits=ready_for_review`, or on approval for a gate with `awaits=approved`, and on a close without a merge, or on failing checks on the head commit, comment on the beads it holds back, once each. beads has `bd gate check`, which resolves on a merge alone and acts on a close through an escalation `bdi` does not make |
 | **pseudopod** | *coined* | one thing `bdi` does in the world rather than reads from it: a limb grown for one job, the way a shoggoth grows one from its own body. There are two: `bdi bd`'s `human respond`, which carries a person's answer to the bead that asked, and `bdi gates`, which settles gh:pr gates. Changing the work itself stays `bd`'s. Neither project names it: beads writes for whoever runs `bd`, and herdr writes to no tracker. |
 | **cell** | *coined* | one named thing a bead's row draws, in whichever block the row's layout puts it: a built-in — `glyph`, `id`, `title`, `badges`, `progress`, `agent`, `anomalies` — or one badge as `badge.<key>`. Notes and the fold's counts are not cells; they trail the state whatever the layout says. Neither project names the parts of a drawn row. |
 
@@ -1376,7 +1376,7 @@ environment_command = "nix develop -c"
   which records a person's answer in the tracker of the project it names,
   without `--readonly`. The second is settling a gh:pr gate: `bd gate resolve` on a
   merge, and `bd comments add` on the beads it holds back on a close without
-  one. That the rest are
+  one or on failing checks. That the rest are
   reads is not a no-writes rule. bd writes on its own account on the way to
   answering, so no property of the command line can exclude it, and *Reading a tracker is not
   leaving it alone* below says what it does. `--readonly` still earns its place

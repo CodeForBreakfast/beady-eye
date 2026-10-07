@@ -729,7 +729,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}}}}}"
         )
     }
 
@@ -937,6 +937,128 @@ mod tests {
             ]
         );
         assert_eq!(writes(&runner), [telling("arkham", "ark-45c")]);
+    }
+
+    fn checks_failed_on(oid: &str) -> String {
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"commits":{{"nodes":[{{"commit":{{"oid":"{oid}","statusCheckRollup":{{"state":"FAILURE"}}}}}}]}}}}"#
+        )
+    }
+
+    fn checks_failed_telling(project: &str, bead: &str, oid: &str) -> String {
+        written(
+            project,
+            &format!(
+                "comments add {bead} The checks on {oid}, the head of pull request \
+                 example/ark#7, failed, so the gh:pr gate waiting on it stays open."
+            ),
+        )
+    }
+
+    fn failing_checks(bead: &str, done: Done) -> Act {
+        act(bead, "has failing checks", done)
+    }
+
+    #[test]
+    fn failed_checks_comment_on_each_held_back_bead_and_leave_the_gate_open() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(7), &answer(7, &checks_failed_on("a1b2c3")))
+            .with(&comments_on("arkham", "ark-2ud"), OWN)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &checks_failed_telling("arkham", "ark-2ud", "a1b2c3"),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &checks_failed_telling("arkham", "ark-45c", "a1b2c3"),
+                "Comment added to ark-45c\n",
+            );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            acts(settled),
+            [
+                failing_checks("ark-2ud", Done::Commented),
+                failing_checks("ark-45c", Done::Commented)
+            ]
+        );
+        assert_eq!(
+            writes(&runner),
+            [
+                checks_failed_telling("arkham", "ark-2ud", "a1b2c3"),
+                checks_failed_telling("arkham", "ark-45c", "a1b2c3")
+            ]
+        );
+    }
+
+    /// A fix that fails again is a new head commit, so it is a new telling,
+    /// and the commit already told is not told twice.
+    #[test]
+    fn failed_checks_are_told_once_for_each_head_commit() {
+        let told = Told::default();
+        let settle_7 = |oid: &str| {
+            let runner = captured(FakeRunner::default(), "arkham")
+                .with(&viewed(7), &answer(7, &checks_failed_on(oid)))
+                .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+                .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+                .with(
+                    &checks_failed_telling("arkham", "ark-2ud", oid),
+                    "Comment added to ark-2ud\n",
+                )
+                .with(
+                    &checks_failed_telling("arkham", "ark-45c", oid),
+                    "Comment added to ark-45c\n",
+                );
+            let settled = settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &pr(7),
+                &told,
+            );
+            (acts(settled), writes(&runner))
+        };
+
+        let (_, first) = settle_7("a1b2c3");
+        let (same, same_writes) = settle_7("a1b2c3");
+        let (_, fixed) = settle_7("d4e5f6");
+
+        assert_eq!(first.len(), 2);
+        assert_eq!(
+            same,
+            [
+                failing_checks("ark-2ud", Done::AlreadyCommented),
+                failing_checks("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(same_writes, Vec::<String>::new());
+        assert_eq!(
+            fixed,
+            [
+                checks_failed_telling("arkham", "ark-2ud", "d4e5f6"),
+                checks_failed_telling("arkham", "ark-45c", "d4e5f6")
+            ]
+        );
+    }
+
+    /// The runner panics on any call it was not given, so a tracker asked
+    /// anything at all fails the test.
+    #[test]
+    fn checks_that_have_not_failed_ask_no_tracker_anything() {
+        for rollup in ["null", r#"{"state":"SUCCESS"}"#, r#"{"state":"PENDING"}"#] {
+            let passing = format!(
+                r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{rollup}}}}}]}}}}"#
+            );
+            let runner = FakeRunner::default().with(&queried(7..=7), &answer(7, &passing));
+
+            assert_eq!(
+                settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
+                [Settled::NothingNew],
+                "{rollup}"
+            );
+        }
     }
 
     fn comments_read(runner: &FakeRunner) -> usize {
@@ -1450,7 +1572,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
