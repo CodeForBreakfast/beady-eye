@@ -619,6 +619,13 @@ alone and not reported. Where `owners` is empty, which is the default, every
 gate is settled. A gate whose `repo` names no owner is settled only then. A
 delivery from GitHub is held to the same rule.
 
+`excluded_owners` names the repository owners this `bdi gates` leaves alone,
+matched in any case, whatever `owners` says. Where two instances split the work
+by owner, one names its owners in `owners` and the other names the same owners
+in `excluded_owners`. Then a gate on any other owner, such as a pull request
+upstream in a dependency, is still settled by the second instance. The default
+is empty.
+
 The address deliveries are taken on and the secret they are signed with are
 not here. They are given on the command line and in the environment, as
 [Taking GitHub's deliveries](#taking-githubs-deliveries) says, so the secret
@@ -891,7 +898,8 @@ to can see. A look asks about a repository's pull requests together, up to a
 hundred in one query, so what it spends of that account's rate limit grows with
 the repositories rather than the pull requests. To settle repositories that
 need different accounts, run one `bdi gates` per account, each with its own
-config naming its [`[gates] owners`](#gates).
+config naming its [`[gates] owners`](#gates), or the owners it leaves to the
+others in `excluded_owners`.
 
 Each look reports on stdout one line for each gate closed, each bead told, and
 each failure:
@@ -962,7 +970,7 @@ type `application/json`, the same secret, and the *Pull requests* event. A
 delivery is a trigger only. `bdi gates` reads the repository and number out of
 it and settles that pull request exactly as a look would, asking GitHub where
 it stands, and passes it over without a word where
-[`[gates] owners`](#gates) leaves its owner to another `bdi gates`. Each
+[`[gates]`](#gates) leaves its owner to another `bdi gates`. Each
 delivery is answered before it is settled:
 
 | the request | the answer |
