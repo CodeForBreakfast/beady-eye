@@ -736,7 +736,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} mergeable headRefOid}}}}}}"
         )
     }
 
@@ -1074,6 +1074,101 @@ mod tests {
                 settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
                 [Settled::NothingNew],
                 "{rollup}"
+            );
+        }
+    }
+
+    /// An open pull request whose head commit `oid` GitHub says is `answer`.
+    fn mergeable_as(answer: &str, oid: &str) -> String {
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"mergeable":"{answer}","headRefOid":"{oid}"}}"#
+        )
+    }
+
+    fn conflict_telling(project: &str, bead: &str, oid: &str) -> String {
+        written(
+            project,
+            &format!(
+                "comments add {bead} The head of pull request example/ark#7, {oid}, conflicts \
+                 with its base, so the gh:pr gate waiting on it stays open."
+            ),
+        )
+    }
+
+    fn conflicting_with_base(bead: &str, done: Done) -> Act {
+        act(bead, "conflicts with its base", done)
+    }
+
+    #[test]
+    fn a_conflict_comments_on_each_held_back_bead_once_for_each_head_commit() {
+        let told = Told::default();
+        let settle_7 = |oid: &str| {
+            let runner = captured(FakeRunner::default(), "arkham")
+                .with(&viewed(7), &answer(7, &mergeable_as("CONFLICTING", oid)))
+                .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+                .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+                .with(
+                    &conflict_telling("arkham", "ark-2ud", oid),
+                    "Comment added to ark-2ud\n",
+                )
+                .with(
+                    &conflict_telling("arkham", "ark-45c", oid),
+                    "Comment added to ark-45c\n",
+                );
+            let settled = settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &pr(7),
+                &told,
+            );
+            (acts(settled), writes(&runner))
+        };
+
+        let (first, first_writes) = settle_7("a1b2c3");
+        let (same, same_writes) = settle_7("a1b2c3");
+        let (_, rebased) = settle_7("d4e5f6");
+
+        assert_eq!(
+            first,
+            [
+                conflicting_with_base("ark-2ud", Done::Commented),
+                conflicting_with_base("ark-45c", Done::Commented)
+            ]
+        );
+        assert_eq!(first_writes.len(), 2);
+        assert_eq!(
+            same,
+            [
+                conflicting_with_base("ark-2ud", Done::AlreadyCommented),
+                conflicting_with_base("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(same_writes, Vec::<String>::new());
+        assert_eq!(
+            rebased,
+            [
+                conflict_telling("arkham", "ark-2ud", "d4e5f6"),
+                conflict_telling("arkham", "ark-45c", "d4e5f6")
+            ]
+        );
+    }
+
+    /// The runner panics on any call it was not given, so a tracker asked
+    /// anything at all fails the test.
+    #[test]
+    fn a_pull_request_that_merges_cleanly_or_is_not_yet_known_to_asks_no_tracker_anything() {
+        for mergeability in ["MERGEABLE", "UNKNOWN"] {
+            let runner = FakeRunner::default().with(
+                &queried(7..=7),
+                &answer(7, &mergeable_as(mergeability, "a1b2c3")),
+            );
+
+            assert_eq!(
+                settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
+                [Settled::NothingNew],
+                "{mergeability}"
             );
         }
     }
@@ -1668,7 +1763,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} mergeable headRefOid}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
