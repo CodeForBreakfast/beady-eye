@@ -33,14 +33,14 @@ pub enum Outcome {
         awaited: fn(Until) -> bool,
         reason: String,
     },
-    /// Comment this on each bead a gate holds back, once. Two tellings with
-    /// one text are one telling, so the text carries whatever tells this one
-    /// from the next.
-    Tell(String),
+    /// Comment each of these on each bead a gate holds back, once. Two
+    /// tellings with one text are one telling, so the text carries whatever
+    /// tells this one from the next.
+    Tell(Vec<String>),
 }
 
 /// Every event `bdi gates` acts on.
-pub const EVENTS: [Event; 6] = [
+pub const EVENTS: [Event; 7] = [
     Event {
         fields: "isDraft",
         happening: "is ready for review",
@@ -65,6 +65,11 @@ pub const EVENTS: [Event; 6] = [
         fields: "commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}",
         happening: "has failing checks",
         outcome: checks_failed,
+    },
+    Event {
+        fields: "reviews(last:5){nodes{url state author{login}}}",
+        happening: "was reviewed",
+        outcome: reviewed,
     },
     Event {
         fields: "mergeable headRefOid",
@@ -161,11 +166,45 @@ fn checks_failed(
         matches!(rollup.state.as_str(), "FAILURE" | "ERROR").then_some(commit.oid)
     });
     Ok(failed.filter(|_| observed.state == State::Open).map(|oid| {
-        Outcome::Tell(format!(
+        Outcome::Tell(vec![format!(
             "The checks on {oid}, the head of pull request {pr}, failed, so the gh:pr gate \
                  waiting on it stays open."
-        ))
+        )])
     }))
+}
+
+fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, serde_json::Error> {
+    #[derive(Deserialize)]
+    struct Fields {
+        #[serde(default)]
+        reviews: Reviews,
+    }
+    #[derive(Deserialize, Default)]
+    struct Reviews {
+        nodes: Vec<Review>,
+    }
+    #[derive(Deserialize)]
+    struct Review {
+        url: String,
+        state: String,
+        author: Option<Author>,
+    }
+    #[derive(Deserialize)]
+    struct Author {
+        login: String,
+    }
+    let Fields { reviews } = Fields::deserialize(&observed.fields)?;
+    let told: Vec<String> = reviews
+        .nodes
+        .into_iter()
+        .filter(|review| !matches!(review.state.as_str(), "PENDING" | "DISMISSED"))
+        .map(|Review { url, state, author }| {
+            let reviewer = author.map_or("ghost".to_string(), |author| author.login);
+            let state = state.to_ascii_lowercase().replace('_', " ");
+            format!("{reviewer} reviewed pull request {pr}: {state}. {url}")
+        })
+        .collect();
+    Ok((observed.state == State::Open && !told.is_empty()).then_some(Outcome::Tell(told)))
 }
 
 fn conflicting(
@@ -183,10 +222,10 @@ fn conflicting(
         head_ref_oid,
     } = Fields::deserialize(&observed.fields)?;
     Ok(match (observed.state, mergeable.as_deref(), head_ref_oid) {
-        (State::Open, Some("CONFLICTING"), Some(oid)) => Some(Outcome::Tell(format!(
+        (State::Open, Some("CONFLICTING"), Some(oid)) => Some(Outcome::Tell(vec![format!(
             "The head of pull request {pr}, {oid}, conflicts with its base, so the gh:pr gate \
              waiting on it stays open."
-        ))),
+        )])),
         _ => None,
     })
 }
@@ -216,10 +255,10 @@ fn closed_unmerged(
     observed: &Observed,
 ) -> Result<Option<Outcome>, serde_json::Error> {
     Ok((observed.state == State::Closed).then(|| {
-        Outcome::Tell(format!(
+        Outcome::Tell(vec![format!(
             "Pull request {pr} closed without being merged, so the gh:pr gate waiting on it \
              stays open."
-        ))
+        )])
     }))
 }
 
@@ -261,8 +300,8 @@ mod tests {
             fields: serde_json::from_str(fields).expect("the fields parse"),
         };
         match checks_failed(&pr, &observed).expect("the fields read") {
-            Some(Outcome::Tell(text)) => Some(text),
-            Some(other) => panic!("a failure of checks only tells, not {other:?}"),
+            Some(Outcome::Tell(mut texts)) if texts.len() == 1 => texts.pop(),
+            Some(other) => panic!("a failure of checks tells once, not {other:?}"),
             None => None,
         }
     }
@@ -318,6 +357,112 @@ mod tests {
         assert_eq!(told_on(State::Merged, &failed), None);
     }
 
+    fn reviewed_on(state: State, fields: &str) -> Vec<String> {
+        let pr = PullRequest {
+            repo: "example/ark".to_string(),
+            number: 7,
+        };
+        let observed = Observed {
+            state,
+            fields: serde_json::from_str(fields).expect("the fields parse"),
+        };
+        match reviewed(&pr, &observed).expect("the fields read") {
+            Some(Outcome::Tell(texts)) => texts,
+            Some(other) => panic!("a review only tells, not {other:?}"),
+            None => vec![],
+        }
+    }
+
+    fn review(login: &str, state: &str, id: u32) -> String {
+        format!(
+            r#"{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-{id}","state":"{state}","author":{{"login":"{login}"}}}}"#
+        )
+    }
+
+    fn reviews(each: &[String]) -> String {
+        format!(r#"{{"reviews":{{"nodes":[{}]}}}}"#, each.join(","))
+    }
+
+    #[test]
+    fn each_submitted_review_is_told_naming_its_reviewer_and_state() {
+        for (state, said) in [
+            ("APPROVED", "approved"),
+            ("CHANGES_REQUESTED", "changes requested"),
+            ("COMMENTED", "commented"),
+        ] {
+            let told = reviewed_on(State::Open, &reviews(&[review("alice", state, 11)]));
+
+            assert_eq!(told.len(), 1, "{state}");
+            assert!(told[0].contains("alice"), "{}", told[0]);
+            assert!(told[0].contains(said), "{}", told[0]);
+            assert!(told[0].contains("example/ark#7"), "{}", told[0]);
+        }
+    }
+
+    /// One reviewer commenting twice, or two reviewers asking for changes,
+    /// are as many reviews as there are, and each is told.
+    #[test]
+    fn two_reviews_that_say_the_same_thing_are_told_apart() {
+        let told = reviewed_on(
+            State::Open,
+            &reviews(&[
+                review("alice", "COMMENTED", 11),
+                review("alice", "COMMENTED", 12),
+            ]),
+        );
+
+        assert_eq!(told.len(), 2);
+        assert_ne!(told[0], told[1]);
+    }
+
+    #[test]
+    fn a_review_nobody_has_submitted_is_not_told() {
+        let pending = reviews(&[review("alice", "PENDING", 11)]);
+        assert_eq!(reviewed_on(State::Open, &pending), Vec::<String>::new());
+    }
+
+    /// Dismissing a review changes its state, so telling a dismissed one
+    /// would tell a review already told as approved a second time.
+    #[test]
+    fn a_dismissed_review_is_not_told() {
+        let dismissed = reviews(&[review("alice", "DISMISSED", 11)]);
+        assert_eq!(reviewed_on(State::Open, &dismissed), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_review_whose_author_has_gone_is_told_as_ghost() {
+        let gone = reviews(&[
+            r#"{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"APPROVED","author":null}"#
+                .to_string(),
+        ]);
+        let told = reviewed_on(State::Open, &gone);
+
+        assert_eq!(told.len(), 1);
+        assert!(told[0].contains("ghost"), "{}", told[0]);
+    }
+
+    #[test]
+    fn a_pull_request_nobody_has_reviewed_is_not_told() {
+        assert_eq!(
+            reviewed_on(State::Open, r#"{"reviews":{"nodes":[]}}"#),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_draft_is_told_of_its_reviews() {
+        let draft =
+            reviews(&[review("alice", "COMMENTED", 11)]).replacen('{', r#"{"isDraft":true,"#, 1);
+        assert_eq!(reviewed_on(State::Open, &draft).len(), 1);
+    }
+
+    #[test]
+    fn a_pull_request_that_is_no_longer_open_is_not_told_of_reviews() {
+        let reviewed = reviews(&[review("alice", "APPROVED", 11)]);
+        assert_eq!(reviewed_on(State::Closed, &reviewed), Vec::<String>::new());
+        assert_eq!(reviewed_on(State::Merged, &reviewed), Vec::<String>::new());
+    }
+
     fn conflict_told_on(state: State, fields: &str) -> Option<String> {
         let pr = PullRequest {
             repo: "example/ark".to_string(),
@@ -328,8 +473,8 @@ mod tests {
             fields: serde_json::from_str(fields).expect("the fields parse"),
         };
         match conflicting(&pr, &observed).expect("the fields read") {
-            Some(Outcome::Tell(text)) => Some(text),
-            Some(other) => panic!("a conflict only tells, not {other:?}"),
+            Some(Outcome::Tell(mut texts)) if texts.len() == 1 => texts.pop(),
+            Some(other) => panic!("a conflict tells once, not {other:?}"),
             None => None,
         }
     }
@@ -380,12 +525,13 @@ mod tests {
     /// The fields today's query asks, so adding an event that reads nothing
     /// new costs GitHub nothing new.
     #[test]
-    fn the_events_read_a_draft_a_merge_commit_a_review_decision_the_head_commits_checks_and_mergeability(
+    fn the_events_read_a_draft_a_merge_commit_a_review_decision_the_head_commits_checks_recent_reviews_and_mergeability(
     ) {
         assert_eq!(
             fields(&EVENTS),
             "isDraft mergeCommit{oid} reviewDecision \
              commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} \
+             reviews(last:5){nodes{url state author{login}}} \
              mergeable headRefOid"
         );
     }
