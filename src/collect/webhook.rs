@@ -382,7 +382,7 @@ fn answer(
         Heard::SettleCommit(commit) => Some(Named::Commit(commit.clone())),
         _ => None,
     };
-    let room = named.map_or(true, |named| settle.try_send(named).is_ok());
+    let room = named.is_none_or(|named| settle.try_send(named).is_ok());
     reply(
         &stream.stream,
         said.answer(room, reading.load(Ordering::SeqCst)),
