@@ -287,11 +287,11 @@ mod tests {
         assert_eq!(spent_until(&runner, None), Ok(None));
     }
 
-    const FIELDS: &str = "isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviews(last:5){nodes{url state author{login}}}";
+    const FIELDS: &str = "isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviews(last:5){nodes{url state author{login}}} mergeable headRefOid";
 
     const QUERY: &str = "query=query($owner:String!,$name:String!){repository(owner:$owner,\
-                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviews(last:5){nodes{url state author{login}}}} \
-                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviews(last:5){nodes{url state author{login}}}}}}";
+                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviews(last:5){nodes{url state author{login}}} mergeable headRefOid} \
+                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state}}}} reviews(last:5){nodes{url state author{login}}} mergeable headRefOid}}}";
 
     fn observed(state: State, fields: &str) -> Observed {
         Observed {

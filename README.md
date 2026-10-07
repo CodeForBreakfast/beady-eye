@@ -309,12 +309,13 @@ so the bead it held back becomes ready. A gate with `awaits=ready_for_review` in
 its metadata closes sooner, once the pull request leaves draft, and so does
 one with `awaits=approved`, once GitHub's review decision is approved. A close
 without a merge leaves the gate open and comments once on that bead, so whoever
-waits on it hears. So do failing checks on the pull request's head commit, once
-for each commit, and each review submitted, once for each review. Then it looks again a minute later, until it is stopped. Run
-it under whatever supervises your processes, as you would the watcher. Given
-`--listen` and the webhook's secret, it also takes GitHub's `pull_request`
-deliveries, and settles a pull request when GitHub says it moved rather than at
-the next look.
+waits on it hears. So do failing checks on the pull request's head commit, a
+conflict between that commit and its base, and each review submitted, once for
+each commit or review. Then it looks again a minute later, until it is stopped.
+Run it under whatever supervises your processes, as you would the watcher.
+Given `--listen` and the webhook's secret, it also takes GitHub's
+`pull_request` deliveries, and settles a pull request when GitHub says it moved
+rather than at the next look.
 "Settling pull-request gates" in [docs/configuration.md](docs/configuration.md)
 has a unit to run it under, the webhook, and every line it prints.
 
