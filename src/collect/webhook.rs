@@ -69,6 +69,38 @@ impl Secret {
     }
 }
 
+/// A commit, as a delivery about its checks names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    /// `OWNER/REPO`, or `HOST/OWNER/REPO`, as [`PullRequest::repo`] has it.
+    pub repo: String,
+    /// The full hexadecimal object name.
+    pub sha: String,
+}
+
+impl std::fmt::Display for Named {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Named::PullRequest(pull_request) => pull_request.fmt(f),
+            Named::Commit(commit) => commit.fmt(f),
+        }
+    }
+}
+
+impl std::fmt::Display for Commit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.repo, self.sha)
+    }
+}
+
+/// What a signed delivery asks to have settled: a pull request, or the open
+/// pull requests whose head is a commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Named {
+    PullRequest(PullRequest),
+    Commit(Commit),
+}
+
 /// What the listener made of one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heard {
@@ -76,14 +108,16 @@ pub enum Heard {
     Healthy,
     /// A signed delivery about this pull request.
     Settle(PullRequest),
+    /// A signed delivery about the checks on this commit.
+    SettleCommit(Commit),
     /// A signed delivery about something other than a pull request.
     Ignored,
     /// A delivery carrying no signature.
     Unsigned,
     /// A delivery whose signature the secret did not make.
     Forged,
-    /// A signed pull_request or pull_request_review delivery whose payload
-    /// names no repository and number.
+    /// A signed pull_request, pull_request_review, check_suite or status
+    /// delivery whose payload names no repository and pull request or commit.
     NamesNoPullRequest,
     /// A body larger than any pull_request delivery.
     TooLarge,
@@ -102,8 +136,8 @@ impl Heard {
         match self {
             Heard::Healthy if !reading => ("503 Service Unavailable", "not reading GitHub\n"),
             Heard::Healthy => ("200 OK", "ok\n"),
-            Heard::Settle(_) if !room => BUSY,
-            Heard::Settle(_) => ("202 Accepted", "settling\n"),
+            Heard::Settle(_) | Heard::SettleCommit(_) if !room => BUSY,
+            Heard::Settle(_) | Heard::SettleCommit(_) => ("202 Accepted", "settling\n"),
             Heard::Ignored => ("202 Accepted", "ignored\n"),
             Heard::Unsigned | Heard::Forged => ("401 Unauthorized", "signature refused\n"),
             Heard::NamesNoPullRequest => ("400 Bad Request", "no pull request named\n"),
@@ -132,6 +166,8 @@ pub fn delivery(
     match event {
         Some("pull_request") => pull_request(body),
         Some("pull_request_review") => pull_request_review(body),
+        Some("check_suite") => check_suite(body),
+        Some("status") => status(body),
         _ => Heard::Ignored,
     }
 }
@@ -175,6 +211,53 @@ struct PullRequestReviewEvent {
 #[derive(Deserialize)]
 struct PullRequestNumber {
     number: u64,
+}
+
+/// What a signed check_suite delivery comes to.
+fn check_suite(body: &[u8]) -> Heard {
+    match serde_json::from_slice::<CheckSuiteEvent>(body) {
+        Ok(event) => commit(event.repository, event.check_suite.head_sha),
+        Err(_) => Heard::NamesNoPullRequest,
+    }
+}
+
+/// The fields of a check_suite delivery that name its commit.
+#[derive(Deserialize)]
+struct CheckSuiteEvent {
+    check_suite: Suite,
+    repository: Repository,
+}
+
+#[derive(Deserialize)]
+struct Suite {
+    head_sha: String,
+}
+
+/// What a signed status delivery comes to.
+fn status(body: &[u8]) -> Heard {
+    match serde_json::from_slice::<StatusEvent>(body) {
+        Ok(event) => commit(event.repository, event.sha),
+        Err(_) => Heard::NamesNoPullRequest,
+    }
+}
+
+/// The fields of a status delivery that name its commit.
+#[derive(Deserialize)]
+struct StatusEvent {
+    sha: String,
+    repository: Repository,
+}
+
+/// The commit `sha` in `repository`, where `sha` is an object name. It goes
+/// into the path of a request to GitHub, so nothing else is taken.
+fn commit(repository: Repository, sha: String) -> Heard {
+    if sha.is_empty() || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Heard::NamesNoPullRequest;
+    }
+    Heard::SettleCommit(Commit {
+        repo: repository.named(),
+        sha,
+    })
 }
 
 #[derive(Deserialize)]
@@ -235,7 +318,7 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
 pub fn listen(
     address: &str,
     secret: Secret,
-    settle: SyncSender<PullRequest>,
+    settle: SyncSender<Named>,
     reading: Arc<AtomicBool>,
     told: impl Fn(&Heard) + Send + Sync + 'static,
 ) -> anyhow::Result<SocketAddr> {
@@ -283,7 +366,7 @@ impl Drop for Answering {
 fn answer(
     stream: TcpStream,
     secret: &Secret,
-    settle: &SyncSender<PullRequest>,
+    settle: &SyncSender<Named>,
     reading: &AtomicBool,
     told: &dyn Fn(&Heard),
 ) {
@@ -294,10 +377,12 @@ fn answer(
     let Some(said) = read(&mut stream, secret) else {
         return;
     };
-    let room = match &said {
-        Heard::Settle(pull_request) => settle.try_send(pull_request.clone()).is_ok(),
-        _ => true,
+    let named = match &said {
+        Heard::Settle(pull_request) => Some(Named::PullRequest(pull_request.clone())),
+        Heard::SettleCommit(commit) => Some(Named::Commit(commit.clone())),
+        _ => None,
     };
+    let room = named.map_or(true, |named| settle.try_send(named).is_ok());
     reply(
         &stream.stream,
         said.answer(room, reading.load(Ordering::SeqCst)),
@@ -586,6 +671,121 @@ mod tests {
             ),
             Heard::Forged
         );
+    }
+
+    const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
+
+    fn commit_of_ark() -> Heard {
+        Heard::SettleCommit(Commit {
+            repo: "example/ark".to_string(),
+            sha: SHA.to_string(),
+        })
+    }
+
+    fn heard_as(event: &str, body: &str) -> Heard {
+        delivery(
+            &secret(),
+            Some(event),
+            Some(&signature(body.as_bytes())),
+            body.as_bytes(),
+        )
+    }
+
+    #[test]
+    fn a_signed_check_suite_delivery_names_the_commit_whose_pull_requests_to_settle() {
+        let body = format!(
+            r#"{{"action":"completed","check_suite":{{"head_sha":"{SHA}","pull_requests":[]}},"repository":{{"full_name":"example/ark"}}}}"#
+        );
+        assert_eq!(heard_as("check_suite", &body), commit_of_ark());
+    }
+
+    #[test]
+    fn a_signed_status_delivery_names_the_commit_whose_pull_requests_to_settle() {
+        let body = format!(
+            r#"{{"state":"success","sha":"{SHA}","repository":{{"full_name":"example/ark"}}}}"#
+        );
+        assert_eq!(heard_as("status", &body), commit_of_ark());
+    }
+
+    #[test]
+    fn a_commit_from_another_host_names_its_repository_with_the_host() {
+        let body = format!(
+            r#"{{"sha":"{SHA}","repository":{{"full_name":"example/ark","html_url":"https://forge.invalid/example/ark"}}}}"#
+        );
+        assert_eq!(
+            heard_as("status", &body),
+            Heard::SettleCommit(Commit {
+                repo: "forge.invalid/example/ark".to_string(),
+                sha: SHA.to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_signed_check_suite_or_status_delivery_naming_no_commit_says_so() {
+        let repository = r#""repository":{"full_name":"example/ark"}"#;
+        for (event, body) in [
+            ("check_suite", format!("{{{repository}}}")),
+            (
+                "check_suite",
+                format!(r#"{{"check_suite":{{}},{repository}}}"#),
+            ),
+            (
+                "check_suite",
+                format!(r#"{{"check_suite":{{"head_sha":"{SHA}"}}}}"#),
+            ),
+            ("status", format!("{{{repository}}}")),
+            ("status", format!(r#"{{"sha":"{SHA}"}}"#)),
+        ] {
+            assert_eq!(
+                heard_as(event, &body),
+                Heard::NamesNoPullRequest,
+                "{event} {body}"
+            );
+        }
+    }
+
+    /// The sha goes into the path of a request to GitHub.
+    #[test]
+    fn a_commit_that_is_not_an_object_name_is_named_no_commit() {
+        for sha in ["", "../../graphql", "5eaf00d?per_page=1", "main"] {
+            let body = format!(r#"{{"sha":"{sha}","repository":{{"full_name":"example/ark"}}}}"#);
+            assert_eq!(
+                heard_as("status", &body),
+                Heard::NamesNoPullRequest,
+                "{sha}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_check_suite_or_status_delivery_with_no_or_a_wrong_signature_is_refused() {
+        let body = format!(r#"{{"sha":"{SHA}","repository":{{"full_name":"example/ark"}}}}"#);
+        let other = Secret::new("hunter2").expect("a secret");
+        for event in ["check_suite", "status"] {
+            assert_eq!(
+                delivery(&secret(), Some(event), None, body.as_bytes()),
+                Heard::Unsigned
+            );
+            assert_eq!(
+                delivery(
+                    &other,
+                    Some(event),
+                    Some(&signature(body.as_bytes())),
+                    body.as_bytes()
+                ),
+                Heard::Forged
+            );
+        }
+    }
+
+    #[test]
+    fn a_delivery_naming_a_commit_is_answered_like_one_naming_a_pull_request() {
+        assert_eq!(
+            commit_of_ark().answer(true, true),
+            ("202 Accepted", "settling\n")
+        );
+        assert_eq!(commit_of_ark().answer(false, true), BUSY);
     }
 
     #[test]

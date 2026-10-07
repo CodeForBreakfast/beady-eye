@@ -97,6 +97,46 @@ pub fn pull_requests(
         .collect()
 }
 
+/// What `gh api repos/OWNER/NAME/commits/SHA/pulls` prints, cut to what this
+/// reads. It lists every pull request whose history holds the commit, merged
+/// and closed ones among them.
+#[derive(Deserialize)]
+struct PullRequestAt {
+    number: u64,
+    state: String,
+    head: Head,
+}
+
+#[derive(Deserialize)]
+struct Head {
+    sha: String,
+}
+
+/// The numbers of the open pull requests in `repo` whose head is the commit
+/// `sha`, which the caller has checked is hexadecimal since it goes into the
+/// path.
+pub fn open_pull_requests_headed_by(
+    runner: &dyn Runner,
+    repo: &Repository,
+    sha: &str,
+) -> Result<Vec<u64>, RunFailure> {
+    let path = format!("repos/{}/{}/commits/{sha}/pulls", repo.owner, repo.name);
+    let mut args = vec!["api", &path];
+    if let Some(host) = repo.host {
+        args.extend(["--hostname", host]);
+    }
+    let out = runner.run("gh", &args, None, &Env::new())?;
+    let listed: Vec<PullRequestAt> =
+        serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
+    Ok(listed
+        .into_iter()
+        .filter(|pull_request| {
+            pull_request.state == "open" && pull_request.head.sha.eq_ignore_ascii_case(sha)
+        })
+        .map(|pull_request| pull_request.number)
+        .collect())
+}
+
 /// Where `fields` say their pull request stands. GraphQL gives `state` as
 /// `OPEN`, `CLOSED` or `MERGED`.
 fn state(fields: &Value) -> Result<State, RunFailure> {
@@ -162,6 +202,47 @@ mod tests {
     use crate::collect::run::FailureKind;
 
     const RATE_LIMIT: &str = "gh api rate_limit";
+
+    const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
+    const COMMIT_PULLS: &str =
+        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls";
+
+    /// #7 open with the commit as its head, #8 open with the commit only in
+    /// its history, #9 closed with the commit as its head.
+    const LISTED: &str = r#"[
+        {"number":7,"state":"open","head":{"sha":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}},
+        {"number":8,"state":"open","head":{"sha":"0badc0de0badc0de0badc0de0badc0de0badc0de"}},
+        {"number":9,"state":"closed","head":{"sha":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}
+    ]"#;
+
+    #[test]
+    fn only_open_pull_requests_headed_by_the_commit_are_found() {
+        let runner = FakeRunner::default().with(COMMIT_PULLS, LISTED);
+
+        assert_eq!(
+            open_pull_requests_headed_by(&runner, &ark(None), SHA),
+            Ok(vec![7])
+        );
+    }
+
+    #[test]
+    fn the_pull_requests_of_a_commit_are_asked_of_the_host_the_repository_is_on() {
+        let runner =
+            FakeRunner::default().with(&format!("{COMMIT_PULLS} --hostname forge.invalid"), "[]");
+
+        assert_eq!(
+            open_pull_requests_headed_by(&runner, &ark(Some("forge.invalid")), SHA),
+            Ok(vec![])
+        );
+    }
+
+    #[test]
+    fn an_answer_that_is_not_a_list_of_pull_requests_is_a_parse_failure() {
+        let runner = FakeRunner::default().with(COMMIT_PULLS, r#"{"message":"Not Found"}"#);
+
+        let failure = open_pull_requests_headed_by(&runner, &ark(None), SHA).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Parse);
+    }
 
     #[test]
     fn a_spent_graphql_limit_is_waited_out_until_it_resets() {

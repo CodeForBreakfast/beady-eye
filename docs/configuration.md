@@ -1008,22 +1008,24 @@ Whitespace around the secret is dropped, and `--listen` with no secret, or an
 empty one, refuses to start.
 
 On GitHub, give the webhook the address `bdi gates` is reached at, the content
-type `application/json`, the same secret, and the *Pull requests* and *Pull request reviews* events. A
-delivery is a trigger only. `bdi gates` reads the repository and number out of
-it and settles that pull request exactly as a look would, asking GitHub where
-it stands, and passes it over without a word where
-[`[gates]`](#gates) leaves its owner to another `bdi gates`. Each
-delivery is answered before it is settled:
+type `application/json`, the same secret, and the *Pull requests*, *Pull request
+reviews*, *Check suites* and *Statuses* events. A delivery is a trigger only.
+`bdi gates` reads the repository and number out of it and settles that pull
+request exactly as a look would, asking GitHub where it stands, and passes it
+over without a word where [`[gates]`](#gates) leaves its owner to another
+`bdi gates`. A check suite or status names a commit and no pull request, so
+`bdi gates` asks GitHub for the open pull requests whose head is that commit
+and settles each. Each delivery is answered before it is settled:
 
 | the request | the answer |
 |---|---|
-| a `pull_request` or `pull_request_review` delivery signed with the secret | `202`, then the pull request is settled |
+| a `pull_request`, `pull_request_review`, `check_suite` or `status` delivery signed with the secret | `202`, then the pull requests it names or whose head it names are settled |
 | any other event signed with the secret, GitHub's `ping` among them | `202`, and nothing else |
 | a delivery with no `X-Hub-Signature-256`, or one the secret did not make | `401`, and a line on stdout |
-| a signed `pull_request` or `pull_request_review` delivery naming no repository and number | `400`, and a line on stdout |
+| a signed `pull_request`, `pull_request_review`, `check_suite` or `status` delivery naming no repository and pull request or commit | `400`, and a line on stdout |
 | a body over 1 MiB, far more than any `pull_request` delivery | `413`, and a line on stdout |
 | a delivery with no `Content-Length`, such as a chunked one | `411`, and a line on stdout |
-| any request while eight are already being answered, or a signed `pull_request` delivery while 64 wait to be settled | `503`. GitHub does not send it again, so the next look settles it |
+| any request while eight are already being answered, or a signed delivery to settle while 64 wait to be settled | `503`. GitHub does not send it again, so the next look settles it |
 | a request that has not arrived in full within ten seconds | the connection is closed unanswered |
 | `GET /healthz` | `200`, for a readiness probe, or `503` while GitHub refuses every read it is asked |
 
