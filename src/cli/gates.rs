@@ -12,12 +12,12 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 
-use crate::app::gates::{delivered, look, Found, Read};
+use crate::app::gates::{delivered, delivered_commit, look, Found, Read};
 use crate::collect::bd;
 use crate::collect::environment::EnvironmentCache;
 use crate::collect::gates::{Done, Told};
 use crate::collect::run::RealRunner;
-use crate::collect::webhook::{self, Heard, Secret};
+use crate::collect::webhook::{self, Heard, Named, Secret};
 use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
 use crate::view::phrase;
@@ -97,17 +97,17 @@ pub(super) fn settle(
             settling
         } else {
             match delivered_for.recv_timeout(next_look - now) {
-                Ok(pull_request) if Instant::now() < rate_limited_until => {
+                Ok(named) if Instant::now() < rate_limited_until => {
                     println!(
                         "{}",
                         spelled_out(&format!(
-                            "{pull_request}: a delivery came while GitHub's rate limit is waited \
+                            "{named}: a delivery came while GitHub's rate limit is waited \
                              out, so the next look settles it"
                         ))
                     );
                     continue;
                 }
-                Ok(pull_request) => delivered(
+                Ok(Named::PullRequest(pull_request)) => delivered(
                     &trackers,
                     &RealRunner,
                     &projects,
@@ -115,6 +115,9 @@ pub(super) fn settle(
                     pull_request,
                     &told,
                 ),
+                Ok(Named::Commit(commit)) => {
+                    delivered_commit(&trackers, &RealRunner, &projects, &cfg.gates, commit, &told)
+                }
                 Err(_) => continue,
             }
         };
@@ -205,7 +208,11 @@ fn refused(heard: &Heard) -> Option<&'static str> {
         Heard::Unmeasured => {
             Some("a delivery was refused: it does not give its Content-Length up front")
         }
-        Heard::Healthy | Heard::Settle(_) | Heard::Ignored | Heard::Unknown => None,
+        Heard::Healthy
+        | Heard::Settle(_)
+        | Heard::SettleCommit(_)
+        | Heard::Ignored
+        | Heard::Unknown => None,
     }
 }
 
@@ -232,6 +239,10 @@ fn reported(found: &Found) -> Option<String> {
         } => format!(
             "{pull_request}: GitHub did not say where it stands, so no gate waiting on it was \
              touched: {failure}"
+        ),
+        Found::CommitUnread { commit, failure } => format!(
+            "{commit}: GitHub did not say which pull requests it heads, so none was settled: \
+             {failure}"
         ),
         Found::RateLimited {
             pull_request,
@@ -300,6 +311,8 @@ fn fault(fault: &Fault) -> String {
 mod tests {
     use super::*;
     use crate::collect::gates::PullRequest;
+    use crate::collect::run::{FailureKind, RunFailure};
+    use crate::collect::webhook::Commit;
     use crate::model::snapshot::TrackerFailure;
 
     fn told(happening: &'static str, done: Result<Done, TrackerFailure>) -> Option<String> {
@@ -337,6 +350,29 @@ mod tests {
         assert_eq!(
             told("closed unmerged", Err(TrackerFailure::Unavailable)).as_deref(),
             Some("example/ark#7: arkham could not settle ark-2ud: the tracker did not answer")
+        );
+    }
+
+    #[test]
+    fn a_commit_whose_pull_requests_github_did_not_list_is_reported_by_its_name() {
+        assert_eq!(
+            reported(&Found::CommitUnread {
+                commit: Commit {
+                    repo: "example/ark".to_string(),
+                    sha: "5eaf00d".to_string(),
+                },
+                failure: RunFailure {
+                    kind: FailureKind::Unavailable,
+                    program: "gh".to_string(),
+                    detail: "gh did not answer".to_string(),
+                    unreadable: None,
+                },
+            })
+            .as_deref(),
+            Some(
+                "example/ark@5eaf00d: GitHub did not say which pull requests it heads, so none \
+                 was settled: gh did not answer"
+            )
         );
     }
 
