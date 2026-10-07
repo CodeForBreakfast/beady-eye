@@ -1,6 +1,8 @@
 //! What a line shut over its subtree says it hides.
 
 use super::*;
+use crate::config::DrawnOn;
+use crate::model::badges::Badged;
 use pretty_assertions::assert_eq;
 
 /// The bead this is for. A row shut over a branch is the only thing on
@@ -247,4 +249,139 @@ fn opening_a_finished_subtree_draws_what_it_holds() {
             "      └── ✓ .4 burn the sleepers",
         ]
     );
+}
+
+/// A survey held back by two gates, one still open and one closed, with a
+/// step of its own beneath it. Its sibling is staffed, so the two lines above
+/// it rest open over it.
+const HELD_BACK: &str = r#"[
+  {"id":"dun-19","title":"raise the dish","status":"in_progress",
+   "priority":1,"issue_type":"epic"},
+  {"id":"dun-19.1","title":"frame the mount","status":"in_progress",
+   "dependencies":[{"depends_on_id":"dun-19","type":"parent-child"}],
+   "priority":2,"issue_type":"task"},
+  {"id":"dun-19.1.1","title":"survey the footings","status":"open",
+   "dependencies":[{"depends_on_id":"dun-19.1","type":"parent-child"},
+                   {"depends_on_id":"dun-21","type":"blocks"},
+                   {"depends_on_id":"dun-22","type":"blocks"}],
+   "priority":2,"issue_type":"task"},
+  {"id":"dun-19.1.1.1","title":"stake the corners","status":"open",
+   "dependencies":[{"depends_on_id":"dun-19.1.1","type":"parent-child"}],
+   "priority":2,"issue_type":"task"},
+  {"id":"dun-21","title":"wait on the mast","status":"open",
+   "priority":2,"issue_type":"gate"},
+  {"id":"dun-22","title":"wait on the wire","status":"closed",
+   "priority":2,"issue_type":"gate","closed_at":"2026-08-26T09:00:00Z"},
+  {"id":"dun-19.1.2","title":"pour the plinth","status":"in_progress",
+   "dependencies":[{"depends_on_id":"dun-19.1","type":"parent-child"}],
+   "priority":2,"issue_type":"task"}
+]"#;
+
+/// The bead `HELD_BACK` is about.
+const SURVEY: &str = "dun-19.1.1";
+
+/// `HELD_BACK`, where each of `badged` carries one badge on `key` naming it,
+/// drawn on the rows `drawn_on` says.
+fn held_back(key: &str, drawn_on: DrawnOn, badged: &[&str]) -> Snapshot {
+    let mut snapshot = alone("dunwich", HELD_BACK, &panes_on(&["dun-19.1.2"]));
+    for tree in snapshot.trees.iter_mut().chain(&mut snapshot.collected) {
+        for bead in Arc::make_mut(tree)
+            .beads
+            .iter_mut()
+            .filter(|bead| badged.contains(&bead.id.as_str()))
+        {
+            bead.badges = vec![Badged {
+                key: key.to_string(),
+                text: format!("⇢ {}", bead.id),
+                link: None,
+                short: None,
+                colour: None,
+                drawn_on,
+            }];
+        }
+    }
+    snapshot
+}
+
+/// The survey and everything hung beneath it.
+const THE_SURVEY_AND_BENEATH: &[&str] = &[SURVEY, "dun-19.1.1.1", "dun-21", "dun-22"];
+
+fn badges_on(forest: &Forest, id: &str) -> Vec<String> {
+    row_of(forest, id)
+        .badges
+        .iter()
+        .map(|badge| badge.text.clone())
+        .collect()
+}
+
+/// The bead this is for. The blocker's line is folded away beneath the bead
+/// it holds back, and what that line carries, such as a pull request's link,
+/// is why the bead waits. A closed blocker holds nothing back, and a child is
+/// not a blocker.
+#[test]
+fn a_line_shut_over_its_blockers_draws_the_badges_of_the_open_ones_after_its_own() {
+    let mut forest = flatten(held_back("gate", DrawnOn::Blocked, THE_SURVEY_AND_BENEATH));
+    select(&mut forest, &key("dunwich", SURVEY));
+
+    forest.apply(Action::CollapseSubtree);
+
+    assert_eq!(fold_of(&forest, SURVEY), Some(false));
+    assert_eq!(badges_on(&forest, SURVEY), ["⇢ dun-19.1.1", "⇢ dun-21"]);
+}
+
+/// Only an entry knows whether its badge means anything on another bead's
+/// row. A blocker's ticket drawn there unasked would read as the row's own.
+#[test]
+fn a_line_shut_over_its_blockers_draws_none_of_their_badges_kept_to_their_own_rows() {
+    let mut forest = flatten(held_back("gate", DrawnOn::Own, THE_SURVEY_AND_BENEATH));
+    select(&mut forest, &key("dunwich", SURVEY));
+
+    forest.apply(Action::CollapseSubtree);
+
+    assert_eq!(fold_of(&forest, SURVEY), Some(false));
+    assert_eq!(badges_on(&forest, SURVEY), ["⇢ dun-19.1.1"]);
+}
+
+/// Opened, the blocker's line draws its badges itself, and the bead's row
+/// saying them too would be the same fact twice.
+#[test]
+fn a_line_opened_over_its_blockers_draws_only_its_own_badges() {
+    let mut forest = flatten(held_back("gate", DrawnOn::Blocked, THE_SURVEY_AND_BENEATH));
+    select(&mut forest, &key("dunwich", SURVEY));
+
+    forest.apply(Action::ExpandSubtree);
+
+    assert_eq!(fold_of(&forest, SURVEY), Some(true));
+    assert_eq!(badges_on(&forest, SURVEY), ["⇢ dun-19.1.1"]);
+}
+
+/// A layout can put a badge in the identity, and the identity's columns are
+/// measured over lines nothing has drawn yet. A line counted rather than
+/// drawn is measured as it will rest, so a badge it lifts does not widen the
+/// column only once a scroll reaches it.
+#[test]
+fn a_counted_line_resting_shut_is_measured_with_the_badges_it_lifts() {
+    let lifted = Cell::Badge("gate".into());
+    let mut forest = flatten(held_back("gate", DrawnOn::Blocked, &["dun-21"]));
+    forest.laid_out_to(row::Layout {
+        identity: vec![Cell::Glyph, lifted.clone(), Cell::Id],
+        ..row::Layout::default()
+    });
+
+    let drawn = forest.lines();
+    let mut reached = Vec::new();
+    for top in drawn.top() {
+        drawn.visit(top, &mut |node| {
+            reached.extend(node.line.bead().map(|bead| bead.id.clone()));
+            matches!(node.beneath, Beneath::Nothing)
+        });
+    }
+    assert!(
+        !reached.iter().any(|id| id == SURVEY),
+        "the survey's line is counted rather than drawn: {:#?}",
+        sketch(&forest)
+    );
+
+    assert_eq!(fold_of(&forest, SURVEY), Some(false));
+    assert_eq!(drawn.widths().of(&lifted), "⇢ dun-21".chars().count());
 }

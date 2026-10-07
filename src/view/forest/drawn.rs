@@ -88,6 +88,9 @@ pub(super) fn left_out<'k>(
 pub(super) struct Count {
     pub(super) rows: usize,
     pub(super) widths: Widths,
+    /// Whether the subtree's own line is a bead's line resting shut. A run's
+    /// line never is.
+    pub(super) shut: bool,
 }
 
 /// One line, and everything drawn beneath it.

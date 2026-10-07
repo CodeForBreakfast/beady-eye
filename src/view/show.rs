@@ -776,6 +776,7 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DrawnOn;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::edges::Related;
@@ -2471,6 +2472,7 @@ mod tests {
                     short: None,
                     link: Some(SOMEWHERE.to_string()),
                     colour: None,
+                    drawn_on: DrawnOn::Own,
                 },
                 Badged {
                     key: "waiting".to_string(),
@@ -2478,6 +2480,7 @@ mod tests {
                     short: None,
                     link: None,
                     colour: None,
+                    drawn_on: DrawnOn::Own,
                 },
             ],
             anomalies: vec![Anomaly::StaleClaim { days: 58 }, Anomaly::StalePane],

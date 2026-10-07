@@ -80,6 +80,7 @@ coin one — and say so.**
 | snapshot | herdr (`herdr api snapshot`) | one poll's whole state |
 | **ground** | *coined* | the terminal's own foreground, untreated, which the liveness scale is measured from rather than being a step on. `bdi` holds a symbol and the terminal holds the value, so a scale with the default among its steps has one interval nobody can size — and a theme setting `color7` or `color15` to its foreground, which is how themes are written, closes that interval to nothing. Neither project has the concept: neither draws a scale. |
 | **badge** | *coined* | a rendering of one value a bead carries, read either from its `metadata` or from a field of its own. beads has `label`, but a label is a bead's own tag; neither project has a display term for this. |
+| **drawn_on** | *coined* | the rows a badge is drawn on: its own bead's alone, or also the shut row of each bead its bead blocks. Neither project draws a value on another bead's row. |
 | **unattributed** | *coined* | a live pane in a configured project resolving to no bead. Neither project names this, because neither knows about the other. |
 | **unconfigured** | *coined* | a directory no `[[projects]]` entry covers, and the panes working in it. `bdi` has not failed to attribute them; it was never told the project exists. |
 | **finished** | *coined* | a branch every bead of which is closed, with no agent and no anomaly anywhere beneath it — the whole branch, not merely its head. beads has *closed*, which is one bead's status; this is a claim about a subtree. |
@@ -2602,7 +2603,7 @@ freshness line's `protocol` is what keeps them honest.
           "started_at": "2026-08-29T10:00:00Z",
           "closed_at": null,
           "badges": [
-            { "key": "blocked_on", "text": "⏸ waiting", "short": null, "link": null, "colour": null }
+            { "key": "blocked_on", "text": "⏸ waiting", "short": null, "link": null, "colour": null, "drawn_on": "own" }
           ],
           "agent": {
             "pane": { "session": "default", "id": "wCM:p9" },

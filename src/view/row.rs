@@ -228,14 +228,16 @@ impl Layout {
     }
 }
 
-/// `shut_over` is what this line's fold hides, where it hides anything. The
-/// caller knows the branch and the fold; the bead's own fields say nothing
-/// about either.
-///
-/// Both of the things a shut line says come off that one set of counts. A
-/// closed line's glyph says done, and the unfinished beads it rests over are
-/// nowhere else on the screen to say otherwise — so it says how many, in
-/// words, beside the fraction saying it in arithmetic.
+/// What a line's fold hides, where it rests shut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shut {
+    /// The beads beneath it, counted once each.
+    pub over: Counts,
+    /// The badges of the open beads that block it, whose own lines the fold
+    /// keeps off the screen, where their entries draw them on this row.
+    pub blockers: Vec<Badged>,
+}
+
 /// Whether `said` leaves this badge the link its `text` is drawn as.
 ///
 /// A row picks a badge's form by its width but picks its style once for both,
@@ -253,12 +255,23 @@ pub fn says_the_same_about_its_link(badge: &Badged, said: &str) -> bool {
         .is_none_or(|to| fitted::openable(said, to) == fitted::openable(&badge.text, to))
 }
 
+/// `shut` is what this line's fold hides, where it hides anything. The
+/// caller knows the branch and the fold; the bead's own fields say nothing
+/// about either.
+///
+/// A closed line's glyph says done, and the unfinished beads it rests over are
+/// nowhere else on the screen to say otherwise — so it says how many, in
+/// words, beside the fraction saying it in arithmetic. And a blocker's badges
+/// are drawn after the bead's own, because the blocker's line is folded away
+/// and what it carries, such as a pull request's link, is why the bead waits.
 pub fn cells(
     node: &Node,
     parent: Option<&str>,
     progress: Option<Progress>,
-    shut_over: Option<Counts>,
+    shut: Option<Shut>,
 ) -> Row {
+    let (shut_over, blockers) =
+        shut.map_or((None, Vec::new()), |shut| (Some(shut.over), shut.blockers));
     let mut notes = Vec::new();
     notes.extend(
         shut_over
@@ -270,7 +283,7 @@ pub fn cells(
     );
     notes.extend(phrase::unrecognised_status(&node.status));
     notes.extend(node.undrawn.iter().map(phrase::undrawn));
-    let badges = node.badges.clone();
+    let badges: Vec<Badged> = node.badges.iter().cloned().chain(blockers).collect();
     // The model reports a link its config could not build; this reports one
     // built and then refused, which only the thing that writes the sequence
     // is in a position to know.
@@ -411,6 +424,7 @@ pub fn anomaly_alone(said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::DrawnOn;
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::{Badged, Undrawn};
     use crate::model::join::JoinSource;
@@ -646,6 +660,7 @@ mod tests {
             link: link.map(str::to_string),
             short: None,
             colour: None,
+            drawn_on: DrawnOn::Own,
         }];
         node
     }
@@ -769,13 +784,16 @@ mod tests {
     #[test]
     fn a_pinned_bead_over_open_work_carries_no_note() {
         let pinned = node("smt-4kd3p.20", Status::Pinned);
-        let shut_over = Counts {
-            total: 3,
-            finished: 1,
-            live_agents: 0,
-            anomalies: 0,
+        let shut = Shut {
+            over: Counts {
+                total: 3,
+                finished: 1,
+                live_agents: 0,
+                anomalies: 0,
+            },
+            blockers: Vec::new(),
         };
-        let row = cells(&pinned, Some(ROOT), None, Some(shut_over));
+        let row = cells(&pinned, Some(ROOT), None, Some(shut));
 
         assert_eq!(row.notes, Vec::<String>::new());
     }
@@ -802,6 +820,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -809,6 +828,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 
@@ -832,6 +852,7 @@ mod tests {
                 link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
             Badged {
                 key: "blocked_on".into(),
@@ -839,6 +860,7 @@ mod tests {
                 link: None,
                 short: None,
                 colour: None,
+                drawn_on: DrawnOn::Own,
             },
         ];
 

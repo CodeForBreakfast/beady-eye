@@ -184,12 +184,13 @@ const GH_PR_GATES: &str = include_str!("fixtures/bd_1.3.0_gh_pr_gates.json");
 /// A badge on a `gh:pr` gate's pull request, as the README gives it.
 const A_BADGE_ON_THE_PULL_REQUEST: &str = r#"
 [[badges]]
-key    = "metadata.repo"
-when   = { await_type = "gh:pr", await_id = "[0-9]+" }
-match  = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
-render = "⇢ {name} #{await_id}"
-short  = "⇢ #{await_id}"
-link   = "https://github.com/{owner}/{name}/pull/{await_id}"
+key      = "metadata.repo"
+when     = { await_type = "gh:pr", await_id = "[0-9]+" }
+match    = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render   = "⇢ {name} #{await_id}"
+short    = "⇢ #{await_id}"
+link     = "https://github.com/{owner}/{name}/pull/{await_id}"
+drawn_on = "blocked"
 "#;
 
 /// A gate hangs under the bead it blocks, and a badge configured on its pull
@@ -345,6 +346,7 @@ fn a_node_carries_every_field_the_contract_names() {
                 "short": null,
                 "link": null,
                 "colour": null,
+                "drawn_on": "own",
             }],
             "agent": null,
             "anomalies": [{"rule": "orphan-claim"}],
