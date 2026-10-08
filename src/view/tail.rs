@@ -197,6 +197,7 @@ mod tests {
     };
     use crate::model::tree::Link;
     use crate::model::types::testing::key as pane_key;
+    use crate::model::types::Printed;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::forest;
     use crate::view::lines::GroupKind;
@@ -263,8 +264,7 @@ mod tests {
             agent,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             labels: Vec::new(),

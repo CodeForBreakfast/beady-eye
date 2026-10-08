@@ -1,6 +1,6 @@
 [package]
 name = "beady-eye"
-version = "0.24.0"
+version = "0.25.0"
 edition = "2021"
 rust-version = "1.88"
 description = "A tree of work in flight: bead graphs annotated with the live agents working them"
@@ -73,7 +73,7 @@ ratatui = "0.30.2"
 # reach for, and it costs a fraction of the build.
 regex-lite = "0.1.9"
 serde = { version = "1.0.229", features = ["derive", "rc"] }
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["raw_value"] }
 sha2 = "0.10.9"
 # Named directly, though crossterm already compiles it for its own resize
 # plumbing: a crate reached only through another crate's tree is not one

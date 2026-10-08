@@ -1244,6 +1244,7 @@ mod tests {
     };
     use crate::model::tree::Link;
     use crate::model::types::testing::key as pane_key;
+    use crate::model::types::Printed;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, PATIENCE};
     use crate::tui::keys::tests::key;
@@ -1595,8 +1596,7 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             labels: Vec::new(),
@@ -2374,7 +2374,7 @@ mod tests {
         for tree in &mut snapshot.collected {
             let tree = Arc::make_mut(tree);
             for node in &mut tree.beads {
-                node.description = format!("what {} is about", node.id).into();
+                node.row = Printed::saying(&format!("what {} is about", node.id), "");
             }
         }
         snapshot.trees = snapshot.collected.clone();
@@ -2437,11 +2437,11 @@ mod tests {
     fn a_grove_with_a_tall_bead(lines: usize) -> Snapshot {
         let mut snapshot = a_described_grove(6);
         let tree = Arc::make_mut(&mut snapshot.collected[0]);
-        tree.beads[0].description = (1..=lines)
+        let description = (1..=lines)
             .map(|n| format!("line {n} of the description"))
             .collect::<Vec<_>>()
-            .join("\\\n")
-            .into();
+            .join("\\\n");
+        tree.beads[0].row = Printed::saying(&description, "");
         snapshot.trees = snapshot.collected.clone();
         snapshot
     }
@@ -2451,7 +2451,7 @@ mod tests {
     fn a_grove_with_a_marked_up_bead() -> Snapshot {
         let mut snapshot = a_described_grove(6);
         let tree = Arc::make_mut(&mut snapshot.collected[0]);
-        tree.beads[0].description = "## Shape\n\n- keep `wrap` *soft*".into();
+        tree.beads[0].row = Printed::saying("## Shape\n\n- keep `wrap` *soft*", "");
         snapshot.trees = snapshot.collected.clone();
         snapshot
     }
@@ -3055,7 +3055,7 @@ mod tests {
         for tree in &mut reordered.collected {
             let tree = Arc::make_mut(tree);
             for node in &mut tree.beads {
-                node.description = format!("what {} is about", node.id).into();
+                node.row = Printed::saying(&format!("what {} is about", node.id), "");
             }
         }
         reordered.trees = reordered.collected.clone();
