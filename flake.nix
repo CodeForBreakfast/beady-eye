@@ -125,11 +125,12 @@
         # tests/no_config.rs runs the binary as a fresh machine would, and
         # bdi asks bd where the tracker is. The worktree-listing test builds
         # a repository and adds a worktree to it, so git has to be here too.
-        # Only the check phase needs either; nothing at runtime is built
-        # against them.
+        # One test runs a `jq` filter README documents. Only the check phase
+        # needs any of them; nothing at runtime is built against them.
         nativeCheckInputs = [
           beads.packages.${pkgs.stdenv.hostPlatform.system}.bd
           pkgs.git
+          pkgs.jq
         ];
 
         # The package is named for the crate, the binary for the command.
@@ -3573,31 +3574,42 @@ and a second line"
         # takes the number after the last one tagged. A number is spent once
         # its tag is pushed, whether or not the run that pushed it went on to
         # publish, so a candidate that failed can be followed by the next.
+        #
+        # bdi and the Claude Code plugin are two tracks, each with its own
+        # notes heading and its own tags, so one's candidates never number
+        # the other's.
         nextCandidate = pkgs.writeShellScriptBin "next-candidate" ''
           set -u
 
-          if [ "$#" -ne 1 ]; then
-            echo "usage: git ls-remote --tags origin | next-candidate <next-release notes>" >&2
+          usage() {
+            echo "usage: git ls-remote --tags origin | next-candidate <bdi|plugin> <next-release notes>" >&2
             echo >&2
             echo "Prints <version>-rc.<n>: the version the notes open with, and the" >&2
             echo "candidate number after the last one tagged for it." >&2
             exit 2
-          fi
+          }
 
-          notes="$1"
+          [ "$#" -eq 2 ] || usage
+          case "$1" in
+            bdi) heading=bdi prefix=v ;;
+            plugin) heading='beady-eye plugin' prefix=plugin-v ;;
+            *) usage ;;
+          esac
+
+          notes="$2"
           tags="$(cat)"
 
           target="$(head -n1 "$notes" 2> /dev/null |
-            sed -nE 's/^bdi ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')"
+            sed -nE "s/^$heading ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p")"
           if [ -z "$target" ]; then
-            echo "$notes does not open with 'bdi <version>', so there is no version to cut a candidate for. See RELEASE-NOTES/README.md." >&2
+            echo "$notes does not open with '$heading <version>', so there is no version to cut a candidate for. See RELEASE-NOTES/README.md." >&2
             exit 1
           fi
 
-          pattern="refs/tags/v$(printf '%s' "$target" | sed 's/\./\\./g')"
+          pattern="refs/tags/$prefix$(printf '%s' "$target" | sed 's/\./\\./g')"
 
           if printf '%s\n' "$tags" | grep -qE "$pattern$"; then
-            echo "v$target is already released, so it takes no more candidates. $notes names the release after it once the next one begins." >&2
+            echo "$prefix$target is already released, so it takes no more candidates. $notes names the release after it once the next one begins." >&2
             exit 1
           fi
 
@@ -3611,6 +3623,7 @@ and a second line"
           { nativeBuildInputs = [ nextCandidate ]; } ''
           set -u
 
+          of=bdi
           notes="$TMPDIR/next.md"
           printf 'bdi 1.2.0\n\nMinor release, **1.1.0 → 1.2.0**.\n' > "$notes"
 
@@ -3627,7 +3640,7 @@ and a second line"
           takes() {
             want="$1"
             shift
-            output="$( tags "$@" | next-candidate "$notes" 2>&1 )" ||
+            output="$( tags "$@" | next-candidate "$of" "$notes" 2>&1 )" ||
               fail "it refused tags it should have numbered after: $*"
             [ "$output" = "$want" ] || fail "expected $want from: $*"
           }
@@ -3636,7 +3649,7 @@ and a second line"
             why="$1"
             reason="$2"
             shift 2
-            output="$( tags "$@" | next-candidate "$notes" 2>&1 )" && status=0 || status=$?
+            output="$( tags "$@" | next-candidate "$of" "$notes" 2>&1 )" && status=0 || status=$?
             [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status: $why"
             case "$output" in
               *"$reason"*) ;;
@@ -3656,6 +3669,9 @@ and a second line"
           # version's candidates are not this one's.
           takes 1.2.0-rc.2 v1.2.0-rc.1 'v1.2.0-rc.1^{}' v1.1.0-rc.7 v11.2.0-rc.4 v1.2.00-rc.5
 
+          # The plugin's tags are another track's, however its versions line up.
+          takes 1.2.0-rc.2 v1.2.0-rc.1 plugin-v1.2.0-rc.6 plugin-v1.2.0
+
           refuses "it cut a candidate for a version already released:" \
             "already released" v1.2.0-rc.3 v1.2.0
 
@@ -3665,31 +3681,61 @@ and a second line"
           printf '# bdi 1.2.0\n' > "$notes"
           refuses "it read a version from notes that do not open with one:" "does not open with"
 
+          printf 'beady-eye plugin 1.2.0\n' > "$notes"
+          refuses "it read bdi's version from the plugin's notes:" \
+            "does not open with 'bdi <version>'"
+
           rm "$notes"
           refuses "it cut a candidate with no notes file at all:" "does not open with"
 
+          of=plugin
+          printf 'beady-eye plugin 1.2.0\n\nMinor release, **1.1.0 → 1.2.0**.\n' > "$notes"
+
+          takes 1.2.0-rc.1 v1.2.0-rc.4 v1.2.0
+          takes 1.2.0-rc.3 plugin-v1.1.0 plugin-v1.2.0-rc.2 'plugin-v1.2.0-rc.2^{}' plugin-v1.2.0-rc.1
+
+          refuses "it cut a plugin candidate for a version already released:" \
+            "plugin-v1.2.0 is already released" plugin-v1.2.0-rc.3 plugin-v1.2.0
+
+          printf 'bdi 1.2.0\n' > "$notes"
+          refuses "it read the plugin's version from bdi's notes:" \
+            "does not open with 'beady-eye plugin <version>'"
+
           output="$( next-candidate < /dev/null 2>&1 )" && status=0 || status=$?
           [ "$status" = 2 ] || fail "expected exit 2 with no argument, got $status:"
+
+          output="$( next-candidate "$notes" < /dev/null 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no track, got $status:"
+
+          output="$( next-candidate herdr "$notes" < /dev/null 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 for a track that does not exist, got $status:"
 
           touch $out
         '';
 
         # A candidate's commit carries its own version, written into every
-        # place `nix flake check` holds together: Cargo.toml, Cargo.lock,
-        # README's flake pin and herdr-plugin.toml. Main never carries it.
+        # place `nix flake check` holds together for its track. For bdi those
+        # are Cargo.toml, Cargo.lock, README's flake pin and herdr-plugin.toml.
+        # For the Claude Code plugin they are its plugin.json, its
+        # package.json, the server version its .mcp.json starts and README's
+        # marketplace pin. Main never carries it.
         stampVersion = pkgs.writeShellScriptBin "stamp-version" ''
           set -u
 
-          if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-            echo "usage: stamp-version <version> [directory]" >&2
+          usage() {
+            echo "usage: stamp-version <bdi|plugin> <version> [directory]" >&2
             echo >&2
-            echo "Writes <version> into Cargo.toml, Cargo.lock, README's flake pin" >&2
-            echo "and herdr-plugin.toml." >&2
+            echo "Writes <version> into every place its track states its version." >&2
             exit 2
+          }
+
+          if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+            usage
           fi
 
-          version="$1"
-          cd "''${2:-.}" || exit 1
+          of="$1"
+          version="$2"
+          cd "''${3:-.}" || exit 1
 
           # Each file is rewritten whole and then compared, so a file whose
           # shape no longer matches is refused by name rather than left on the
@@ -3706,33 +3752,53 @@ and a second line"
             mv "$file.stamped" "$file"
           }
 
-          rewrite Cargo.toml awk -v v="$version" '
-            /^\[/ { package = ($0 == "[package]") }
-            package && /^version *=/ { $0 = "version = \"" v "\"" }
-            { print }
-          '
+          case "$of" in
+            bdi)
+              rewrite Cargo.toml awk -v v="$version" '
+                /^\[/ { package = ($0 == "[package]") }
+                package && /^version *=/ { $0 = "version = \"" v "\"" }
+                { print }
+              '
 
-          # Cargo states a package's name and version on consecutive lines.
-          rewrite Cargo.lock awk -v v="$version" '
-            crate && /^version *=/ { $0 = "version = \"" v "\"" }
-            { crate = ($0 == "name = \"beady-eye\"") }
-            { print }
-          '
+              # Cargo states a package's name and version on consecutive lines.
+              rewrite Cargo.lock awk -v v="$version" '
+                crate && /^version *=/ { $0 = "version = \"" v "\"" }
+                { crate = ($0 == "name = \"beady-eye\"") }
+                { print }
+              '
 
-          rewrite herdr-plugin.toml awk -v v="$version" '
-            /^\[/ { tabled = 1 }
-            !tabled && /^version *=/ { $0 = "version = \"" v "\"" }
-            { print }
-          '
+              rewrite herdr-plugin.toml awk -v v="$version" '
+                /^\[/ { tabled = 1 }
+                !tabled && /^version *=/ { $0 = "version = \"" v "\"" }
+                { print }
+              '
 
-          rewrite README.md sed -E \
-            "s|(github:CodeForBreakfast/beady-eye/)v[^\"[:space:]]+|\1v$version|g"
+              rewrite README.md sed -E \
+                "s|(github:CodeForBreakfast/beady-eye/)v[^\"[:space:]]+|\1v$version|g"
+              ;;
+            plugin)
+              # Edited in place rather than through jq, which would reformat
+              # each file whole. Only a top-level key sits two spaces in.
+              for manifest in plugin/.claude-plugin/plugin.json plugin/package.json; do
+                rewrite "$manifest" sed -E \
+                  "s|^(  \"version\": )\"[^\"]*\"|\1\"$version\"|"
+              done
+
+              package="$(${pkgs.jq}/bin/jq -r .name plugin/package.json)"
+              rewrite plugin/.mcp.json sed \
+                "s|\"$package@[^\"]*\"|\"$package@$version\"|"
+
+              rewrite README.md sed -E \
+                "s|(CodeForBreakfast/beady-eye[@#]plugin-v)[^[:space:]\`\"]+|\1$version|g"
+              ;;
+            *) usage ;;
+          esac
         '';
 
         # What a stamped tree is held to is what the flake already checks, so
         # those checks are what this runs on one.
         stampVersionTest = pkgs.runCommand "stamp-version-test"
-          { nativeBuildInputs = [ stampVersion readmePinsTheVersion pluginDeclaresTheVersion ]; } ''
+          { nativeBuildInputs = [ stampVersion readmePinsTheVersion pluginDeclaresTheVersion claudePluginVersionsAgree ]; } ''
           set -u
 
           fail() { echo "FAIL: $1"; printf '%s\n' "$output"; exit 1; }
@@ -3777,7 +3843,7 @@ and a second line"
           inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v1.1.0";
           EOF
 
-          output="$( stamp-version 1.2.0-rc.3 "$tree" 2>&1 )" ||
+          output="$( stamp-version bdi 1.2.0-rc.3 "$tree" 2>&1 )" ||
             fail "it refused a tree holding all four places:"
 
           output="$( readme-pins-the-version "$tree" 2>&1 )" ||
@@ -3808,15 +3874,88 @@ and a second line"
           # A lock that has lost the crate's entry is refused by name, rather
           # than left declaring the release before.
           printf '[[package]]\nname = "anyhow"\nversion = "1.1.0"\n' > "$tree/Cargo.lock"
-          output="$( stamp-version 1.2.0-rc.4 "$tree" 2>&1 )" && status=0 || status=$?
+          output="$( stamp-version bdi 1.2.0-rc.4 "$tree" 2>&1 )" && status=0 || status=$?
           [ "$status" = 1 ] || fail "expected exit 1 for a lock without the crate, got $status:"
           case "$output" in
             *Cargo.lock*) ;;
             *) fail "the refusal did not name Cargo.lock:" ;;
           esac
 
+          tree="$TMPDIR/plugin-tree"
+          mkdir -p "$tree/plugin/.claude-plugin"
+
+          cat > "$tree/plugin/.claude-plugin/plugin.json" <<'EOF'
+          {
+            "name": "example",
+            "version": "1.1.0"
+          }
+          EOF
+
+          cat > "$tree/plugin/package.json" <<'EOF'
+          {
+            "name": "@example/server",
+            "version": "1.1.0",
+            "dependencies": {
+              "example-lib": "1.1.0"
+            }
+          }
+          EOF
+
+          cat > "$tree/plugin/.mcp.json" <<'EOF'
+          {
+            "mcpServers": {
+              "example": {
+                "command": "npx",
+                "args": ["-y", "@example/server@1.1.0"]
+              }
+            }
+          }
+          EOF
+
+          cat > "$tree/README.md" <<'EOF'
+          inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v1.1.0";
+          $ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v1.1.0
+          EOF
+
+          output="$( stamp-version plugin 1.2.0-rc.3 "$tree" 2>&1 )" ||
+            fail "it refused a tree holding all four of the plugin's places:"
+
+          output="$( claude-plugin-versions-agree "$tree" 2>&1 )" ||
+            fail "the plugin's places do not agree once stamped:"
+
+          output="$( cat "$tree/plugin/.claude-plugin/plugin.json" )"
+          grep -qF '"version": "1.2.0-rc.3"' "$tree/plugin/.claude-plugin/plugin.json" ||
+            fail "plugin.json does not declare the candidate:"
+
+          output="$( cat "$tree/plugin/package.json" )"
+          grep -qF '"example-lib": "1.1.0"' "$tree/plugin/package.json" ||
+            fail "a dependency's version was stamped as the package's:"
+
+          output="$( cat "$tree/plugin/.mcp.json" )"
+          grep -qF '"@example/server@1.2.0-rc.3"' "$tree/plugin/.mcp.json" ||
+            fail ".mcp.json does not start the candidate's server:"
+
+          output="$( cat "$tree/README.md" )"
+          grep -qF 'beady-eye#plugin-v1.2.0-rc.3' "$tree/README.md" ||
+            fail "README's marketplace pin does not name the candidate's tag:"
+          grep -qF 'github:CodeForBreakfast/beady-eye/v1.1.0' "$tree/README.md" ||
+            fail "bdi's flake pin was stamped with the plugin's version:"
+
+          # A server started under another name is no pin, so it is refused by
+          # name rather than left starting the published server.
+          sed -i 's|@example/server@|@example/other@|' "$tree/plugin/.mcp.json"
+          output="$( stamp-version plugin 1.2.0-rc.4 "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected exit 1 for a .mcp.json without the server's pin, got $status:"
+          case "$output" in
+            *plugin/.mcp.json*) ;;
+            *) fail "the refusal did not name plugin/.mcp.json:" ;;
+          esac
+
           output="$( stamp-version 2>&1 )" && status=0 || status=$?
           [ "$status" = 2 ] || fail "expected exit 2 with no argument, got $status:"
+
+          output="$( stamp-version 1.2.0-rc.3 "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no track, got $status:"
 
           touch $out
         '';
@@ -3827,26 +3966,53 @@ and a second line"
         # alone, because the tap serves whatever was last written into it to
         # everyone who runs `brew install`. A version that is neither shape is
         # refused, so it cannot reach the tap as a release.
+        #
+        # The plugin's track has no tap. Its counterpart is npm's `latest`
+        # dist-tag, which npm installs when nothing names a version, so a
+        # candidate publishes under `next` and leaves `latest` alone.
         releasePlan = pkgs.writeShellScriptBin "release-plan" ''
           set -u
 
-          if [ "$#" -ne 1 ]; then
-            echo "usage: release-plan <version>" >&2
+          usage() {
+            echo "usage: release-plan <bdi|plugin> <version>" >&2
             echo >&2
-            echo "Prints candidate=, notes= and tap= lines for GITHUB_OUTPUT." >&2
+            echo "Prints candidate= and notes= lines for GITHUB_OUTPUT, then tap= for" >&2
+            echo "bdi or npm_tag= for the plugin." >&2
             exit 2
-          fi
+          }
 
-          version="$1"
+          [ "$#" -eq 2 ] || usage
+          case "$1" in
+            bdi) notes=RELEASE-NOTES ;;
+            plugin) notes=RELEASE-NOTES/plugin ;;
+            *) usage ;;
+          esac
+
+          of="$1"
+          version="$2"
 
           if printf '%s' "$version" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'; then
-            printf 'candidate=false\nnotes=RELEASE-NOTES/%s.md\ntap=true\n' "$version"
+            candidate=false
+            notes="$notes/$version.md"
           elif printf '%s' "$version" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+'; then
-            printf 'candidate=true\nnotes=RELEASE-NOTES/next.md\ntap=false\n'
+            candidate=true
+            notes="$notes/next.md"
           else
             echo "$version is neither a release nor a release candidate, so this does not know what to publish it as." >&2
             exit 1
           fi
+
+          printf 'candidate=%s\nnotes=%s\n' "$candidate" "$notes"
+          case "$of" in
+            bdi)
+              [ "$candidate" = true ] && tap=false || tap=true
+              echo "tap=$tap"
+              ;;
+            plugin)
+              [ "$candidate" = true ] && npm_tag=next || npm_tag=latest
+              echo "npm_tag=$npm_tag"
+              ;;
+          esac
         '';
 
         releasePlanTest = pkgs.runCommand "release-plan-test"
@@ -3856,18 +4022,29 @@ and a second line"
           fail() { echo "FAIL: $1"; printf '%s\n' "$output"; exit 1; }
 
           plans() {
-            want="$(printf '%s\n' "$2" "$3" "$4")"
-            output="$( release-plan "$1" 2>&1 )" || fail "it refused $1:"
-            [ "$output" = "$want" ] || fail "the plan for $1 is not the one this expects:"
+            want="$(printf '%s\n' "$3" "$4" "$5")"
+            output="$( release-plan "$1" "$2" 2>&1 )" || fail "it refused $1 $2:"
+            [ "$output" = "$want" ] || fail "the plan for $1 $2 is not the one this expects:"
           }
 
-          plans 1.2.0 candidate=false notes=RELEASE-NOTES/1.2.0.md tap=true
-          plans 1.2.0-rc.3 candidate=true notes=RELEASE-NOTES/next.md tap=false
+          plans bdi 1.2.0 candidate=false notes=RELEASE-NOTES/1.2.0.md tap=true
+          plans bdi 1.2.0-rc.3 candidate=true notes=RELEASE-NOTES/next.md tap=false
 
-          for version in 1.2.0-beta.1 1.2.0-rc 1.2 v1.2.0 ""; do
-            output="$( release-plan "$version" 2>&1 )" && status=0 || status=$?
-            [ "$status" = 1 ] || fail "expected a refusal of '$version', got $status:"
+          plans plugin 1.2.0 candidate=false notes=RELEASE-NOTES/plugin/1.2.0.md npm_tag=latest
+          plans plugin 1.2.0-rc.3 candidate=true notes=RELEASE-NOTES/plugin/next.md npm_tag=next
+
+          for of in bdi plugin; do
+            for version in 1.2.0-beta.1 1.2.0-rc 1.2 v1.2.0 ""; do
+              output="$( release-plan "$of" "$version" 2>&1 )" && status=0 || status=$?
+              [ "$status" = 1 ] || fail "expected a refusal of $of '$version', got $status:"
+            done
           done
+
+          output="$( release-plan 1.2.0 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no track, got $status:"
+
+          output="$( release-plan herdr 1.2.0 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 for a track that does not exist, got $status:"
 
           touch $out
         '';
@@ -3953,6 +4130,7 @@ and a second line"
           pkgs.rustfmt
           pkgs.clippy
           pkgs.rust-analyzer
+          pkgs.jq
           boundTheToolsOwnName
           pkgs.watchexec
           rerunBdiOnChange
