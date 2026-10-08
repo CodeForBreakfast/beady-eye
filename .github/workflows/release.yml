@@ -28,8 +28,8 @@ on:
   # that half-release into a whole one.
   #
   # `candidate` is not a stage. Dispatched on main, it cuts a release
-  # candidate of bdi for the version the next-release notes name, and needs
-  # nobody to merge anything.
+  # candidate of whatever `of` names, for the version that track's
+  # next-release notes name, and needs nobody to merge anything.
   workflow_dispatch:
     inputs:
       from:
@@ -88,7 +88,7 @@ jobs:
     outputs:
       version: ${{ steps.candidate.outputs.version || steps.decide.outputs.version }}
       release: ${{ steps.decide.outputs.release }}
-      plugin_version: ${{ steps.decide-plugin.outputs.version }}
+      plugin_version: ${{ steps.candidate.outputs.plugin_version || steps.decide-plugin.outputs.version }}
       plugin_release: ${{ steps.decide-plugin.outputs.release }}
       # The commit CI tested, which every job below checks out and the tag is
       # cut from. `GITHUB_SHA` is main's head under `workflow_run` rather than
@@ -215,30 +215,37 @@ jobs:
         id: candidate
         if: github.event.inputs.from == 'candidate'
         run: |
-          [ "$OF" = bdi ] || {
-            echo "::error::Only bdi takes a release candidate, so of=$OF has nothing to cut."
-            exit 1
-          }
           [ "$GITHUB_REF" = refs/heads/main ] || {
             echo "::error::A candidate is cut from main, and this was dispatched on $GITHUB_REF."
             exit 1
           }
 
+          case "$OF" in
+            bdi)
+              notes=RELEASE-NOTES/next.md name=bdi tag=v output=version
+              stamped=(Cargo.toml Cargo.lock README.md herdr-plugin.toml)
+              ;;
+            plugin)
+              notes=RELEASE-NOTES/plugin/next.md name='beady-eye plugin' tag=plugin-v output=plugin_version
+              stamped=(plugin/.claude-plugin/plugin.json plugin/package.json plugin/.mcp.json README.md)
+              ;;
+          esac
+
           tags=$(git ls-remote --tags origin)
-          version=$(printf '%s\n' "$tags" | nix run .#next-candidate -- RELEASE-NOTES/next.md)
-          echo "This candidate is $version"
+          version=$(printf '%s\n' "$tags" | nix run .#next-candidate -- "$OF" "$notes")
+          echo "This candidate is $name $version"
 
           nix run .#await-ci-verdict -- "$GITHUB_SHA"
 
-          nix run .#stamp-version -- "$version"
+          nix run .#stamp-version -- "$OF" "$version"
           git \
             -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m "bdi $version" -- Cargo.toml Cargo.lock README.md herdr-plugin.toml
-          git tag "v$version"
-          git push origin "refs/tags/v$version"
+            commit -m "$name $version" -- "${stamped[@]}"
+          git tag "$tag$version"
+          git push origin "refs/tags/$tag$version"
 
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "$output=$version" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         env:
           OF: ${{ github.event.inputs.of }}
@@ -415,7 +422,7 @@ jobs:
       - name: plan the release
         id: plan
         run: |
-          plan=$(nix run .#release-plan -- "$VERSION")
+          plan=$(nix run .#release-plan -- bdi "$VERSION")
           printf '%s\n' "$plan" | tee -a "$GITHUB_OUTPUT"
 
       # The flake reads its own version from Cargo.toml through a path nothing
@@ -751,7 +758,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # npm trusts only a run in this environment, and the environment admits
-    # only main and plugin-v* tags, the refs a release and its repairs run on.
+    # only main and plugin-v* tags, the refs a release, a candidate and their
+    # repairs run on.
     environment: npm-publish
     # `id-token` is what npm's trusted publishing exchanges for the right to
     # publish, so no npm token is stored anywhere. npm trusts this workflow by
@@ -767,13 +775,22 @@ jobs:
       VERSION: ${{ needs.detect.outputs.plugin_version }}
       TAG: plugin-v${{ needs.detect.outputs.plugin_version }}
       SHA: ${{ needs.detect.outputs.sha }}
-      NOTES: RELEASE-NOTES/plugin/${{ needs.detect.outputs.plugin_version }}.md
     steps:
+      # Two commits deep, because a candidate's tested commit is its parent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.detect.outputs.sha }}
+          fetch-depth: 2
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      # As bdi's plan does, this reads everything from the version, so a
+      # repair dispatched on a candidate's tag finishes it as a candidate.
+      - name: plan the release
+        id: plan
+        run: |
+          plan=$(nix run .#release-plan -- plugin "$VERSION")
+          printf '%s\n' "$plan" | tee -a "$GITHUB_OUTPUT"
 
       # bdi's version gate, for the plugin's tag and notes. `nix flake check`
       # holds the plugin's version sites together, so CI's verdict below is
@@ -796,12 +813,21 @@ jobs:
           }
         env:
           FROM: ${{ github.event.inputs.from }}
+          NOTES: ${{ steps.plan.outputs.notes }}
 
+      # A candidate's own commit is a version stamp that CI never saw, so the
+      # verdict it is published on is its parent's.
       - name: CI's verdict for this commit
         if: github.event.inputs.from != 'announce'
-        run: nix run .#await-ci-verdict -- "$SHA"
+        run: |
+          tested=$SHA
+          if [ "$CANDIDATE" = true ]; then
+            tested=$(git rev-parse "$SHA^")
+          fi
+          nix run .#await-ci-verdict -- "$tested"
         env:
           GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.plan.outputs.candidate }}
 
       - name: tag the commit this release is cut from
         run: |
@@ -817,6 +843,8 @@ jobs:
       # The dev shell's npm is new enough for trusted publishing, which needs
       # 11.5.1 or later, and npm attaches provenance on its own when it
       # publishes that way.
+      #
+      # The dist-tag comes from the plan, so a candidate never moves `latest`.
       - name: npm publish
         if: github.event.inputs.from != 'announce'
         run: |
@@ -825,17 +853,36 @@ jobs:
           if [ -n "$(nix develop -c npm view "$package@$VERSION" version 2> /dev/null)" ]; then
             echo "$package@$VERSION is already on npm"
           else
-            nix develop -c npm publish ./plugin --access public
+            nix develop -c npm publish ./plugin --access public --tag "$NPM_TAG"
           fi
+        env:
+          NPM_TAG: ${{ steps.plan.outputs.npm_tag }}
 
       # Not marked latest, so bdi's release stays the one a reader lands on.
+      # A candidate is a prerelease as well, and its body opens by saying so,
+      # above the notes for the release it is a candidate for.
       - name: announce the release
         run: |
           gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          if [ "$CANDIDATE" = true ]; then
+            body="$RUNNER_TEMP/notes.md"
+            {
+              echo "**Release candidate** for the beady-eye plugin ${VERSION%-rc.*}, built from $(git rev-parse "$SHA^") on main."
+              echo
+              cat "$NOTES"
+            } > "$body"
+            kind=(--prerelease)
+          else
+            body=$NOTES
+            kind=()
+          fi
           gh release view "$TAG" > /dev/null 2>&1 ||
             gh release create "$TAG" \
               --title "$TAG" \
-              --notes-file "$NOTES" \
-              --latest=false
+              --notes-file "$body" \
+              --latest=false \
+              "${kind[@]}"
         env:
           GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.plan.outputs.candidate }}
+          NOTES: ${{ steps.plan.outputs.notes }}
