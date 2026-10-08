@@ -8,7 +8,7 @@
 		{
 			"name": "beady-eye",
 			"source": "./plugin",
-			"description": "Wakes a Claude Code session when a bead it watches changes."
+			"description": "Wakes a Claude Code session when a bead it watches changes status, becomes ready, is commented on or goes. Part of beady-eye, which shows the work and the agents on it, wakes agents and settles pull-request waits."
 		}
 	]
 }
