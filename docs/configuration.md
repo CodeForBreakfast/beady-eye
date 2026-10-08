@@ -974,9 +974,6 @@ repository:
 | *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing checks are told |
 
 A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
-Where GitHub refuses a field, `bdi gates` acts on everything else it was told
-and names what it cannot see once for each repository, as the
-`cannot see whether it has failing checks` line below shows.
 
 A look asks about a repository's pull requests together, up to a
 hundred in one query, so what it spends of that account's rate limit grows with
@@ -1009,9 +1006,9 @@ that enforces single sign-on, a lapsed authorisation is the usual cause, and
 `gh auth refresh` is the cure.
 
 A field GitHub will not show the account `gh` runs as costs only the events
-that read it. Every other event still settles the pull request, merges
-included, and `bdi gates` names the event it cannot see once for each
-repository, with what GitHub said.
+that read it. Every other event still settles the pull request, and
+`bdi gates` names the event it cannot see once for each repository, with what
+GitHub said.
 
 A rate limit is the exception, because the login `gh` runs as may be shared
 with whoever else uses it. Once GitHub refuses a pull request for one, that
