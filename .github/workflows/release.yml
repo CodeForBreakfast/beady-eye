@@ -26,15 +26,20 @@ on:
   # cannot simply be repeated: crates.io already holds the version and refuses
   # it a second time. Dispatching on the tag from a later stage is what turns
   # that half-release into a whole one.
+  #
+  # `candidate` is not a stage. Dispatched on main, it cuts a release
+  # candidate of bdi for the version the next-release notes name, and needs
+  # nobody to merge anything.
   workflow_dispatch:
     inputs:
       from:
-        description: the stage to start from
+        description: the stage to start from, or candidate to cut a release candidate from main
         type: choice
         default: publish
         options:
           - publish
           - announce
+          - candidate
       of:
         description: what to release, bdi or the Claude Code plugin
         type: choice
@@ -65,7 +70,8 @@ jobs:
   detect:
     name: is this merge a release
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # A candidate waits here for CI's verdict on the commit it is cut from.
+    timeout-minutes: ${{ github.event.inputs.from == 'candidate' && 45 || 5 }}
     # Every line here sits at one indentation on purpose: a folded scalar
     # keeps the newline before any line indented further than its first, and
     # what this has to hand the expression parser is one line.
@@ -74,10 +80,13 @@ jobs:
       (github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.conclusion == 'success')
+    # `contents: write` is a candidate's tag push and `actions: read` is CI's
+    # verdict on the commit it is cut from. Nothing else here writes.
     permissions:
-      contents: read
+      contents: write
+      actions: read
     outputs:
-      version: ${{ steps.decide.outputs.version }}
+      version: ${{ steps.candidate.outputs.version || steps.decide.outputs.version }}
       release: ${{ steps.decide.outputs.release }}
       plugin_version: ${{ steps.decide-plugin.outputs.version }}
       plugin_release: ${{ steps.decide-plugin.outputs.release }}
@@ -86,15 +95,18 @@ jobs:
       # the sha of the run that concluded, and the two differ whenever another
       # merge lands while CI is still going. A dispatch carries no triggering
       # run and is on the ref it was dispatched for, so there it is the ref.
-      sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+      # A candidate is the one exception: it is the commit stamped on top of
+      # the tested one.
+      sha: ${{ steps.candidate.outputs.sha || github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      # A dispatch is a repair on a tag that already exists, so it answers yes
-      # without asking either question — the push that cut that tag asked them
-      # both before anything was published.
+      # A dispatch is a candidate, or a repair on a tag that already exists. A
+      # repair answers yes without asking either question, because the run
+      # that cut that tag asked them both before anything was published. A
+      # candidate asks its own, in the step after these two.
       #
       # A push asks both. The existing tag is what makes every merge after the
       # bump a no-op, and it is also what separates a notes file somebody
@@ -189,6 +201,48 @@ jobs:
           echo "release=true" >> "$GITHUB_OUTPUT"
         env:
           OF: ${{ github.event.inputs.of }}
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: github.event.inputs.from == 'candidate'
+
+      # Main never carries a candidate's version, so the candidate is a commit
+      # of its own on top of the tested one, holding that version in every
+      # place the flake checks. The builds below check it out by its tag, so
+      # the tag is pushed here rather than last, as a release's is. That costs
+      # nothing a release would: a candidate whose run fails after this has
+      # spent its number, and the next dispatch takes the one after it.
+      - name: cut the candidate
+        id: candidate
+        if: github.event.inputs.from == 'candidate'
+        run: |
+          [ "$OF" = bdi ] || {
+            echo "::error::Only bdi takes a release candidate, so of=$OF has nothing to cut."
+            exit 1
+          }
+          [ "$GITHUB_REF" = refs/heads/main ] || {
+            echo "::error::A candidate is cut from main, and this was dispatched on $GITHUB_REF."
+            exit 1
+          }
+
+          tags=$(git ls-remote --tags origin)
+          version=$(printf '%s\n' "$tags" | nix run .#next-candidate -- RELEASE-NOTES/next.md)
+          echo "This candidate is $version"
+
+          nix run .#await-ci-verdict -- "$GITHUB_SHA"
+
+          nix run .#stamp-version -- "$version"
+          git \
+            -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "bdi $version" -- Cargo.toml Cargo.lock README.md herdr-plugin.toml
+          git tag "v$version"
+          git push origin "refs/tags/v$version"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          OF: ${{ github.event.inputs.of }}
+          GH_TOKEN: ${{ github.token }}
 
   # A Linux runner cannot produce a Mach-O binary, so the Darwin builds are
   # their own job and the release job waits on them. They run first on purpose:
@@ -346,11 +400,23 @@ jobs:
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
       # runs with this repository's token.
+      #
+      # Two commits deep, because a candidate's tested commit is its parent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.detect.outputs.sha }}
+          fetch-depth: 2
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      # Whether this is a candidate, which notes it announces and whether it
+      # writes the tap, all read from the version. A repair dispatched on a
+      # candidate's tag therefore finishes it as a candidate.
+      - name: plan the release
+        id: plan
+        run: |
+          plan=$(nix run .#release-plan -- "$VERSION")
+          printf '%s\n' "$plan" | tee -a "$GITHUB_OUTPUT"
 
       # The flake reads its own version from Cargo.toml through a path nothing
       # else here exercises, and it is what `nix flake check` and every binary
@@ -384,12 +450,13 @@ jobs:
             exit 1
           fi
 
-          test -f "RELEASE-NOTES/$VERSION.md" || {
-            echo "::error::RELEASE-NOTES/$VERSION.md is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
+          test -f "$NOTES" || {
+            echo "::error::$NOTES is missing, so this release has no body anybody wrote. See RELEASE-NOTES/README.md."
             exit 1
           }
         env:
           FROM: ${{ github.event.inputs.from }}
+          NOTES: ${{ steps.plan.outputs.notes }}
 
       # A resume skips every step guarded the way this one is. The guard reads
       # the event payload rather than the `inputs` context, which is only
@@ -433,6 +500,7 @@ jobs:
       # expired, or made for the wrong repository — out of the minutes after
       # cargo publish.
       - name: the tap precondition
+        if: steps.plan.outputs.tap == 'true'
         run: |
           test -n "$GH_TOKEN" || {
             echo "::error::HOMEBREW_TAP_TOKEN is not set, so this release cannot write $TAP. It is a fine-grained token with contents write on that repository; github.token will not do, because it is scoped to this one."
@@ -480,11 +548,20 @@ jobs:
       # `await-ci-verdict-test` in the flake holds every conclusion GitHub can
       # give against the exit this wants for it. What is not checked is this
       # step — no gate here reads a workflow file.
+      #
+      # A candidate's own commit is a version stamp that CI never saw, so the
+      # verdict it is published on is its parent's.
       - name: CI's verdict for this commit
         if: github.event.inputs.from != 'announce'
-        run: nix run .#await-ci-verdict -- "$SHA"
+        run: |
+          tested=$SHA
+          if [ "$CANDIDATE" = true ]; then
+            tested=$(git rev-parse "$SHA^")
+          fi
+          nix run .#await-ci-verdict -- "$tested"
         env:
           GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.plan.outputs.candidate }}
 
       # The record of which commit produced the release, cut last of everything
       # that can still fail cheaply. A tag naming a version is a claim that the
@@ -544,12 +621,28 @@ jobs:
         # Every asset is named rather than globbed, so an upload cannot quietly
         # leave one out: a pattern matching nothing uploads nothing and says
         # the step passed.
+        #
+        # A candidate is a prerelease and never Latest, and its body opens by
+        # saying so, above the notes for the release it is a candidate for.
         run: |
           gh() { nix run --inputs-from . nixpkgs#gh -- "$@"; }
+          if [ "$CANDIDATE" = true ]; then
+            body="$RUNNER_TEMP/notes.md"
+            {
+              echo "**Release candidate** for bdi ${VERSION%-rc.*}, built from $(git rev-parse "$SHA^") on main."
+              echo
+              cat "$NOTES"
+            } > "$body"
+            kind=(--prerelease --latest=false)
+          else
+            body=$NOTES
+            kind=()
+          fi
           gh release view "$TAG" > /dev/null 2>&1 ||
             gh release create "$TAG" \
               --title "$TAG" \
-              --notes-file "RELEASE-NOTES/$VERSION.md"
+              --notes-file "$body" \
+              "${kind[@]}"
           gh release upload "$TAG" \
             dist/bdi-aarch64-apple-darwin \
             dist/bdi-aarch64-apple-darwin.sha256 \
@@ -562,6 +655,8 @@ jobs:
             --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.plan.outputs.candidate }}
+          NOTES: ${{ steps.plan.outputs.notes }}
 
       # Homelab runs bdi from this image, and Renovate there bumps it by its
       # version tag, so no `latest` is pushed. Without one, a repair dispatched
@@ -599,6 +694,7 @@ jobs:
       # serves a newer version than the one being repaired, rather than
       # downgrading every `brew install` to finish an old release.
       - name: update the tap's formula
+        if: steps.plan.outputs.tap == 'true'
         run: |
           formula="$RUNNER_TEMP/bdi.rb"
           nix run .#tap-formula -- "$VERSION" dist > "$formula"
