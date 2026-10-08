@@ -95,6 +95,8 @@ pub enum Action {
     CycleSpineForest,
     /// Show every tree, rather than only those with a live agent.
     ToggleFilter,
+    /// Hide the tail and give its rows to the forest, or bring it back.
+    ToggleTail,
     /// Focus the selected bead's pane in herdr.
     Focus,
     /// Draw the selected bead as the only root, with everything beneath it and
