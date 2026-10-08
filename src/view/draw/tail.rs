@@ -32,8 +32,9 @@ pub struct Band<'a> {
 /// Draw the tail into the band `regions` reserved for it: a rule naming the
 /// pane, and as much of what that pane last wrote as fits beneath it.
 ///
-/// The newest lines are the ones kept. A pane's last line is what it is
-/// doing now, and a tail that dropped it to keep older ones would be
+/// The newest lines are the ones kept, and the newest sits on the band's
+/// last row, as it does at the foot of the pane. A pane's last line is what
+/// it is doing now, and a tail that dropped it to keep older ones would be
 /// answering yesterday's question.
 pub fn draw_tail(frame: &mut Frame, area: Rect, band: Band<'_>) {
     let Band { tail, background } = band;
@@ -51,12 +52,10 @@ pub fn draw_tail(frame: &mut Frame, area: Rect, band: Band<'_>) {
         Tail::Pane { pane, lines } => {
             frame.render_widget(rule(Some(&pane.id), area.width as usize), row(0));
             let styled = sgr::lines(lines);
-            for (n, said) in styled
-                .into_iter()
-                .skip(lines.len().saturating_sub(room))
-                .enumerate()
-            {
-                frame.render_widget(as_the_pane_drew_it(said), row(n + 1));
+            let shown = lines.len().min(room);
+            let first = 1 + room - shown;
+            for (n, said) in styled.into_iter().skip(lines.len() - shown).enumerate() {
+                frame.render_widget(as_the_pane_drew_it(said), row(first + n));
             }
         }
         Tail::Reading { pane } => {
@@ -160,8 +159,11 @@ mod tests {
         }
     }
 
+    /// A pane that has said less than the band holds keeps its newest line
+    /// on the band's last row, as it sits at the foot of the pane, and the
+    /// gap goes between the rule and what the pane said.
     #[test]
-    fn the_tail_fills_the_band_it_is_given_and_no_row_above_it() {
+    fn the_tail_fills_the_band_it_is_given_from_the_bottom_and_no_row_above_it() {
         let tail = tailing("wCM:p9", &["rebuilt .#larkspur, generation 541"]);
 
         assert_eq!(
@@ -170,8 +172,8 @@ mod tests {
                 "                                            ",
                 "                                            ",
                 "────────────────── wCM:p9 ──────────────────",
-                "  rebuilt .#larkspur, generation 541        ",
                 "                                            ",
+                "  rebuilt .#larkspur, generation 541        ",
             ]
         );
     }

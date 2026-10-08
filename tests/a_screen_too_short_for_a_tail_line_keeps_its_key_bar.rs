@@ -1,13 +1,14 @@
 //! The key bar survives a screen short enough that the tail band is one row.
 //!
-//! `regions` gives the tail `(LINES + 1).min((rows - 1) / 2)` rows, which is
-//! one at a screen height of 4 and of 5 and more everywhere else. A band one
+//! `regions` gives the tail one row at a screen height of 4 and of 5 where the
+//! forest needs the rest, and more everywhere else. A band one
 //! row high holds the rule naming the pane and nothing else, because the row
 //! a line beneath the rule would go on is the key bar. `draw_tail` holds that
 //! with `if room > 0` in each of the two arms that draw a second row.
 //!
 //! Every other pty test here drives `bdi` at forty rows, where the band is
-//! seven and `room` is six, so both guards are met and both are true. What
+//! seven rows or more and `room` six or more, so both guards are met and both
+//! are true. What
 //! nothing reaches is either of them being false. This is that rule reached
 //! the way a reader reaches it: through the binary, on a terminal short
 //! enough for the band to run out of room.
@@ -29,7 +30,7 @@ use terminal::shims::{shims_first_with_nothing_called, ShimmedHerdr, ShimmedTrac
 use terminal::{a_home_naming_one_project, a_socket_of_its_own, contains, ENTER_ALTERNATE_SCREEN};
 
 /// The height every other pty test here runs at, and where the band is seven
-/// rows. The run that meets the guard starts here and is shortened, because
+/// rows or more. The run that meets the guard starts here and is shortened, because
 /// what it has to do first needs the room.
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
