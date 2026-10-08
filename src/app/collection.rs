@@ -3395,6 +3395,36 @@ prefix = "kad"
         assert_eq!(said_of(&again), [("ferry", "read")]);
     }
 
+    /// A tracker the watcher has been told it cannot reach is not said to be
+    /// unreachable again by a collection that never asked it.
+    #[test]
+    fn a_watcher_is_not_told_again_of_a_tracker_the_collection_did_not_ask() {
+        let unreachable = |dunwich| {
+            Fakes::default().with("dunwich", dunwich).with(
+                "ferry",
+                ferry_waiting().failing(Asked::All, failing(FailureKind::Auth)),
+            )
+        };
+        let mut collection = Collection::default();
+        let first = watched(
+            &mut collection,
+            &unreachable(dunwich_tracker()),
+            &Wanted::Everything,
+        );
+
+        let again = watched(
+            &mut collection,
+            &unreachable(dunwich_tracker().moved()),
+            &dunwich_alone(),
+        );
+
+        assert_eq!(
+            said_of(&first),
+            [("dunwich", "read"), ("ferry", "unreachable")]
+        );
+        assert_eq!(said_of(&again), [("dunwich", "read")]);
+    }
+
     /// The instant a project nothing moved in is current as of travels with
     /// it, so a consumer's freshness moves on.
     #[test]
@@ -3405,7 +3435,13 @@ prefix = "kad"
             .with("ferry", ferry_waiting());
         let later = now() + TimeDelta::seconds(30);
 
-        let again = collection.watched(&two_projects(), &no_panes(), &trackers, &dunwich_alone(), later);
+        let again = collection.watched(
+            &two_projects(),
+            &no_panes(),
+            &trackers,
+            &dunwich_alone(),
+            later,
+        );
 
         assert!(matches!(
             again.answers[0].said,

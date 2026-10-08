@@ -230,10 +230,12 @@ impl Hold {
                 })
                 .map(|record| watching::event_line(&project, record))
                 .collect();
-            standing.told(&project, interest, replaced).is_none_or(|told| {
-                lines.extend(told);
-                consumer.tells(lines)
-            })
+            standing
+                .told(&project, interest, replaced)
+                .is_none_or(|told| {
+                    lines.extend(told);
+                    consumer.tells(lines)
+                })
         });
     }
 

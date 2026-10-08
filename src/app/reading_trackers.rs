@@ -239,8 +239,7 @@ mod tests {
 
     #[test]
     fn a_producers_line_is_taken_while_polls_keep_coming_due() {
-        let (mut source, tell) =
-            dunwich_polling_every(Some(std::time::Duration::ZERO), trackers());
+        let (mut source, tell) = dunwich_polling_every(Some(std::time::Duration::ZERO), trackers());
         for _ in 0..2 {
             source.next();
         }
