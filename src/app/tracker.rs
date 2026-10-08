@@ -124,8 +124,8 @@ fn speaks_until(beads: &[Arc<Bead>], read_at: DateTime<Utc>) -> Option<DateTime<
 /// What one refresh of one project did.
 pub(super) enum Refresh {
     /// Nothing has moved since the read that is standing, so there is nothing
-    /// to replace it with.
-    Unchanged,
+    /// to replace it with. It speaks for the tracker as of `as_of`.
+    Unchanged { as_of: DateTime<Utc> },
     /// What the tracker says now, and what it was read against. `None` where
     /// the probe could not answer, which has every later refresh read in full
     /// rather than compare against a state nobody established. `as_of` is
@@ -133,7 +133,7 @@ pub(super) enum Refresh {
     /// tracker answered from what another process read.
     ///
     /// `at` and `work` are behind a box because `Unchanged` is the usual
-    /// answer and carries nothing: a project that has not moved would
+    /// answer and carries only its date: a project that has not moved would
     /// otherwise be handed back on the stack as the size of one that had.
     /// `ReadAt` holds a whole `Project`, so it grows whenever a project entry
     /// gains a field.
@@ -187,7 +187,7 @@ pub(super) fn refresh_project(
 
     if let (Some(fingerprint), Some(standing)) = (probed.as_deref(), standing) {
         if standing.still_speaks_for(project, fingerprint, &named, &roots, now) {
-            return Ok(Refresh::Unchanged);
+            return Ok(Refresh::Unchanged { as_of });
         }
     }
 
@@ -227,7 +227,7 @@ fn read_project(
         || tracker.all(),
         || together(|| tracker.ready(), || tracker.blocked()),
     );
-    let beads: Vec<Arc<Bead>> = beads?.into_iter().map(Arc::new).collect();
+    let beads = beads?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -1895,7 +1895,7 @@ dunwich = ["bdi-404"]
             Tracker::fingerprint(&self.inner)
         }
 
-        fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+        fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure> {
             self.at.arrive("all");
             Tracker::all(&self.inner)
         }

@@ -357,13 +357,13 @@ impl Collection {
     ) {
         for (project, answer) in self.refresh_together(cfg, trackers, named, panes, now) {
             match answer {
-                Ok(Refresh::Unchanged) => {
+                Ok(Refresh::Unchanged { as_of }) => {
                     // A skipped read is a successful read: `bdi` knows the
                     // tracker has not moved, so the project is as fresh as if
                     // the cascade had run and the foot must not draw it as
                     // stale.
                     if let Some(standing) = self.read.get_mut(&project.name) {
-                        standing.at = now;
+                        standing.at = as_of;
                     }
                 }
                 Ok(Refresh::Read {
@@ -1230,7 +1230,7 @@ mod tests {
             self.inner.fingerprint()
         }
 
-        fn all(&self) -> Result<Vec<crate::model::types::Bead>, RunFailure> {
+        fn all(&self) -> Result<Vec<Arc<crate::model::types::Bead>>, RunFailure> {
             self.inner.all()
         }
 
@@ -1655,6 +1655,38 @@ mod tests {
             !trees_of(&after, "dunwich").is_empty(),
             "and everything the skipped read stood on is still drawn"
         );
+    }
+
+    /// A tracker answering from what another process read is as fresh as
+    /// that process last vouched for, whether the read was skipped or not.
+    #[test]
+    fn a_skipped_read_of_an_answer_read_elsewhere_is_as_fresh_as_that_answer() {
+        let cfg = one_project();
+        let earlier = now();
+        let vouched = earlier + chrono::Duration::seconds(20);
+        let later = earlier + chrono::Duration::seconds(30);
+        let mut standing = Collection::default();
+        standing.collect(
+            &cfg,
+            &panes(),
+            &dunwich_with(dunwich_tracker().vouched_for(earlier)),
+            &Wanted::Everything,
+            Filter::All,
+            earlier,
+        );
+
+        let trackers = dunwich_with(dunwich_tracker().vouched_for(vouched));
+        let after = standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &dunwich_alone(),
+            Filter::All,
+            later,
+        );
+
+        assert_eq!(trackers.tracker("dunwich").asked(), [Asked::Fingerprint]);
+        assert_eq!(after.read_at["dunwich"], vouched);
     }
 
     /// Skipping the read must not skip the drawing. What a node says about
