@@ -47,7 +47,8 @@ const NO_TERMINAL: u8 = 2;
 #[command(
     name = "bdi",
     version,
-    about = "A tree of work in flight",
+    about = "One eye over your beads trackers: shows trees of work and their agents, \
+             wakes an agent when its bead changes, settles pull-request waits from GitHub.",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
@@ -526,7 +527,6 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
     let mut collection = crate::app::Collection::default();
     let trackers = bd::Cli::new(&RealRunner)
-        .keeping_rows()
         .reading_journals()
         .caching_environments(EnvironmentCache::here());
     let reads: Reads = Box::new(move |wanted, now| {
@@ -1235,6 +1235,20 @@ detached
     #[test]
     fn the_command_line_is_well_formed() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn the_about_line_tells_the_three_jobs() {
+        let about = Cli::command()
+            .get_about()
+            .expect("bdi has an about")
+            .to_string();
+
+        assert_eq!(
+            about,
+            "One eye over your beads trackers: shows trees of work and their agents, \
+             wakes an agent when its bead changes, settles pull-request waits from GitHub."
+        );
     }
 
     /// Everything after the project is bd's to be checked, so nothing there

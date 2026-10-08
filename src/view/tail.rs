@@ -13,8 +13,9 @@ use crate::view::lines::{Content, Item};
 use crate::view::phrase;
 use crate::view::sgr;
 
-/// How many lines of the pane the tail shows. The band reserved for it is
-/// this plus the rule that names the pane.
+/// How many lines of the pane the tail keeps where the forest needs the rest
+/// of the screen. The band reserved for it is this plus the rule that names
+/// the pane, and a forest that leaves more rows free gives the band those.
 pub const LINES: u16 = 6;
 
 /// What a pane has most recently written, or why there is nothing to show.
@@ -252,6 +253,7 @@ mod tests {
     };
     use crate::model::tree::Link;
     use crate::model::types::testing::key as pane_key;
+    use crate::model::types::Printed;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::forest;
     use crate::view::lines::GroupKind;
@@ -318,8 +320,7 @@ mod tests {
             agent,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             labels: Vec::new(),

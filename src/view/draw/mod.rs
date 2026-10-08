@@ -33,7 +33,7 @@ use crate::view::query::Query;
 use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
-pub use bands::{line_at, regions};
+pub use bands::{key_rows, line_at, regions};
 pub(crate) use bead::identity_widths;
 pub use tail::{draw_tail, Band};
 
@@ -139,7 +139,7 @@ pub fn draw(
     now: DateTime<Utc>,
     foot: Foot,
 ) {
-    let bands = regions(area);
+    let bands = regions(area, forest.lines().len());
     let lines = forest.lines();
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;
@@ -277,6 +277,7 @@ pub(super) fn structure(prefix: &str) -> Span<'static> {
 mod tests {
     use super::*;
     use crate::model::types::testing::key;
+    use crate::model::types::Printed;
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
@@ -374,8 +375,7 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             labels: Vec::new(),

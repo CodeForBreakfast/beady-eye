@@ -314,7 +314,7 @@ impl Collection {
                                     None => (bd.ready, bd.blocked_by.clone()),
                                 };
                                 let held = Held {
-                                    row: bead.row.clone(),
+                                    bead: Arc::clone(bead),
                                     ready,
                                     blocked_by,
                                     bd,

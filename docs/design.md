@@ -3014,8 +3014,9 @@ arithmetic; a shut line over agents or anomalies counts them.
 ### The tail
 
 The band under the forest is a rule with the selected pane's id centred in it,
-over up to six lines of that pane's output indented two columns; the newest
-lines are the ones kept, because a pane's last line is what it is doing now. The
+over that pane's output indented two columns; the newest lines are the ones
+kept, because a pane's last line is what it is doing now, and the newest sits on
+the band's last row, as it sits at the foot of the pane. The
 rule is drawn whether or not there is a pane, so the band never goes blank and
 always says where the forest stopped. Where there is no pane, the reason sits
 under the rule in dim, and there are six: no agent provider at all; a provider
@@ -3105,8 +3106,15 @@ that is not a bead — a project's line, a group's line — `y` does nothing and
 says nothing, as `Enter` does. A hidden tree's root is a root, so both keys
 work there as they do on any other.
 
-The band yields its rows before the forest yields any: on a short screen the
-forest is the thing this tool exists to show.
+The band takes the rows the forest leaves free, up to half the screen's height,
+so a short tree leaves no blank between itself and the pane. Where the forest
+needs the rows, the band keeps six lines under its rule, and on a short screen
+it yields those before the forest yields any: the forest is the thing this tool
+exists to show. A read of an uncropped pane asks herdr for as many lines as the
+band had room for on the last frame, so a band that grows fills on the next
+read. A cropped pane is read whole whatever the band's height, and the rows
+above its cut fill the band from the bottom, so a taller band shows more of
+what the agent last said.
 
 ### The reader says what their background is
 

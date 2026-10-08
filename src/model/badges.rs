@@ -86,19 +86,19 @@ pub fn badges_for(bead: &Bead, badges: &[Badge]) -> Badges {
             continue;
         }
 
-        let Some(text) = badge.apply(value, bead) else {
+        let Some(text) = badge.apply(&value, bead) else {
             continue;
         };
         read.insert(badge.key.as_str());
 
-        let link = badge.link_for(value, bead);
+        let link = badge.link_for(&value, bead);
         if badge.link.is_some() && link.is_none() {
             undrawn.push(Undrawn::Link {
                 key: badge.key.clone(),
             });
         }
 
-        let short = badge.short_for(value, bead);
+        let short = badge.short_for(&value, bead);
         if badge.short.is_some() && short.is_none() {
             undrawn.push(Undrawn::Short {
                 key: badge.key.clone(),
