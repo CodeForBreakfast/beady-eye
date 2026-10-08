@@ -28,7 +28,7 @@ use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link, OrphanedDependency};
-use crate::model::types::{Edge, PaneKey, PaneStatus, Status, Unreadable};
+use crate::model::types::{Edge, PaneKey, PaneStatus, Printed, Status, Unreadable};
 
 /// Which agent provider this run read, and how that went.
 ///
@@ -297,13 +297,12 @@ pub struct Node {
     /// The blockers the bead waits on that no tracker holds a bead for, each
     /// drawn beneath it with why.
     pub orphaned_dependencies: Vec<OrphanedDependency>,
-    /// What `bd show` says of the bead beyond its row, carried so the screen
-    /// can show a bead without asking the tracker again. Not part of the
-    /// forest's JSON, which is the forest and not the beads' prose.
+    /// The row as the tracker printed it, carried so the screen can show
+    /// what the bead says of itself without asking the tracker again. Not
+    /// part of the forest's JSON, which is the forest and not the beads'
+    /// prose.
     #[serde(skip)]
-    pub description: Arc<str>,
-    #[serde(skip)]
-    pub notes: Arc<str>,
+    pub row: Printed,
     /// The row's `created_by`, and not the address its `owner` carries.
     #[serde(skip)]
     pub created_by: Option<String>,
@@ -332,6 +331,16 @@ impl Node {
             project: self.project.clone(),
             id: self.id.clone(),
         }
+    }
+
+    /// What the bead says of itself, where it says anything.
+    pub fn description(&self) -> Option<String> {
+        self.row.text("description")
+    }
+
+    /// Everything noted on the bead, where anything has been.
+    pub fn notes(&self) -> Option<String> {
+        self.row.text("notes")
     }
 
     /// Whether this is the bead `key` names.

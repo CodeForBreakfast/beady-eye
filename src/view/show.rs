@@ -541,8 +541,12 @@ pub fn said(
 
     let mut related = Vec::new();
     for (heading, body, names_beads) in [
-        (DESCRIPTION, prose(&node.description), false),
-        (NOTES, prose(&node.notes), false),
+        (
+            DESCRIPTION,
+            prose(&node.description().unwrap_or_default()),
+            false,
+        ),
+        (NOTES, prose(&node.notes().unwrap_or_default()), false),
         (PARENT, tied(UP, node.parent.as_slice()), true),
         (DEPENDS_ON, tied(OUT, &node.depends_on), true),
         (BLOCKS, tied(BACK, &node.blocks), true),
@@ -782,6 +786,7 @@ mod tests {
     use crate::model::edges::Related;
     use crate::model::join::{AgentRef, JoinSource};
     use crate::model::types::testing::key;
+    use crate::model::types::Printed;
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::view::fitted::hyperlink;
     use chrono::{DateTime, Utc};
@@ -813,6 +818,10 @@ mod tests {
         }
     }
 
+    /// What `a_bead` says of itself, and what is noted on it.
+    const SAID: &str = "Point it at the new bird.\n\nThe old one is gone.";
+    const NOTED: &str = "The crane is booked for Tuesday.";
+
     /// A bead with something in every section `bd show` prints.
     fn a_bead() -> Node {
         Node {
@@ -836,8 +845,7 @@ mod tests {
             }),
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "Point it at the new bird.\n\nThe old one is gone.".into(),
-            notes: "The crane is booked for Tuesday.".into(),
+            row: Printed::saying(SAID, NOTED),
             created_by: Some("kim".to_string()),
             assignee: None,
             labels: Vec::new(),
@@ -944,8 +952,7 @@ mod tests {
     fn sections_the_bead_has_nothing_for_are_left_out() {
         let bare = Node {
             agent: None,
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             created_at: None,
@@ -1045,7 +1052,10 @@ mod tests {
     #[test]
     fn the_description_wraps_to_the_window_rather_than_being_cut() {
         let long = Node {
-            description: "one two three four five six seven eight nine ten eleven twelve".into(),
+            row: Printed::saying(
+                "one two three four five six seven eight nine ten eleven twelve",
+                NOTED,
+            ),
             ..a_bead()
         };
         let rows = drawn(&long, &mut Show::default(), 30, 30);
@@ -1209,8 +1219,7 @@ mod tests {
     fn a_line_that_names_another_bead_is_cut_rather_than_wrapped() {
         let named = Node {
             agent: None,
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             depends_on: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
@@ -1631,7 +1640,7 @@ mod tests {
     #[test]
     fn on_a_wide_screen_the_window_is_four_fifths_of_it_and_the_prose_wraps_there() {
         let long = Node {
-            description: "abcde ".repeat(60).trim().into(),
+            row: Printed::saying("abcde ".repeat(60).trim(), NOTED),
             ..a_bead()
         };
         let rows = drawn(&long, &mut Show::default(), 200, 60);
@@ -1697,7 +1706,7 @@ mod tests {
     fn a_bead_shorter_than_the_window_still_gets_the_full_height() {
         let bare = Node {
             agent: None,
-            notes: "".into(),
+            row: Printed::saying(SAID, ""),
             parent: None,
             depends_on: Vec::new(),
             blocks: Vec::new(),
@@ -1742,7 +1751,7 @@ mod tests {
     #[test]
     fn no_row_is_drawn_in_the_column_beside_a_border() {
         let bead = Node {
-            description: "abcde ".repeat(40).trim().into(),
+            row: Printed::saying("abcde ".repeat(40).trim(), NOTED),
             ..a_bead_with_a_long_title()
         };
         let mut read = 0;
@@ -2200,7 +2209,10 @@ mod tests {
     #[test]
     fn emphasis_in_the_prose_is_by_weight_and_a_code_span_by_its_own_colour() {
         let bead = Node {
-            description: "Point it at the **new** bird, `now`.\n\nThe old one is gone.".into(),
+            row: Printed::saying(
+                "Point it at the **new** bird, `now`.\n\nThe old one is gone.",
+                NOTED,
+            ),
             ..a_bead()
         };
         let prose = painted(&bead, 44, 24).row(7);
