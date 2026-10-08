@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -30,25 +30,23 @@ use crate::model::types::{Bead, Dependency, Edge, Printed, Status};
 /// asked for. `bd list`, `bd ready` and `bd query` all write the same row.
 #[cfg(any(test, feature = "testing"))]
 pub fn parse_beads(s: &str) -> anyhow::Result<Vec<Bead>> {
-    parsed(s, false)
+    parsed(s)
 }
 
 /// The same rows, each bead shared as a project's read holds it.
 #[cfg(any(test, feature = "testing"))]
-pub fn parse_shared_beads(s: &str) -> anyhow::Result<Vec<Arc<Bead>>> {
-    Ok(parse_beads(s)?.into_iter().map(Arc::new).collect())
+pub fn parse_shared_beads(s: &str) -> anyhow::Result<Vec<std::sync::Arc<Bead>>> {
+    Ok(parse_beads(s)?
+        .into_iter()
+        .map(std::sync::Arc::new)
+        .collect())
 }
 
-/// The rows in `s` as beads, each holding the row it was read from where
-/// `keeping_rows` asks for it.
-fn parsed(s: &str, keeping_rows: bool) -> anyhow::Result<Vec<Bead>> {
+/// The rows in `s` as beads, each holding the row it was read from.
+fn parsed(s: &str) -> anyhow::Result<Vec<Bead>> {
     const SHAPE: &str = "bd --json returned a shape we do not understand";
-    let written: Vec<Printed> = serde_json::from_str(s).context(SHAPE)?;
-    match written
-        .into_iter()
-        .map(|written| bead_of(written, keeping_rows))
-        .collect()
-    {
+    let written: Vec<Fields> = serde_json::from_str(s).context(SHAPE)?;
+    match written.into_iter().map(bead_of).collect() {
         Ok(beads) => Ok(beads),
         // A row read out of its map has lost where in the answer it was, so
         // the answer is read again as rows to say where it broke.
@@ -59,11 +57,14 @@ fn parsed(s: &str, keeping_rows: bool) -> anyhow::Result<Vec<Bead>> {
     }
 }
 
+/// One row's fields, as the map they were read into.
+pub(crate) type Fields = serde_json::Map<String, serde_json::Value>;
+
 /// One row as a bead, its typed fields moved out of the map it was read into,
-/// and holding the map as well where `keeping_rows` asks for it.
-pub(crate) fn bead_of(written: Printed, keeping_rows: bool) -> serde_json::Result<Bead> {
+/// and holding the row as its text.
+pub(crate) fn bead_of(written: Fields) -> serde_json::Result<Bead> {
     let values = values_of(&written);
-    let printed = keeping_rows.then(|| Arc::new(written.clone()));
+    let printed = Printed::of(&written)?;
     Ok(Row::deserialize(serde_json::Value::Object(written))?.into_bead(values, printed))
 }
 
@@ -81,7 +82,7 @@ pub(crate) fn bead_of(written: Printed, keeping_rows: bool) -> serde_json::Resul
 /// field, for a member and for a member of a list. The rule is about kinds of
 /// value rather than names of fields, so nothing here moves when bd's schema
 /// does.
-fn values_of(row: &serde_json::Map<String, serde_json::Value>) -> Values {
+fn values_of(row: &Fields) -> Values {
     let mut values = Values::default();
     for (field, value) in row {
         match object_written_either_way(value) {
@@ -169,13 +170,6 @@ struct Row {
     assignee: Option<String>,
     #[serde(default, deserialize_with = "null_is_default")]
     labels: Vec<String>,
-    /// As `bd show` prints it. bd leaves the field out of a row that has
-    /// none.
-    #[serde(default)]
-    description: Option<Arc<str>>,
-    /// Everything `bd note` has added, as one text. Left out the same way.
-    #[serde(default)]
-    notes: Option<Arc<str>>,
     #[serde(default)]
     created_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -198,7 +192,7 @@ struct RowDependency {
 
 impl Row {
     /// This row as a bead, beside every value a badge could name in it.
-    fn into_bead(self, values: Values, printed: Option<Arc<Printed>>) -> Bead {
+    fn into_bead(self, values: Values, printed: Printed) -> Bead {
         let row = self;
         Bead {
             values: values.single,
@@ -222,8 +216,6 @@ impl Row {
             created_by: row.created_by,
             assignee: row.assignee,
             labels: row.labels,
-            description: row.description,
-            notes: row.notes,
             created_at: row.created_at,
             updated_at: row.updated_at,
             started_at: row.started_at,
@@ -350,10 +342,6 @@ pub struct Cli<'r> {
     /// refresh. Found out once per project, from the refusal itself, so the
     /// probe is paid for once per run rather than once per refresh.
     without_a_probe: Mutex<BTreeSet<String>>,
-    /// Whether each bead is handed over with the row bd printed for it. Only
-    /// a watcher asks: a view draws what it parsed, and a row held beside
-    /// every bead would hold the tracker's text twice.
-    keeping_rows: bool,
     /// Whether a project claiming an events journal has it read. Only a
     /// watcher asks, because only a watcher passes the records on.
     reading_journals: bool,
@@ -371,7 +359,6 @@ impl<'r> Cli<'r> {
             runner,
             ambient: environment::ambient_credential(),
             without_a_probe: Mutex::default(),
-            keeping_rows: false,
             reading_journals: false,
             unfinished_work: false,
             cache: None,
@@ -392,14 +379,6 @@ impl<'r> Cli<'r> {
     /// directory would produce.
     pub fn caching_environments(self, cache: Option<environment::EnvironmentCache>) -> Self {
         Self { cache, ..self }
-    }
-
-    /// The same CLI, handing each bead over with the row bd printed for it.
-    pub fn keeping_rows(self) -> Self {
-        Self {
-            keeping_rows: true,
-            ..self
-        }
     }
 
     /// The same CLI, reading every bead but a finished bead's free text, for
@@ -428,7 +407,6 @@ impl Cli<'_> {
             path: project.path.clone(),
             env,
             without_a_probe: &self.without_a_probe,
-            keeping_rows: self.keeping_rows,
             journal: self.reading_journals && project.events_journal,
             unfinished_work: self.unfinished_work,
         })
@@ -511,7 +489,6 @@ struct Reader<'r> {
     /// The run's memory of which projects' trackers refused the probe,
     /// shared with every reader the run opens.
     without_a_probe: &'r Mutex<BTreeSet<String>>,
-    keeping_rows: bool,
     /// Whether this tracker's events journal is read.
     journal: bool,
     unfinished_work: bool,
@@ -625,8 +602,8 @@ impl Reader<'_> {
             || self.asked(&["list", "--all", "--include-gates", "--limit", "0", "--json"]),
             || self.wisps(),
         );
-        let mut beads = rows(&listed?, "list", self.keeping_rows)?;
-        beads.extend(rows(&wisps?, "query", self.keeping_rows)?);
+        let mut beads = rows(&listed?, "list")?;
+        beads.extend(rows(&wisps?, "query")?);
         Ok(beads)
     }
 
@@ -665,9 +642,9 @@ impl Reader<'_> {
             Err(refused) if refused.kind == FailureKind::UnknownFlag => return self.every_bead(),
             briefly => briefly?,
         };
-        let mut beads = rows(&unfinished?, "list", self.keeping_rows)?;
+        let mut beads = rows(&unfinished?, "list")?;
         let whole: BTreeSet<String> = beads.iter().map(|bead| bead.id.clone()).collect();
-        let briefly: Vec<Bead> = rows(&briefly, "list", self.keeping_rows)?
+        let briefly: Vec<Bead> = rows(&briefly, "list")?
             .into_iter()
             .filter(|bead| !whole.contains(&bead.id))
             .collect();
@@ -675,7 +652,7 @@ impl Reader<'_> {
             return self.every_bead();
         }
         beads.extend(briefly);
-        beads.extend(rows(&wisps?, "query", self.keeping_rows)?);
+        beads.extend(rows(&wisps?, "query")?);
         Ok(beads)
     }
 
@@ -688,7 +665,7 @@ impl Reader<'_> {
     /// id, so it is asked once per gate, and only of a gate that is wanted.
     fn pr_gates(&self, wanted: impl Fn(&PrGate) -> bool) -> Result<Vec<PrGate>, RunFailure> {
         let listed = self.asked(&["gate", "list", "--limit", "0", "--json"])?;
-        rows(&listed, "gate", false)?
+        rows(&listed, "gate")?
             .into_iter()
             .filter(gate::awaits_a_pull_request)
             .map(|gate| PrGate::of(&gate, Vec::new()))
@@ -703,7 +680,7 @@ impl Reader<'_> {
                     "blocks",
                     "--json",
                 ])?;
-                gate.blocks = rows(&held, "dep", false)?
+                gate.blocks = rows(&held, "dep")?
                     .into_iter()
                     .map(|bead| bead.id)
                     .collect();
@@ -767,7 +744,7 @@ impl Tracker for Reader<'_> {
         );
         let mut ready = BTreeSet::new();
         for out in [work?, gates?] {
-            ready.extend(rows(&out, "ready", false)?.into_iter().map(|bead| bead.id));
+            ready.extend(rows(&out, "ready")?.into_iter().map(|bead| bead.id));
         }
         Ok(ready)
     }
@@ -841,8 +818,8 @@ const EPHEMERAL: &str = "ephemeral=true";
 /// The root cause rather than the whole chain: `parse_beads` wraps the
 /// parser's account in a sentence saying the answer was not understood, which
 /// is what the phrase around this already says.
-fn rows(out: &str, read: &str, keeping_rows: bool) -> Result<Vec<Bead>, RunFailure> {
-    parsed(out, keeping_rows).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
+fn rows(out: &str, read: &str) -> Result<Vec<Bead>, RunFailure> {
+    parsed(out).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
 }
 
 /// The one bd command `bdi bd` passes through, and the first of the two ways
@@ -928,19 +905,19 @@ mod tests {
             .find(|b| b.id == "dun-9fw")
             .expect("dun-9fw is in the capture");
 
+        let description = bead.row.text("description");
+        let notes = bead.row.text("notes");
         assert!(
-            bead.description
+            description
                 .as_deref()
                 .is_some_and(|said| said.starts_with("`dunwich` reads a repository")),
-            "{:?}",
-            bead.description
+            "{description:?}"
         );
         assert!(
-            bead.notes
+            notes
                 .as_deref()
                 .is_some_and(|said| said.starts_with("Correction to this bead's roster")),
-            "{:?}",
-            bead.notes
+            "{notes:?}"
         );
         assert_eq!(bead.created_by.as_deref(), Some("Mira Vance"));
         assert_eq!(bead.assignee.as_deref(), Some("Mira Vance"));
@@ -952,8 +929,8 @@ mod tests {
     fn a_row_without_a_description_or_notes_parses_with_neither() {
         let bead = row("bdi-2bb.4");
 
-        assert_eq!(bead.description, None);
-        assert_eq!(bead.notes, None);
+        assert_eq!(bead.row.text("description"), None);
+        assert_eq!(bead.row.text("notes"), None);
     }
 
     /// A captured row names every bead it depends on, and the kinds differ
@@ -1092,14 +1069,14 @@ mod tests {
         let bead = &parse_beads(rows).expect("the row parses")[0];
 
         assert_eq!(
-            bead.value("external_ref"),
+            bead.value("external_ref").as_deref(),
             Some("https://jira.invalid/browse/HELIO-412")
         );
-        assert_eq!(bead.value("id"), Some("a"));
-        assert_eq!(bead.value("issue_type"), Some("feature"));
-        assert_eq!(bead.value("metadata.jira"), Some("ARKHAM-19"));
+        assert_eq!(bead.value("id").as_deref(), Some("a"));
+        assert_eq!(bead.value("issue_type").as_deref(), Some("feature"));
+        assert_eq!(bead.value("metadata.jira").as_deref(), Some("ARKHAM-19"));
         assert_eq!(
-            bead.value("metadata.helio.ticket"),
+            bead.value("metadata.helio.ticket").as_deref(),
             Some("HELIO-9"),
             "a key holding a dot of its own is named by the whole of it"
         );
@@ -1128,7 +1105,7 @@ mod tests {
             ("description", "what it is"),
             ("notes", "what was noted"),
         ] {
-            assert_eq!(bead.value(key), Some(text), "{key} is drawable");
+            assert_eq!(bead.value(key).as_deref(), Some(text), "{key} is drawable");
             assert_eq!(bead.values.get(key), None, "{key} is held once");
         }
     }
@@ -1144,8 +1121,12 @@ mod tests {
 
         let bead = &parse_beads(rows).expect("the row parses")[0];
 
-        assert_eq!(bead.value("description.ticket"), Some("HELIO-9"));
-        assert_eq!(bead.value("description"), None, "an object is no one value");
+        assert_eq!(bead.value("description.ticket").as_deref(), Some("HELIO-9"));
+        assert_eq!(
+            bead.value("description").as_deref(),
+            None,
+            "an object is no one value"
+        );
     }
 
     /// An empty text is no value to draw, whether bdi holds a field for it
@@ -1167,7 +1148,11 @@ mod tests {
             "assignee",
             "created_by",
         ] {
-            assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
+            assert_eq!(
+                bead.value(absent).as_deref(),
+                None,
+                "{absent} is no value to draw"
+            );
         }
     }
 
@@ -1187,10 +1172,14 @@ mod tests {
 
         let bead = &parse_beads(rows).expect("the row parses")[0];
 
-        assert_eq!(bead.value("priority"), Some("1"));
-        assert_eq!(bead.value("pinned"), Some("true"));
+        assert_eq!(bead.value("priority").as_deref(), Some("1"));
+        assert_eq!(bead.value("pinned").as_deref(), Some("true"));
         for absent in ["external_ref", "parent", "dependencies", "metadata"] {
-            assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
+            assert_eq!(
+                bead.value(absent).as_deref(),
+                None,
+                "{absent} is no value to draw"
+            );
         }
     }
 
@@ -1209,16 +1198,20 @@ mod tests {
 
         let bead = &parse_beads(rows).expect("the row parses")[0];
 
-        assert_eq!(bead.value("metadata.attempts"), Some("3"));
-        assert_eq!(bead.value("metadata.waiting"), Some("false"));
-        assert_eq!(bead.value("metadata.phase"), Some("vacuum-soak"));
+        assert_eq!(bead.value("metadata.attempts").as_deref(), Some("3"));
+        assert_eq!(bead.value("metadata.waiting").as_deref(), Some("false"));
+        assert_eq!(bead.value("metadata.phase").as_deref(), Some("vacuum-soak"));
         for absent in [
             "metadata.cleared",
             "metadata.note",
             "metadata.seats",
             "metadata.budget",
         ] {
-            assert_eq!(bead.value(absent), None, "{absent} is no value to draw");
+            assert_eq!(
+                bead.value(absent).as_deref(),
+                None,
+                "{absent} is no value to draw"
+            );
         }
     }
 
@@ -1241,7 +1234,11 @@ mod tests {
         for nothing in ["dependencies", "metadata.none", "assignee"] {
             assert_eq!(bead.members(nothing), Vec::<&str>::new(), "{nothing}");
         }
-        assert_eq!(bead.value("labels"), None, "a list is still no one value");
+        assert_eq!(
+            bead.value("labels").as_deref(),
+            None,
+            "a list is still no one value"
+        );
     }
 
     /// A tracker's metadata is arbitrary JSON, and bdi draws it as text. A
@@ -1466,7 +1463,6 @@ mod tests {
             path: project_dir(),
             env: credentialled(),
             without_a_probe: Box::leak(Box::default()),
-            keeping_rows: false,
             journal: false,
             unfinished_work: false,
         }
@@ -1495,7 +1491,6 @@ mod tests {
             runner,
             ambient: ambient.map(str::to_string),
             without_a_probe: Mutex::default(),
-            keeping_rows: false,
             reading_journals: false,
             unfinished_work: false,
             cache: None,
@@ -1825,11 +1820,10 @@ mod tests {
         }
     }
 
-    /// A reader keeping rows hands each bead over with its row exactly as bd
-    /// printed it, so a field `bdi` holds nothing of reaches whoever reads
-    /// the row.
+    /// A reader hands each bead over with its row exactly as bd printed it,
+    /// so a field `bdi` holds nothing of reaches whoever reads the row.
     #[test]
-    fn a_reader_keeping_rows_hands_each_bead_over_with_the_row_bd_printed() {
+    fn a_reader_hands_each_bead_over_with_the_row_bd_printed() {
         let runner = FakeRunner::default()
             .with(&spelled(TRACKER_CALL), FIXTURE)
             .with(&spelled(WISP_CALL), WISPS);
@@ -1838,17 +1832,9 @@ mod tests {
             .flat_map(|out| serde_json::from_str::<Vec<_>>(out).expect("the capture parses"))
             .collect();
 
-        let beads = Reader {
-            keeping_rows: true,
-            ..opened(&runner)
-        }
-        .all()
-        .unwrap();
+        let beads = opened(&runner).all().unwrap();
 
-        let rows: Vec<_> = beads
-            .iter()
-            .map(|bead| bead.row.as_deref().cloned().expect("the row is kept"))
-            .collect();
+        let rows: Vec<_> = beads.iter().map(|bead| bead.row.fields()).collect();
         assert_eq!(rows, printed);
     }
 
@@ -1927,17 +1913,6 @@ mod tests {
         assert_eq!(failure.unreadable.expect("a parse failure").read, "events");
     }
 
-    #[test]
-    fn a_reader_not_keeping_rows_holds_none() {
-        let runner = FakeRunner::default()
-            .with(&spelled(TRACKER_CALL), FIXTURE)
-            .with(&spelled(WISP_CALL), WISPS);
-
-        let beads = opened(&runner).all().unwrap();
-
-        assert!(beads.iter().all(|bead| bead.row.is_none()));
-    }
-
     /// `bd list` answers about the permanent table, so it returns no wisp at
     /// all — not under `--all`, and not under its own `--wisp-type` filter.
     /// A tracker read only that way draws none of them.
@@ -1996,15 +1971,18 @@ mod tests {
 
         let beads = reading_unfinished_work(&runner).all().unwrap();
 
-        let described: Vec<(&str, Option<&str>)> = beads
+        let described: Vec<(&str, Option<String>)> = beads
             .iter()
-            .map(|bead| (bead.id.as_str(), bead.description.as_deref()))
+            .map(|bead| (bead.id.as_str(), bead.row.text("description")))
             .filter(|(id, _)| id.starts_with("ark-"))
             .collect();
         assert_eq!(
             described,
             [
-                ("ark-1.1", Some("from the lighthouse to the point")),
+                (
+                    "ark-1.1",
+                    Some("from the lighthouse to the point".to_string())
+                ),
                 ("ark-1", None)
             ]
         );

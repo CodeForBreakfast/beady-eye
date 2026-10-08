@@ -430,6 +430,7 @@ mod tests {
     use crate::model::join::JoinSource;
     use crate::model::types::testing::key;
     use crate::model::types::PaneStatus;
+    use crate::model::types::Printed;
     use pretty_assertions::assert_eq;
 
     const ROOT: &str = "smt-4kd3p";
@@ -451,8 +452,7 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             labels: Vec::new(),
