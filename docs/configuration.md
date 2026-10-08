@@ -949,6 +949,14 @@ on, and acts on what GitHub says:
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
 | a draft with no failing checks, no review, no conflict and no comment | nothing |
 
+A gate tells only what happened after it was made, since whoever made it could
+already see the rest. A review dates from when it was submitted, a comment from
+when it was made, and failing checks from when the first check to fail finished.
+GitHub does not say when a conflict began, so a conflict dates from the later of
+the head commit and the base branch's latest commit. A conflict that stood
+before the gate is still told once the base moves on. A close without a merge
+is told however old the gate is.
+
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
 as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
 Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is
@@ -975,6 +983,7 @@ dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
 kadath: its gh:pr gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
+dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token
 arkham: gate ark-6pp cannot be settled: it names no repo
 dunwich/arkham#41: GitHub refused it for the rate limit of the login gh runs as, so GitHub is asked nothing more until the limit resets at 2026-01-01 00:30:00 UTC
 ```
@@ -983,6 +992,11 @@ A failure stops nothing. The next look tries again. A `gh` that GitHub refuses
 leaves every gate waiting on that pull request as it was. On an organisation
 that enforces single sign-on, a lapsed authorisation is the usual cause, and
 `gh auth refresh` is the cure.
+
+A field GitHub will not show the account `gh` runs as costs only the events
+that read it. Every other event still settles the pull request, merges
+included, and `bdi gates` names the event it cannot see once for each
+repository, with what GitHub said.
 
 A rate limit is the exception, because the login `gh` runs as may be shared
 with whoever else uses it. Once GitHub refuses a pull request for one, that

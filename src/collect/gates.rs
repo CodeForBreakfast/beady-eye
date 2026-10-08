@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fmt;
 
+use chrono::{DateTime, Utc};
+
 use crate::collect::bd::{Cli, Settling};
 use crate::collect::github::{self, Observed};
 use crate::collect::pr_events::{self, Event, Outcome};
@@ -31,6 +33,8 @@ pub struct PrGate {
     pub awaits: Result<Wait, Vec<Fault>>,
     /// The beads the gate holds back.
     pub blocks: Vec<String>,
+    /// When the gate was made, where the tracker says.
+    pub made: Option<DateTime<Utc>>,
 }
 
 /// What a gate waits for, and of which pull request.
@@ -79,12 +83,24 @@ pub enum Settled {
     /// GitHub did not say where the pull request stands, so no tracker was
     /// asked anything.
     Unread(RunFailure),
-    /// Nothing the pull request has done is new to a gate waiting on it, so
-    /// no tracker was asked anything.
-    NothingNew,
+    /// Nothing the pull request has done that GitHub let `bdi gates` see is
+    /// new to a gate waiting on it, so no tracker was asked anything.
+    NothingNew { unseen: Vec<Unseen> },
     /// The pull request did something new to a gate waiting on it, and this
     /// is what each configured project did about it.
-    Acted(Vec<ProjectSettled>),
+    Acted {
+        projects: Vec<ProjectSettled>,
+        unseen: Vec<Unseen>,
+    },
+}
+
+/// An event GitHub's answer for a pull request did not let `bdi gates` see,
+/// so nothing it would have done was done, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unseen {
+    /// What the event would have reported the pull request did.
+    pub happening: &'static str,
+    pub why: String,
 }
 
 /// What one configured project did about a pull request, or why its tracker
@@ -130,6 +146,8 @@ pub struct Waiting {
     pub until: Until,
     /// The beads the gate holds back.
     pub blocks: Vec<String>,
+    /// When the gate was made, where the tracker says.
+    pub made: Option<DateTime<Utc>>,
 }
 
 /// Which bead has been told what, as far as this process knows. A bead it
@@ -226,7 +244,7 @@ fn settle_asked_together<'a>(
         .and_then(|each| gate::repository(&each.pull_request.repo))
         .map(|repo| github::pull_requests(gh, &repo, &numbers, &fields));
     let observed: Box<dyn Iterator<Item = Result<Observed, RunFailure>> + 'a> = match together {
-        Some(Ok(observed)) => Box::new(observed.into_iter().map(Ok)),
+        Some(Ok(observed)) => Box::new(observed.into_iter()),
         Some(Err(failure)) if failure.kind != FailureKind::Gone || asked.len() == 1 => {
             Box::new(asked.iter().map(move |_| Err(failure.clone())))
         }
@@ -260,8 +278,7 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
         ),
         unreadable: None,
     })?;
-    let mut observed = github::pull_requests(gh, &repo, &[pr.number], fields)?;
-    Ok(observed.remove(0))
+    github::pull_requests(gh, &repo, &[pr.number], fields)?.remove(0)
 }
 
 /// Settle every open gh:pr gate waiting on `pr` in each of `projects`, doing
@@ -272,7 +289,8 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 ///
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. A pull request GitHub did not
-/// answer for leaves every tracker untouched.
+/// answer for leaves every tracker untouched, and an event whose fields
+/// GitHub did not answer is the only one passed over.
 fn settled(
     cli: &Cli,
     projects: &[Project],
@@ -282,8 +300,8 @@ fn settled(
     waiting: Option<&[Waiting]>,
     told: &Told,
 ) -> Settled {
-    let outcomes = match observed.and_then(|observed| outcomes(events, pr, &observed)) {
-        Ok(outcomes) => outcomes,
+    let (outcomes, unseen) = match observed {
+        Ok(observed) => outcomes(events, pr, &observed),
         Err(failure) => return Settled::Unread(failure),
     };
     let new: Vec<(&'static str, Outcome)> = outcomes
@@ -291,10 +309,10 @@ fn settled(
         .filter(|(_, outcome)| waiting.is_none_or(|waiting| is_new(outcome, waiting, told)))
         .collect();
     if new.is_empty() {
-        return Settled::NothingNew;
+        return Settled::NothingNew { unseen };
     }
-    Settled::Acted(
-        projects
+    Settled::Acted {
+        projects: projects
             .iter()
             .map(|project| ProjectSettled {
                 project: project.name.clone(),
@@ -307,33 +325,52 @@ fn settled(
                 }),
             })
             .collect(),
-    )
+        unseen,
+    }
 }
 
 /// What each of `events` makes of `pr`, beside what it did, as the event
-/// says it.
+/// says it, and each event GitHub's answer did not let it see.
 fn outcomes(
     events: &[Event],
     pr: &PullRequest,
     observed: &Observed,
-) -> Result<Vec<(&'static str, Outcome)>, RunFailure> {
-    events
-        .iter()
-        .filter_map(|event| match (event.outcome)(pr, observed) {
-            Ok(outcome) => outcome.map(|outcome| Ok((event.happening, outcome))),
-            Err(e) => Some(Err(RunFailure::parse("gh", e))),
-        })
-        .collect()
+) -> (Vec<(&'static str, Outcome)>, Vec<Unseen>) {
+    let mut seen = Vec::new();
+    let mut unseen = Vec::new();
+    for event in events {
+        let outcome = match observed
+            .refused
+            .iter()
+            .find(|refusal| event.reads(&refusal.field))
+        {
+            Some(refusal) => Err(format!(
+                "GitHub would not let gh read {}: {}",
+                refusal.field, refusal.why
+            )),
+            None => (event.outcome)(pr, observed)
+                .map_err(|e| format!("GitHub answered its fields in a way bdi cannot read: {e}")),
+        };
+        match outcome {
+            Ok(Some(outcome)) => seen.push((event.happening, outcome)),
+            Ok(None) => {}
+            Err(why) => unseen.push(Unseen {
+                happening: event.happening,
+                why,
+            }),
+        }
+    }
+    (seen, unseen)
 }
 
 /// Whether `outcome` asks anything not yet done of the gates `waiting`.
 fn is_new(outcome: &Outcome, waiting: &[Waiting], told: &Told) -> bool {
     waiting.iter().any(|gate| match outcome {
         Outcome::Resolve { awaited, .. } => awaited(gate.until),
-        Outcome::Tell(texts) => gate.blocks.iter().any(|bead| {
-            texts
-                .iter()
-                .any(|text| !told.knows(&gate.project, bead, text))
+        Outcome::Tell(tellings) => gate.blocks.iter().any(|bead| {
+            tellings.iter().any(|telling| {
+                telling.is_news_to(gate.made) && !told.knows(&gate.project, bead, &telling.text)
+            })
         }),
     })
 }
@@ -370,17 +407,21 @@ fn acted(
                     });
                 }
             }
-            Outcome::Tell(texts) => {
-                let held_back: BTreeSet<&String> = concerned
+            Outcome::Tell(tellings) => {
+                let open: Vec<&PrGate> = concerned
                     .filter(|gate| !closed.contains(&gate.id))
-                    .flat_map(|gate| &gate.blocks)
                     .collect();
-                for text in texts {
-                    for bead in &held_back {
+                for telling in tellings {
+                    let held_back: BTreeSet<&String> = open
+                        .iter()
+                        .filter(|gate| telling.is_news_to(gate.made))
+                        .flat_map(|gate| &gate.blocks)
+                        .collect();
+                    for bead in held_back {
                         acts.push(Act {
-                            bead: (*bead).clone(),
+                            bead: bead.clone(),
                             happening,
-                            done: tell(tracker, project, bead, text, told),
+                            done: tell(tracker, project, bead, &telling.text, told),
                         });
                     }
                 }
@@ -458,6 +499,7 @@ impl PrGate {
             repo: repo.map(str::to_string),
             awaits,
             blocks,
+            made: gate.created_at,
         }
     }
 }
@@ -566,6 +608,7 @@ mod tests {
                     until: Until::Merged,
                 }),
                 blocks: vec!["ark-qca".to_string()],
+                made: "2026-10-06T08:24:48Z".parse().ok(),
             }
         );
         assert_eq!(
@@ -605,6 +648,7 @@ mod tests {
                 repo: None,
                 awaits: Err(vec![Fault::NoRepo]),
                 blocks: vec!["ark-92q".to_string()],
+                made: "2026-10-06T08:24:52Z".parse().ok(),
             }
         );
     }
@@ -739,7 +783,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -810,7 +854,11 @@ mod tests {
 
     fn acts(settled: Settled) -> Vec<Act> {
         match settled {
-            Settled::Acted(mut projects) => {
+            Settled::Acted {
+                mut projects,
+                unseen,
+            } => {
+                assert_eq!(unseen, [], "GitHub let every event see the pull request");
                 assert_eq!(projects.len(), 1, "one project was configured");
                 let project = projects.remove(0);
                 assert_eq!(project.project, "arkham");
@@ -1075,7 +1123,7 @@ mod tests {
 
             assert_eq!(
                 settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
-                [Settled::NothingNew],
+                [Settled::NothingNew { unseen: vec![] }],
                 "{rollup}"
             );
         }
@@ -1170,7 +1218,7 @@ mod tests {
 
             assert_eq!(
                 settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
-                [Settled::NothingNew],
+                [Settled::NothingNew { unseen: vec![] }],
                 "{mergeability}"
             );
         }
@@ -1426,8 +1474,8 @@ mod tests {
         let first = sweep();
         let again = sweep();
 
-        assert!(matches!(first[0], Settled::Acted(_)));
-        assert_eq!(again, [Settled::NothingNew]);
+        assert!(matches!(first[0], Settled::Acted { .. }));
+        assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
     }
 
     /// An open pull request with a conversation comment from each of
@@ -1594,8 +1642,93 @@ mod tests {
         let first = sweep();
         let again = sweep();
 
-        assert!(matches!(first[0], Settled::Acted(_)));
-        assert_eq!(again, [Settled::NothingNew]);
+        assert!(matches!(first[0], Settled::Acted { .. }));
+        assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
+    }
+
+    /// When the captured tracker made ark-eb1, the gate waiting on #7.
+    const EB1_MADE: &str = "2026-10-06T08:24:49Z";
+
+    fn made_at(mut awaited: Awaited, made: &str) -> Awaited {
+        for gate in &mut awaited.waiting {
+            gate.made = made.parse().ok();
+        }
+        awaited
+    }
+
+    /// #7 open with failing checks, a review, a conflict and a comment, each
+    /// of them `at`.
+    fn everything_at(at: &str) -> String {
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,
+            "commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"nodes":[{{"conclusion":"FAILURE","completedAt":"{at}"}}]}}}}}}}}]}},
+            "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}}]}},
+            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
+            "comments":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-12","createdAt":"{at}","author":{{"login":"bob"}}}}]}}}}"#
+        )
+    }
+
+    /// Whoever made a gate could already see what its pull request had done,
+    /// so a bdi that newly tells it would wake every seat for old news.
+    #[test]
+    fn a_gate_made_after_failing_checks_a_review_a_conflict_and_a_comment_tells_none_of_them() {
+        let runner = captured(FakeRunner::default(), "arkham").with(
+            &viewed(7),
+            &answer(7, &everything_at("2026-10-06T08:24:48Z")),
+        );
+        let looked = made_at(awaited(7, Until::Merged, &["ark-2ud", "ark-45c"]), EB1_MADE);
+
+        let swept = settled_together(&runner, &[looked]);
+        assert_eq!(swept, [Settled::NothingNew { unseen: vec![] }]);
+        assert_eq!(runner.calls().len(), 1, "only GitHub was asked");
+
+        let delivered = settled(&runner, &[project("arkham")], &pr(7));
+        assert_eq!(acts(delivered), []);
+        assert_eq!(writes(&runner), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_gate_made_before_failing_checks_a_review_a_conflict_and_a_comment_tells_each_once() {
+        let tellings = |bead| {
+            [
+                checks_failed_telling("arkham", bead, "a1b2c3"),
+                review_telling(bead, "alice", "commented", 11),
+                conflict_telling("arkham", bead, "a1b2c3"),
+                comment_telling(bead, "bob", 12),
+            ]
+        };
+        let mut runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(7), &answer(7, &everything_at(EB1_MADE)));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner.with(&comments_on("arkham", bead), NO_COMMENTS);
+            for telling in tellings(bead) {
+                runner = runner.with(&telling, &format!("Comment added to {bead}\n"));
+            }
+        }
+        let told = Told::default();
+        let looked = [made_at(
+            awaited(7, Until::Merged, &["ark-2ud", "ark-45c"]),
+            EB1_MADE,
+        )];
+        let sweep = || {
+            settle_together(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &looked,
+                &told,
+            )
+            .collect::<Vec<_>>()
+        };
+
+        sweep();
+        let again = sweep();
+
+        let [a, b, c, d] = tellings("ark-2ud");
+        let [e, f, g, h] = tellings("ark-45c");
+        assert_eq!(writes(&runner), [a, e, b, f, c, g, d, h]);
+        assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
     }
 
     fn comments_read(runner: &FakeRunner) -> usize {
@@ -1776,7 +1909,7 @@ mod tests {
 
             assert_eq!(
                 settled_together(&runner, &[awaited(42, Until::Approved, &["ark-qca"])]),
-                [Settled::NothingNew],
+                [Settled::NothingNew { unseen: vec![] }],
                 "{decision}"
             );
         }
@@ -1790,7 +1923,7 @@ mod tests {
 
         assert_eq!(
             settled_together(&runner, &[awaited(42, Until::Merged, &["ark-qca"])]),
-            [Settled::NothingNew]
+            [Settled::NothingNew { unseen: vec![] }]
         );
     }
 
@@ -1824,7 +1957,7 @@ mod tests {
         for _ in 0..2 {
             assert_eq!(
                 settled(&runner, &[project("arkham")], &pr(42)),
-                Settled::NothingNew
+                Settled::NothingNew { unseen: vec![] }
             );
         }
     }
@@ -1838,7 +1971,7 @@ mod tests {
 
         assert_eq!(
             settled_together(&runner, &[awaited(42, Until::Merged, &["ark-qca"])]),
-            [Settled::NothingNew]
+            [Settled::NothingNew { unseen: vec![] }]
         );
     }
 
@@ -1933,17 +2066,169 @@ mod tests {
         );
     }
 
+    /// What settling came to in arkham alone, and the events GitHub hid.
+    fn acted_and_unseen(settled: Settled) -> (Vec<Act>, Vec<Unseen>) {
+        match settled {
+            Settled::Acted {
+                mut projects,
+                unseen,
+            } => {
+                assert_eq!(projects.len(), 1, "one project was configured");
+                let project = projects.remove(0);
+                (project.acts.expect("arkham's tracker answered"), unseen)
+            }
+            not_acted => panic!("settling came to {not_acted:?}"),
+        }
+    }
+
+    fn happenings(unseen: &[Unseen]) -> Vec<&'static str> {
+        unseen.iter().map(|unseen| unseen.happening).collect()
+    }
+
+    /// A field GitHub answers null without saying why, where the event
+    /// reading it cannot take a null.
     #[test]
-    fn a_pull_request_with_a_field_an_event_cannot_read_is_reported_and_no_tracker_is_asked() {
-        let runner = FakeRunner::default().with(
-            &viewed(42),
-            &answer(42, r#"{"state":"OPEN","isDraft":"no","mergeCommit":null}"#),
+    fn a_pull_request_with_a_field_one_event_cannot_read_is_settled_by_the_others() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &viewed(42),
+                &answer(
+                    42,
+                    r#"{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"},"commits":null}"#,
+                ),
+            )
+            .with(&resolving_42("arkham"), "");
+
+        let (acts, unseen) = acted_and_unseen(settled(&runner, &[project("arkham")], &pr(42)));
+
+        assert_eq!(acts, [merged("ark-0i5")]);
+        assert_eq!(happenings(&unseen), ["has failing checks"]);
+        assert!(unseen[0].why.contains("cannot read"), "{}", unseen[0].why);
+    }
+
+    /// Each of `pulls`, a number and its fields, as GitHub answers a token
+    /// refused the checks on their heads: the data with `statusCheckRollup`
+    /// null, and an error naming it for each.
+    fn checks_refused(pulls: &[(u64, &str)]) -> String {
+        let data: Vec<String> = pulls
+            .iter()
+            .map(|(number, fields)| {
+                format!(
+                    r#""pr{number}":{{{fields},"commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":null}}}}]}}}}"#
+                )
+            })
+            .collect();
+        let errors: Vec<String> = pulls
+            .iter()
+            .map(|(number, _)| {
+                format!(
+                    r#"{{"type":"FORBIDDEN","path":["repository","pr{number}","commits","nodes",0,"commit","statusCheckRollup"],"message":"Resource not accessible by personal access token"}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"data":{{"repository":{{{}}}}},"errors":[{}]}}"#,
+            data.join(","),
+            errors.join(",")
+        )
+    }
+
+    /// #42 merged, as [`MERGED`] has it, without its braces.
+    const MERGED_FIELDS: &str = r#""state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}"#;
+
+    fn refused_the_checks() -> Unseen {
+        Unseen {
+            happening: "has failing checks",
+            why: "GitHub would not let gh read commits: Resource not accessible by personal \
+                  access token"
+                .to_string(),
+        }
+    }
+
+    /// gh prints GitHub's whole answer, then exits 1 for the error in it. The
+    /// refusal is what says the checks are unseen: the null it leaves reads
+    /// as a head with no checks at all.
+    #[test]
+    fn a_merge_settles_while_github_refuses_the_token_the_checks() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .failing_having_printed(
+                &viewed(42),
+                &checks_refused(&[(42, MERGED_FIELDS)]),
+                unavailable("gh"),
+            )
+            .with(&resolving_42("arkham"), "");
+
+        let settled = settled(&runner, &[project("arkham")], &pr(42));
+
+        assert_eq!(
+            acted_and_unseen(settled),
+            (vec![merged("ark-0i5")], vec![refused_the_checks()])
+        );
+    }
+
+    #[test]
+    fn an_approval_settles_while_github_refuses_the_token_the_checks() {
+        let resolving = written(
+            "arkham",
+            &format!("gate resolve ark-eb1 --reason {APPROVED_REASON}"),
+        );
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &gate_list("arkham"),
+                &gate_list_with_42_awaiting("approved"),
+            )
+            .failing_having_printed(
+                &viewed(42),
+                &checks_refused(&[(
+                    42,
+                    r#""state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":"APPROVED""#,
+                )]),
+                unavailable("gh"),
+            )
+            .with(&resolving, "");
+
+        let settled = settled(&runner, &[project("arkham")], &pr(42));
+
+        assert_eq!(
+            acted_and_unseen(settled),
+            (
+                vec![act("ark-eb1", "is approved", Done::Resolved)],
+                vec![refused_the_checks()]
+            )
+        );
+    }
+
+    /// The runner panics on any call it was not given, so falling back to a
+    /// query for each pull request would fail the test.
+    #[test]
+    fn a_look_github_refuses_the_checks_of_settles_every_pull_request_in_its_one_query() {
+        let both = checks_refused(&[
+            (41, r#""state":"OPEN","isDraft":true,"mergeCommit":null"#),
+            (42, MERGED_FIELDS),
+        ]);
+        let runner = captured(FakeRunner::default(), "arkham")
+            .failing_having_printed(&queried(41..=42), &both, unavailable("gh"))
+            .with(&resolving_42("arkham"), "");
+
+        let settled = settled_together(
+            &runner,
+            &[
+                awaited(41, Until::Merged, &["ark-2ud"]),
+                awaited(42, Until::Merged, &["ark-45c"]),
+            ],
         );
 
-        match settled(&runner, &[project("arkham")], &pr(42)) {
-            Settled::Unread(failure) => assert_eq!(failure.kind, FailureKind::Parse),
-            settled => panic!("settling came to {settled:?}"),
-        }
+        let [first, second]: [Settled; 2] = settled.try_into().expect("two were settled");
+        assert_eq!(
+            first,
+            Settled::NothingNew {
+                unseen: vec![refused_the_checks()]
+            }
+        );
+        assert_eq!(
+            acted_and_unseen(second),
+            (vec![merged("ark-0i5")], vec![refused_the_checks()])
+        );
     }
 
     #[test]
@@ -2022,16 +2307,19 @@ mod tests {
 
         assert_eq!(
             settled,
-            Settled::Acted(vec![
-                ProjectSettled {
-                    project: "arkham".to_string(),
-                    acts: Err(OpenFailure::Refused(unavailable("bd"))),
-                },
-                ProjectSettled {
-                    project: "dunwich".to_string(),
-                    acts: Ok(vec![merged("ark-0i5")]),
-                },
-            ])
+            Settled::Acted {
+                projects: vec![
+                    ProjectSettled {
+                        project: "arkham".to_string(),
+                        acts: Err(OpenFailure::Refused(unavailable("bd"))),
+                    },
+                    ProjectSettled {
+                        project: "dunwich".to_string(),
+                        acts: Ok(vec![merged("ark-0i5")]),
+                    },
+                ],
+                unseen: vec![],
+            }
         );
         assert_eq!(writes(&runner), [resolving_42("dunwich")]);
     }
@@ -2045,6 +2333,7 @@ mod tests {
                 project: "arkham".to_string(),
                 until,
                 blocks: blocks.iter().map(|bead| bead.to_string()).collect(),
+                made: None,
             }],
         }
     }
@@ -2109,7 +2398,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
@@ -2136,7 +2425,7 @@ mod tests {
         let mut expected: Vec<Settled> = (1..=100)
             .map(|_| Settled::Unread(unavailable.clone()))
             .collect();
-        expected.push(Settled::NothingNew);
+        expected.push(Settled::NothingNew { unseen: vec![] });
         assert_eq!(settled_together(&runner, &awaited), expected);
         assert_eq!(runner.calls().len(), 2);
     }
@@ -2168,7 +2457,7 @@ mod tests {
     /// gate on an open pull request its head commit, as an event for
     /// failing checks would.
     const HEAD: Event = Event {
-        fields: "headRefOid",
+        fields: &["headRefOid"],
         happening: "has a new head",
         outcome: |pr, observed| {
             #[derive(serde::Deserialize)]
@@ -2177,8 +2466,12 @@ mod tests {
                 head_ref_oid: String,
             }
             let Fields { head_ref_oid } = serde::Deserialize::deserialize(&observed.fields)?;
-            Ok((observed.state == github::State::Open)
-                .then(|| Outcome::Tell(vec![format!("Pull request {pr} is at {head_ref_oid}.")])))
+            Ok((observed.state == github::State::Open).then(|| {
+                Outcome::Tell(vec![pr_events::Telling {
+                    text: format!("Pull request {pr} is at {head_ref_oid}."),
+                    happened: None,
+                }])
+            }))
         },
     };
 
@@ -2250,7 +2543,10 @@ mod tests {
         looked_at_head(&first, &told);
         let second = FakeRunner::default().with(&head_queried(), &at("c0ffee"));
 
-        assert_eq!(looked_at_head(&second, &told), [Settled::NothingNew]);
+        assert_eq!(
+            looked_at_head(&second, &told),
+            [Settled::NothingNew { unseen: vec![] }]
+        );
     }
 
     #[test]
@@ -2274,7 +2570,7 @@ mod tests {
     /// An event no `bdi gates` has, which closes every gate on a merge, as
     /// the merge does.
     const ALSO_ON_MERGE: Event = Event {
-        fields: "",
+        fields: &[],
         happening: "merged again",
         outcome: |_, observed| {
             Ok(
