@@ -40,6 +40,8 @@ pub struct Config {
     #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
+    pub tail: Tail,
+    #[serde(default)]
     pub row: Layout,
     /// Which of `projects` this run reads, and what chose them. The rest stay
     /// here rather than being dropped: a pane is placed by which configured
@@ -792,6 +794,32 @@ pub enum Background {
     Light,
 }
 
+/// How the tail reads a pane, by the agent in it.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tail {
+    /// The crop for each agent, keyed by the name the agent provider gives
+    /// it. A pane whose agent has none is tailed as it stands.
+    pub crop: BTreeMap<String, Crop>,
+}
+
+impl Tail {
+    pub fn crop_for(&self, agent: &str) -> Option<Crop> {
+        self.crop.get(agent).copied()
+    }
+}
+
+/// Where on a pane's screen the tail cuts, by the name a config gives it.
+///
+/// Each strategy knows one agent's layout, so the model knows none.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Crop {
+    /// Above Claude Code's input box: the top of the two full-width rules
+    /// that hold it, counted up from the bottom of the screen.
+    ClaudeCode,
+}
+
 impl Default for Anomalies {
     fn default() -> Self {
         Self {
@@ -862,6 +890,7 @@ impl Config {
             gates: Gates::default(),
             tui: Tui::default(),
             theme: Theme::default(),
+            tail: Tail::default(),
             row: Layout::default(),
             scope: Scope::default(),
             named_without_git: false,
@@ -1290,6 +1319,9 @@ wheel_notch_lines = 1
 [theme]
 background = "light"
 
+[tail.crop]
+claude = "claude-code"
+
 [row]
 identity = ["glyph", "id", "badge.metadata.blocked_on"]
 state    = ["agent", "anomalies", "progress"]
@@ -1429,6 +1461,7 @@ path = "/home/user/dev/cinder"
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
         assert_eq!(cfg.tui.wheel_notch_lines, 1);
         assert_eq!(cfg.theme.background, Background::Light);
+        assert_eq!(cfg.tail.crop_for("claude"), Some(Crop::ClaudeCode));
         assert_eq!(
             cfg.row,
             Layout {
@@ -1797,6 +1830,25 @@ path = "/home/user/dev/kadath"
             "three lines a notch is the convention a reader who says nothing gets"
         );
         assert_eq!(cfg.theme.background, Background::Dark);
+        assert_eq!(
+            cfg.tail.crop_for("claude"),
+            None,
+            "a pane is tailed uncropped unless the reader asked otherwise"
+        );
+    }
+
+    /// A crop is chosen by name from the strategies `bdi` ships, so a name it
+    /// does not ship is a typo, and a typo answered with no crop at all would
+    /// leave the reader looking at the tail they configured away.
+    #[test]
+    fn a_crop_strategy_bdi_does_not_ship_is_refused() {
+        let mistyped = format!("{ONE_PROJECT}\n[tail.crop]\nclaude = \"claude_code\"\n");
+
+        let refused = Config::from_toml(&mistyped).expect_err("a strategy bdi does not ship");
+
+        let said = format!("{refused:#}");
+        assert!(said.contains("claude_code"), "{said}");
+        assert!(said.contains("claude-code"), "names what it ships: {said}");
     }
 
     /// `bdi` cannot see the reader's background, so a reader who says
