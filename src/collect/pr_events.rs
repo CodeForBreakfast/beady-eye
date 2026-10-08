@@ -17,8 +17,8 @@ use crate::model::gate::Until;
 #[derive(Clone, Copy)]
 pub struct Event {
     /// The fields of GraphQL's `PullRequest` this event reads, beside the
-    /// `state` every event is given.
-    pub fields: &'static str,
+    /// `state` every event is given, each with what it selects.
+    pub fields: &'static [&'static str],
     /// What the pull request did, as a line reporting it says.
     pub happening: &'static str,
     /// What this event makes of the pull request, or nothing where the pull
@@ -63,43 +63,47 @@ impl Telling {
 /// Every event `bdi gates` acts on.
 pub const EVENTS: [Event; 8] = [
     Event {
-        fields: "isDraft",
+        fields: &["isDraft"],
         happening: "is ready for review",
         outcome: ready_for_review,
     },
     Event {
-        fields: "mergeCommit{oid}",
+        fields: &["mergeCommit{oid}"],
         happening: "merged",
         outcome: merged,
     },
     Event {
-        fields: "",
+        fields: &[],
         happening: "closed unmerged",
         outcome: closed_unmerged,
     },
     Event {
-        fields: "reviewDecision",
+        fields: &["reviewDecision"],
         happening: "is approved",
         outcome: approved,
     },
     Event {
-        fields: "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}}",
+        fields: &["commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}}"],
         happening: "has failing checks",
         outcome: checks_failed,
     },
     Event {
-        fields: "reviews(last:5){nodes{url state submittedAt author{login}}}",
+        fields: &["reviews(last:5){nodes{url state submittedAt author{login}}}"],
         happening: "was reviewed",
         outcome: reviewed,
     },
     Event {
-        fields: "mergeable headRefOid headRef{target{...on Commit{committedDate}}} \
-                 baseRef{target{...on Commit{committedDate}}}",
+        fields: &[
+            "mergeable",
+            "headRefOid",
+            "headRef{target{...on Commit{committedDate}}}",
+            "baseRef{target{...on Commit{committedDate}}}",
+        ],
         happening: "conflicts with its base",
         outcome: conflicting,
     },
     Event {
-        fields: "comments(last:5){nodes{url createdAt author{login}}}",
+        fields: &["comments(last:5){nodes{url createdAt author{login}}}"],
         happening: "was commented on",
         outcome: commented,
     },
@@ -109,10 +113,19 @@ pub const EVENTS: [Event; 8] = [
 pub fn fields(events: &[Event]) -> String {
     events
         .iter()
-        .map(|event| event.fields)
-        .filter(|fields| !fields.is_empty())
+        .flat_map(|event| event.fields)
+        .copied()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+impl Event {
+    /// Whether this event reads the field GraphQL answers under `name`.
+    pub fn reads(&self, name: &str) -> bool {
+        self.fields
+            .iter()
+            .any(|field| field.split(['(', '{']).next() == Some(name))
+    }
 }
 
 impl Outcome {
@@ -428,6 +441,7 @@ mod tests {
         let observed = Observed {
             state,
             fields: serde_json::from_str(fields).expect("the fields parse"),
+            refused: Vec::new(),
         };
         approved(&pr, &observed).expect("the fields read").is_some()
     }
@@ -455,6 +469,7 @@ mod tests {
         let observed = Observed {
             state,
             fields: serde_json::from_str(fields).expect("the fields parse"),
+            refused: Vec::new(),
         };
         match event(&pr, &observed).expect("the fields read") {
             Some(Outcome::Tell(tellings)) => tellings,
