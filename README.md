@@ -174,6 +174,21 @@ the project whose entry states `prefix = "dun"`, and draws it beneath `ark-5`.
 A qualified form such as `dunwich:dun-7` is not a bead id, so `bdi` cannot
 place it and draws it as not in any configured project.
 
+`bd dep list` cannot see `ark-5` waiting on `dun-7`, because the edge is stored
+in arkham's tracker. The forest can. Every unfinished bead is in some tree,
+with each bead it depends on drawn directly beneath it. So this lists every
+unfinished bead in any project that depends on `dun-7`, with its status, and
+goes on listing them after `dun-7` closes:
+
+```console
+$ bdi --json --all --all-projects | jq --arg project dunwich --arg id dun-7 '
+    [.trees[].nodes
+     | foreach .[] as $node ([]; .[:$node.depth] + [$node])
+     | select(.[-1] | .project == $project and .id == $id and .edge == "blocks")
+     | .[-2] | {project, id, status}]
+    | unique'
+```
+
 `bdi watch` reads every configured project and holds what it read, polling as
 the eye does and taking the same reports on a socket of its own. Run one per
 machine under whatever supervises your processes, such as a systemd user unit or

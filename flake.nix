@@ -125,11 +125,12 @@
         # tests/no_config.rs runs the binary as a fresh machine would, and
         # bdi asks bd where the tracker is. The worktree-listing test builds
         # a repository and adds a worktree to it, so git has to be here too.
-        # Only the check phase needs either; nothing at runtime is built
-        # against them.
+        # One test runs a `jq` filter README documents. Only the check phase
+        # needs any of them; nothing at runtime is built against them.
         nativeCheckInputs = [
           beads.packages.${pkgs.stdenv.hostPlatform.system}.bd
           pkgs.git
+          pkgs.jq
         ];
 
         # The package is named for the crate, the binary for the command.
@@ -3627,6 +3628,7 @@ and a second line"
           pkgs.rustfmt
           pkgs.clippy
           pkgs.rust-analyzer
+          pkgs.jq
           boundTheToolsOwnName
           pkgs.watchexec
           rerunBdiOnChange
