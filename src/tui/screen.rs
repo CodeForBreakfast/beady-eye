@@ -3484,6 +3484,21 @@ mod tests {
         );
     }
 
+    /// A cropped pane is read whole, and a hidden band reads it no more than
+    /// any other pane.
+    #[test]
+    fn a_hidden_tail_reads_a_cropped_pane_no_more() {
+        let (mut shown, panes) = shown_cropping_claude_code_over("claude");
+        let opened_on = panes.reads();
+
+        press(&mut shown, KeyCode::Char('t'));
+        let later = an_instant() + EVERY * 100;
+        shown.tailed(read(A_SELECTED_PANE, &A_CLAUDE_CODE_SCREEN), later);
+        shown.reread(later);
+
+        assert_eq!(panes.reads(), opened_on);
+    }
+
     /// A crop is the agent's, so a pane holding an agent the reader gave none
     /// is read and drawn exactly as a pane was before there were crops.
     #[test]
