@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::collect::run::{Env, RunFailure, Runner};
+use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
 use crate::model::gate::Repository;
 
 /// Where a pull request stands on GitHub, which every event reads.
@@ -90,7 +90,7 @@ impl QueryError {
 ///
 /// An answer whose every error refuses one pull request's field is read for
 /// all it does hold, and each refusal is handed back with the pull request
-/// it refused. Any other error fails the query as a whole.
+/// it refused. Any other error, or a rate limit, fails the query as a whole.
 pub fn pull_requests(
     runner: &dyn Runner,
     repo: &Repository,
@@ -122,7 +122,8 @@ pub fn pull_requests(
         Ok(out) => serde_json::from_str::<Queried>(&out).map_err(|e| RunFailure::parse("gh", e))?,
         Err(printed) => match serde_json::from_str::<Queried>(&printed.stdout) {
             Ok(queried)
-                if !queried.errors.is_empty()
+                if printed.failure.kind != FailureKind::RateLimited
+                    && !queried.errors.is_empty()
                     && queried.errors.iter().all(|error| error.refusal().is_some()) =>
             {
                 queried
@@ -554,6 +555,21 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    /// A rate limit is waited out whatever the answer beside it holds.
+    #[test]
+    fn a_rate_limit_fails_the_query_however_its_errors_are_placed() {
+        let runner = FakeRunner::default().failing_having_printed(
+            &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+            CHECKS_REFUSED_ON_7,
+            exited(FailureKind::RateLimited),
+        );
+
+        assert_eq!(
+            queried(&runner, None),
+            Err(exited(FailureKind::RateLimited))
+        );
     }
 
     #[test]
