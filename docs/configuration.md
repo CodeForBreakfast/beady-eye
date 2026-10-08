@@ -949,6 +949,14 @@ on, and acts on what GitHub says:
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
 | a draft with no failing checks, no review, no conflict and no comment | nothing |
 
+A gate tells only what happened after it was made, since whoever made it could
+already see the rest. A review dates from when it was submitted, a comment from
+when it was made, and failing checks from when the first check to fail finished.
+GitHub does not say when a conflict began, so a conflict dates from the later of
+the head commit and the base branch's latest commit. A conflict that stood
+before the gate is still told once the base moves on. A close without a merge
+is told however old the gate is.
+
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
 as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
 Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is

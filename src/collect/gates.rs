@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fmt;
 
+use chrono::{DateTime, Utc};
+
 use crate::collect::bd::{Cli, Settling};
 use crate::collect::github::{self, Observed};
 use crate::collect::pr_events::{self, Event, Outcome};
@@ -31,6 +33,8 @@ pub struct PrGate {
     pub awaits: Result<Wait, Vec<Fault>>,
     /// The beads the gate holds back.
     pub blocks: Vec<String>,
+    /// When the gate was made, where the tracker says.
+    pub made: Option<DateTime<Utc>>,
 }
 
 /// What a gate waits for, and of which pull request.
@@ -130,6 +134,8 @@ pub struct Waiting {
     pub until: Until,
     /// The beads the gate holds back.
     pub blocks: Vec<String>,
+    /// When the gate was made, where the tracker says.
+    pub made: Option<DateTime<Utc>>,
 }
 
 /// Which bead has been told what, as far as this process knows. A bead it
@@ -330,10 +336,10 @@ fn outcomes(
 fn is_new(outcome: &Outcome, waiting: &[Waiting], told: &Told) -> bool {
     waiting.iter().any(|gate| match outcome {
         Outcome::Resolve { awaited, .. } => awaited(gate.until),
-        Outcome::Tell(texts) => gate.blocks.iter().any(|bead| {
-            texts
-                .iter()
-                .any(|text| !told.knows(&gate.project, bead, text))
+        Outcome::Tell(tellings) => gate.blocks.iter().any(|bead| {
+            tellings.iter().any(|telling| {
+                telling.is_news_to(gate.made) && !told.knows(&gate.project, bead, &telling.text)
+            })
         }),
     })
 }
@@ -370,17 +376,21 @@ fn acted(
                     });
                 }
             }
-            Outcome::Tell(texts) => {
-                let held_back: BTreeSet<&String> = concerned
+            Outcome::Tell(tellings) => {
+                let open: Vec<&PrGate> = concerned
                     .filter(|gate| !closed.contains(&gate.id))
-                    .flat_map(|gate| &gate.blocks)
                     .collect();
-                for text in texts {
-                    for bead in &held_back {
+                for telling in tellings {
+                    let held_back: BTreeSet<&String> = open
+                        .iter()
+                        .filter(|gate| telling.is_news_to(gate.made))
+                        .flat_map(|gate| &gate.blocks)
+                        .collect();
+                    for bead in held_back {
                         acts.push(Act {
-                            bead: (*bead).clone(),
+                            bead: bead.clone(),
                             happening,
-                            done: tell(tracker, project, bead, text, told),
+                            done: tell(tracker, project, bead, &telling.text, told),
                         });
                     }
                 }
@@ -458,6 +468,7 @@ impl PrGate {
             repo: repo.map(str::to_string),
             awaits,
             blocks,
+            made: gate.created_at,
         }
     }
 }
@@ -566,6 +577,7 @@ mod tests {
                     until: Until::Merged,
                 }),
                 blocks: vec!["ark-qca".to_string()],
+                made: "2026-10-06T08:24:48Z".parse().ok(),
             }
         );
         assert_eq!(
@@ -605,6 +617,7 @@ mod tests {
                 repo: None,
                 awaits: Err(vec![Fault::NoRepo]),
                 blocks: vec!["ark-92q".to_string()],
+                made: "2026-10-06T08:24:52Z".parse().ok(),
             }
         );
     }
@@ -739,7 +752,7 @@ mod tests {
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -1598,6 +1611,91 @@ mod tests {
         assert_eq!(again, [Settled::NothingNew]);
     }
 
+    /// When the captured tracker made ark-eb1, the gate waiting on #7.
+    const EB1_MADE: &str = "2026-10-06T08:24:49Z";
+
+    fn made_at(mut awaited: Awaited, made: &str) -> Awaited {
+        for gate in &mut awaited.waiting {
+            gate.made = made.parse().ok();
+        }
+        awaited
+    }
+
+    /// #7 open with failing checks, a review, a conflict and a comment, each
+    /// of them `at`.
+    fn everything_at(at: &str) -> String {
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,
+            "commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"nodes":[{{"conclusion":"FAILURE","completedAt":"{at}"}}]}}}}}}}}]}},
+            "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}}]}},
+            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
+            "comments":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-12","createdAt":"{at}","author":{{"login":"bob"}}}}]}}}}"#
+        )
+    }
+
+    /// Whoever made a gate could already see what its pull request had done,
+    /// so a bdi that newly tells it would wake every seat for old news.
+    #[test]
+    fn a_gate_made_after_failing_checks_a_review_a_conflict_and_a_comment_tells_none_of_them() {
+        let runner = captured(FakeRunner::default(), "arkham").with(
+            &viewed(7),
+            &answer(7, &everything_at("2026-10-06T08:24:48Z")),
+        );
+        let looked = made_at(awaited(7, Until::Merged, &["ark-2ud", "ark-45c"]), EB1_MADE);
+
+        let swept = settled_together(&runner, &[looked]);
+        assert_eq!(swept, [Settled::NothingNew]);
+        assert_eq!(runner.calls().len(), 1, "only GitHub was asked");
+
+        let delivered = settled(&runner, &[project("arkham")], &pr(7));
+        assert_eq!(acts(delivered), []);
+        assert_eq!(writes(&runner), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_gate_made_before_failing_checks_a_review_a_conflict_and_a_comment_tells_each_once() {
+        let tellings = |bead| {
+            [
+                checks_failed_telling("arkham", bead, "a1b2c3"),
+                review_telling(bead, "alice", "commented", 11),
+                conflict_telling("arkham", bead, "a1b2c3"),
+                comment_telling(bead, "bob", 12),
+            ]
+        };
+        let mut runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(7), &answer(7, &everything_at(EB1_MADE)));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner.with(&comments_on("arkham", bead), NO_COMMENTS);
+            for telling in tellings(bead) {
+                runner = runner.with(&telling, &format!("Comment added to {bead}\n"));
+            }
+        }
+        let told = Told::default();
+        let looked = [made_at(
+            awaited(7, Until::Merged, &["ark-2ud", "ark-45c"]),
+            EB1_MADE,
+        )];
+        let sweep = || {
+            settle_together(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                &EVENTS,
+                &looked,
+                &told,
+            )
+            .collect::<Vec<_>>()
+        };
+
+        sweep();
+        let again = sweep();
+
+        let [a, b, c, d] = tellings("ark-2ud");
+        let [e, f, g, h] = tellings("ark-45c");
+        assert_eq!(writes(&runner), [a, e, b, f, c, g, d, h]);
+        assert_eq!(again, [Settled::NothingNew]);
+    }
+
     fn comments_read(runner: &FakeRunner) -> usize {
         runner
             .calls()
@@ -2045,6 +2143,7 @@ mod tests {
                 project: "arkham".to_string(),
                 until,
                 blocks: blocks.iter().map(|bead| bead.to_string()).collect(),
+                made: None,
             }],
         }
     }
@@ -2109,7 +2208,7 @@ mod tests {
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
@@ -2177,8 +2276,12 @@ mod tests {
                 head_ref_oid: String,
             }
             let Fields { head_ref_oid } = serde::Deserialize::deserialize(&observed.fields)?;
-            Ok((observed.state == github::State::Open)
-                .then(|| Outcome::Tell(vec![format!("Pull request {pr} is at {head_ref_oid}.")])))
+            Ok((observed.state == github::State::Open).then(|| {
+                Outcome::Tell(vec![pr_events::Telling {
+                    text: format!("Pull request {pr} is at {head_ref_oid}."),
+                    happened: None,
+                }])
+            }))
         },
     };
 
