@@ -286,7 +286,7 @@ and a watcher on the same machine. Add this repository as a marketplace pinned
 to a plugin release, and install the plugin from it:
 
 ```console
-$ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.2.1
+$ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.2.2
 $ claude plugin install beady-eye@beady-eye
 ```
 
