@@ -629,6 +629,7 @@ fn answered(
                 | Action::CycleSpine
                 | Action::CycleSpineForest
                 | Action::ToggleFilter
+                | Action::ToggleTail
                 | Action::FocusForest
                 | Action::Search
                 | Action::NextMatch

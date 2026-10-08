@@ -24,6 +24,7 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
 use crate::view::bindings::key_bindings;
+use crate::view::draw::TailBand;
 use crate::view::forest::{self, Forest};
 use crate::view::lines::Place;
 use crate::view::phrase;
@@ -137,6 +138,9 @@ struct Shown {
     /// puts on the screen does and needs no program outside it.
     clipboard: Box<dyn io::Write>,
     tail: Tail,
+    /// Whether the band is on the screen at all. Shown at every start: the
+    /// reader's choice lasts the run and no longer.
+    tail_band: TailBand,
     /// The pane the band on screen is about, so a selection moving within it
     /// does not spend a call on the provider for the answer already drawn.
     tailing: Option<PaneKey>,
@@ -245,6 +249,7 @@ impl Shown {
         let mut shown = Self {
             tail: tail::tail(&forest),
             tailing: tail::target(&forest).pane().cloned(),
+            tail_band: TailBand::Shown,
             forest,
             panes,
             clipboard,
@@ -372,7 +377,7 @@ impl Shown {
     /// trade the bound is spent on: the tail can fall behind the selection,
     /// and the keyboard never does.
     fn ask(&mut self) {
-        if self.reading != Reading::Nothing {
+        if self.reading != Reading::Nothing || self.tail_band == TailBand::Hidden {
             return;
         }
         let Tail::Reading { pane } = &self.tail else {
@@ -497,6 +502,30 @@ impl Shown {
         }
     }
 
+    /// Hide the band, or bring it back with a fresh read of the selected pane.
+    ///
+    /// Nothing reads the pane while the band is hidden, since nothing would be
+    /// drawn from the read. So hiding supersedes a read already out and
+    /// disarms the next one, and `ask` asks for nothing until the band is
+    /// back. Coming back is `retail`: the rows the band held when it went are
+    /// as old as the hiding, and the band says it is reading until the answer
+    /// lands.
+    fn toggle_tail(&mut self) {
+        match self.tail_band {
+            TailBand::Shown => {
+                self.tail_band = TailBand::Hidden;
+                if self.reading == Reading::Outstanding {
+                    self.reading = Reading::Superseded;
+                }
+                self.due = None;
+            }
+            TailBand::Hidden => {
+                self.tail_band = TailBand::Shown;
+                self.retail();
+            }
+        }
+    }
+
     /// Follow the selection, where it has left the pane the tail is showing.
     fn follow(&mut self) {
         if tail::moved_on(&self.forest, self.tailing.as_ref()) {
@@ -531,7 +560,7 @@ impl Shown {
     /// than left on the last frame's, so a pointer is answered for the screen
     /// it pointed at whatever has been drawn since.
     fn clicked(&mut self, screen: Rect, row: u16) -> bool {
-        let bands = draw::regions(screen, self.forest.lines().len());
+        let bands = draw::regions(screen, self.forest.lines().len(), self.tail_band);
         self.forest.fit(bands.forest.height as usize);
 
         match draw::line_at(
@@ -740,6 +769,10 @@ impl Shown {
         }
         if action == Action::NextRelated {
             return self.step_related();
+        }
+        if action == Action::ToggleTail {
+            self.toggle_tail();
+            return true;
         }
         if action == Action::CopyId {
             return self.copy_id();
@@ -1006,31 +1039,24 @@ fn said_of(landed: forest::Landed) -> Said {
 /// broken. A window goes on last because it sits over the forest rather
 /// than in place of it.
 ///
-/// Answers how many of the pane's lines the band had room for, under its rule.
+/// Answers how many of the pane's lines the band has room for under its rule,
+/// hidden or not, so a band brought back asks for a band's worth.
 #[allow(clippy::too_many_arguments)]
 fn paint(
     frame: &mut Frame,
     forest: &mut Forest,
     layout: &Layout,
     tail: draw::Band<'_>,
+    tail_band: TailBand,
     over: Over<'_>,
     foot: draw::Foot,
     collecting: &[Awaited],
     lapsed: &[String],
     now: DateTime<Utc>,
 ) -> u16 {
-    let bands = draw::regions(frame.area(), forest.lines().len());
+    let bands = draw::regions(frame.area(), forest.lines().len(), tail_band);
     forest.fit(bands.forest.height as usize);
-    draw::draw(
-        frame,
-        frame.area(),
-        forest,
-        layout,
-        collecting,
-        lapsed,
-        now,
-        foot,
-    );
+    draw::draw(frame, bands, forest, layout, collecting, lapsed, now, foot);
     draw::draw_tail(frame, bands.tail, tail);
     match over {
         Over::Nothing => {}
@@ -1052,7 +1078,10 @@ fn paint(
             }
         }
     }
-    bands.tail.height.saturating_sub(1)
+    draw::regions(frame.area(), forest.lines().len(), TailBand::Shown)
+        .tail
+        .height
+        .saturating_sub(1)
 }
 
 /// The window over the forest, where one is up, with what drawing it needs:
@@ -1189,6 +1218,7 @@ impl View for Screen {
         let Shown {
             forest,
             tail,
+            tail_band,
             show,
             collecting,
             lapsed,
@@ -1220,6 +1250,7 @@ impl View for Screen {
                 forest,
                 &drawing.layout,
                 band,
+                *tail_band,
                 over,
                 foot,
                 collecting,
@@ -1352,7 +1383,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 36 more bindings · no room on a screen this short",
+                "  … 37 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1462,6 +1493,7 @@ mod tests {
                 "  s         cycle which copy of a bead opens, under the selected node",
                 "  S         cycle which copy of a bead opens, across the whole forest",
                 "  F         draw the selected bead as the only root, or put the forest back",
+                "  t         hide or show the pane's output under the forest",
                 "  /         find part of a bead's id or title, wherever the forest draws it",
                 "  n, ^G     go to the next bead matching the search",
                 "  N, ^T     go to the one before it",
@@ -1680,6 +1712,7 @@ mod tests {
     fn painted(
         forest: &mut Forest,
         tail: &Tail,
+        tail_band: TailBand,
         over: Over<'_>,
         pressed: Pressed<'_>,
         collecting: &[Awaited],
@@ -1703,6 +1736,7 @@ mod tests {
                     tail,
                     background: Background::Dark,
                 },
+                tail_band,
                 over,
                 foot,
                 collecting,
@@ -1722,6 +1756,7 @@ mod tests {
         painted(
             forest,
             tail,
+            TailBand::Shown,
             over,
             Pressed::default(),
             &[],
@@ -1751,6 +1786,7 @@ mod tests {
         painted(
             forest,
             tail,
+            TailBand::Shown,
             Over::Nothing,
             Pressed::default(),
             collecting,
@@ -1817,6 +1853,7 @@ mod tests {
             painted(
                 &mut forest,
                 &Tail::Silent("nothing to tail"),
+                TailBand::Shown,
                 Over::Nothing,
                 Pressed::default(),
                 &[],
@@ -2359,7 +2396,11 @@ mod tests {
     /// viewport that scrolled back to the top is the same bug wearing a
     /// different hat, and only the rows show the difference.
     fn forest_band(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
-        let bands = draw::regions(Rect::new(0, 0, width, height), shown.forest.lines().len());
+        let bands = draw::regions(
+            Rect::new(0, 0, width, height),
+            shown.forest.lines().len(),
+            TailBand::Shown,
+        );
         let rows = screen_of(&mut shown.forest, &shown.tail, width, height, Over::Nothing).rows();
         rows[..bands.forest.height as usize].to_vec()
     }
@@ -3152,7 +3193,7 @@ mod tests {
     fn a_click_selects_the_line_the_forest_drew_on_that_row() {
         let screen = Rect::new(0, 0, 60, 24);
         let mut shown = shown(a_grove(30));
-        let band = draw::regions(screen, shown.forest.lines().len()).forest;
+        let band = draw::regions(screen, shown.forest.lines().len(), shown.tail_band).forest;
 
         assert!(shown.clicked(screen, band.y + 3));
         assert_eq!(shown.forest.selected_line(), 3);
@@ -3180,7 +3221,7 @@ mod tests {
     fn a_click_beneath_the_forest_selects_nothing() {
         let screen = Rect::new(0, 0, 60, 24);
         let mut shown = shown(a_grove(30));
-        let bands = draw::regions(screen, shown.forest.lines().len());
+        let bands = draw::regions(screen, shown.forest.lines().len(), shown.tail_band);
         shown.clicked(screen, bands.forest.y + 3);
         let selected = shown.forest.selected_line();
 
@@ -3547,6 +3588,112 @@ mod tests {
             None,
             "nothing is due while a read is out"
         );
+    }
+
+    /// The screen as `Shown` would draw it, with the band hidden or not as
+    /// the reader left it.
+    fn shown_screen(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
+        painted(
+            &mut shown.forest,
+            &shown.tail,
+            shown.tail_band,
+            Over::Nothing,
+            Pressed::default(),
+            &[],
+            &[],
+            width,
+            height,
+        )
+        .rows()
+    }
+
+    /// `t` takes the band away and the forest draws on its rows, and `t`
+    /// again puts it back where it was.
+    #[test]
+    fn t_gives_the_tails_rows_to_the_forest_and_takes_them_back() {
+        let (mut shown, _) = shown_asking(a_grove(30));
+        let rule = |screen: &[String]| screen.iter().position(|row| row.starts_with('─'));
+        let last_bead = |screen: &[String]| {
+            screen
+                .iter()
+                .rposition(|row| row.contains("a bead in the grove"))
+                .expect("the forest draws beads")
+        };
+        let before = shown_screen(&mut shown, 60, 24);
+        let under_the_forest = rule(&before).expect("the band's rule is drawn");
+
+        assert!(press(&mut shown, KeyCode::Char('t')));
+        let hidden = shown_screen(&mut shown, 60, 24);
+
+        assert_eq!(rule(&hidden), None, "no band, so no rule: {hidden:#?}");
+        assert_eq!(
+            last_bead(&hidden),
+            22,
+            "the forest runs down to the row above the keys: {hidden:#?}"
+        );
+
+        assert!(press(&mut shown, KeyCode::Char('t')));
+        let back = shown_screen(&mut shown, 60, 24);
+
+        assert_eq!(rule(&back), Some(under_the_forest), "{back:#?}");
+        assert_eq!(last_bead(&back), last_bead(&before), "{back:#?}");
+    }
+
+    /// Nothing is drawn from a read while the band is hidden, so none is
+    /// asked for: not the one an answer already out would have asked for
+    /// next, not one on the band's clock, and not one for a pane the
+    /// selection moves on to. Bringing the band back asks for the selected
+    /// pane at once, and says it is reading rather than show rows as old as
+    /// the hiding.
+    #[test]
+    fn a_hidden_tail_reads_no_pane_until_it_is_shown_again() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+        let opened_on = panes.reads();
+        let answered = an_instant();
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), answered);
+        shown.reread(answered + EVERY);
+        let reading = panes.reads();
+        assert_eq!(reading.len(), opened_on.len() + 1, "a read is out");
+
+        press(&mut shown, KeyCode::Char('t'));
+        let later = answered + EVERY * 100;
+        shown.tailed(read(A_SELECTED_PANE, &["what it says next"]), later);
+        assert_eq!(
+            shown.rereads_in(later),
+            None,
+            "nothing is due while the band is hidden"
+        );
+        shown.reread(later);
+        to_the_last_row(&mut shown);
+
+        assert_eq!(panes.reads(), reading, "nothing was read while hidden");
+
+        press(&mut shown, KeyCode::Char('t'));
+        let resting_on = match &shown.tail {
+            Tail::Reading { pane } => pane.clone(),
+            other => panic!("the band says it is reading: {other:?}"),
+        };
+        assert_eq!(
+            panes.reads(),
+            [reading, vec![format!("{} {}", resting_on.id, tail::LINES)]].concat(),
+            "the pane the selection rests on is read as the band comes back"
+        );
+    }
+
+    /// The band is hidden with nothing out and a read due: the due read is
+    /// not made.
+    #[test]
+    fn hiding_the_tail_disarms_the_read_that_was_due() {
+        let (mut shown, panes) = shown_asking(a_staffed_grove(6));
+        let answered = an_instant();
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), answered);
+        let filled = panes.reads();
+
+        press(&mut shown, KeyCode::Char('t'));
+        shown.reread(answered + EVERY);
+
+        assert_eq!(panes.reads(), filled);
+        assert_eq!(shown.rereads_in(answered + EVERY), None);
     }
 
     /// A pane that has said nothing new since the last read is the common
@@ -4527,6 +4674,7 @@ mod tests {
         painted(
             &mut shown.forest,
             &shown.tail,
+            TailBand::Shown,
             Over::Nothing,
             Pressed {
                 said: shown.said.as_ref(),
@@ -4697,7 +4845,11 @@ mod tests {
         };
 
         let rows = screen_of(&mut forest, &tail, 40, 12, Over::Nothing).rows();
-        let bands = draw::regions(Rect::new(0, 0, 40, 12), forest.lines().len());
+        let bands = draw::regions(
+            Rect::new(0, 0, 40, 12),
+            forest.lines().len(),
+            TailBand::Shown,
+        );
 
         assert!(
             rows[bands.tail.y as usize].contains("w:p1"),

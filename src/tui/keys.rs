@@ -110,6 +110,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
+        keys: &[alone(KeyCode::Char('t'), "t")],
+        action: Action::ToggleTail,
+        does: "hide or show the pane's output under the forest",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Char('/'), "/")],
         action: Action::Search,
         does: "find part of a bead's id or title, wherever the forest draws it",
@@ -538,6 +544,7 @@ pub(super) mod tests {
             Action::CycleSpine,
             Action::CycleSpineForest,
             Action::ToggleFilter,
+            Action::ToggleTail,
             Action::Focus,
             Action::FocusForest,
             Action::ShowBead,
@@ -574,6 +581,7 @@ pub(super) mod tests {
                 | Action::CycleSpine
                 | Action::CycleSpineForest
                 | Action::ToggleFilter
+                | Action::ToggleTail
                 | Action::Focus
                 | Action::FocusForest
                 | Action::ShowBead
