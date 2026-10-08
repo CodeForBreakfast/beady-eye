@@ -602,6 +602,7 @@ impl Forest {
                 true
             }
             Action::Focus
+            | Action::ToggleTail
             | Action::ShowBead
             | Action::NextRelated
             | Action::Back
