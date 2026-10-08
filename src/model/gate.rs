@@ -40,7 +40,7 @@ pub enum Fault {
 
 /// Whether `gate` waits on a pull request, whichever one that is.
 pub fn awaits_a_pull_request(gate: &Bead) -> bool {
-    gate.value("await_type") == Some(PULL_REQUEST)
+    gate.value("await_type").as_deref() == Some(PULL_REQUEST)
 }
 
 /// The repository `gate` names, where it names one.

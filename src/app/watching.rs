@@ -13,8 +13,9 @@ use serde_json::json;
 use crate::collect::watched::PROTOCOL;
 use crate::config::Reach;
 use crate::model::snapshot::{TrackerFailure, TrackerState};
+use crate::model::types::Printed;
 
-use super::watcher::Held;
+use super::watcher::{BeadReadiness, Held};
 
 /// What one line asks the watcher to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,35 +181,40 @@ fn differs(was: &Held, is: &Held) -> bool {
     was.ready != is.ready
         || was.blocked_by != is.blocked_by
         || was.bd != is.bd
-        || (was.row != is.row && acted_on(was) != acted_on(is))
+        || (was.bead.row != is.bead.row && acted_on(was) != acted_on(is))
 }
 
-fn acted_on(held: &Held) -> Option<Vec<(&String, &serde_json::Value)>> {
-    held.row.as_deref().map(|row| {
-        row.iter()
-            .filter(|(field, _)| !HEARTBEAT.contains(&field.as_str()))
-            .collect()
-    })
+fn acted_on(held: &Held) -> serde_json::Map<String, serde_json::Value> {
+    let mut fields = held.bead.row.fields();
+    fields.retain(|field, _| !HEARTBEAT.contains(&field.as_str()));
+    fields
 }
 
 fn is_closed(held: &Held) -> bool {
-    held.row
-        .as_ref()
-        .and_then(|row| row.get("status"))
-        .and_then(serde_json::Value::as_str)
-        == Some("closed")
+    held.bead.status.is_closed()
+}
+
+/// A `bead` line: bdi's readiness and bd's beside the row bd printed.
+#[derive(Serialize)]
+struct BeadLine<'a> {
+    bd: &'a BeadReadiness,
+    blocked_by: &'a [String],
+    line: &'static str,
+    project: &'a str,
+    ready: bool,
+    row: &'a Printed,
 }
 
 fn bead_line(project: &str, held: &Held) -> String {
-    json!({
-        "line": "bead",
-        "project": project,
-        "ready": held.ready,
-        "blocked_by": held.blocked_by,
-        "bd": held.bd,
-        "row": held.row,
+    serde_json::to_string(&BeadLine {
+        bd: &held.bd,
+        blocked_by: &held.blocked_by,
+        line: "bead",
+        project,
+        ready: held.ready,
+        row: &held.bead.row,
     })
-    .to_string()
+    .expect("a bead line serialises")
 }
 
 fn gone_line(project: &str, id: &str) -> String {
@@ -271,17 +277,17 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::app::watcher::BeadReadiness;
+    use crate::collect::bd::bead_of;
 
     fn a_bead(id: &str, status: &str) -> (String, Held) {
-        let row = json!({ "id": id, "status": status });
+        let row = json!({ "id": id, "title": "", "status": status });
         let Value::Object(row) = row else {
             unreachable!("a row is an object")
         };
         (
             id.to_string(),
             Held {
-                row: Some(Arc::new(row)),
+                bead: Arc::new(bead_of(row).expect("the row reads")),
                 ready: false,
                 blocked_by: Vec::new(),
                 bd: BeadReadiness::default(),
@@ -291,6 +297,14 @@ mod tests {
 
     fn beads(of: &[(&str, &str)]) -> BTreeMap<String, Held> {
         of.iter().map(|(id, status)| a_bead(id, status)).collect()
+    }
+
+    /// `held` with `value` written into its row under `field`.
+    fn writing(held: &mut Held, field: &str, value: Value) {
+        let bead = Arc::make_mut(&mut held.bead);
+        let mut fields = bead.row.fields();
+        fields.insert(field.to_string(), value);
+        bead.row = Printed::of(&fields).expect("the row prints");
     }
 
     fn watching(watches: &[Watch]) -> Interest {
@@ -411,13 +425,11 @@ mod tests {
         let mut interest = watching(&[project(false)]);
         interest.catch_up("dunwich", &beads(&[("dun-2", "closed")]));
         let mut commented = beads(&[("dun-2", "closed")]);
-        let row = Arc::make_mut(
-            commented
-                .get_mut("dun-2")
-                .and_then(|held| held.row.as_mut())
-                .expect("a row"),
+        writing(
+            commented.get_mut("dun-2").expect("held"),
+            "comment_count",
+            json!(1),
         );
-        row.insert("comment_count".to_string(), json!(1));
 
         assert_eq!(
             said(&interest.catch_up("dunwich", &commented)),
@@ -467,7 +479,7 @@ mod tests {
 
         assert_eq!(
             line,
-            json!({ "line": "bead", "project": "dunwich", "ready": false, "blocked_by": ["fer-4"], "bd": { "ready": true, "blocked_by": [] }, "row": { "id": "dun-1", "status": "open" } })
+            json!({ "line": "bead", "project": "dunwich", "ready": false, "blocked_by": ["fer-4"], "bd": { "ready": true, "blocked_by": [] }, "row": { "id": "dun-1", "title": "", "status": "open" } })
         );
     }
 
@@ -499,17 +511,9 @@ mod tests {
         let mut interest = watching(&[project(false)]);
         interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
         let mut beating = beads(&[("dun-1", "open")]);
-        let row = Arc::make_mut(
-            beating
-                .get_mut("dun-1")
-                .and_then(|held| held.row.as_mut())
-                .expect("a row"),
-        );
-        row.insert("heartbeat_at".to_string(), json!("2026-08-30T10:21:02Z"));
-        row.insert(
-            "lease_expires_at".to_string(),
-            json!("2026-08-30T10:31:02Z"),
-        );
+        let held = beating.get_mut("dun-1").expect("held");
+        writing(held, "heartbeat_at", json!("2026-08-30T10:21:02Z"));
+        writing(held, "lease_expires_at", json!("2026-08-30T10:31:02Z"));
 
         assert_eq!(
             said(&interest.catch_up("dunwich", &beating)),
