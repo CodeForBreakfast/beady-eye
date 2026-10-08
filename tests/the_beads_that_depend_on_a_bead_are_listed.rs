@@ -21,7 +21,8 @@ const FILTER: &str = r#"
     [.trees[].nodes
      | foreach .[] as $node ([]; .[:$node.depth] + [$node])
      | select(.[-1] | .project == $project and .id == $id and .edge == "blocks")
-     | .[-2] | {project, id, status}]
+     | .[-2] | select(.status != "closed" and .status != "pinned")
+     | {project, id, status}]
     | unique"#;
 
 /// Dunwich's bead that the others wait on, closed; a bead of dunwich's own
@@ -38,7 +39,8 @@ const DUNWICH: &str = r#"[
 
 /// Arkham's beads waiting on dunwich's: one at the top of its tree, one under
 /// a parent, and one that waits on the first and so has dunwich's bead two
-/// levels beneath it.
+/// levels beneath it. A closed one under the same parent waited too, and is
+/// finished with it.
 const ARKHAM: &str = r#"[
   {"id":"ark-5","title":"copy the manuscript","status":"open","priority":2,
    "issue_type":"task","dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]},
@@ -46,6 +48,10 @@ const ARKHAM: &str = r#"[
    "priority":1,"issue_type":"epic"},
   {"id":"ark-1.2","title":"index the folios","status":"in_progress","priority":2,
    "issue_type":"task","parent":"ark-1",
+   "dependencies":[{"depends_on_id":"ark-1","type":"parent-child"},
+                   {"depends_on_id":"dun-7","type":"blocks"}]},
+  {"id":"ark-1.3","title":"photograph the folios","status":"closed","priority":2,
+   "issue_type":"task","parent":"ark-1","closed_at":"2026-08-29T09:00:00Z",
    "dependencies":[{"depends_on_id":"ark-1","type":"parent-child"},
                    {"depends_on_id":"dun-7","type":"blocks"}]},
   {"id":"ark-8","title":"bind the copy","status":"open","priority":3,

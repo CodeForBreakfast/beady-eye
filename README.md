@@ -185,7 +185,8 @@ $ bdi --json --all --all-projects | jq --arg project dunwich --arg id dun-7 '
     [.trees[].nodes
      | foreach .[] as $node ([]; .[:$node.depth] + [$node])
      | select(.[-1] | .project == $project and .id == $id and .edge == "blocks")
-     | .[-2] | {project, id, status}]
+     | .[-2] | select(.status != "closed" and .status != "pinned")
+     | {project, id, status}]
     | unique'
 ```
 
