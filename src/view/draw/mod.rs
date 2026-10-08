@@ -33,7 +33,7 @@ use crate::view::query::Query;
 use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
-pub use bands::{line_at, regions};
+pub use bands::{key_rows, line_at, regions};
 pub(crate) use bead::identity_widths;
 pub use tail::{draw_tail, Band};
 
@@ -139,7 +139,7 @@ pub fn draw(
     now: DateTime<Utc>,
     foot: Foot,
 ) {
-    let bands = regions(area);
+    let bands = regions(area, forest.lines().len());
     let lines = forest.lines();
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;

@@ -9,8 +9,9 @@ use crate::view::forest::Forest;
 use crate::view::lines::{Content, Item};
 use crate::view::phrase;
 
-/// How many lines of the pane the tail shows. The band reserved for it is
-/// this plus the rule that names the pane.
+/// How many lines of the pane the tail keeps where the forest needs the rest
+/// of the screen. The band reserved for it is this plus the rule that names
+/// the pane, and a forest that leaves more rows free gives the band those.
 pub const LINES: u16 = 6;
 
 /// What a pane has most recently written, or why there is nothing to show.

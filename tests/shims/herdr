@@ -18,8 +18,9 @@
 #                               set and holding no file for the session asked,
 #                               the list fails as a session that will not
 #                               answer does.
-#   BDI_SHIM_HERDR_VISIBLE      file holding what `agent read` answers with.
-#                               Unset, the read is refused.
+#   BDI_SHIM_HERDR_VISIBLE      file holding what `agent read` answers with,
+#                               cut to its last `--lines` lines as herdr cuts
+#                               the visible screen. Unset, the read is refused.
 #   BDI_SHIM_HERDR_HANGS_WHILE  path to the flag. While it is there, every
 #                               `agent read` waits for it to go away.
 #   BDI_SHIM_HERDR_HOLDING      path this writes while it is holding a read, so
@@ -84,6 +85,14 @@ if [ "${1:-}" = "agent" ] && [ "${2:-}" = "read" ]; then
     if [ -n "${BDI_SHIM_HERDR_HOLDING:-}" ]; then rm -f "$BDI_SHIM_HERDR_HOLDING"; fi
   fi
   if [ -n "${BDI_SHIM_HERDR_VISIBLE:-}" ]; then
+    lines=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--lines" ]; then lines="${2:-}"; fi
+      shift
+    done
+    if [ -n "$lines" ]; then
+      exec tail -n "$lines" "$BDI_SHIM_HERDR_VISIBLE"
+    fi
     exec cat "$BDI_SHIM_HERDR_VISIBLE"
   fi
 fi
