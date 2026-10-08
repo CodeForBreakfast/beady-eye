@@ -3,31 +3,57 @@
 ![A screen-printed cosmic-horror poster: a colossal eye with a red pupil hangs in a green-black sky, tentacles trailing away behind it, while a line of small robots below hauls a chain of glowing beads under its gaze.](docs/images/beady-eye-hero.png)
 
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
-tracker you point it at. It draws each tracker's work as a tree, and beside
-every bead an agent has claimed, the live [herdr](https://herdr.dev) pane that
-agent is sitting in. Select a bead and the tail of its pane is drawn under the
-forest, so what the agent is doing is read off the same screen as the work it
-is doing it to.
+tracker you point it at, and over the [herdr](https://herdr.dev) panes of the
+agents working them. beads knows the work. herdr knows the agents. Neither has
+heard of the other, and neither has heard of GitHub. Something old has opened
+an eye over all three, and it does three things with what it sees.
 
-Run a few agents through one backlog and this is the view you wanted, and
-not one the agents were going to volunteer. beads knows the work. herdr knows
-the agents. Neither has heard of the other. Something old has opened an eye
-over both.
+- **It shows you the work.** Each tracker's work is drawn as a tree, and
+  beside every bead an agent has claimed sits the live pane that agent is in.
+  A bead waiting on another project's work has that work drawn beneath it,
+  whichever tracker holds it.
+- **It wakes the agents.** `bdi watch` keeps watch over every tracker at once.
+  A Claude Code session with the beady-eye plugin asks it to watch a bead, and
+  is woken the moment that bead changes.
+- **It settles waits on pull requests.** `bdi gates` asks GitHub where each
+  awaited pull request stands. A merge ends the bead's wait. A failing check,
+  a conflict, a review or a comment is passed on to the bead that waits.
 
 ![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
 Three of arkham's beads have a live agent beside them, and the band at the
 foot is what the selected one's pane is saying.
-`ark-5` is what else falls out of watching both at once: beads says an agent
+`ark-5` is what else falls out of watching beads and herdr at once: beads says an agent
 claimed it, herdr has no pane for that agent, and the eye says so. It has seen
 a pane die on a Tuesday before.
 
-The eye only looks. When there is something it must do, it grows a pseudopod
-for the job, the way a shoggoth grows a limb from its own body, and so far it
-has grown two. One carries a person's answer to the bead that asked for it.
-The other closes a bead's wait on a pull request once GitHub says the pull
-request has merged. Changing the work itself is still `bd`'s job, and the eye
-finds this arrangement acceptable.
+The other two jobs happen while you are looking elsewhere. When a pull request
+moves, the news finds whoever waits on it:
+
+```text
+    a pull request merges, fails a check, or is reviewed
+                              │
+                              ▼
+    bdi gates closes the bead's wait, or comments on the bead
+                              │
+                              ▼
+    bdi watch sees the bead change in its tracker
+                              │
+               ┌──────────────┴──────────────┐
+               ▼                             ▼
+    the plugin wakes the            the view redraws
+    Claude Code session             in front of you
+    waiting on that bead
+```
+
+Nobody polls GitHub by hand, and no agent sleeps through the answer.
+
+The eye only looks. Waking an agent is still looking, only louder. When there
+is something it must do, it grows a pseudopod for the job, the way a shoggoth
+grows a limb from its own body, and so far it has grown two. `bdi gates` is
+one. The other carries a person's answer to the bead that asked for it.
+Changing the work itself is still `bd`'s job, and the eye finds this
+arrangement acceptable.
 
 ## Summoning
 
