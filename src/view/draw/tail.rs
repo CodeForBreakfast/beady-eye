@@ -383,7 +383,58 @@ mod tests {
             ARGV,
             include_str!("../../../tests/fixtures/herdr_agent_read_ansi.txt"),
         );
-        tail::read(key("wQ:p1"), Herdr::new(&runner).read(&key("wQ:p1"), 6))
+        tail::read(
+            key("wQ:p1"),
+            Herdr::new(&runner).read(&key("wQ:p1"), 6),
+            None,
+        )
+    }
+
+    /// A Claude Code pane's whole screen, read the way the tail reads one it
+    /// has a crop for, and cropped by the strategy shipped for it.
+    fn a_cropped_claude_code_pane() -> Tail {
+        use crate::collect::agents::Agents;
+        use crate::collect::herdr::Herdr;
+        use crate::collect::run::testing::FakeRunner;
+        use crate::config::Crop;
+        use crate::view::tail;
+
+        let argv = format!(
+            "herdr --session default agent read wQ:p1 --source visible --lines {} --format ansi",
+            tail::WHOLE_SCREEN
+        );
+        let runner = FakeRunner::default().with(
+            &argv,
+            include_str!("../../../tests/fixtures/herdr_agent_read_claude_code_ansi.txt"),
+        );
+        tail::read(
+            key("wQ:p1"),
+            Herdr::new(&runner).read(&key("wQ:p1"), tail::WHOLE_SCREEN),
+            Some(Crop::ClaudeCode),
+        )
+    }
+
+    /// The bead: over a Claude Code pane, the band shows what the agent last
+    /// said and the line saying when it finished, newest at the bottom. None
+    /// of the input box reaches it — not its rules, not the suggestion
+    /// greyed into it, not the meter or the mode line beneath it — and a rule
+    /// the agent drew in its own message is the agent's, so it stays.
+    #[test]
+    fn a_claude_code_pane_is_tailed_above_its_input_box() {
+        let painted = tail_frame(&a_cropped_claude_code_pane(), 80, 7, 0).rows();
+        let rows: Vec<&str> = painted.iter().map(|row| row.trim_end()).collect();
+
+        assert_eq!(
+            rows[1..],
+            [
+                format!("    {}", "─".repeat(40)).as_str(),
+                "",
+                "    The second switch is dun-7.3, and its pane is still reading the map.",
+                "",
+                "  ✻ Worked for 3m 12s · done 14:05",
+                "",
+            ]
+        );
     }
 
     /// The bead: the band draws the pane's own colour and attributes, read

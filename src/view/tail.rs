@@ -1,13 +1,17 @@
 //! The tail of the selected bead's pane, shown beneath the forest.
 
+use ratatui::text::Line;
+
 use crate::collect::panes::Panes;
 use crate::collect::run::RunFailure;
+use crate::config::Crop;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::snapshot::{ProviderState, Snapshot};
 use crate::model::types::PaneKey;
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Item};
 use crate::view::phrase;
+use crate::view::sgr;
 
 /// How many lines of the pane the tail keeps where the forest needs the rest
 /// of the screen. The band reserved for it is this plus the rule that names
@@ -137,12 +141,64 @@ pub fn tail(forest: &Forest) -> Tail {
     }
 }
 
-/// The tail for what herdr said about a pane it was asked to read.
-pub fn read(pane: PaneKey, read: Result<Vec<String>, RunFailure>) -> Tail {
+/// What a read of a pane to be cropped asks for: the whole visible screen,
+/// because where to cut is found by looking at it. The provider clamps a count
+/// to the rows the screen holds.
+pub const WHOLE_SCREEN: u16 = u16::MAX;
+
+/// How many of a pane's rows to ask the provider for, where the band shows
+/// `band` of them and the reader gave the pane's agent `crop`.
+pub fn rows_to_read(crop: Option<Crop>, band: u16) -> u16 {
+    match crop {
+        Some(_) => WHOLE_SCREEN,
+        None => band,
+    }
+}
+
+/// The tail for what herdr said about a pane it was asked to read, cut where
+/// `crop` says.
+pub fn read(pane: PaneKey, read: Result<Vec<String>, RunFailure>, crop: Option<Crop>) -> Tail {
     match read {
-        Ok(lines) => Tail::Pane { pane, lines },
+        Ok(lines) => Tail::Pane {
+            pane,
+            lines: cropped(lines, crop),
+        },
         Err(failure) => Tail::Silent(phrase::pane_unreadable(failure.kind)),
     }
+}
+
+/// The rows above where `crop` cuts. A screen it finds nowhere to cut on keeps
+/// every row, because a band cropped to nothing reads as a pane with nothing
+/// to say.
+fn cropped(mut rows: Vec<String>, crop: Option<Crop>) -> Vec<String> {
+    let cut = match crop {
+        Some(Crop::ClaudeCode) => above_the_input_box(&rows),
+        None => None,
+    };
+    if let Some(cut) = cut {
+        rows.truncate(cut);
+    }
+    rows
+}
+
+/// Where Claude Code's input box starts: the second rule up from the foot of
+/// the screen, the first being the box's own bottom edge.
+fn above_the_input_box(rows: &[String]) -> Option<usize> {
+    sgr::lines(rows)
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, row)| is_a_rule(row))
+        .nth(1)
+        .map(|(at, _)| at)
+}
+
+/// A row drawn from its first column as nothing but a horizontal rule. A
+/// rule indented into an agent's message is part of the message.
+fn is_a_rule(row: &Line<'_>) -> bool {
+    let said: String = row.spans.iter().map(|span| span.content.as_ref()).collect();
+    let said = said.trim_end();
+    !said.is_empty() && said.chars().all(|c| c == '─')
 }
 
 /// Whether the tail must be read again for what the selection is on now.
@@ -375,7 +431,8 @@ mod tests {
         assert_eq!(
             read(
                 pane_key("w:p1"),
-                Ok(vec!["rebuilt .#larkspur, generation 541".to_string()])
+                Ok(vec!["rebuilt .#larkspur, generation 541".to_string()]),
+                None
             ),
             Tail::Pane {
                 pane: pane_key("w:p1"),
@@ -419,13 +476,83 @@ mod tests {
         );
     }
 
+    /// A screen with an input box at its foot, as Claude Code draws one.
+    fn a_screen_with_an_input_box() -> Vec<String> {
+        [
+            "done 14:05",
+            "",
+            "─────",
+            "❯ move the second switch",
+            "─────",
+            "  41%",
+        ]
+        .map(str::to_string)
+        .to_vec()
+    }
+
+    /// A pane whose agent the reader gave no crop is tailed as it was read,
+    /// input box and all.
+    #[test]
+    fn a_pane_with_no_crop_is_tailed_as_read() {
+        assert_eq!(
+            read(pane_key("w:p1"), Ok(a_screen_with_an_input_box()), None),
+            Tail::Pane {
+                pane: pane_key("w:p1"),
+                lines: a_screen_with_an_input_box(),
+            }
+        );
+    }
+
+    /// The Claude Code crop cuts at the top of the input box's two rules, so
+    /// the rows above it are what the band has to show.
+    #[test]
+    fn the_claude_code_crop_keeps_the_rows_above_the_input_box() {
+        assert_eq!(
+            read(
+                pane_key("w:p1"),
+                Ok(a_screen_with_an_input_box()),
+                Some(Crop::ClaudeCode)
+            ),
+            Tail::Pane {
+                pane: pane_key("w:p1"),
+                lines: vec!["done 14:05".to_string(), String::new()],
+            }
+        );
+    }
+
+    /// A screen the crop finds no input box on — a dialog drawn in its place,
+    /// or a pane that has not drawn one yet — is tailed as it was read. A
+    /// crop that found nothing to cut at and cut everything would leave the
+    /// band empty, which reads as a pane with nothing to say.
+    ///
+    /// The rule indented into the agent's message is the agent's, so it is
+    /// not the second of the two rules the crop looks for.
+    #[test]
+    fn a_crop_that_finds_no_input_box_leaves_the_rows_as_read() {
+        let one_rule: Vec<String> = ["  ─────", "done 14:05", "─────", "  41%"]
+            .map(str::to_string)
+            .to_vec();
+
+        assert_eq!(
+            read(
+                pane_key("w:p1"),
+                Ok(one_rule.clone()),
+                Some(Crop::ClaudeCode)
+            ),
+            Tail::Pane {
+                pane: pane_key("w:p1"),
+                lines: one_rule,
+            }
+        );
+    }
+
     /// A pane that went away between one poll and the next. The band says so
     /// rather than emptying: an empty band reads as a pane with nothing to
     /// say.
     #[test]
     fn a_pane_that_has_gone_degrades_to_a_phrase() {
         assert_eq!(
-            read(pane_key("w:p1"), Err(failure(FailureKind::Gone))),
+            read(pane_key("w:p1"), Err(failure(FailureKind::Gone)), None),
             Tail::Silent(phrase::pane_unreadable(FailureKind::Gone))
         );
     }
@@ -439,7 +566,7 @@ mod tests {
     #[test]
     fn every_way_a_read_can_fail_is_said_rather_than_drawn_blank() {
         for kind in every_failure_kind() {
-            let band = read(pane_key("w:p1"), Err(failure(kind)));
+            let band = read(pane_key("w:p1"), Err(failure(kind)), None);
 
             let Tail::Silent(said) = band else {
                 panic!("{kind:?} left the band drawing a pane rather than saying so")
