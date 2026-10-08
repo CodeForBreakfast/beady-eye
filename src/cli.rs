@@ -12,7 +12,8 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 
 use crate::app::{
-    armed_unread, hold, serve, Armed, Arming, Hold, Outstanding, ReadingTrackers, Reads,
+    allocate_from_one_arena, armed_unread, hold, serve, Armed, Arming, Hold, Outstanding,
+    ReadingTrackers, Reads,
 };
 use crate::app::{Asked, Wanted};
 use crate::collect::agents::{Agents, Unasked};
@@ -479,6 +480,7 @@ fn arming(polling: Polling) -> Arming {
 ///
 /// The config is read once. Replacing what the watcher reads is a restart.
 fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
+    allocate_from_one_arena();
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,

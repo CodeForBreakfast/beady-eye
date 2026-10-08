@@ -327,6 +327,24 @@ fn give_back_freed_memory() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 fn give_back_freed_memory() {}
 
+/// Have every thread of the watcher allocate from one arena.
+///
+/// glibc gives each thread that allocates an arena of its own, and what a
+/// thread frees stays in its arena for that thread to reuse. A read and a
+/// catch-up each free tens of megabytes on threads that then sit idle, so
+/// every arena keeps its own share resident and the watcher holds about
+/// twice what it uses. An arena once made is kept, so this comes before the
+/// watcher starts any thread.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn allocate_from_one_arena() {
+    // SAFETY: `mallopt` takes no pointer, and `M_ARENA_MAX` only limits the
+    // arenas made from here on.
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, 1) };
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn allocate_from_one_arena() {}
+
 /// How many answers a connection may fall behind by before it is hung up
 /// on. A consumer that reconnects is sent the beads as they then stand, so
 /// hanging up loses it nothing, where queueing for it without end would cost
