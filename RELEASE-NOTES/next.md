@@ -10,6 +10,8 @@ Minor release, **0.24.0 → 0.25.0**. `bdi gates` hears more about a pull reques
 
 **`bdi gates` tells a held-back bead what is happening on its pull request.** While a pull request is open, draft or not, `bdi gates` comments on each bead its gh:pr gates hold back when its checks fail, when its head conflicts with its base, when someone submits a review, and when someone comments on its conversation. Each is told once: a failure or conflict once per head commit, a review or comment once each. The gates stay open. A comment names the reviewer or author, and links the review or comment. Only what happened after the gate was made is told, so upgrading does not replay a pull request's history to the beads already waiting on it. Where your token cannot read what one of these needs, `bdi gates` skips only that kind of news, says so once for each repository, and still settles the gate.
 
+**A coming release can be tried as a candidate.** Before a release, a candidate such as `0.25.0-rc.1` can be published to crates.io, as a GitHub prerelease and as a container image. `cargo install beady-eye` and the Homebrew tap still take the last release, so nothing changes unless you ask for a candidate by its exact version, as in `cargo install beady-eye --version 0.25.0-rc.1`.
+
 ## Maintenance
 
 Webhook deliveries are handled one event type at a time, and gates settle through one table of pull request events.
