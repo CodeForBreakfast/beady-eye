@@ -74,7 +74,7 @@ ratatui = "0.30.2"
 regex-lite = "0.1.9"
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 # Named directly, though crossterm already compiles it for its own resize
 # plumbing: a crate reached only through another crate's tree is not one
 # this code may `use`, and would go the day crossterm changed its mind.
