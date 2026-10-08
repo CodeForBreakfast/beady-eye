@@ -9,6 +9,7 @@
 //! get what the last one got.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Snapshot, Tree};
@@ -27,7 +28,7 @@ use super::spine::{Chosen, Spine, Stand};
 /// the group holding it.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Facts {
-    trees: BTreeMap<BeadKey, TreeFacts>,
+    trees: BTreeMap<BeadKey, Arc<TreeFacts>>,
     projects: BTreeMap<String, Counts>,
     begun: BTreeMap<Handle, Stand>,
     chosen: Vec<Chosen>,
@@ -36,12 +37,31 @@ pub(super) struct Facts {
 impl Facts {
     /// `spine` is the rule in force over the forest, and `spines` the rule
     /// the reader has put in force under each line they set one on.
-    pub(super) fn of(snapshot: &Snapshot, spine: Spine, spines: &BTreeMap<Handle, Spine>) -> Self {
+    /// `earlier` is a snapshot answered before and its answers, which a tree
+    /// it held unchanged keeps.
+    pub(super) fn of(
+        snapshot: &Snapshot,
+        spine: Spine,
+        spines: &BTreeMap<Handle, Spine>,
+        earlier: Option<(&Snapshot, &Facts)>,
+    ) -> Self {
+        let mut answered = BTreeMap::new();
+        if let Some((snapshot, facts)) = earlier {
+            for tree in snapshot.trees.iter().chain(&snapshot.collected) {
+                let key = root_key(tree);
+                if let Some(facts) = facts.trees.get(&key) {
+                    answered.entry(key).or_insert((tree, facts));
+                }
+            }
+        }
         let mut trees = BTreeMap::new();
         for tree in snapshot.trees.iter().chain(&snapshot.collected) {
-            trees
-                .entry(root_key(tree))
-                .or_insert_with(|| TreeFacts::of(tree));
+            let key = root_key(tree);
+            let earlier = answered.get(&key);
+            trees.entry(key).or_insert_with(|| match earlier {
+                Some((was, facts)) if *was == tree => Arc::clone(facts),
+                _ => Arc::new(TreeFacts::of(tree)),
+            });
         }
         // The rule over the forest begins on every tree's root, and a rule
         // set on a line begins there instead of the one it stands under.
@@ -94,6 +114,7 @@ impl Facts {
         self.trees
             .get(root)
             .expect("every tree the snapshot holds was answered when it was taken")
+            .as_ref()
     }
 
     /// Every bead in the project's trees, shown or hidden, counted once.
