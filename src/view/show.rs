@@ -15,7 +15,7 @@ use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
 use crate::view::draw::bead::{badge_style, opens_at};
 use crate::view::draw::tone::status_style;
-use crate::view::draw::{done, regions};
+use crate::view::draw::{done, key_rows};
 use crate::view::fitted::{self, cover, indent, Fitted, Link};
 use crate::view::forest::Forest;
 use crate::view::lines::Content;
@@ -391,7 +391,7 @@ pub fn drawn_at<'a>(
 /// sides of a page a reader opened to read — where the right edge leaves the
 /// spine, the glyphs and the ids, which read as structure.
 ///
-/// The foot's height is asked of `regions` rather than counted here, so the
+/// The foot's height is asked of `key_rows` rather than counted here, so the
 /// row it stops above is the row the foot is actually drawn on.
 fn show_window(area: Rect) -> Rect {
     let width = offered(area.width);
@@ -399,7 +399,7 @@ fn show_window(area: Rect) -> Rect {
         x: area.right() - width,
         y: area.y,
         width,
-        height: area.height - regions(area).keys.height,
+        height: area.height - key_rows(area),
     }
 }
 

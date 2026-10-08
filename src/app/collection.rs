@@ -705,6 +705,7 @@ impl Collection {
                         provider: agents.name(),
                         state: unlistable(failure.kind),
                         sessions: Vec::new(),
+                        pane_agents: BTreeMap::new(),
                     },
                     BTreeSet::new(),
                 )
@@ -735,11 +736,8 @@ impl Collection {
             };
             read.push(Session { name, state });
         }
-        (
-            panes,
-            AgentProvider::answering(agents.name(), read),
-            out_of_reach,
-        )
+        let provider = AgentProvider::answering(agents.name(), read, &panes);
+        (panes, provider, out_of_reach)
     }
 }
 
@@ -1119,6 +1117,27 @@ mod tests {
         let snap = run(&one_project(), &no_panes(), &dunwich(), Filter::All, now());
 
         assert_eq!(snap.agents.state, ProviderState::Answering);
+    }
+
+    /// The agent a provider named in a pane reaches the snapshot under that
+    /// pane, which is what the tail finds the pane's crop by. A pane it named
+    /// no agent in has none.
+    #[test]
+    fn the_agent_a_provider_named_in_a_pane_is_kept_by_pane() {
+        let mut claude = pane("w:p1", DUNWICH, PaneStatus::Working);
+        claude.agent = Some("claude".to_string());
+        let unnamed = pane("w:p2", DUNWICH, PaneStatus::Idle);
+
+        let snap = run(
+            &one_project(),
+            &Provider::holding(vec![claude.clone(), unnamed.clone()]),
+            &dunwich(),
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.agents.agent_in(&claude.key()), Some("claude"));
+        assert_eq!(snap.agents.agent_in(&unnamed.key()), None);
     }
 
     /// Every bead a run reported as a claim that has lost its agent.

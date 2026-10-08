@@ -68,6 +68,8 @@ struct Agent {
     pane_id: String,
     cwd: PathBuf,
     #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
     display_agent: Option<String>,
     #[serde(default)]
     title: Option<String>,
@@ -87,6 +89,7 @@ impl Agent {
             self.cwd,
             self.agent_status,
         );
+        pane.agent = self.agent;
         pane.display_agent = self.display_agent;
         pane.title = self.title;
         pane.state_labels = self.state_labels;
@@ -261,6 +264,7 @@ mod tests {
         let p = pane(&panes, "wG:p6");
 
         assert_eq!(p.cwd, PathBuf::from("/tmp/bdi-ground/dunwich"));
+        assert_eq!(p.agent.as_deref(), Some("claude"));
         assert_eq!(p.display_agent.as_deref(), Some("dun-2kd.5"));
         assert_eq!(
             p.title.as_deref(),

@@ -266,6 +266,10 @@ pub struct Pane {
     pub session: String,
     pub pane_id: String,
     pub cwd: PathBuf,
+    /// Which agent the provider detected in the pane, by the provider's own
+    /// name for it. `bdi` never reads anything into the name: it is the key
+    /// the reader's `[tail.crop]` is written against.
+    pub agent: Option<String>,
     pub display_agent: Option<String>,
     pub title: Option<String>,
     pub state_labels: BTreeMap<String, String>,
@@ -290,6 +294,7 @@ impl Pane {
             session,
             pane_id,
             cwd,
+            agent: None,
             display_agent: None,
             title: None,
             state_labels: BTreeMap::new(),

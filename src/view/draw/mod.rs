@@ -33,7 +33,7 @@ use crate::view::query::Query;
 use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
-pub use bands::{line_at, regions};
+pub use bands::{key_rows, line_at, regions, Regions, TailBand};
 pub(crate) use bead::identity_widths;
 pub use tail::{draw_tail, Band};
 
@@ -126,12 +126,12 @@ pub struct Foot<'a> {
     pub keys: &'a [String],
 }
 
-/// Draw the forest and the foot, leaving the tail's band to whoever holds a
-/// tail.
+/// Draw the forest and the foot into the bands `regions` gave them, leaving
+/// the tail's band to whoever holds a tail.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
-    area: Rect,
+    bands: Regions,
     forest: &Forest,
     layout: &Layout,
     collecting: &[Awaited],
@@ -139,7 +139,6 @@ pub fn draw(
     now: DateTime<Utc>,
     foot: Foot,
 ) {
-    let bands = regions(area);
     let lines = forest.lines();
     let selected = forest.selected_line();
     let height = bands.forest.height as usize;
@@ -669,7 +668,7 @@ mod tests {
         Painted::drawn_by(width, height, |frame| {
             draw(
                 frame,
-                frame.area(),
+                regions(frame.area(), forest.lines().len(), TailBand::Shown),
                 forest,
                 &Layout::default(),
                 collecting,
@@ -699,7 +698,7 @@ mod tests {
             .draw(|frame| {
                 draw(
                     frame,
-                    frame.area(),
+                    regions(frame.area(), forest.lines().len(), TailBand::Shown),
                     &forest,
                     &Layout::default(),
                     &[],

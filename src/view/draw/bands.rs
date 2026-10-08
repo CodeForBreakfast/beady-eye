@@ -17,16 +17,36 @@ pub struct Regions {
     pub keys: Rect,
 }
 
+/// Whether the tail's band is on the screen, which the reader turns with `t`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TailBand {
+    Shown,
+    Hidden,
+}
+
 /// Divide the screen between the forest, the tail and the key bar.
 ///
-/// The tail gives up its rows before the forest gives up any, and the forest
-/// is never left with none: a `bdi` with no tree on screen is not showing the
-/// thing it exists to show.
-pub fn regions(area: Rect) -> Regions {
-    let mut rows = area.height;
-    let keys = if rows >= 2 { 1 } else { 0 };
-    rows -= keys;
-    let tail = (tail::LINES + 1).min(rows.saturating_sub(1) / 2);
+/// `lines` is how many rows the forest has to show. The tail takes the rows
+/// the forest leaves free, up to half the screen, so a short tree leaves no
+/// blank between itself and the pane. Where the forest needs the rows, the
+/// tail keeps `LINES` and its rule and gives up those before the forest gives
+/// up any, and the forest is never left with none: a `bdi` with no tree on
+/// screen is not showing the thing it exists to show.
+///
+/// A hidden tail takes no rows, and the forest has them all.
+pub fn regions(area: Rect, lines: usize, band: TailBand) -> Regions {
+    let keys = key_rows(area);
+    let rows = area.height - keys;
+    let tail = match band {
+        TailBand::Shown => {
+            let looking = (tail::LINES + 1).min(rows.saturating_sub(1) / 2);
+            let free = rows.saturating_sub(u16::try_from(lines).unwrap_or(u16::MAX));
+            looking
+                .max(free.min(area.height / 2))
+                .min(rows.saturating_sub(1))
+        }
+        TailBand::Hidden => 0,
+    };
     let forest = rows - tail;
 
     Regions {
@@ -44,6 +64,16 @@ pub fn regions(area: Rect) -> Regions {
             height: keys,
             ..area
         },
+    }
+}
+
+/// How many rows the key bar takes at the foot of the screen: one, unless
+/// the screen is a single row and the forest needs it.
+pub fn key_rows(area: Rect) -> u16 {
+    if area.height >= 2 {
+        1
+    } else {
+        0
     }
 }
 
@@ -80,11 +110,15 @@ mod tests {
     /// reader and neither this file nor the forest decides.
     const A_NOTCH: usize = 3;
 
+    /// A forest with more lines than any screen here has rows, so the tail
+    /// is left only what it keeps when the forest needs the rest.
+    const A_TALL_TREE: usize = 100;
+
     // ---- the bands of the screen -----------------------------------------
 
     #[test]
     fn a_full_screen_gives_the_forest_most_of_it_the_tail_a_look_and_the_keys_a_row() {
-        let bands = regions(Rect::new(0, 0, 80, 24));
+        let bands = regions(Rect::new(0, 0, 80, 24), A_TALL_TREE, TailBand::Shown);
 
         assert_eq!(bands.forest, Rect::new(0, 0, 80, 16));
         assert_eq!(
@@ -99,18 +133,52 @@ mod tests {
     /// for and a screen showing no tree is showing nothing.
     #[test]
     fn a_short_screen_takes_the_rows_from_the_tail_and_not_from_the_forest() {
-        let bands = regions(Rect::new(0, 0, 80, 10));
+        let bands = regions(Rect::new(0, 0, 80, 10), A_TALL_TREE, TailBand::Shown);
 
         assert_eq!(bands.forest.height, 5);
         assert_eq!(bands.tail.height, 4);
         assert_eq!(bands.keys.height, 1);
     }
 
+    /// A short tree leaves rows free under it, and the tail takes them up
+    /// to half the screen, so no blank sits between the tree and the pane.
+    #[test]
+    fn a_short_tree_gives_the_tail_its_free_rows_up_to_half_the_screen() {
+        let bands = regions(Rect::new(0, 0, 80, 40), 5, TailBand::Shown);
+
+        assert_eq!(bands.tail.height, 20, "half of forty rows");
+        assert_eq!(bands.forest.height, 19);
+        assert_eq!(bands.keys, Rect::new(0, 39, 80, 1));
+    }
+
+    #[test]
+    fn a_tree_leaving_less_than_half_the_screen_free_gives_the_tail_exactly_that() {
+        let bands = regions(Rect::new(0, 0, 80, 40), 25, TailBand::Shown);
+
+        assert_eq!(bands.forest.height, 25, "every line of the tree is drawn");
+        assert_eq!(bands.tail.height, 14);
+    }
+
+    /// The tail never takes less than it keeps for a tree that needs the
+    /// screen, however short the tree.
+    #[test]
+    fn a_tree_leaving_fewer_rows_free_than_the_tail_keeps_is_scrolled_instead() {
+        let bands = regions(Rect::new(0, 0, 80, 24), 20, TailBand::Shown);
+
+        assert_eq!(bands.tail.height, tail::LINES + 1);
+        assert_eq!(bands.forest.height, 16);
+    }
+
     #[test]
     fn the_forest_keeps_a_row_however_little_room_there_is() {
-        for height in 1..=8 {
-            let bands = regions(Rect::new(0, 0, 80, height));
-            assert!(bands.forest.height >= 1, "{height} rows: {bands:?}");
+        for lines in [0, 1, A_TALL_TREE] {
+            for height in 1..=8 {
+                let bands = regions(Rect::new(0, 0, 80, height), lines, TailBand::Shown);
+                assert!(
+                    bands.forest.height >= 1,
+                    "{height} rows, {lines} lines: {bands:?}"
+                );
+            }
         }
     }
 
@@ -119,7 +187,7 @@ mod tests {
     #[test]
     fn the_smallest_screens_spend_their_rows_on_the_forest_first() {
         assert_eq!(
-            regions(Rect::new(0, 0, 80, 2)),
+            regions(Rect::new(0, 0, 80, 2), 0, TailBand::Shown),
             Regions {
                 forest: Rect::new(0, 0, 80, 1),
                 tail: Rect::new(0, 1, 80, 0),
@@ -127,7 +195,7 @@ mod tests {
             }
         );
         assert_eq!(
-            regions(Rect::new(0, 0, 80, 1)),
+            regions(Rect::new(0, 0, 80, 1), 0, TailBand::Shown),
             Regions {
                 forest: Rect::new(0, 0, 80, 1),
                 tail: Rect::new(0, 1, 80, 0),
@@ -140,22 +208,36 @@ mod tests {
     /// the last frame left there, and an overlap would draw two things at once.
     #[test]
     fn the_three_bands_tile_the_screen_exactly() {
-        for height in 0..40 {
-            let area = Rect::new(3, 7, 80, height);
-            let bands = regions(area);
+        for band in [TailBand::Shown, TailBand::Hidden] {
+            for (height, lines) in
+                (0..40).flat_map(|height| [(height, 0), (height, 9), (height, A_TALL_TREE)])
+            {
+                let area = Rect::new(3, 7, 80, height);
+                let bands = regions(area, lines, band);
+                let at = format!("{band:?} on {height} rows");
 
-            assert_eq!(bands.forest.y, area.y, "{height}");
-            assert_eq!(
-                bands.tail.y,
-                bands.forest.y + bands.forest.height,
-                "{height}"
-            );
-            assert_eq!(bands.keys.y, bands.tail.y + bands.tail.height, "{height}");
-            assert_eq!(
-                bands.forest.height + bands.tail.height + bands.keys.height,
-                area.height,
-                "{height}"
-            );
+                assert_eq!(bands.forest.y, area.y, "{at}");
+                assert_eq!(bands.tail.y, bands.forest.y + bands.forest.height, "{at}");
+                assert_eq!(bands.keys.y, bands.tail.y + bands.tail.height, "{at}");
+                assert_eq!(
+                    bands.forest.height + bands.tail.height + bands.keys.height,
+                    area.height,
+                    "{at}"
+                );
+            }
+        }
+    }
+
+    /// A hidden tail gives the forest every row the keys leave, whether the
+    /// tree needs them or not.
+    #[test]
+    fn a_hidden_tail_gives_the_forest_every_row_above_the_keys() {
+        for lines in [5, A_TALL_TREE] {
+            let bands = regions(Rect::new(0, 0, 80, 24), lines, TailBand::Hidden);
+
+            assert_eq!(bands.forest, Rect::new(0, 0, 80, 23), "{lines} lines");
+            assert_eq!(bands.tail.height, 0, "{lines} lines");
+            assert_eq!(bands.keys, Rect::new(0, 23, 80, 1), "{lines} lines");
         }
     }
 
@@ -176,7 +258,7 @@ mod tests {
     fn every_row_of_the_forest_names_the_line_drawn_on_it() {
         for wheeled in 0..3 {
             let (width, height) = (60, 24);
-            let band = regions(Rect::new(0, 0, width, height)).forest;
+            let band = regions(Rect::new(0, 0, width, height), A_TALL_TREE, TailBand::Shown).forest;
             let mut forest = opened(&snapshot(
                 vec![grove(40)],
                 Vec::new(),
@@ -224,7 +306,7 @@ mod tests {
     /// the selection can sit on.
     #[test]
     fn a_row_outside_the_forest_band_names_none() {
-        let bands = regions(Rect::new(0, 0, 60, 24));
+        let bands = regions(Rect::new(0, 0, 60, 24), A_TALL_TREE, TailBand::Shown);
         let (from, lines) = (0, 100);
 
         for row in [bands.tail.y, bands.tail.y + 3, bands.keys.y] {
