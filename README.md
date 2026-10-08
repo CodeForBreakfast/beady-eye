@@ -74,7 +74,7 @@ $ nix run github:CodeForBreakfast/beady-eye
 From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.24.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.25.0-rc.1";
 
 beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
