@@ -1,6 +1,7 @@
 //! What a setup tells `bdi`: the shape of the config file, what each setting
 //! means, and what `bdi` refuses to read.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -524,7 +525,7 @@ impl Pattern {
     }
 
     /// Whether any of `members` matches, where none reads as one empty value.
-    fn matches_any(&self, members: &[&str]) -> bool {
+    fn matches_any(&self, members: &[Cow<'_, str>]) -> bool {
         match members {
             [] => self.anchored.is_match(""),
             _ => members.iter().any(|member| self.anchored.is_match(member)),
@@ -1200,16 +1201,16 @@ impl Badge {
             };
             let name = &rest[open + 1..close];
             let placed = match name {
-                "" => Some(value),
+                "" => Some(Cow::Borrowed(value)),
                 _ => taken
                     .as_ref()
                     .and_then(|taken| taken.name(name))
-                    .map(|capture| capture.as_str())
+                    .map(|capture| Cow::Borrowed(capture.as_str()))
                     .or_else(|| bead.value(name)),
             };
             whole &= placed.is_some();
             text.push_str(&rest[..open]);
-            text.push_str(placed.unwrap_or(&rest[open..=close]));
+            text.push_str(placed.as_deref().unwrap_or(&rest[open..=close]));
             rest = &rest[close + 1..];
         }
         text.push_str(rest);

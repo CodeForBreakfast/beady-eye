@@ -22,13 +22,13 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::collect::bd::bead_of;
+use crate::collect::bd::{bead_of, Fields};
 use crate::collect::changes::{self, Heard};
 use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::config::{Project, Reach};
 use crate::model::snapshot::{TrackerFailure, TrackerState};
-use crate::model::types::{Bead, Printed};
+use crate::model::types::Bead;
 
 /// The version of the lines the watcher sends a consumer, which every
 /// freshness line carries. It moves only for a change a consumer cannot read
@@ -245,7 +245,7 @@ enum Line {
     Bead {
         project: String,
         bd: BeadReadiness,
-        row: Printed,
+        row: Fields,
     },
     Gone {
         project: String,
@@ -366,7 +366,7 @@ impl Watcher {
     fn take(&mut self, line: Line) -> Option<Option<String>> {
         match line {
             Line::Bead { project, bd, row } => {
-                let bead = Arc::new(bead_of(row, false).ok()?);
+                let bead = Arc::new(bead_of(row).ok()?);
                 let listed = Listed { bead, bd };
                 Arc::make_mut(&mut self.arriving(&project).beads)
                     .insert(listed.bead.id.clone(), listed);
@@ -1255,8 +1255,7 @@ path = "/srv/work/dunwich"
                     "priority": 2, "issue_type": "task", "dependencies": dependencies })
         };
         let held = |row: &serde_json::Value| {
-            bead_of(row.as_object().expect("a row is an object").clone(), false)
-                .expect("the row reads")
+            bead_of(row.as_object().expect("a row is an object").clone()).expect("the row reads")
         };
         let cfg = projects()
             .scoped_to(&["dunwich".to_string()])

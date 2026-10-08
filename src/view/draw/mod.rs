@@ -277,6 +277,7 @@ pub(super) fn structure(prefix: &str) -> Span<'static> {
 mod tests {
     use super::*;
     use crate::model::types::testing::key;
+    use crate::model::types::Printed;
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
@@ -374,8 +375,7 @@ mod tests {
             agent: None,
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
-            description: "".into(),
-            notes: "".into(),
+            row: Printed::saying("", ""),
             created_by: None,
             assignee: None,
             labels: Vec::new(),

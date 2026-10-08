@@ -21,20 +21,20 @@ use serde::Serialize;
 use crate::collect::changes::{self, Heard, Reported};
 use crate::config::Reach;
 use crate::model::snapshot::TrackerFailure;
-use crate::model::types::Printed;
+use crate::model::types::Bead;
 
 use super::watching::{self, Events, Interest, Refusal, Watch, ALIVE_LINE};
 
-/// One bead as the watcher holds it: its tracker's row, and the readiness
-/// `bdi --beads` gives it.
+/// One bead as the watcher holds it: the bead its tracker's row was read
+/// into, and the readiness `bdi --beads` gives it.
 ///
 /// The readiness sits beside the row rather than in it, so nothing `bdi` adds
 /// can be taken for a field of bd's or collide with one a later bd adds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Held {
-    /// The row as bd printed it, so a field `bdi` never reads still reaches a
-    /// consumer. Nothing where the tracker was read without keeping its rows.
-    pub row: Option<Arc<Printed>>,
+    /// The bead as its project's read holds it, whose row is passed on as bd
+    /// printed it, so a field `bdi` never reads still reaches a consumer.
+    pub bead: Arc<Bead>,
     pub ready: bool,
     /// Every bead blocking this one, in its own project or another.
     pub blocked_by: Vec<String>,
@@ -398,8 +398,12 @@ mod tests {
     use crate::app::fixtures::now;
 
     fn a_bead() -> Held {
+        let beads = crate::collect::bd::parse_shared_beads(
+            r#"[{"id":"dun-1","title":"re-point the dish","status":"open"}]"#,
+        )
+        .expect("the row reads");
         Held {
-            row: None,
+            bead: Arc::clone(&beads[0]),
             ready: true,
             blocked_by: Vec::new(),
             bd: BeadReadiness {
