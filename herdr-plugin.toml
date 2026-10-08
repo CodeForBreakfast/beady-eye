@@ -1,9 +1,9 @@
 id = "codeforbreakfast.beady-eye"
 name = "beady-eye"
-version = "0.24.0"
+version = "0.25.0"
 min_herdr_version = "0.9.1"
 platforms = ["linux", "macos"]
-description = "A tree of work in flight: bead graphs annotated with the live agents working them."
+description = "Shows the trees of work and the agents on them, wakes an agent when a bead it waits on changes, and settles pull-request waits from GitHub."
 
 # Fetches this version's released bdi into bin/, so installing needs no Rust
 # toolchain. `herdr plugin link` skips it: a linked checkout runs it by hand.
