@@ -47,9 +47,9 @@ base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4.6.6", features = ["derive"] }
 # The signature GitHub puts on each webhook delivery is an HMAC-SHA256 of its
-# body, and nothing in `std` computes one. RustCrypto's pair, the 0.12/0.10
-# line because sha2 0.10 is already in the tree, and `verify_slice` compares in
-# constant time.
+# body, and nothing in `std` computes one. RustCrypto's pair, which move
+# together because both are built on one version of `digest`, and
+# `verify_slice` compares in constant time.
 hmac = "0.13.0"
 # `bdi gates --listen` takes GitHub's webhook deliveries over HTTP. The request
 # head is parsed by this, a parser with no dependencies of its own, and
