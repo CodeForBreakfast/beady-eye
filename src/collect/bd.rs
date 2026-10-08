@@ -756,12 +756,20 @@ impl Tracker for Reader<'_> {
 
     /// bd computes readiness itself and treats it as a state of its own, so
     /// it is asked for rather than inferred from status.
+    ///
+    /// A bare `bd ready` leaves gates out as work nobody claims, and answers
+    /// for them by the same rule when asked by type, so gates are asked for
+    /// beside it.
     fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
-        let out = self.asked(&["ready", "--limit", "0", "--json"])?;
-        Ok(rows(&out, "ready", false)?
-            .into_iter()
-            .map(|bead| bead.id)
-            .collect())
+        let (work, gates) = together(
+            || self.asked(&["ready", "--limit", "0", "--json"]),
+            || self.asked(&["ready", "--type", "gate", "--limit", "0", "--json"]),
+        );
+        let mut ready = BTreeSet::new();
+        for out in [work?, gates?] {
+            ready.extend(rows(&out, "ready", false)?.into_iter().map(|bead| bead.id));
+        }
+        Ok(ready)
     }
 
     /// A dep-tree row carries its tree parent, not its blocker set: a bead
@@ -1541,7 +1549,9 @@ mod tests {
     /// `bdi` was launched from holds, which the adapter captured once.
     #[test]
     fn a_project_configuring_nothing_is_read_on_the_ambient_credential() {
-        let runner = FakeRunner::default().with(&spelled("ready --limit 0 --json"), "[]");
+        let runner = FakeRunner::default()
+            .with(&spelled("ready --limit 0 --json"), "[]")
+            .with(&spelled("ready --type gate --limit 0 --json"), "[]");
 
         let cli = launched_with(&runner, Some("hunter2"));
         let tracker = cli
@@ -2231,7 +2241,9 @@ mod tests {
     fn ready_ids_returns_the_set_bd_considers_startable() {
         let out = r#"[{"id":"p-1.1","title":"a","status":"open"},
                       {"id":"p-1.3","title":"b","status":"open"}]"#;
-        let runner = FakeRunner::default().with(&spelled("ready --limit 0 --json"), out);
+        let runner = FakeRunner::default()
+            .with(&spelled("ready --limit 0 --json"), out)
+            .with(&spelled("ready --type gate --limit 0 --json"), "[]");
 
         let got = opened(&runner).ready().unwrap();
 
@@ -2241,6 +2253,25 @@ mod tests {
             !got.contains("p-1.4"),
             "a bead bd did not list is not ready"
         );
+    }
+
+    /// A bare `bd ready` leaves gates out as work nobody claims, and lists
+    /// them when asked for by type, by the same rule as any other bead.
+    #[test]
+    fn a_gate_bd_lists_when_asked_for_gates_is_ready() {
+        let runner = FakeRunner::default()
+            .with(
+                &spelled("ready --limit 0 --json"),
+                r#"[{"id":"p-1.1","title":"a","status":"open"}]"#,
+            )
+            .with(
+                &spelled("ready --type gate --limit 0 --json"),
+                r#"[{"id":"p-wg1","title":"Gate: gh:pr","status":"open","issue_type":"gate"}]"#,
+            );
+
+        let got = opened(&runner).ready().unwrap();
+
+        assert_eq!(got, BTreeSet::from(["p-1.1".into(), "p-wg1".into()]));
     }
 
     /// The shape a real tracker produces: a bead blocked by two beads, whose

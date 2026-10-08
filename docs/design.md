@@ -572,7 +572,9 @@ on, not whether those dependencies are satisfied, and beads already answers
 that. `bd swarm status` shows Ready as a first-class state alongside Completed,
 Active and Blocked, so a viewer that collapsed Ready into plain "open" would be
 throwing away a distinction beads makes. One call each per project, intersected
-with the tree's ids. bd reads no edge to another project's bead, and that is
+with the tree's ids. A bare `bd ready` leaves gates out as work nobody claims,
+so **`bd ready --type gate --limit 0 --json`** is asked beside it, and a gate
+with no open blocker is ready like any other bead. bd reads no edge to another project's bead, and that is
 the one place `bdi` adds to its answer: see *Across projects*.
 
 **`bd list --all --include-gates --limit 0 --json` and `bd query
