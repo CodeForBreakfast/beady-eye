@@ -916,7 +916,7 @@ fn held_by_watcher(
             let bd = bd_readiness(work, &bead.id);
             let given = differing.get(&bead.id).unwrap_or(&bd);
             let held = Held {
-                row: bead.row.clone(),
+                bead: Arc::clone(bead),
                 ready: given.ready,
                 blocked_by: given.blocked_by.clone(),
                 bd,

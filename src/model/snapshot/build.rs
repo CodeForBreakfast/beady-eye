@@ -124,8 +124,7 @@ pub fn build_tree(
                 ),
                 agent,
                 orphaned_dependencies: assembled.orphaned.get(&at).cloned().unwrap_or_default(),
-                description: bead.description.clone().unwrap_or_default(),
-                notes: bead.notes.clone().unwrap_or_default(),
+                row: bead.row.clone(),
                 created_by: bead.created_by.clone(),
                 assignee: bead.assignee.clone(),
                 labels: bead.labels.clone(),
@@ -613,8 +612,11 @@ mod tests {
         );
 
         let root = node(&t, "dun-6");
-        assert_eq!(&*root.description, "lift the whole station");
-        assert_eq!(&*root.notes, "the crane is booked");
+        assert_eq!(
+            root.description().as_deref(),
+            Some("lift the whole station")
+        );
+        assert_eq!(root.notes().as_deref(), Some("the crane is booked"));
         assert_eq!(root.created_by.as_deref(), Some("Mira Vance"));
         assert_eq!(root.assignee.as_deref(), Some("Rowan Ash"));
         assert_eq!(root.labels, ["mast", "weather"]);
@@ -625,8 +627,8 @@ mod tests {
         assert_eq!(root.blocks, vec![]);
 
         let waiting = node(&t, "dun-6.1");
-        assert_eq!(&*waiting.description, "", "a row with nothing to say");
-        assert_eq!(&*waiting.notes, "");
+        assert_eq!(waiting.description(), None, "a row with nothing to say");
+        assert_eq!(waiting.notes(), None);
         assert_eq!(waiting.created_by, None);
         assert_eq!(waiting.assignee, None);
         assert_eq!(waiting.labels, [] as [String; 0]);

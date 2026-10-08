@@ -526,7 +526,6 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
     let mut collection = crate::app::Collection::default();
     let trackers = bd::Cli::new(&RealRunner)
-        .keeping_rows()
         .reading_journals()
         .caching_environments(EnvironmentCache::here());
     let reads: Reads =
