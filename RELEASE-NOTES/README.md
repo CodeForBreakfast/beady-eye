@@ -1,12 +1,23 @@
 # Release notes
 
-One file per release, `RELEASE-NOTES/<version>.md`, where `<version>` is the
-`MAJOR.MINOR.PATCH` the release bumps to — so `RELEASE-NOTES/0.3.0.md`. The
-pull request that bumps the version checks it in.
+The notes for the coming release live on `main`, in `RELEASE-NOTES/next.md`,
+written in the template below. A pull request that changes what a reader would
+notice updates the file as it lands, and the file is brought up to date before
+an rc is cut. Every rc publishes it as its GitHub Release body.
+
+The file's first line names the version the coming release bumps to, and an rc
+reads its version from that line. When a patch grows into a minor, edit that
+line and the one under it. Nothing is renamed or thrown away. beady-eye stays
+below 1.0 until it is settled, so the version moves by minor or patch only.
+
+The real release's pull request bumps the version and renames the file to
+`RELEASE-NOTES/<version>.md`, where `<version>` is the `MAJOR.MINOR.PATCH` it
+bumps to, so `RELEASE-NOTES/0.3.0.md`. It leaves a fresh `next.md` behind,
+holding the template's first two lines for the patch after it.
 
 The [`Release` workflow](../.github/workflows/release.yml) cuts the GitHub
-Release from the file it finds. What is written here is what a reader gets,
-word for word. A version bump merged without its notes file fails the run, so
+Release from `<version>.md`. What is written here is what a reader gets, word
+for word. A version bump merged without its notes file fails the run, so
 landing the file afterwards is the whole of the repair.
 
 ## Style
@@ -30,7 +41,7 @@ earns a share of one line. Most releases are shorter than this file.
 **One line per paragraph and per bullet.** GitHub renders a Release body with
 hard line breaks on, so every newline inside a paragraph reaches a reader as a
 `<br>` and a wrapped file shows as ragged short lines. A fenced block keeps its
-own breaks. `nix flake check` refuses a wrapped `RELEASE-NOTES/<version>.md`.
+own breaks. `nix flake check` refuses a wrapped notes file, `next.md` included.
 This file is a repository document rather than a Release body, so it stays
 wrapped.
 
@@ -54,8 +65,9 @@ Dependency bumps and internal improvements.
 ## The Claude Code plugin
 
 The plugin releases on a version of its own, the one
-`plugin/.claude-plugin/plugin.json` declares, so its notes go in
-`RELEASE-NOTES/plugin/<version>.md` and its release is tagged
+`plugin/.claude-plugin/plugin.json` declares. So its coming release's notes
+live in `RELEASE-NOTES/plugin/next.md`, its release renames them to
+`RELEASE-NOTES/plugin/<version>.md`, and that release is tagged
 `plugin-v<version>`. The audience is somebody running the plugin in Claude
-Code. The style and the template above hold, with `beady-eye plugin <version>`
-as the first line.
+Code. Everything above holds, with `beady-eye plugin <version>` as the first
+line.
