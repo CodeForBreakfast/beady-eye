@@ -28,7 +28,7 @@ use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link, OrphanedDependency};
-use crate::model::types::{Edge, PaneKey, PaneStatus, Status, Unreadable};
+use crate::model::types::{Edge, Pane, PaneKey, PaneStatus, Status, Unreadable};
 
 /// Which agent provider this run read, and how that went.
 ///
@@ -45,15 +45,28 @@ pub struct AgentProvider {
     /// session is a fact to draw, and the panes of the ones that answered
     /// are drawn whatever the others did.
     pub sessions: Vec<Session>,
+    /// The agent the provider named in each pane it listed, where it named
+    /// one. Not drawn and not published: the tail finds a pane's crop by it.
+    #[serde(skip)]
+    pub pane_agents: BTreeMap<PaneKey, String>,
 }
 
 impl AgentProvider {
-    pub fn answering(provider: &'static str, sessions: Vec<Session>) -> Self {
+    pub fn answering(provider: &'static str, sessions: Vec<Session>, panes: &[Pane]) -> Self {
         Self {
             provider,
             state: ProviderState::Answering,
             sessions,
+            pane_agents: panes
+                .iter()
+                .filter_map(|pane| Some((pane.key(), pane.agent.clone()?)))
+                .collect(),
         }
+    }
+
+    /// The agent the provider named in `pane`, where it named one.
+    pub fn agent_in(&self, pane: &PaneKey) -> Option<&str> {
+        self.pane_agents.get(pane).map(String::as_str)
     }
 
     /// The sessions the provider named and that did not answer for their
@@ -100,6 +113,7 @@ pub fn a_provider(state: ProviderState) -> AgentProvider {
         provider: A_PROVIDER,
         state,
         sessions: Vec::new(),
+        pane_agents: BTreeMap::new(),
     }
 }
 
@@ -620,7 +634,7 @@ impl Snapshot {
     ) -> Self {
         Snapshot {
             generated_at: now,
-            agents: AgentProvider::answering(provider, Vec::new()),
+            agents: AgentProvider::answering(provider, Vec::new(), &[]),
             filter,
             trees: Vec::new(),
             hidden_trees: Vec::new(),

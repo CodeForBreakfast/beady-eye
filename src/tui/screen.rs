@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
-use crate::config::{Background, Config};
+use crate::config::{self, Background, Config, Crop};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
@@ -61,6 +61,8 @@ pub(super) struct Drawing {
     notch: usize,
     /// Which cells a bead's row draws, and in what order.
     layout: Layout,
+    /// Where the tail cuts each agent's screen.
+    crops: config::Tail,
 }
 
 impl Drawing {
@@ -70,6 +72,7 @@ impl Drawing {
             background: cfg.theme.background,
             notch: cfg.tui.wheel_notch_lines,
             layout: cfg.row.clone(),
+            crops: cfg.tail.clone(),
         }
     }
 }
@@ -392,9 +395,17 @@ impl Shown {
     /// way;
     /// what arms the next read is that answer landing.
     fn read(&mut self, pane: PaneKey) {
-        self.panes.read(&pane, tail::LINES);
+        let rows = tail::rows_to_read(self.crop_for(&pane), tail::LINES);
+        self.panes.read(&pane, rows);
         self.reading = Reading::Outstanding;
         self.due = None;
+    }
+
+    /// Where the reader has the tail cut the screen of the agent in `pane`,
+    /// where they gave that agent a crop and the provider named the agent.
+    fn crop_for(&self, pane: &PaneKey) -> Option<Crop> {
+        let agent = self.forest.snapshot().agents.agent_in(pane)?;
+        self.drawing.crops.crop_for(agent)
     }
 
     /// How long until the pane on the band is asked for again, or nothing
@@ -472,7 +483,8 @@ impl Shown {
                     self.ask();
                     return false;
                 }
-                let read = tail::read(pane, read);
+                let crop = self.crop_for(&pane);
+                let read = tail::read(pane, read, crop);
                 let changed = read != self.tail;
                 self.tail = read;
                 self.due = due_after(now, self.drawing.tail_every);
@@ -2085,6 +2097,7 @@ mod tests {
             background: Background::Dark,
             notch: A_NOTCH,
             layout: Layout::default(),
+            crops: config::Tail::default(),
         }
     }
 
@@ -3370,6 +3383,74 @@ mod tests {
             panes.reads(),
             [format!("{A_SELECTED_PANE} {}", tail::LINES)],
             "the pane is asked for exactly the lines the band has room for"
+        );
+    }
+
+    /// A staffed grove whose selected pane the provider says holds `agent`,
+    /// on the screen of a reader who crops Claude Code's screen.
+    fn shown_cropping_claude_code_over(agent: &str) -> (Shown, Asking) {
+        let mut snapshot = a_staffed_grove(6);
+        snapshot
+            .agents
+            .pane_agents
+            .insert(pane_key(A_SELECTED_PANE), agent.to_string());
+        let panes = Asking::default();
+        let crops = config::Tail {
+            crop: BTreeMap::from([("claude".to_string(), Crop::ClaudeCode)]),
+        };
+        (
+            Shown::of(
+                snapshot,
+                Box::new(panes.clone()),
+                Box::new(io::sink()),
+                Drawing { crops, ..drawing() },
+                nothing_said(),
+                an_instant(),
+            ),
+            panes,
+        )
+    }
+
+    /// A Claude Code screen: what the agent said, then its input box.
+    const A_CLAUDE_CODE_SCREEN: [&str; 5] = ["done 14:05", "─────", "❯ move", "─────", "  41%"];
+
+    /// A crop is found by looking at the screen, so the pane is asked for all
+    /// of it, and what lands is cut where the crop says.
+    #[test]
+    fn a_pane_whose_agent_has_a_crop_is_read_whole_and_cropped() {
+        let (mut shown, panes) = shown_cropping_claude_code_over("claude");
+
+        assert_eq!(
+            panes.reads(),
+            [format!("{A_SELECTED_PANE} {}", tail::WHOLE_SCREEN)]
+        );
+        shown.tailed(read(A_SELECTED_PANE, &A_CLAUDE_CODE_SCREEN), an_instant());
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: pane_key(A_SELECTED_PANE),
+                lines: vec!["done 14:05".to_string()],
+            }
+        );
+    }
+
+    /// A crop is the agent's, so a pane holding an agent the reader gave none
+    /// is read and drawn exactly as a pane was before there were crops.
+    #[test]
+    fn a_pane_whose_agent_has_no_crop_is_tailed_as_before() {
+        let (mut shown, panes) = shown_cropping_claude_code_over("codex");
+
+        assert_eq!(
+            panes.reads(),
+            [format!("{A_SELECTED_PANE} {}", tail::LINES)]
+        );
+        shown.tailed(read(A_SELECTED_PANE, &A_CLAUDE_CODE_SCREEN), an_instant());
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: pane_key(A_SELECTED_PANE),
+                lines: A_CLAUDE_CODE_SCREEN.map(str::to_string).to_vec(),
+            }
         );
     }
 
