@@ -7,7 +7,9 @@ use chrono::{DateTime, Utc};
 
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
-use crate::collect::gates::{self, Awaited, Done, PrGate, PullRequest, Settled, Told, Waiting};
+use crate::collect::gates::{
+    self, Awaited, Done, PrGate, PullRequest, Settled, Told, Unseen, Waiting,
+};
 use crate::collect::github;
 use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
@@ -36,6 +38,13 @@ pub enum Found {
     GitHubUnread {
         pull_request: PullRequest,
         failure: RunFailure,
+    },
+    /// GitHub said where a pull request stands, but not what an event reads
+    /// of it, so that event did nothing and the others settled it.
+    Unseen {
+        pull_request: PullRequest,
+        happening: &'static str,
+        why: String,
     },
     /// GitHub did not say which open pull requests a commit heads, so a
     /// delivery about its checks settled none.
@@ -236,44 +245,58 @@ pub fn delivered_commit(
 
 /// What settling `pull_request` found to report, and whether GitHub answered.
 fn findings(gh: &dyn Runner, pull_request: PullRequest, settled: Settled) -> Settling {
-    let github = match settled {
-        Settled::Unread(_) => Read::Refused,
-        Settled::NothingNew | Settled::Acted(_) => Read::Answered,
+    let (projects, unseen) = match settled {
+        Settled::NothingNew { unseen } => (Vec::new(), unseen),
+        Settled::Acted { projects, unseen } => (projects, unseen),
+        Settled::Unread(failure) => return unread(gh, pull_request, failure),
     };
-    let found = match settled {
-        Settled::NothingNew => Vec::new(),
-        Settled::Unread(failure) if failure.kind == FailureKind::RateLimited => {
-            let resets = github::spent_until(gh, gate::host(&pull_request.repo));
-            vec![Found::RateLimited {
-                pull_request,
-                resets: resets.ok().flatten(),
-            }]
-        }
-        Settled::Unread(failure) => vec![Found::GitHubUnread {
-            pull_request,
-            failure,
+    let unseen = unseen
+        .into_iter()
+        .map(|Unseen { happening, why }| Found::Unseen {
+            pull_request: pull_request.clone(),
+            happening,
+            why,
+        });
+    let acted = projects.into_iter().flat_map(|settled| match settled.acts {
+        Err(failure) => vec![Found::TrackerUnread {
+            project: settled.project,
+            failure: open_failure(&failure),
         }],
-        Settled::Acted(each) => each
+        Ok(acts) => acts
             .into_iter()
-            .flat_map(|settled| match settled.acts {
-                Err(failure) => vec![Found::TrackerUnread {
-                    project: settled.project,
-                    failure: open_failure(&failure),
-                }],
-                Ok(acts) => acts
-                    .into_iter()
-                    .map(|act| Found::Settling {
-                        pull_request: pull_request.clone(),
-                        happening: act.happening,
-                        project: settled.project.clone(),
-                        bead: act.bead,
-                        done: act.done.map_err(|failure| tracker_failure(&failure)),
-                    })
-                    .collect(),
+            .map(|act| Found::Settling {
+                pull_request: pull_request.clone(),
+                happening: act.happening,
+                project: settled.project.clone(),
+                bead: act.bead,
+                done: act.done.map_err(|failure| tracker_failure(&failure)),
             })
             .collect(),
+    });
+    Settling {
+        found: unseen.chain(acted).collect(),
+        github: Read::Answered,
+    }
+}
+
+/// What GitHub refusing to say where `pull_request` stands found to report.
+fn unread(gh: &dyn Runner, pull_request: PullRequest, failure: RunFailure) -> Settling {
+    let found = if failure.kind == FailureKind::RateLimited {
+        let resets = github::spent_until(gh, gate::host(&pull_request.repo));
+        Found::RateLimited {
+            pull_request,
+            resets: resets.ok().flatten(),
+        }
+    } else {
+        Found::GitHubUnread {
+            pull_request,
+            failure,
+        }
     };
-    Settling { found, github }
+    Settling {
+        found: vec![found],
+        github: Read::Refused,
+    }
 }
 
 #[cfg(test)]
@@ -477,6 +500,38 @@ mod tests {
                 settling("dunwich"),
             ]
         );
+    }
+
+    /// gh prints GitHub's answer, then exits 1 for its refusing the checks on
+    /// #7, so GitHub answered the look and the merge of #42 is settled.
+    #[test]
+    fn a_look_github_refuses_one_field_of_says_which_event_it_cannot_see_and_settles_the_rest() {
+        let refused = r#"{"data":{"repository":{
+            "pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null,"commits":{"nodes":[{"commit":{"oid":"a1b2c3","statusCheckRollup":null}}]}},
+            "pr42":{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}}},
+            "errors":[{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup"],"message":"Resource not accessible by personal access token"}]}"#;
+        let runner = captured(FakeRunner::default(), "arkham")
+            .failing_having_printed(&queried("ark"), refused, unavailable("gh"))
+            .with(&resolving_42("arkham"), "");
+
+        let Settling { found, github } = looked(&runner, &[project("arkham")], &Gates::default());
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-6pp", Fault::NoRepo),
+                no_number("arkham"),
+                Found::Unseen {
+                    pull_request: pr(7),
+                    happening: "has failing checks",
+                    why: "GitHub would not let gh read commits: Resource not accessible by \
+                          personal access token"
+                        .to_string(),
+                },
+                settling("arkham"),
+            ]
+        );
+        assert_eq!(github, Read::Answered);
     }
 
     fn gate_lists_read(runner: &FakeRunner) -> usize {

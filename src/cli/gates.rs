@@ -2,6 +2,7 @@
 //! and, where it listens, on each of GitHub's deliveries, with what each
 //! settling found said on stdout.
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
@@ -89,6 +90,7 @@ pub(super) fn settle(
     // ever settles for logins on two hosts at once.
     let mut rate_limited_until = Instant::now();
     let told = Told::default();
+    let mut unseen = SaidUnseen::default();
     loop {
         let now = Instant::now();
         let settling = if now >= next_look {
@@ -131,9 +133,36 @@ pub(super) fn settle(
                 rate_limited_until = waited_out(resets);
                 next_look = next_look.max(rate_limited_until);
             }
+            if !unseen.is_news(&found) {
+                continue;
+            }
             if let Some(said) = reported(&found) {
                 println!("{said}");
             }
+        }
+    }
+}
+
+/// The events already said to be unseen, by repository. A token GitHub
+/// refuses a field is refused it for every pull request in the repository on
+/// every look, so each is said once.
+#[derive(Default)]
+struct SaidUnseen(BTreeSet<(String, &'static str)>);
+
+impl SaidUnseen {
+    /// Whether `found` is worth saying: anything but an event already said
+    /// to be unseen in its repository. GitHub reads a repository's name in
+    /// any case, so this does not heed it.
+    fn is_news(&mut self, found: &Found) -> bool {
+        match found {
+            Found::Unseen {
+                pull_request,
+                happening,
+                ..
+            } => self
+                .0
+                .insert((pull_request.repo.to_ascii_lowercase(), happening)),
+            _ => true,
         }
     }
 }
@@ -240,6 +269,15 @@ fn reported(found: &Found) -> Option<String> {
             "{pull_request}: GitHub did not say where it stands, so no gate waiting on it was \
              touched: {failure}"
         ),
+        Found::Unseen {
+            pull_request,
+            happening,
+            why,
+        } => format!(
+            "{pull_request}: bdi gates cannot see whether it {happening}, so it acts on \
+             everything else and says this once for {}: {why}",
+            pull_request.repo
+        ),
         Found::CommitUnread { commit, failure } => format!(
             "{commit}: GitHub did not say which pull requests it heads, so none was settled: \
              {failure}"
@@ -326,6 +364,69 @@ mod tests {
             bead: "ark-2ud".to_string(),
             done,
         })
+    }
+
+    fn unseen(repo: &str, number: u64, happening: &'static str) -> Found {
+        Found::Unseen {
+            pull_request: PullRequest {
+                repo: repo.to_string(),
+                number,
+            },
+            happening,
+            why: "GitHub would not let gh read commits: Resource not accessible by personal \
+                  access token"
+                .to_string(),
+        }
+    }
+
+    #[test]
+    fn an_event_github_hid_is_reported_with_why() {
+        assert_eq!(
+            reported(&unseen("example/ark", 7, "has failing checks")).as_deref(),
+            Some(
+                "example/ark#7: bdi gates cannot see whether it has failing checks, so it acts \
+                 on everything else and says this once for example/ark: GitHub would not let gh \
+                 read commits: Resource not accessible by personal access token"
+            )
+        );
+    }
+
+    /// A token GitHub refuses a field is refused it on every look.
+    #[test]
+    fn an_event_github_hid_is_said_once_for_each_repository() {
+        let mut said = SaidUnseen::default();
+
+        let news: Vec<bool> = [
+            unseen("example/ark", 7, "has failing checks"),
+            unseen("example/ark", 42, "has failing checks"),
+            unseen("Example/Ark", 7, "has failing checks"),
+            unseen("example/ark", 7, "was reviewed"),
+            unseen("example/arc", 7, "has failing checks"),
+            unseen("example/ark", 7, "has failing checks"),
+        ]
+        .iter()
+        .map(|found| said.is_news(found))
+        .collect();
+
+        assert_eq!(news, [true, false, false, true, true, false]);
+    }
+
+    #[test]
+    fn everything_but_an_event_github_hid_is_always_news() {
+        let mut said = SaidUnseen::default();
+        let merged = Found::Settling {
+            pull_request: PullRequest {
+                repo: "example/ark".to_string(),
+                number: 7,
+            },
+            happening: "merged",
+            project: "arkham".to_string(),
+            bead: "ark-2ud".to_string(),
+            done: Ok(Done::Resolved),
+        };
+
+        assert!(said.is_news(&merged));
+        assert!(said.is_news(&merged));
     }
 
     #[test]

@@ -983,6 +983,7 @@ dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
 kadath: its gh:pr gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
+dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token
 arkham: gate ark-6pp cannot be settled: it names no repo
 dunwich/arkham#41: GitHub refused it for the rate limit of the login gh runs as, so GitHub is asked nothing more until the limit resets at 2026-01-01 00:30:00 UTC
 ```
@@ -991,6 +992,11 @@ A failure stops nothing. The next look tries again. A `gh` that GitHub refuses
 leaves every gate waiting on that pull request as it was. On an organisation
 that enforces single sign-on, a lapsed authorisation is the usual cause, and
 `gh auth refresh` is the cure.
+
+A field GitHub will not show the account `gh` runs as costs only the events
+that read it. Every other event still settles the pull request, merges
+included, and `bdi gates` names the event it cannot see once for each
+repository, with what GitHub said.
 
 A rate limit is the exception, because the login `gh` runs as may be shared
 with whoever else uses it. Once GitHub refuses a pull request for one, that

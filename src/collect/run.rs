@@ -553,6 +553,37 @@ pub trait Runner: Sync {
         cwd: Option<&Path>,
         env: &Env,
     ) -> Result<String, RunFailure>;
+
+    /// As [`run`](Runner::run), but a command that fails hands back what it
+    /// wrote to stdout beside the failure. gh prints GitHub's whole answer
+    /// before it exits 1 for the errors in it, and some of that answer may be
+    /// worth reading.
+    fn run_keeping_stdout(
+        &self,
+        program: &str,
+        args: &[&str],
+        cwd: Option<&Path>,
+        env: &Env,
+    ) -> Result<String, Box<Printed>> {
+        self.run(program, args, cwd, env).map_err(Printed::nothing)
+    }
+}
+
+/// A command that failed, and what it wrote to stdout first: empty where it
+/// wrote nothing or never started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Printed {
+    pub failure: RunFailure,
+    pub stdout: String,
+}
+
+impl Printed {
+    fn nothing(failure: RunFailure) -> Box<Self> {
+        Box::new(Self {
+            failure,
+            stdout: String::new(),
+        })
+    }
 }
 
 /// Both answers, with `second` asked on a thread of its own while `first`
@@ -583,17 +614,31 @@ impl Runner for RealRunner {
         cwd: Option<&Path>,
         env: &Env,
     ) -> Result<String, RunFailure> {
+        self.run_keeping_stdout(program, args, cwd, env)
+            .map_err(|printed| printed.failure)
+    }
+
+    fn run_keeping_stdout(
+        &self,
+        program: &str,
+        args: &[&str],
+        cwd: Option<&Path>,
+        env: &Env,
+    ) -> Result<String, Box<Printed>> {
         let out = told(program, args, cwd, env)
             .output()
-            .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))?;
+            .map_err(|e| Printed::nothing(RunFailure::could_not_start(program, cwd, env, &e)))?;
         if !out.status.success() {
-            return Err(RunFailure::from_exit(
-                program,
-                out.status.code(),
-                &String::from_utf8_lossy(&out.stderr),
-            ));
+            return Err(Box::new(Printed {
+                failure: RunFailure::from_exit(
+                    program,
+                    out.status.code(),
+                    &String::from_utf8_lossy(&out.stderr),
+                ),
+                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            }));
         }
-        String::from_utf8(out.stdout).map_err(|e| RunFailure::parse(program, e))
+        String::from_utf8(out.stdout).map_err(|e| Printed::nothing(RunFailure::parse(program, e)))
     }
 }
 
@@ -700,7 +745,7 @@ pub mod testing {
     /// A Runner that replays canned output keyed by the joined argv.
     #[derive(Default)]
     pub struct FakeRunner {
-        responses: HashMap<String, Result<String, RunFailure>>,
+        responses: HashMap<String, Result<String, Box<Printed>>>,
         calls: Mutex<Vec<Call>>,
         meeting: Rendezvous,
     }
@@ -744,7 +789,25 @@ pub mod testing {
         }
 
         pub fn failing(mut self, argv: &str, failure: RunFailure) -> Self {
-            self.responses.insert(argv.to_string(), Err(failure));
+            self.responses
+                .insert(argv.to_string(), Err(Printed::nothing(failure)));
+            self
+        }
+
+        /// `argv` writes `out` to stdout, then fails with `failure`.
+        pub fn failing_having_printed(
+            mut self,
+            argv: &str,
+            out: &str,
+            failure: RunFailure,
+        ) -> Self {
+            self.responses.insert(
+                argv.to_string(),
+                Err(Box::new(Printed {
+                    failure,
+                    stdout: out.to_string(),
+                })),
+            );
             self
         }
 
@@ -776,6 +839,17 @@ pub mod testing {
             cwd: Option<&Path>,
             env: &Env,
         ) -> Result<String, RunFailure> {
+            self.run_keeping_stdout(program, args, cwd, env)
+                .map_err(|printed| printed.failure)
+        }
+
+        fn run_keeping_stdout(
+            &self,
+            program: &str,
+            args: &[&str],
+            cwd: Option<&Path>,
+            env: &Env,
+        ) -> Result<String, Box<Printed>> {
             let argv = format!("{program} {}", args.join(" "));
             self.calls.lock().unwrap().push(Call {
                 argv: argv.clone(),
@@ -905,6 +979,22 @@ mod tests {
             .expect("sh runs");
 
         assert_eq!(out, "hello");
+    }
+
+    /// As gh does for an answer from GitHub holding an error.
+    #[test]
+    fn stdout_comes_back_beside_the_failure_of_a_command_that_prints_then_fails() {
+        let printed = RealRunner
+            .run_keeping_stdout(
+                "sh",
+                &["-c", "printf 'partly'; echo 'gh: refused' >&2; exit 1"],
+                None,
+                &Env::new(),
+            )
+            .expect_err("sh exits 1");
+
+        assert_eq!(printed.stdout, "partly");
+        assert_eq!(printed.failure, failing_command("gh: refused"));
     }
 
     /// The leading risk in the design: a child inherits the parent's

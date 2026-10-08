@@ -19,26 +19,66 @@ pub enum State {
     Closed,
 }
 
-/// A pull request as GitHub answered for it: where it stands, and every
-/// field [`pull_requests`] asked of it, under the names GraphQL gives them.
+/// A pull request as GitHub answered for it: where it stands, every field
+/// [`pull_requests`] asked of it, under the names GraphQL gives them, and
+/// the fields GitHub would not answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Observed {
     pub state: State,
     pub fields: Value,
+    pub refused: Vec<Refusal>,
+}
+
+/// A field of one pull request GitHub would not answer, under the name
+/// GraphQL answers it, and what GitHub said of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub field: String,
+    pub why: String,
 }
 
 /// What `gh api graphql` prints for [`pull_requests`]' query: the
 /// repository, with each pull request asked about under the alias
-/// `pr<number>`. Measured on gh 2.102.0, which exits 1 where the repository
-/// or any one of the pull requests is not there.
+/// `pr<number>`, and GraphQL's errors. Measured on gh 2.102.0, which prints
+/// the whole answer and exits 1 wherever it holds an error, as it does where
+/// the repository or any one of the pull requests is not there.
 #[derive(Deserialize)]
 struct Queried {
     data: Data,
+    #[serde(default)]
+    errors: Vec<QueryError>,
 }
 
 #[derive(Deserialize)]
 struct Data {
     repository: Option<BTreeMap<String, Option<Value>>>,
+}
+
+/// One of GraphQL's errors: where in the answer it stands, and what GitHub
+/// said.
+#[derive(Deserialize)]
+struct QueryError {
+    #[serde(default)]
+    path: Vec<Value>,
+    message: String,
+}
+
+impl QueryError {
+    /// The alias of the pull request this error refused a field of, and the
+    /// refusal, or nothing for an error about anything larger than one
+    /// field: the query, the repository, or a whole pull request.
+    fn refusal(&self) -> Option<(&str, Refusal)> {
+        match self.path.as_slice() {
+            [repository, alias, field, ..] if repository == "repository" => Some((
+                alias.as_str()?,
+                Refusal {
+                    field: field.as_str()?.to_string(),
+                    why: self.message.clone(),
+                },
+            )),
+            _ => None,
+        }
+    }
 }
 
 /// Each of `numbers` in `repo` as GitHub has it now, in the order asked, read
@@ -47,12 +87,16 @@ struct Data {
 /// owner and name go to `gh` as variables rather than into the query, since
 /// a gate's writer chose them. `gh` picks the host for a `repo` that names
 /// none, `GH_HOST` included, exactly as `bd gate check` has it pick.
+///
+/// An answer whose every error refuses one pull request's field is read for
+/// all it does hold, and each refusal is handed back with the pull request
+/// it refused. Any other error fails the query as a whole.
 pub fn pull_requests(
     runner: &dyn Runner,
     repo: &Repository,
     numbers: &[u64],
     fields: &str,
-) -> Result<Vec<Observed>, RunFailure> {
+) -> Result<Vec<Result<Observed, RunFailure>>, RunFailure> {
     let asked_of_each = ["state", fields].join(" ");
     let asked: Vec<String> = numbers
         .iter()
@@ -74,27 +118,45 @@ pub fn pull_requests(
         args.extend(["--hostname", host]);
     }
     args.extend(["-f", &owner, "-f", &name, "-f", &query]);
-    let out = runner.run("gh", &args, None, &Env::new())?;
-    let queried: Queried = serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
+    let queried = match runner.run_keeping_stdout("gh", &args, None, &Env::new()) {
+        Ok(out) => serde_json::from_str::<Queried>(&out).map_err(|e| RunFailure::parse("gh", e))?,
+        Err(printed) => match serde_json::from_str::<Queried>(&printed.stdout) {
+            Ok(queried)
+                if !queried.errors.is_empty()
+                    && queried.errors.iter().all(|error| error.refusal().is_some()) =>
+            {
+                queried
+            }
+            _ => return Err(printed.failure),
+        },
+    };
     let mut answered = queried
         .data
         .repository
         .ok_or_else(|| RunFailure::parse("gh", "the answer names no repository"))?;
-    numbers
+    let refusals: Vec<(&str, Refusal)> = queried
+        .errors
+        .iter()
+        .filter_map(QueryError::refusal)
+        .collect();
+    Ok(numbers
         .iter()
         .map(|number| {
-            let fields = answered
-                .remove(&format!("pr{number}"))
-                .flatten()
-                .ok_or_else(|| {
-                    RunFailure::parse("gh", format!("the answer has no pull request #{number}"))
-                })?;
+            let alias = format!("pr{number}");
+            let fields = answered.remove(&alias).flatten().ok_or_else(|| {
+                RunFailure::parse("gh", format!("the answer has no pull request #{number}"))
+            })?;
             Ok(Observed {
                 state: state(&fields)?,
                 fields,
+                refused: refusals
+                    .iter()
+                    .filter(|(refused, _)| *refused == alias)
+                    .map(|(_, refusal)| refusal.clone())
+                    .collect(),
             })
         })
-        .collect()
+        .collect())
 }
 
 /// What `gh api repos/OWNER/NAME/commits/SHA/pulls` prints, cut to what this
@@ -297,6 +359,7 @@ mod tests {
         Observed {
             state,
             fields: serde_json::from_str(fields).expect("the fields parse"),
+            refused: Vec::new(),
         }
     }
 
@@ -311,12 +374,18 @@ mod tests {
     fn queried(
         runner: &FakeRunner,
         host: Option<&'static str>,
-    ) -> Result<Vec<Observed>, RunFailure> {
+    ) -> Result<Vec<Result<Observed, RunFailure>>, RunFailure> {
         pull_requests(runner, &ark(host), &[7, 42], FIELDS)
     }
 
-    fn states(observed: Result<Vec<Observed>, RunFailure>) -> Result<Vec<State>, RunFailure> {
-        observed.map(|each| each.into_iter().map(|one| one.state).collect())
+    fn states(
+        observed: Result<Vec<Result<Observed, RunFailure>>, RunFailure>,
+    ) -> Result<Vec<State>, RunFailure> {
+        observed.and_then(|each| {
+            each.into_iter()
+                .map(|one| one.map(|one| one.state))
+                .collect()
+        })
     }
 
     #[test]
@@ -329,14 +398,14 @@ mod tests {
         assert_eq!(
             queried(&runner, None),
             Ok(vec![
-                observed(
+                Ok(observed(
                     State::Open,
                     r#"{"state":"OPEN","isDraft":false,"mergeCommit":null}"#
-                ),
-                observed(
+                )),
+                Ok(observed(
                     State::Merged,
                     r#"{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}"#
-                ),
+                )),
             ])
         );
         assert_eq!(runner.calls().len(), 1);
@@ -366,7 +435,7 @@ mod tests {
 
         assert_eq!(
             pull_requests(&runner, &ark(None), &[7], ""),
-            Ok(vec![observed(State::Closed, r#"{"state":"CLOSED"}"#)])
+            Ok(vec![Ok(observed(State::Closed, r#"{"state":"CLOSED"}"#))])
         );
     }
 
@@ -385,27 +454,126 @@ mod tests {
         );
     }
 
+    /// The one of `observed` that failed to read, which is #42.
+    fn failed_42(observed: Result<Vec<Result<Observed, RunFailure>>, RunFailure>) -> RunFailure {
+        let mut each = observed.expect("the query was answered");
+        assert_eq!(each.len(), 2);
+        assert!(each[0].is_ok(), "#7 reads: {:?}", each[0]);
+        each.remove(1).expect_err("#42 does not read")
+    }
+
     #[test]
-    fn an_answer_missing_a_pull_request_asked_about_is_a_failure_to_read() {
+    fn an_answer_missing_a_pull_request_asked_about_fails_to_read_only_that_one() {
         let runner = FakeRunner::default().with(
             &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
             r#"{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null},"pr42":null}}}"#,
         );
 
-        let failure = queried(&runner, None).expect_err("#42 is not in the answer");
+        let failure = failed_42(queried(&runner, None));
         assert_eq!(failure.kind, FailureKind::Parse);
         assert!(failure.detail.contains("#42"), "{}", failure.detail);
     }
 
     #[test]
-    fn a_state_gh_has_not_printed_before_is_a_failure_to_read() {
+    fn a_state_gh_has_not_printed_before_fails_to_read_only_that_pull_request() {
         let runner = FakeRunner::default().with(
             &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
             r#"{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null},"pr42":{"state":"DRAFT","isDraft":false,"mergeCommit":null}}}}"#,
         );
 
-        let failure = queried(&runner, None).expect_err("DRAFT is not a state bdi knows");
+        let failure = failed_42(queried(&runner, None));
         assert_eq!(failure.kind, FailureKind::Parse);
         assert!(failure.detail.contains("DRAFT"), "{}", failure.detail);
+    }
+
+    /// What gh says on stderr for an answer holding errors, which bdi does
+    /// not read past its classification.
+    fn exited(kind: FailureKind) -> RunFailure {
+        RunFailure {
+            kind,
+            program: "gh".to_string(),
+            detail: "gh exited 1".to_string(),
+            unreadable: None,
+        }
+    }
+
+    /// An answer as gh prints it before exiting 1, measured on gh 2.102.0
+    /// for an error naming a pull request: the data GitHub could give, and
+    /// an error with the path to what it could not. The error refusing a
+    /// field is not yet measured, and has the shape GraphQL gives every
+    /// error.
+    const CHECKS_REFUSED_ON_7: &str = r#"{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null,"commits":{"nodes":[{"commit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff","statusCheckRollup":null}}]}},"pr42":{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"0badc0de0badc0de0badc0de0badc0de0badc0de"}}}},"errors":[{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup"],"locations":[{"line":1,"column":200}],"message":"Resource not accessible by personal access token"}]}"#;
+
+    #[test]
+    fn a_field_github_refused_is_handed_back_with_the_pull_request_it_refused_and_the_rest_read() {
+        let runner = FakeRunner::default().failing_having_printed(
+            &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+            CHECKS_REFUSED_ON_7,
+            exited(FailureKind::Unavailable),
+        );
+
+        let each = queried(&runner, None).expect("the answer is read for what it holds");
+        let refused: Vec<Vec<Refusal>> = each
+            .iter()
+            .map(|one| one.as_ref().expect("both read").refused.clone())
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                vec![Refusal {
+                    field: "commits".to_string(),
+                    why: "Resource not accessible by personal access token".to_string(),
+                }],
+                vec![],
+            ]
+        );
+        assert_eq!(states(Ok(each)), Ok(vec![State::Open, State::Merged]));
+    }
+
+    /// An error about anything larger than one pull request's field, beside
+    /// one that is, leaves the query failed for what gh's exit said.
+    #[test]
+    fn an_answer_with_any_error_larger_than_a_field_fails_as_gh_said() {
+        let larger = [
+            r#"{"type":"NOT_FOUND","path":["repository","pr42"],"message":"Could not resolve to a PullRequest with the number of 42."}"#,
+            r#"{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository with the name 'example/ark'."}"#,
+            r#"{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}"#,
+        ];
+        for error in larger {
+            let printed =
+                CHECKS_REFUSED_ON_7.replace(r#""errors":["#, &format!(r#""errors":[{error},"#));
+            let runner = FakeRunner::default().failing_having_printed(
+                &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+                &printed,
+                exited(FailureKind::Gone),
+            );
+
+            assert_eq!(
+                queried(&runner, None),
+                Err(exited(FailureKind::Gone)),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failure_with_nothing_readable_on_stdout_fails_as_gh_said() {
+        for printed in [
+            "",
+            "not json",
+            r#"{"data":{"repository":{"pr7":null,"pr42":null}}}"#,
+        ] {
+            let runner = FakeRunner::default().failing_having_printed(
+                &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+                printed,
+                exited(FailureKind::Unavailable),
+            );
+
+            assert_eq!(
+                queried(&runner, None),
+                Err(exited(FailureKind::Unavailable)),
+                "{printed}"
+            );
+        }
     }
 }
