@@ -750,6 +750,9 @@ jobs:
     if: needs.detect.outputs.plugin_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # npm trusts only a run in this environment, and the environment admits
+    # only main and plugin-v* tags, the refs a release and its repairs run on.
+    environment: npm-publish
     # `id-token` is what npm's trusted publishing exchanges for the right to
     # publish, so no npm token is stored anywhere. npm trusts this workflow by
     # its filename, so the publish has to stay in release.yml.
