@@ -117,9 +117,13 @@ impl Standing {
     /// with how current that is. None until there is something to say: a
     /// project neither read nor found unreachable has a watch wait rather
     /// than be told it is empty.
-    fn told(&self, project: &str, interest: &mut Interest) -> Option<Vec<String>> {
+    ///
+    /// Every interest is caught up whenever the beads are replaced, so one
+    /// whose beads have not been replaced since has nothing to catch up on.
+    fn told(&self, project: &str, interest: &mut Interest, replaced: bool) -> Option<Vec<String>> {
         let mut lines = match &self.beads {
-            Some(beads) => interest.catch_up(project, beads),
+            Some(beads) if replaced => interest.catch_up(project, beads),
+            Some(_) => Vec::new(),
             None if self.unreachable.is_some() => Vec::new(),
             None => return None,
         };
@@ -190,6 +194,7 @@ impl Hold {
     /// Take what a source said of one project, and tell everyone watching it.
     pub fn take(&mut self, answer: Answer) {
         let standing = self.projects.entry(answer.project.clone()).or_default();
+        let replaced = matches!(answer.said, Said::Read { .. });
         match answer.said {
             Said::Read { at, beads } => {
                 standing.beads = Some(beads);
@@ -225,7 +230,7 @@ impl Hold {
                 })
                 .map(|record| watching::event_line(&project, record))
                 .collect();
-            standing.told(&project, interest).is_none_or(|told| {
+            standing.told(&project, interest, replaced).is_none_or(|told| {
                 lines.extend(told);
                 consumer.tells(lines)
             })
@@ -268,7 +273,7 @@ impl Hold {
             interest.widen(watch);
             lines.extend(
                 self.projects[project]
-                    .told(project, interest)
+                    .told(project, interest, true)
                     .into_iter()
                     .flatten(),
             );

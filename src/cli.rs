@@ -529,11 +529,8 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         .keeping_rows()
         .reading_journals()
         .caching_environments(EnvironmentCache::here());
-    let reads: Reads = Box::new(move |wanted, now| {
-        let snapshot = collection.collect(&cfg, &Unasked, &trackers, wanted, Filter::All, now);
-        let answers = collection.answers(&snapshot);
-        (snapshot, answers)
-    });
+    let reads: Reads =
+        Box::new(move |wanted, now| collection.watched(&cfg, &Unasked, &trackers, wanted, now));
     let mut source = ReadingTrackers::new(reads, heard, outstanding, reading);
     std::thread::spawn(move || hold(&mut source, &held));
 

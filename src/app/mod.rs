@@ -22,7 +22,7 @@ mod watcher;
 mod watching;
 
 pub use armed::{armed_unread, Armed, Arming};
-pub use collection::{run, Asked, Awaited, Collection, Wanted};
+pub use collection::{run, Asked, Awaited, Collection, Wanted, Watched};
 pub use due::due_after;
 pub use outstanding::Outstanding;
 pub use reading::Reading;

@@ -10,15 +10,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use chrono::{DateTime, Utc};
 
 use crate::collect::changes::Heard;
-use crate::model::snapshot::Snapshot;
 
 use super::watcher::{Answer, ChangeSource, Said};
-use super::{Asked, Outstanding, Reading, Wanted};
+use super::{Asked, Outstanding, Reading, Wanted, Watched};
 
-/// One read of what `Wanted` names, as of the instant handed in: the
-/// collection drawn from it, and what each project standing says to the
-/// watcher.
-pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> (Snapshot, Vec<Answer>) + Send>;
+/// One read of what `Wanted` names, as of the instant handed in, and what
+/// each project with something new to say says to the watcher.
+pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> Watched + Send>;
 
 /// A change source that reads every configured project's tracker, once at
 /// the start and then whenever a project's poll comes round or a producer
@@ -64,14 +62,14 @@ impl ReadingTrackers {
         let Ok(Asked::Read(wanted)) = self.asking.1.try_recv() else {
             return false;
         };
-        let (snapshot, answers) = (self.reads)(&wanted, now);
+        let watched = (self.reads)(&wanted, now);
         self.reading.came_back(
             self.outstanding.came_back(),
-            &snapshot.projects,
-            &snapshot.speaks_until,
+            &watched.projects,
+            &watched.speaks_until,
             Utc::now(),
         );
-        self.told.extend(answers);
+        self.told.extend(watched.answers);
         true
     }
 
@@ -140,7 +138,6 @@ mod tests {
     use crate::collect::agents::testing::Fake as Provider;
     use crate::collect::changes::Reported;
     use crate::collect::tracker::testing::Fakes;
-    use crate::model::snapshot::Filter;
 
     /// Every project `trackers` holds, read through a collection as
     /// `bdi watch` reads them, with no window and nothing polling.
@@ -156,16 +153,13 @@ mod tests {
         let cfg = two_projects();
         let mut collection = Collection::default();
         let reads: Reads = Box::new(move |wanted, now| {
-            let snapshot = collection.collect(
+            collection.watched(
                 &cfg,
                 &Provider::holding(Vec::new()),
                 trackers.as_ref(),
                 wanted,
-                Filter::All,
                 now,
-            );
-            let answers = collection.answers(&snapshot);
-            (snapshot, answers)
+            )
         });
         let (tell, heard) = mpsc::channel();
         let armed = ["dunwich", "ferry"]
