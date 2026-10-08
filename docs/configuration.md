@@ -963,7 +963,19 @@ Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is
 stopped. Its config is read once at startup.
 
 It asks GitHub through `gh`, so it settles what the account `gh` is signed in
-to can see. A look asks about a repository's pull requests together, up to a
+to can see, with the token `gh` holds for it. A classic token needs the `repo`
+scope. A fine-grained token needs read access to these permissions on each
+repository:
+
+| permission | what `bdi gates` reads with it | without it |
+|---|---|---|
+| *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
+| *Contents* | the merge commit and the head commit | no merge is settled and no failing checks are told |
+| *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing checks are told |
+
+A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
+
+A look asks about a repository's pull requests together, up to a
 hundred in one query, so what it spends of that account's rate limit grows with
 the repositories rather than the pull requests. To settle repositories that
 need different accounts, run one `bdi gates` per account, each with its own
@@ -994,9 +1006,9 @@ that enforces single sign-on, a lapsed authorisation is the usual cause, and
 `gh auth refresh` is the cure.
 
 A field GitHub will not show the account `gh` runs as costs only the events
-that read it. Every other event still settles the pull request, merges
-included, and `bdi gates` names the event it cannot see once for each
-repository, with what GitHub said.
+that read it. Every other event still settles the pull request, and
+`bdi gates` names the event it cannot see once for each repository, with what
+GitHub said.
 
 A rate limit is the exception, because the login `gh` runs as may be shared
 with whoever else uses it. Once GitHub refuses a pull request for one, that

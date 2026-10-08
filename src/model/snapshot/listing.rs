@@ -43,7 +43,7 @@ struct Listed<'a> {
     agent: Option<&'a AgentRef>,
     badges: &'a [Badged],
     labels: &'a [String],
-    description: Option<&'a str>,
+    description: Option<String>,
     created_at: Option<DateTime<Utc>>,
     metadata: &'a BTreeMap<String, String>,
 }
@@ -62,7 +62,7 @@ impl<'a> From<&'a Node> for Listed<'a> {
             agent: node.agent.as_ref(),
             badges: &node.badges,
             labels: &node.labels,
-            description: Some(&*node.description).filter(|said| !said.is_empty()),
+            description: node.description().filter(|said| !said.is_empty()),
             created_at: node.created_at,
             metadata: &node.metadata,
         }
