@@ -19,7 +19,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
-use crate::config::{Background, Config};
+use crate::config::{self, Background, Config, Crop};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
@@ -61,6 +61,8 @@ pub(super) struct Drawing {
     notch: usize,
     /// Which cells a bead's row draws, and in what order.
     layout: Layout,
+    /// Where the tail cuts each agent's screen.
+    crops: config::Tail,
 }
 
 impl Drawing {
@@ -70,6 +72,7 @@ impl Drawing {
             background: cfg.theme.background,
             notch: cfg.tui.wheel_notch_lines,
             layout: cfg.row.clone(),
+            crops: cfg.tail.clone(),
         }
     }
 }
@@ -142,6 +145,10 @@ struct Shown {
     tailing: Option<PaneKey>,
     /// Where the band is with the pane read it is waiting on.
     reading: Reading,
+    /// How many of the pane's lines the band had room for on the last frame,
+    /// which is how many a read asks for. The band's height follows the
+    /// forest's, so the frame is what knows it.
+    room: u16,
     /// What the config in force settles about the drawing.
     drawing: Drawing,
     /// When the pane on the band is next asked for, or nothing while a read
@@ -245,6 +252,7 @@ impl Shown {
             panes,
             clipboard,
             reading: Reading::Nothing,
+            room: tail::LINES,
             drawing,
             due: None,
             said: None,
@@ -392,9 +400,17 @@ impl Shown {
     /// way;
     /// what arms the next read is that answer landing.
     fn read(&mut self, pane: PaneKey) {
-        self.panes.read(&pane, tail::LINES);
+        let rows = tail::rows_to_read(self.crop_for(&pane), self.room);
+        self.panes.read(&pane, rows);
         self.reading = Reading::Outstanding;
         self.due = None;
+    }
+
+    /// Where the reader has the tail cut the screen of the agent in `pane`,
+    /// where they gave that agent a crop and the provider named the agent.
+    fn crop_for(&self, pane: &PaneKey) -> Option<Crop> {
+        let agent = self.forest.snapshot().agents.agent_in(pane)?;
+        self.drawing.crops.crop_for(agent)
     }
 
     /// How long until the pane on the band is asked for again, or nothing
@@ -472,7 +488,8 @@ impl Shown {
                     self.ask();
                     return false;
                 }
-                let read = tail::read(pane, read);
+                let crop = self.crop_for(&pane);
+                let read = tail::read(pane, read, crop);
                 let changed = read != self.tail;
                 self.tail = read;
                 self.due = due_after(now, self.drawing.tail_every);
@@ -526,7 +543,7 @@ impl Shown {
     /// than left on the last frame's, so a pointer is answered for the screen
     /// it pointed at whatever has been drawn since.
     fn clicked(&mut self, screen: Rect, row: u16) -> bool {
-        let bands = draw::regions(screen);
+        let bands = draw::regions(screen, self.forest.lines().len());
         self.forest.fit(bands.forest.height as usize);
 
         match draw::line_at(
@@ -974,14 +991,6 @@ impl Screen {
     }
 }
 
-/// One frame: the forest, the tail beneath it, the height the forest is told
-/// it has, and the window over it when one is up — the bindings, or a bead.
-///
-/// Outside the `terminal.draw` closure so a test backend can drive the whole
-/// frame. This is the only place the three bands are agreed on, and `^D` and
-/// `^U` are the part of that agreement nothing on screen would show was
-/// broken. A window goes on last because it sits over the forest rather
-/// than in place of it.
 /// The search prompt: what has been typed into it, and where the search
 /// began.
 struct Prompt {
@@ -1000,6 +1009,16 @@ fn said_of(landed: forest::Landed) -> Said {
     }
 }
 
+/// One frame: the forest, the tail beneath it, the height the forest is told
+/// it has, and the window over it when one is up — the bindings, or a bead.
+///
+/// Outside the `terminal.draw` closure so a test backend can drive the whole
+/// frame. This is the only place the three bands are agreed on, and `^D` and
+/// `^U` are the part of that agreement nothing on screen would show was
+/// broken. A window goes on last because it sits over the forest rather
+/// than in place of it.
+///
+/// Answers how many of the pane's lines the band had room for, under its rule.
 #[allow(clippy::too_many_arguments)]
 fn paint(
     frame: &mut Frame,
@@ -1011,8 +1030,8 @@ fn paint(
     collecting: &[Awaited],
     lapsed: &[String],
     now: DateTime<Utc>,
-) {
-    let bands = draw::regions(frame.area());
+) -> u16 {
+    let bands = draw::regions(frame.area(), forest.lines().len());
     forest.fit(bands.forest.height as usize);
     draw::draw(
         frame,
@@ -1045,6 +1064,7 @@ fn paint(
             }
         }
     }
+    bands.tail.height.saturating_sub(1)
 }
 
 /// The window over the forest, where one is up, with what drawing it needs:
@@ -1187,6 +1207,7 @@ impl View for Screen {
             said,
             sought,
             drawing,
+            room,
             ..
         } = &mut self.shown;
         let over = match showing {
@@ -1206,7 +1227,7 @@ impl View for Screen {
             background: drawing.background,
         };
         self.terminal.draw(|frame| {
-            paint(
+            *room = paint(
                 frame,
                 forest,
                 &drawing.layout,
@@ -2085,6 +2106,7 @@ mod tests {
             background: Background::Dark,
             notch: A_NOTCH,
             layout: Layout::default(),
+            crops: config::Tail::default(),
         }
     }
 
@@ -2350,7 +2372,7 @@ mod tests {
     /// viewport that scrolled back to the top is the same bug wearing a
     /// different hat, and only the rows show the difference.
     fn forest_band(shown: &mut Shown, width: u16, height: u16) -> Vec<String> {
-        let bands = draw::regions(Rect::new(0, 0, width, height));
+        let bands = draw::regions(Rect::new(0, 0, width, height), shown.forest.lines().len());
         let rows = screen_of(&mut shown.forest, &shown.tail, width, height, Over::Nothing).rows();
         rows[..bands.forest.height as usize].to_vec()
     }
@@ -3142,8 +3164,8 @@ mod tests {
     #[test]
     fn a_click_selects_the_line_the_forest_drew_on_that_row() {
         let screen = Rect::new(0, 0, 60, 24);
-        let band = draw::regions(screen).forest;
         let mut shown = shown(a_grove(30));
+        let band = draw::regions(screen, shown.forest.lines().len()).forest;
 
         assert!(shown.clicked(screen, band.y + 3));
         assert_eq!(shown.forest.selected_line(), 3);
@@ -3170,8 +3192,8 @@ mod tests {
     #[test]
     fn a_click_beneath_the_forest_selects_nothing() {
         let screen = Rect::new(0, 0, 60, 24);
-        let bands = draw::regions(screen);
         let mut shown = shown(a_grove(30));
+        let bands = draw::regions(screen, shown.forest.lines().len());
         shown.clicked(screen, bands.forest.y + 3);
         let selected = shown.forest.selected_line();
 
@@ -3370,6 +3392,74 @@ mod tests {
             panes.reads(),
             [format!("{A_SELECTED_PANE} {}", tail::LINES)],
             "the pane is asked for exactly the lines the band has room for"
+        );
+    }
+
+    /// A staffed grove whose selected pane the provider says holds `agent`,
+    /// on the screen of a reader who crops Claude Code's screen.
+    fn shown_cropping_claude_code_over(agent: &str) -> (Shown, Asking) {
+        let mut snapshot = a_staffed_grove(6);
+        snapshot
+            .agents
+            .pane_agents
+            .insert(pane_key(A_SELECTED_PANE), agent.to_string());
+        let panes = Asking::default();
+        let crops = config::Tail {
+            crop: BTreeMap::from([("claude".to_string(), Crop::ClaudeCode)]),
+        };
+        (
+            Shown::of(
+                snapshot,
+                Box::new(panes.clone()),
+                Box::new(io::sink()),
+                Drawing { crops, ..drawing() },
+                nothing_said(),
+                an_instant(),
+            ),
+            panes,
+        )
+    }
+
+    /// A Claude Code screen: what the agent said, then its input box.
+    const A_CLAUDE_CODE_SCREEN: [&str; 5] = ["done 14:05", "─────", "❯ move", "─────", "  41%"];
+
+    /// A crop is found by looking at the screen, so the pane is asked for all
+    /// of it, and what lands is cut where the crop says.
+    #[test]
+    fn a_pane_whose_agent_has_a_crop_is_read_whole_and_cropped() {
+        let (mut shown, panes) = shown_cropping_claude_code_over("claude");
+
+        assert_eq!(
+            panes.reads(),
+            [format!("{A_SELECTED_PANE} {}", tail::WHOLE_SCREEN)]
+        );
+        shown.tailed(read(A_SELECTED_PANE, &A_CLAUDE_CODE_SCREEN), an_instant());
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: pane_key(A_SELECTED_PANE),
+                lines: vec!["done 14:05".to_string()],
+            }
+        );
+    }
+
+    /// A crop is the agent's, so a pane holding an agent the reader gave none
+    /// is read and drawn exactly as a pane was before there were crops.
+    #[test]
+    fn a_pane_whose_agent_has_no_crop_is_tailed_as_before() {
+        let (mut shown, panes) = shown_cropping_claude_code_over("codex");
+
+        assert_eq!(
+            panes.reads(),
+            [format!("{A_SELECTED_PANE} {}", tail::LINES)]
+        );
+        shown.tailed(read(A_SELECTED_PANE, &A_CLAUDE_CODE_SCREEN), an_instant());
+        assert_eq!(
+            shown.tail,
+            Tail::Pane {
+                pane: pane_key(A_SELECTED_PANE),
+                lines: A_CLAUDE_CODE_SCREEN.map(str::to_string).to_vec(),
+            }
         );
     }
 
@@ -4656,6 +4746,29 @@ mod tests {
         assert!(!foot_of(&mut shown, 80, 24).contains("copied"));
     }
 
+    /// A tall screen over a short tree: the tail takes half the screen
+    /// rather than leaving the rows between the two blank, and the pane's
+    /// newest line sits on the row above the keys.
+    #[test]
+    fn a_short_tree_on_a_tall_screen_gives_the_tail_half_of_it() {
+        let mut forest = an_open_grove(3);
+        let said: Vec<String> = (1..=30).map(|n| format!("line {n}")).collect();
+        let tail = Tail::Pane {
+            pane: pane_key("w:p1"),
+            lines: said,
+        };
+
+        let rows = screen_of(&mut forest, &tail, 40, 40, Over::Nothing).rows();
+
+        assert!(
+            rows[19].contains("w:p1"),
+            "the rule and the pane under it take twenty rows of forty: {rows:?}"
+        );
+        assert!(rows[20].starts_with("  line 12 "), "{rows:?}");
+        assert!(rows[38].starts_with("  line 30 "), "{rows:?}");
+        assert!(rows[39].contains("q quit"));
+    }
+
     #[test]
     fn a_frame_puts_the_tail_in_the_band_reserved_for_it() {
         let mut forest = an_open_grove(30);
@@ -4665,13 +4778,16 @@ mod tests {
         };
 
         let rows = screen_of(&mut forest, &tail, 40, 12, Over::Nothing).rows();
-        let bands = draw::regions(Rect::new(0, 0, 40, 12));
+        let bands = draw::regions(Rect::new(0, 0, 40, 12), forest.lines().len());
 
         assert!(
             rows[bands.tail.y as usize].contains("w:p1"),
             "the rule naming the pane opens the tail's band: {rows:?}"
         );
-        assert!(rows[bands.tail.y as usize + 1].starts_with("  rebuilt .#larkspur"));
+        assert!(
+            rows[(bands.keys.y - 1) as usize].starts_with("  rebuilt .#larkspur"),
+            "the pane's newest line sits on the band's last row: {rows:?}"
+        );
         assert!(
             rows[bands.tail.y as usize - 1].contains("a bead in the grove"),
             "the row above the tail is still the forest's"

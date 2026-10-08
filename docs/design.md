@@ -99,6 +99,7 @@ coin one — and say so.**
 | **gone** | *coined* | a bead its tracker held and has since answered without. The watcher's gone line names one, and so does the line standing where a focused bead's row was. Not a root its tracker never held, which is reported missing. Neither project has a word for a bead that has left a tracker's answer. |
 | **unanswered** | *coined* | a read of a project that has been outstanding longer than one may be and has produced nothing. Neither project names it: the read is `bdi`'s own, and neither `bd` nor `herdr` knows it is being waited on. Not *refused*, which is a read that came back and said no. Whether the read is the collection `bdi` is running or one queued behind it is not part of it — the reader's question is how long their rows have been on their way, and both answers to *why* are the same wait. |
 | **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
+| **crop** | *coined* | where the tail cuts a pane's screen, so that it shows the rows above the cut: a strategy `bdi` ships, which the reader's `[tail.crop]` names for each agent. herdr names the agent in a pane and reads its screen; neither project cuts one. |
 | **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
 | **aside** | *coined* | the agent provider held off the loop: the tail asks by sending, and the answer arrives later on the channel every other event arrives on. A provider that has wedged therefore costs one waiting thread rather than a keyboard that has stopped answering. Neither project names it, because neither is the thing being kept waiting. |
 | **block** | *coined* | one of the three parts a row is fitted from: the identity, left-aligned and yielding last; the title, filling the middle and cut first; the state, right-justified and cut from its own end. Neither project has a word for it, because neither fits a row to a width. |
@@ -3013,8 +3014,9 @@ arithmetic; a shut line over agents or anomalies counts them.
 ### The tail
 
 The band under the forest is a rule with the selected pane's id centred in it,
-over up to six lines of that pane's output indented two columns; the newest
-lines are the ones kept, because a pane's last line is what it is doing now. The
+over that pane's output indented two columns; the newest lines are the ones
+kept, because a pane's last line is what it is doing now, and the newest sits on
+the band's last row, as it sits at the foot of the pane. The
 rule is drawn whether or not there is a pane, so the band never goes blank and
 always says where the forest stopped. Where there is no pane, the reason sits
 under the rule in dim, and there are six: no agent provider at all; a provider
@@ -3034,6 +3036,29 @@ cut with `…` where it runs past the band; there is no reflow, because a pane's
 screen is a rectangle at its own geometry. What `bdi` says in the band is
 toned apart from what the pane says, which is the whole of what tells its words
 from the pane's; which tone that is depends on the reader's background, below.
+
+An agent's own screen often ends in rows that are the same whatever it is
+doing. Claude Code's are its input box, its model and context meter, and its
+mode line, so a tail of its bottom rows says nothing about the work. In the
+tail, the suggestion it greys into the box reads as if the reader had typed
+it. So the reader can say where the tail cuts each agent's screen.
+`[tail.crop]` maps the name herdr gives the agent in a pane, its `agent`
+field, to a crop `bdi` ships. The tail then shows the rows above the cut,
+newest at the bottom. A crop is chosen by name rather than spelled out in the
+config, because what an agent draws at the foot of its screen is that agent's
+layout. The model knows no agent, and the strategy is the one place that
+knowledge lives. One ships:
+
+| crop | where it cuts |
+|---|---|
+| `claude-code` | at the top of the two rules that hold Claude Code's input box, counted up from the foot of the screen |
+
+A rule counts only where it starts in the first column, because a rule
+indented into a message is part of the message. A cropped pane is read whole,
+with `--lines` past anything a screen holds, because the cut is found by
+looking at the screen. A screen the crop finds nowhere to cut is tailed as it
+was read, because a band cropped to nothing reads as a pane with nothing to
+say. A pane whose agent has no crop is tailed uncropped.
 
 The pane is read on the band's own clock and not on the trackers'. herdr
 answers a read in a few milliseconds, and no herdr event carries a pane's
@@ -3081,8 +3106,15 @@ that is not a bead — a project's line, a group's line — `y` does nothing and
 says nothing, as `Enter` does. A hidden tree's root is a root, so both keys
 work there as they do on any other.
 
-The band yields its rows before the forest yields any: on a short screen the
-forest is the thing this tool exists to show.
+The band takes the rows the forest leaves free, up to half the screen's height,
+so a short tree leaves no blank between itself and the pane. Where the forest
+needs the rows, the band keeps six lines under its rule, and on a short screen
+it yields those before the forest yields any: the forest is the thing this tool
+exists to show. A read of an uncropped pane asks herdr for as many lines as the
+band had room for on the last frame, so a band that grows fills on the next
+read. A cropped pane is read whole whatever the band's height, and the rows
+above its cut fill the band from the bottom, so a taller band shows more of
+what the agent last said.
 
 ### The reader says what their background is
 

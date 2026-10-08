@@ -76,6 +76,9 @@ wheel_notch_lines = 3
 [theme]
 background = "light"
 
+[tail.crop]
+claude = "claude-code"
+
 [row]
 identity = ["glyph", "id"]
 title    = ["title", "badges"]
@@ -712,6 +715,26 @@ to.
 `background` is `dark` or `light`. `bdi` cannot see your terminal's background
 and assumes `dark`; on a light one the tail band becomes hard to read until you
 say so.
+
+## `[tail.crop]`
+
+Where the tail cuts a pane's screen, for each agent. A key is the name herdr
+gives the agent in a pane, which `herdr agent list` prints as `agent`. A value
+is one of the crops `bdi` ships, and the tail shows the rows above where it
+cuts:
+
+| crop | where it cuts |
+|---|---|
+| `claude-code` | above Claude Code's input box, so the tail shows what the agent last said and when it finished, without the box, the suggestion greyed into it, the meter or the mode line |
+
+```toml
+[tail.crop]
+claude = "claude-code"
+```
+
+A pane whose agent has no entry is tailed uncropped. A screen the crop finds
+nowhere to cut, such as one with a dialog drawn where the box would be, is
+tailed uncropped too. The file is refused for a crop `bdi` does not ship.
 
 ## `[row]`
 
