@@ -121,6 +121,7 @@ pub fn look(
                         project: read.project.clone(),
                         until: wait.until,
                         blocks: gate.blocks,
+                        made: gate.made,
                     },
                 ),
             }
@@ -359,7 +360,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}}}}}}"
+             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -373,7 +374,7 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7)\
-             {{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state}}}}}}}} reviews(last:5){{nodes{{url state author{{login}}}}}} mergeable headRefOid comments(last:5){{nodes{{url author{{login}}}}}}}}}}}}"
+             {{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
         )
     }
 
@@ -496,6 +497,21 @@ mod tests {
         looked(&runner, &[project("arkham")], &Gates::default());
 
         assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    /// #7 was reviewed a second before ark-eb1, the gate waiting on it, was
+    /// made, and #42 is a draft.
+    #[test]
+    fn a_look_reads_the_gates_again_for_nothing_older_than_the_gate_waiting() {
+        let reviewed_before_the_gate = r#"{"data":{"repository":{
+            "pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"reviews":{"nodes":[{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"2026-10-06T08:24:48Z","author":{"login":"alice"}}]}},
+            "pr42":{"state":"OPEN","isDraft":true,"mergeCommit":null,"reviewDecision":null}}}}"#;
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&queried("ark"), reviewed_before_the_gate);
+
+        looked(&runner, &[project("arkham")], &Gates::default());
+
+        assert_eq!(gate_lists_read(&runner), 1);
     }
 
     #[test]
