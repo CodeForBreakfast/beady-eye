@@ -1408,9 +1408,18 @@ dunwich = ["dun-c3"]
         );
         let cfg = one_project();
 
-        let refreshed =
-            refresh_project(&trackers, &cfg.projects[0], &cfg, &[], true, None, true, 0, now())
-                .expect("the beads are read");
+        let refreshed = refresh_project(
+            &trackers,
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            None,
+            true,
+            0,
+            now(),
+        )
+        .expect("the beads are read");
 
         let Refresh::Read { at, journal, .. } = refreshed else {
             panic!("a project nothing has read is read in full")

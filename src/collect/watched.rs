@@ -1575,7 +1575,10 @@ path = "/srv/work/dunwich"
         let mut watcher = Watcher::default();
         let first = taking(
             &mut watcher,
-            &[bead("dunwich", "dun-1", true, &[]), fresh("dunwich", json!("ok"))],
+            &[
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
         );
 
         let then = taking(&mut watcher, &[fresh("dunwich", json!("ok"))]);
@@ -1588,13 +1591,22 @@ path = "/srv/work/dunwich"
         let mut watcher = Watcher::default();
         let first = taking(
             &mut watcher,
-            &[bead("dunwich", "dun-1", true, &[]), fresh("dunwich", json!("ok"))],
+            &[
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
         );
         let changed = taking(
             &mut watcher,
-            &[bead("dunwich", "dun-1", false, &[]), fresh("dunwich", json!("ok"))],
+            &[
+                bead("dunwich", "dun-1", false, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
         );
-        let went = taking(&mut watcher, &[gone("dun-1"), fresh("dunwich", json!("ok"))]);
+        let went = taking(
+            &mut watcher,
+            &[gone("dun-1"), fresh("dunwich", json!("ok"))],
+        );
 
         assert_ne!(fingerprint(&changed), fingerprint(&first));
         assert_ne!(fingerprint(&went), fingerprint(&changed));
@@ -1607,7 +1619,10 @@ path = "/srv/work/dunwich"
         let mut watcher = Watcher::default();
         let before = taking(
             &mut watcher,
-            &[bead("dunwich", "dun-1", true, &[]), fresh("dunwich", json!("ok"))],
+            &[
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
         );
         watcher.gone(true);
 

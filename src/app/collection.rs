@@ -3016,7 +3016,9 @@ path = "{FERRY}"
         standing
             .read
             .iter()
-            .filter_map(|(project, read)| Some((project.as_str(), read.work.as_ref().ok()?.roots.len())))
+            .filter_map(|(project, read)| {
+                Some((project.as_str(), read.work.as_ref().ok()?.roots.len()))
+            })
             .collect()
     }
 
