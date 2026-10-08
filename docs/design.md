@@ -3118,6 +3118,14 @@ read. A cropped pane is read whole whatever the band's height, and the rows
 above its cut fill the band from the bottom, so a taller band shows more of
 what the agent last said.
 
+`t` hides the band and gives its rows to the forest, and `t` again brings it
+back. While the band is hidden `bdi` reads no pane, since nothing would be
+drawn from the read: a read already out is answered into nothing, and none is
+due. Bringing the band back reads the selected pane at once, and until that
+answer lands the band says it is reading rather than show rows as old as the
+hiding. The band is shown at every start. The choice lasts the run and is not
+remembered.
+
 ### The reader says what their background is
 
 `bdi` cannot see the reader's background and does not ask. A `[theme]` section
@@ -3475,6 +3483,7 @@ The bindings are vim-like, with the arrows as aliases:
 | `s` | cycle which copy of a bead opens, under the selected node |
 | `S` | cycle which copy of a bead opens, across the whole forest |
 | `F` | draw the selected bead as the only root, or put the forest back |
+| `t` | hide or show the pane's output under the forest |
 | `/` | find part of a bead's id or title, wherever the forest draws it |
 | `n`, `^G` | go to the next bead matching the search |
 | `N`, `^T` | go to the one before it |
