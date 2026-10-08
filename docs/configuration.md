@@ -955,7 +955,28 @@ Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is
 stopped. Its config is read once at startup.
 
 It asks GitHub through `gh`, so it settles what the account `gh` is signed in
-to can see. A look asks about a repository's pull requests together, up to a
+to can see, with the token `gh` holds for it. That token needs read access to
+each repository's pull requests, their commits and their commit statuses:
+
+| token | what it needs |
+|---|---|
+| fine-grained | read access to *Metadata*, *Pull requests*, *Contents* and *Commit statuses* on each repository |
+| classic | the `repo` scope |
+
+Each permission answers for part of what `bdi gates` reads. *Pull requests*
+covers a pull request's state, reviews and comments, and the lookup a check
+suite or status delivery makes. *Contents* covers the merge commit and the
+head commit, and *Commit statuses* covers the head commit's checks, GitHub
+Actions runs included. A fine-grained token offers no *Checks* permission, and
+`bdi gates` needs none.
+
+A token missing any of these settles nothing in that repository. GitHub
+answers the rest of the query and refuses the one field, `gh` exits 1, and
+every pull request the query asked about is reported as unanswered, merges
+included. A token that cannot see the repository at all reads to GitHub as a
+repository that is not there.
+
+A look asks about a repository's pull requests together, up to a
 hundred in one query, so what it spends of that account's rate limit grows with
 the repositories rather than the pull requests. To settle repositories that
 need different accounts, run one `bdi gates` per account, each with its own
