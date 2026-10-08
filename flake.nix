@@ -3567,6 +3567,311 @@ and a second line"
           touch $out
         '';
 
+        # A release candidate is cut from main, where Cargo.toml still declares
+        # the release before it. The version it is a candidate for is the one
+        # the next-release notes open with, and each candidate for that version
+        # takes the number after the last one tagged. A number is spent once
+        # its tag is pushed, whether or not the run that pushed it went on to
+        # publish, so a candidate that failed can be followed by the next.
+        nextCandidate = pkgs.writeShellScriptBin "next-candidate" ''
+          set -u
+
+          if [ "$#" -ne 1 ]; then
+            echo "usage: git ls-remote --tags origin | next-candidate <next-release notes>" >&2
+            echo >&2
+            echo "Prints <version>-rc.<n>: the version the notes open with, and the" >&2
+            echo "candidate number after the last one tagged for it." >&2
+            exit 2
+          fi
+
+          notes="$1"
+          tags="$(cat)"
+
+          target="$(head -n1 "$notes" 2> /dev/null |
+            sed -nE 's/^bdi ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p')"
+          if [ -z "$target" ]; then
+            echo "$notes does not open with 'bdi <version>', so there is no version to cut a candidate for. See RELEASE-NOTES/README.md." >&2
+            exit 1
+          fi
+
+          pattern="refs/tags/v$(printf '%s' "$target" | sed 's/\./\\./g')"
+
+          if printf '%s\n' "$tags" | grep -qE "$pattern$"; then
+            echo "v$target is already released, so it takes no more candidates. $notes names the release after it once the next one begins." >&2
+            exit 1
+          fi
+
+          last="$(printf '%s\n' "$tags" |
+            sed -nE "s|.*$pattern-rc\.([0-9]+)$|\1|p" | sort -n | tail -n1)"
+
+          echo "$target-rc.$(( ''${last:-0} + 1 ))"
+        '';
+
+        nextCandidateTest = pkgs.runCommand "next-candidate-test"
+          { nativeBuildInputs = [ nextCandidate ]; } ''
+          set -u
+
+          notes="$TMPDIR/next.md"
+          printf 'bdi 1.2.0\n\nMinor release, **1.1.0 → 1.2.0**.\n' > "$notes"
+
+          fail() { echo "FAIL: $1"; printf '%s\n' "$output"; exit 1; }
+
+          # What git ls-remote prints, a line per tag. An annotated tag adds a
+          # second line for the commit it points at.
+          tags() {
+            for name in "$@"; do
+              printf '%s\trefs/tags/%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$name"
+            done
+          }
+
+          takes() {
+            want="$1"
+            shift
+            output="$( tags "$@" | next-candidate "$notes" 2>&1 )" ||
+              fail "it refused tags it should have numbered after: $*"
+            [ "$output" = "$want" ] || fail "expected $want from: $*"
+          }
+
+          refuses() {
+            why="$1"
+            reason="$2"
+            shift 2
+            output="$( tags "$@" | next-candidate "$notes" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 1 ] || fail "expected a refusal (exit 1), got $status: $why"
+            case "$output" in
+              *"$reason"*) ;;
+              *) fail "the refusal did not say why ($reason): $why" ;;
+            esac
+          }
+
+          takes 1.2.0-rc.1
+          takes 1.2.0-rc.1 v1.1.0
+          takes 1.2.0-rc.2 v1.1.0 v1.2.0-rc.1
+
+          # Numbered, not sorted as text, and unbothered by the order git
+          # lists them in.
+          takes 1.2.0-rc.11 v1.2.0-rc.10 v1.2.0-rc.9 v1.2.0-rc.2
+
+          # A peeled annotated tag is the same candidate again, and another
+          # version's candidates are not this one's.
+          takes 1.2.0-rc.2 v1.2.0-rc.1 'v1.2.0-rc.1^{}' v1.1.0-rc.7 v11.2.0-rc.4 v1.2.00-rc.5
+
+          refuses "it cut a candidate for a version already released:" \
+            "already released" v1.2.0-rc.3 v1.2.0
+
+          : > "$notes"
+          refuses "it cut a candidate from empty notes:" "does not open with"
+
+          printf '# bdi 1.2.0\n' > "$notes"
+          refuses "it read a version from notes that do not open with one:" "does not open with"
+
+          rm "$notes"
+          refuses "it cut a candidate with no notes file at all:" "does not open with"
+
+          output="$( next-candidate < /dev/null 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no argument, got $status:"
+
+          touch $out
+        '';
+
+        # A candidate's commit carries its own version, written into every
+        # place `nix flake check` holds together: Cargo.toml, Cargo.lock,
+        # README's flake pin and herdr-plugin.toml. Main never carries it.
+        stampVersion = pkgs.writeShellScriptBin "stamp-version" ''
+          set -u
+
+          if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+            echo "usage: stamp-version <version> [directory]" >&2
+            echo >&2
+            echo "Writes <version> into Cargo.toml, Cargo.lock, README's flake pin" >&2
+            echo "and herdr-plugin.toml." >&2
+            exit 2
+          fi
+
+          version="$1"
+          cd "''${2:-.}" || exit 1
+
+          # Each file is rewritten whole and then compared, so a file whose
+          # shape no longer matches is refused by name rather than left on the
+          # version before.
+          rewrite() {
+            file="$1"
+            shift
+            "$@" "$file" > "$file.stamped" || exit 1
+            if cmp -s "$file" "$file.stamped"; then
+              rm "$file.stamped"
+              echo "$file no longer states the version where stamp-version looks for it, so $version was not written into it." >&2
+              exit 1
+            fi
+            mv "$file.stamped" "$file"
+          }
+
+          rewrite Cargo.toml awk -v v="$version" '
+            /^\[/ { package = ($0 == "[package]") }
+            package && /^version *=/ { $0 = "version = \"" v "\"" }
+            { print }
+          '
+
+          # Cargo states a package's name and version on consecutive lines.
+          rewrite Cargo.lock awk -v v="$version" '
+            crate && /^version *=/ { $0 = "version = \"" v "\"" }
+            { crate = ($0 == "name = \"beady-eye\"") }
+            { print }
+          '
+
+          rewrite herdr-plugin.toml awk -v v="$version" '
+            /^\[/ { tabled = 1 }
+            !tabled && /^version *=/ { $0 = "version = \"" v "\"" }
+            { print }
+          '
+
+          rewrite README.md sed -E \
+            "s|(github:CodeForBreakfast/beady-eye/)v[^\"[:space:]]+|\1v$version|g"
+        '';
+
+        # What a stamped tree is held to is what the flake already checks, so
+        # those checks are what this runs on one.
+        stampVersionTest = pkgs.runCommand "stamp-version-test"
+          { nativeBuildInputs = [ stampVersion readmePinsTheVersion pluginDeclaresTheVersion ]; } ''
+          set -u
+
+          fail() { echo "FAIL: $1"; printf '%s\n' "$output"; exit 1; }
+          output=""
+
+          tree="$TMPDIR/tree"
+          mkdir -p "$tree"
+
+          cat > "$tree/Cargo.toml" <<'EOF'
+          [package]
+          name = "beady-eye"
+          version = "1.1.0"
+
+          [dependencies.serde]
+          version = "1"
+          EOF
+
+          cat > "$tree/Cargo.lock" <<'EOF'
+          [[package]]
+          name = "anyhow"
+          version = "1.1.0"
+
+          [[package]]
+          name = "beady-eye"
+          version = "1.1.0"
+          dependencies = [
+           "anyhow",
+          ]
+          EOF
+
+          cat > "$tree/herdr-plugin.toml" <<'EOF'
+          id = "example.beady-eye"
+          version = "1.1.0"
+
+          [[panes]]
+          id = "eye"
+          version = "1.1.0"
+          EOF
+
+          cat > "$tree/README.md" <<'EOF'
+          $ nix run github:CodeForBreakfast/beady-eye
+          inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v1.1.0";
+          EOF
+
+          output="$( stamp-version 1.2.0-rc.3 "$tree" 2>&1 )" ||
+            fail "it refused a tree holding all four places:"
+
+          output="$( readme-pins-the-version "$tree" 2>&1 )" ||
+            fail "README's pin does not agree with the stamped Cargo.toml:"
+          output="$( plugin-declares-the-version "$tree" 2>&1 )" ||
+            fail "herdr-plugin.toml does not agree with the stamped Cargo.toml:"
+
+          output="$( cat "$tree/Cargo.toml" )"
+          grep -qx 'version = "1.2.0-rc.3"' "$tree/Cargo.toml" ||
+            fail "Cargo.toml does not declare the candidate:"
+          grep -qx 'version = "1"' "$tree/Cargo.toml" ||
+            fail "a dependency's version was stamped as the crate's:"
+
+          output="$( cat "$tree/Cargo.lock" )"
+          [ "$(grep -A1 -x 'name = "beady-eye"' "$tree/Cargo.lock" | tail -n1)" = 'version = "1.2.0-rc.3"' ] ||
+            fail "Cargo.lock does not record the candidate for the crate:"
+          [ "$(grep -A1 -x 'name = "anyhow"' "$tree/Cargo.lock" | tail -n1)" = 'version = "1.1.0"' ] ||
+            fail "another crate in Cargo.lock was stamped:"
+
+          output="$( cat "$tree/herdr-plugin.toml" )"
+          [ "$(grep -c 'version = "1.1.0"' "$tree/herdr-plugin.toml")" = 1 ] ||
+            fail "a pane's version was stamped as the plugin's:"
+
+          output="$( cat "$tree/README.md" )"
+          grep -qx '$ nix run github:CodeForBreakfast/beady-eye' "$tree/README.md" ||
+            fail "an unpinned reference was given a pin:"
+
+          # A lock that has lost the crate's entry is refused by name, rather
+          # than left declaring the release before.
+          printf '[[package]]\nname = "anyhow"\nversion = "1.1.0"\n' > "$tree/Cargo.lock"
+          output="$( stamp-version 1.2.0-rc.4 "$tree" 2>&1 )" && status=0 || status=$?
+          [ "$status" = 1 ] || fail "expected exit 1 for a lock without the crate, got $status:"
+          case "$output" in
+            *Cargo.lock*) ;;
+            *) fail "the refusal did not name Cargo.lock:" ;;
+          esac
+
+          output="$( stamp-version 2>&1 )" && status=0 || status=$?
+          [ "$status" = 2 ] || fail "expected exit 2 with no argument, got $status:"
+
+          touch $out
+        '';
+
+        # What a release does follows from its version alone, so a repair
+        # dispatched on a candidate's tag does what the candidate's own run
+        # did. A candidate announces the next-release notes and leaves the tap
+        # alone, because the tap serves whatever was last written into it to
+        # everyone who runs `brew install`. A version that is neither shape is
+        # refused, so it cannot reach the tap as a release.
+        releasePlan = pkgs.writeShellScriptBin "release-plan" ''
+          set -u
+
+          if [ "$#" -ne 1 ]; then
+            echo "usage: release-plan <version>" >&2
+            echo >&2
+            echo "Prints candidate=, notes= and tap= lines for GITHUB_OUTPUT." >&2
+            exit 2
+          fi
+
+          version="$1"
+
+          if printf '%s' "$version" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            printf 'candidate=false\nnotes=RELEASE-NOTES/%s.md\ntap=true\n' "$version"
+          elif printf '%s' "$version" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+'; then
+            printf 'candidate=true\nnotes=RELEASE-NOTES/next.md\ntap=false\n'
+          else
+            echo "$version is neither a release nor a release candidate, so this does not know what to publish it as." >&2
+            exit 1
+          fi
+        '';
+
+        releasePlanTest = pkgs.runCommand "release-plan-test"
+          { nativeBuildInputs = [ releasePlan ]; } ''
+          set -u
+
+          fail() { echo "FAIL: $1"; printf '%s\n' "$output"; exit 1; }
+
+          plans() {
+            want="$(printf '%s\n' "$2" "$3" "$4")"
+            output="$( release-plan "$1" 2>&1 )" || fail "it refused $1:"
+            [ "$output" = "$want" ] || fail "the plan for $1 is not the one this expects:"
+          }
+
+          plans 1.2.0 candidate=false notes=RELEASE-NOTES/1.2.0.md tap=true
+          plans 1.2.0-rc.3 candidate=true notes=RELEASE-NOTES/next.md tap=false
+
+          for version in 1.2.0-beta.1 1.2.0-rc 1.2 v1.2.0 ""; do
+            output="$( release-plan "$version" 2>&1 )" && status=0 || status=$?
+            [ "$status" = 1 ] || fail "expected a refusal of '$version', got $status:"
+          done
+
+          touch $out
+        '';
+
         # Everything needed to build, test and lint the crate.
         # The Claude Code plugin's TypeScript workspace. Bun and Biome come
         # from nixpkgs, at the versions commy pins, because their npm
@@ -3753,6 +4058,9 @@ and a second line"
           beady-eye = beady-eye;
           await-ci-verdict = awaitCiVerdict;
           conventional-subject = conventionalSubject;
+          next-candidate = nextCandidate;
+          release-plan = releasePlan;
+          stamp-version = stampVersion;
           tap-formula = tapFormula;
           unbuilt-checks = unbuiltChecks;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit image; };
@@ -3831,10 +4139,13 @@ and a second line"
           bound-the-tools-own-name-test = boundTheToolsOwnNameTest;
           scope-to-the-change-test = scopeToTheChangeTest;
           name-the-runs-directory-test = nameTheRunsDirectoryTest;
+          next-candidate-test = nextCandidateTest;
+          release-plan-test = releasePlanTest;
           bound-the-machine-test = boundTheMachineTest;
           screen-walks = checkOf "screen-walks" null [ screenWalksAreBounded ]
             "screen-walks-are-bounded";
           screen-walks-test = screenWalksAreBoundedTest;
+          stamp-version-test = stampVersionTest;
           tap-formula-test = tapFormulaTest;
           unbuilt-checks-test = unbuiltChecksTest;
 
