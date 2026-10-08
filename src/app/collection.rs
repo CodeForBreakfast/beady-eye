@@ -252,6 +252,7 @@ impl Collection {
             &reading,
             trackers,
             &|project| wanted.names(project),
+            &|project| cfg.reads(project),
             &panes,
             now,
         );
@@ -265,6 +266,7 @@ impl Collection {
                         &reading,
                         trackers,
                         &|project| needed.contains(project),
+                        &|project| cfg.reads(project),
                         &panes,
                         now,
                     );
@@ -346,16 +348,19 @@ impl Collection {
     }
 
     /// Refresh every project `cfg` reads that `named` names, and keep what
-    /// each said.
+    /// each said. Only a project that `draws_trees` has its trees assembled.
     fn read(
         &mut self,
         cfg: &Config,
         trackers: &dyn Trackers,
         named: &(dyn Fn(&str) -> bool + Sync),
+        draws_trees: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) {
-        for (project, answer) in self.refresh_together(cfg, trackers, named, panes, now) {
+        for (project, answer) in
+            self.refresh_together(cfg, trackers, named, draws_trees, panes, now)
+        {
             match answer {
                 Ok(Refresh::Unchanged { as_of }) => {
                     // A skipped read is a successful read: `bdi` knows the
@@ -419,6 +424,7 @@ impl Collection {
         cfg: &'a Config,
         trackers: &dyn Trackers,
         named: &(dyn Fn(&str) -> bool + Sync),
+        draws_trees: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) -> Vec<(&'a Project, Result<Refresh, OpenFailure>)> {
@@ -436,12 +442,14 @@ impl Collection {
                         .get(&project.name)
                         .and_then(|journal| journal.seq)
                         .unwrap_or(0);
+                    let draws_trees = draws_trees(&project.name);
                     reads.spawn(move || {
                         let answer = refresh_project(
                             trackers,
                             project,
                             cfg,
                             panes,
+                            draws_trees,
                             standing.as_ref(),
                             !self.once,
                             since,
@@ -2836,6 +2844,65 @@ path = "{FERRY}"
         );
         assert_eq!(unreachable_from_ferry(&snap), vec![]);
         assert_eq!(snap.projects, ["dunwich", "ferry"]);
+    }
+
+    /// How many trees each project's standing read assembled.
+    fn trees_assembled(standing: &Collection) -> BTreeMap<&str, usize> {
+        standing
+            .read
+            .iter()
+            .filter_map(|(project, read)| Some((project.as_str(), read.work.as_ref().ok()?.roots.len())))
+            .collect()
+    }
+
+    /// Only a project the run reads draws trees of its own, so one read for
+    /// what those trees reach in it has none assembled.
+    #[test]
+    fn a_project_read_only_for_what_another_reaches_in_it_assembles_no_trees() {
+        let mut standing = Collection::default();
+        standing.collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            trees_assembled(&standing),
+            BTreeMap::from([("dunwich", 0), ("ferry", 1)])
+        );
+    }
+
+    /// A project the run comes to read for itself has its trees assembled,
+    /// though its tracker has not moved since it was read on demand.
+    #[test]
+    fn a_project_read_on_demand_and_then_for_itself_has_its_trees_assembled() {
+        let trackers = ferry_waiting_on_dunwich();
+        let mut standing = Collection::default();
+        standing.collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        let both = reading_ferry_where_dunwich(STATES_ITS_PREFIX)
+            .scoped_to(&["dunwich".to_string(), "ferry".to_string()])
+            .expect("both are configured");
+        standing.collect(
+            &both,
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_ne!(trees_assembled(&standing)["dunwich"], 0);
     }
 
     /// dunwich's bead waits on kadath's, so reading dunwich for ferry's
