@@ -963,26 +963,20 @@ Then it waits [`[gates] poll_seconds`](#gates) and looks again, until it is
 stopped. Its config is read once at startup.
 
 It asks GitHub through `gh`, so it settles what the account `gh` is signed in
-to can see, with the token `gh` holds for it. That token needs read access to
-each repository's pull requests, their commits and their commit statuses:
+to can see, with the token `gh` holds for it. A classic token needs the `repo`
+scope. A fine-grained token needs read access to these permissions on each
+repository:
 
-| token | what it needs |
-|---|---|
-| fine-grained | read access to *Metadata*, *Pull requests*, *Contents* and *Commit statuses* on each repository |
-| classic | the `repo` scope |
+| permission | what `bdi gates` reads with it | without it |
+|---|---|---|
+| *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
+| *Contents* | the merge commit and the head commit | no merge is settled and no failing checks are told |
+| *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing checks are told |
 
-Each permission answers for part of what `bdi gates` reads. *Pull requests*
-covers a pull request's state, reviews and comments, and the lookup a check
-suite or status delivery makes. *Contents* covers the merge commit and the
-head commit, and *Commit statuses* covers the head commit's checks, GitHub
-Actions runs included. A fine-grained token offers no *Checks* permission, and
-`bdi gates` needs none.
-
-A token missing any of these settles nothing in that repository. GitHub
-answers the rest of the query and refuses the one field, `gh` exits 1, and
-every pull request the query asked about is reported as unanswered, merges
-included. A token that cannot see the repository at all reads to GitHub as a
-repository that is not there.
+A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
+Where GitHub refuses a field, `bdi gates` acts on everything else it was told
+and names what it cannot see once for each repository, as the
+`cannot see whether it has failing checks` line below shows.
 
 A look asks about a repository's pull requests together, up to a
 hundred in one query, so what it spends of that account's rate limit grows with
