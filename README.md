@@ -100,7 +100,7 @@ $ nix run github:CodeForBreakfast/beady-eye
 From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.24.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.25.0";
 
 beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
@@ -355,9 +355,9 @@ waits on it hears. So do failing checks on the pull request's head commit, a
 conflict between that commit and its base, each review submitted, and each
 comment on the pull request's conversation, once for each commit, review or
 comment. Then it looks again a minute later, until it is stopped. Run it under whatever supervises your processes, as you would the watcher.
-Given `--listen` and the webhook's secret, it also takes GitHub's
-`pull_request` deliveries, and settles a pull request when GitHub says it moved
-rather than at the next look.
+Given `--listen` and the webhook's secret, it also takes GitHub's deliveries
+about pull requests, their reviews and comments, check suites and statuses, and
+settles a pull request when GitHub says it moved rather than at the next look.
 "Settling pull-request gates" in [docs/configuration.md](docs/configuration.md)
 has a unit to run it under, the webhook, and every line it prints.
 
@@ -394,7 +394,9 @@ Hand it over, and let it fold the lines into whatever it already obeys.
 - **git, for worktrees.** Without it the project is named after its directory
   and a pane cannot be placed by worktree.
 - **gh, for `bdi gates`.** It settles what the account `gh` is signed in to can
-  see. Nothing else in `bdi` asks GitHub anything.
+  see, and its token needs the read access
+  [the configuration reference](docs/configuration.md) lists. Nothing else in
+  `bdi` asks GitHub anything.
 - **A terminal that honours OSC 52**, for `y`. Terminal.app does not, and says
   nothing about it.
 

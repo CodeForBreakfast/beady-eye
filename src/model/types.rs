@@ -1,11 +1,13 @@
 //! What a tracker and a session say, as `bdi` holds it.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -110,10 +112,6 @@ pub struct Bead {
     pub created_by: Option<String>,
     pub assignee: Option<String>,
     pub labels: Vec<String>,
-    /// The bead's own account of itself, where it has one.
-    pub description: Option<Arc<str>>,
-    /// Everything noted on it, as one text, where anything has been.
-    pub notes: Option<Arc<str>>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
@@ -124,8 +122,9 @@ pub struct Bead {
     /// on the clock rather than on a write.
     pub defer_until: Option<DateTime<Utc>>,
     /// The row as the tracker printed it, every field it wrote whether `bdi`
-    /// reads it or not, where whoever read the tracker asked for it kept.
-    pub row: Option<Arc<Printed>>,
+    /// reads it or not. The description and notes are read from it rather
+    /// than held beside it.
+    pub row: Printed,
 }
 
 impl Bead {
@@ -145,17 +144,21 @@ impl Bead {
     /// The value the row held under `key`, which is what a badge reads. A text
     /// held in a field is no value when it is empty or spells an object, as in
     /// `values`. An object's members are values of their own, in `values`.
-    pub fn value(&self, key: &str) -> Option<&str> {
+    pub fn value(&self, key: &str) -> Option<Cow<'_, str>> {
         let text = match key {
-            "id" => Some(self.id.as_str()),
-            "title" => Some(self.title.as_str()),
-            "issue_type" => Some(self.issue_type.as_str()),
-            "parent" => self.parent.as_deref(),
-            "created_by" => self.created_by.as_deref(),
-            "assignee" => self.assignee.as_deref(),
-            "description" => self.description.as_deref(),
-            "notes" => self.notes.as_deref(),
-            _ => return self.values.get(key).map(String::as_str),
+            "id" => Some(Cow::Borrowed(self.id.as_str())),
+            "title" => Some(Cow::Borrowed(self.title.as_str())),
+            "issue_type" => Some(Cow::Borrowed(self.issue_type.as_str())),
+            "parent" => self.parent.as_deref().map(Cow::Borrowed),
+            "created_by" => self.created_by.as_deref().map(Cow::Borrowed),
+            "assignee" => self.assignee.as_deref().map(Cow::Borrowed),
+            "description" | "notes" => self.row.text(key).map(Cow::Owned),
+            _ => {
+                return self
+                    .values
+                    .get(key)
+                    .map(|value| Cow::Borrowed(value.as_str()))
+            }
         };
         text.filter(|text| {
             !text.is_empty()
@@ -165,20 +168,70 @@ impl Bead {
 
     /// Every value the row held under `key`: the one value where it holds
     /// one, each member of a list, and none where it holds neither.
-    pub fn members(&self, key: &str) -> Vec<&str> {
+    pub fn members(&self, key: &str) -> Vec<Cow<'_, str>> {
         match self.value(key) {
             Some(value) => vec![value],
             None => self
                 .lists
                 .get(key)
-                .map(|list| list.iter().map(String::as_str).collect())
+                .map(|list| {
+                    list.iter()
+                        .map(|member| Cow::Borrowed(member.as_str()))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }
 }
 
-/// One row as the tracker printed it.
-pub type Printed = serde_json::Map<String, serde_json::Value>;
+/// One row as the tracker printed it, held as the JSON text its fields write
+/// out as, which is what a watch line carries.
+#[derive(Debug, Clone)]
+pub struct Printed(Arc<RawValue>);
+
+impl Printed {
+    pub fn of(fields: &serde_json::Map<String, serde_json::Value>) -> serde_json::Result<Self> {
+        Ok(Self(serde_json::value::to_raw_value(fields)?.into()))
+    }
+
+    /// Every field the row holds.
+    pub fn fields(&self) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_str(self.0.get()).expect("a row printed from its fields reads back")
+    }
+
+    /// A row saying nothing but `description` and `notes`.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn saying(description: &str, notes: &str) -> Self {
+        let serde_json::Value::Object(fields) =
+            serde_json::json!({ "description": description, "notes": notes })
+        else {
+            unreachable!("a row is an object")
+        };
+        Self::of(&fields).expect("a row of two texts prints")
+    }
+
+    /// The text the row holds under `field`, where it holds a string there.
+    pub fn text(&self, field: &str) -> Option<String> {
+        match self.fields().remove(field) {
+            Some(serde_json::Value::String(text)) => Some(text),
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq for Printed {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.0.get() == other.0.get()
+    }
+}
+
+impl Eq for Printed {}
+
+impl Serialize for Printed {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -499,10 +499,8 @@ mod tests {
     }
 
     /// An answer as gh prints it before exiting 1, measured on gh 2.102.0
-    /// for an error naming a pull request: the data GitHub could give, and
-    /// an error with the path to what it could not. The error refusing a
-    /// field is not yet measured, and has the shape GraphQL gives every
-    /// error.
+    /// for a fine-grained token without *Commit statuses*: the data GitHub
+    /// could give, the refused field null, and an error with its path.
     const CHECKS_REFUSED_ON_7: &str = r#"{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":false,"mergeCommit":null,"commits":{"nodes":[{"commit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff","statusCheckRollup":null}}]}},"pr42":{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"0badc0de0badc0de0badc0de0badc0de0badc0de"}}}},"errors":[{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup"],"locations":[{"line":1,"column":200}],"message":"Resource not accessible by personal access token"}]}"#;
 
     #[test]
