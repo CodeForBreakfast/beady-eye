@@ -1,7 +1,7 @@
 {
   "name": "@codeforbreakfast/beady-eye-mcp",
-  "version": "0.2.1",
-  "description": "The MCP server the beady-eye Claude Code plugin starts.",
+  "version": "0.2.2",
+  "description": "The MCP server of the beady-eye Claude Code plugin. It wakes a session when a watched bead changes status, becomes ready, is commented on or goes. beady-eye shows the work and the agents on it, wakes agents and settles pull-request waits.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
