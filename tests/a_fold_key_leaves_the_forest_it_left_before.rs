@@ -52,9 +52,10 @@ use terminal::{a_socket_of_its_own, rows_drawn, window_over, ENTER_ALTERNATE_SCR
 
 const COLS: u16 = 120;
 
-/// A screen `bdi` is drawn on: its height, and how many rows of it are the
-/// forest's — the rest are the tail's and the key bar's, by the arithmetic
-/// in `view::draw::bands`.
+/// A screen `bdi` is drawn on: its height, and the most rows of it that are
+/// the forest's — the rest are the tail's and the key bar's, by the
+/// arithmetic in `view::draw::bands`. A forest shorter than that gives the
+/// tail the rows it leaves free, so the band ends at the tail's rule.
 struct Screen {
     rows: u16,
     band: usize,
@@ -594,7 +595,8 @@ fn launched(named: &str, screen: &Screen) -> (Driven, Fixture) {
 
 /// The forest band as it stands, one string per row, in the words the
 /// assertions use: a row's blanks squeezed to one gap, the project's clock
-/// masked, and the rows below the last drawn one dropped.
+/// masked, and the rows below the last drawn one dropped. The band ends where
+/// the tail's rule starts, which is above `screen.band` on a short forest.
 ///
 /// Read off a frame `bdi` was made to repaint whole, for the reason `row_of`
 /// gives. The screen is grown a row and shrunk back, and the second answer
@@ -605,6 +607,7 @@ fn forest(bdi: &mut Driven, screen: &Screen) -> Vec<String> {
     let mut rows: Vec<String> = rows_drawn(&repainted(bdi, screen))
         .into_iter()
         .take(screen.band)
+        .take_while(|row| !row.starts_with('─'))
         .map(|row| without_the_clock(&squeezed(&row)))
         .collect();
     while rows.last().is_some_and(String::is_empty) {
