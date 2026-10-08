@@ -286,7 +286,7 @@ and a watcher on the same machine. Add this repository as a marketplace pinned
 to a plugin release, and install the plugin from it:
 
 ```console
-$ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.2.1
+$ claude plugin marketplace add CodeForBreakfast/beady-eye#plugin-v0.2.2
 $ claude plugin install beady-eye@beady-eye
 ```
 
@@ -394,7 +394,9 @@ Hand it over, and let it fold the lines into whatever it already obeys.
 - **git, for worktrees.** Without it the project is named after its directory
   and a pane cannot be placed by worktree.
 - **gh, for `bdi gates`.** It settles what the account `gh` is signed in to can
-  see. Nothing else in `bdi` asks GitHub anything.
+  see, and its token needs the read access
+  [the configuration reference](docs/configuration.md) lists. Nothing else in
+  `bdi` asks GitHub anything.
 - **A terminal that honours OSC 52**, for `y`. Terminal.app does not, and says
   nothing about it.
 
