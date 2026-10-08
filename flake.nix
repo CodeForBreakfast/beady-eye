@@ -2242,14 +2242,15 @@ $pinned"
         # A wrap is a line whose successor continues it. Inside a fence the
         # breaks are the content, and RELEASE-NOTES/README.md is a repository
         # document rather than a Release body, so the glob takes the version
-        # files only.
+        # files and each track's next.md only.
         releaseNotesAreUnwrapped = pkgs.writeShellScriptBin "release-notes-are-unwrapped" ''
           set -u
 
           cd "''${1:-.}" || exit 1
 
           files=""
-          for file in RELEASE-NOTES/[0-9]*.md RELEASE-NOTES/plugin/[0-9]*.md; do
+          for file in RELEASE-NOTES/[0-9]*.md RELEASE-NOTES/next.md \
+                      RELEASE-NOTES/plugin/[0-9]*.md RELEASE-NOTES/plugin/next.md; do
             [ -e "$file" ] && files="$files $file"
           done
 
@@ -2403,6 +2404,17 @@ the `MAJOR.MINOR.PATCH` the release bumps to.
 EOF
           accepts "it read the wrapped README beside the notes files:"
 
+          # The coming release's notes are published by every rc before the
+          # real release renames them.
+          cat > "$tree/RELEASE-NOTES/next.md" <<'EOF'
+bdi 1.0.1
+
+**The selection survives a refresh.** A tracker that answers late no
+longer moves it.
+EOF
+          refuses "it accepted a wrapped next-release notes file:" "RELEASE-NOTES/next.md"
+          rm "$tree/RELEASE-NOTES/next.md"
+
           # The Claude Code plugin's notes are a Release body as much as bdi's.
           mkdir "$tree/RELEASE-NOTES/plugin"
           cat > "$tree/RELEASE-NOTES/plugin/0.1.0.md" <<'EOF'
@@ -2412,6 +2424,15 @@ beady-eye plugin 0.1.0
 running on the same machine.
 EOF
           refuses "it accepted a wrapped plugin notes file:" "RELEASE-NOTES/plugin/0.1.0.md"
+          rm "$tree/RELEASE-NOTES/plugin/0.1.0.md"
+
+          cat > "$tree/RELEASE-NOTES/plugin/next.md" <<'EOF'
+beady-eye plugin 0.1.1
+
+**A watch survives a restart.** The watcher reads it back when it
+starts.
+EOF
+          refuses "it accepted a wrapped next-release plugin notes file:" "RELEASE-NOTES/plugin/next.md"
 
           touch $out
         '';
