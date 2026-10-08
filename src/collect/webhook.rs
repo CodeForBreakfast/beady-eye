@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 
