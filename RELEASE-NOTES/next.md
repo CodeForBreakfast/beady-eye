@@ -14,4 +14,4 @@ Minor release, **0.24.0 → 0.25.0**. `bdi gates` hears more about a pull reques
 
 ## Maintenance
 
-Webhook deliveries are handled one event type at a time, and gates settle through one table of pull request events.
+Webhook deliveries are handled one event type at a time, and gates settle through one table of pull request events. README shows how to list the beads in any project that depend on a bead, with `bdi --json --all --all-projects` and `jq`.
