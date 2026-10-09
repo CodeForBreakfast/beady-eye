@@ -11,7 +11,7 @@ use crate::model::anomaly;
 use crate::model::badges;
 use crate::model::edges::{Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
-use crate::model::tree::Assembled;
+use crate::model::tree::{self, Assembled};
 use crate::model::types::{Edge, Pane, PaneKey};
 
 use super::filter::{in_flight_first, partition};
@@ -69,16 +69,21 @@ pub fn build_tree(
         .map(|project| (project, cfg.badges_for_project(project)))
         .collect();
     let project_of = |at: usize| assembled.external.get(&at).map_or(project, String::as_str);
+    let key_of = |at: usize| BeadKey {
+        project: project_of(at).to_string(),
+        id: assembled.beads[at].id.clone(),
+    };
+    let under_a_seat = under_a_seat(assembled, |at| {
+        let key = key_of(at);
+        joined.agents.contains_key(&key) || joined.out_of_reach.contains(&key)
+    });
     let beads: Vec<Node> = assembled
         .beads
         .iter()
         .enumerate()
         .map(|(at, bead)| {
             let own = project_of(at);
-            let key = BeadKey {
-                project: own.to_string(),
-                id: bead.id.clone(),
-            };
+            let key = key_of(at);
             let said = said.get(own);
             let readiness = said.map(|said| said.readiness);
             let agent = joined.agents.get(&key).cloned();
@@ -119,6 +124,7 @@ pub fn build_tree(
                     refused,
                     agents,
                     out_of_reach,
+                    under_a_seat[at],
                     &cfg.anomalies,
                     now,
                 ),
@@ -152,6 +158,18 @@ pub fn build_tree(
         orphaned_dependencies: assembled.orphaned_dependencies.clone(),
         cycles: assembled.cycles.clone(),
     }
+}
+
+/// Whether each bead sits beneath a bead `seated` holds, by whatever edge the
+/// tree nests it: a seat covers every bead beneath it, and none above.
+fn under_a_seat(assembled: &Assembled, seated: impl Fn(usize) -> bool) -> Vec<bool> {
+    let mut covered = vec![false; assembled.beads.len()];
+    for seat in (0..covered.len()).filter(|at| seated(*at)) {
+        for below in tree::beneath(&assembled.children, seat, &[]) {
+            covered[below] = true;
+        }
+    }
+    covered
 }
 
 /// The ids of the blockers outside the bead at `at`'s own answer that may
@@ -450,21 +468,211 @@ mod tests {
     }
 
     #[test]
-    fn a_bead_firing_two_rules_is_counted_once() {
+    fn a_claim_beneath_a_seat_is_held_to_its_age_alone() {
         let t = tree();
         assert_eq!(
             node(&t, "dun-7.3").anomalies,
+            vec![Anomaly::StaleClaim { days: 60 }],
+            "dun-7.3 is under dun-7's seat, so only its age is held against it"
+        );
+        assert_eq!(node(&t, "dun-7.2").anomalies, vec![Anomaly::StalePane]);
+        assert_eq!(t.counts.anomalies, 2);
+    }
+
+    /// One pane, working on the work in `dun-1`'s tree.
+    const SEAT_PANES: &str = r#"{"result":{"agents":[
+      {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working"}
+    ]}}"#;
+
+    /// A bead in flight, parented where `parent` says, and blocked by each of
+    /// `blockers`. `pane` is the one thing a seat writes onto its bead.
+    fn in_flight(id: &str, parent: Option<&str>, blockers: &[&str], pane: bool) -> String {
+        let deps: Vec<String> = parent
+            .map(|p| format!(r#"{{"depends_on_id":"{p}","type":"parent-child"}}"#))
+            .into_iter()
+            .chain(
+                blockers
+                    .iter()
+                    .map(|b| format!(r#"{{"depends_on_id":"{b}","type":"blocks"}}"#)),
+            )
+            .collect();
+        let metadata = if pane {
+            r#"{"agent_pane":"w:p1"}"#
+        } else {
+            "{}"
+        };
+        format!(
+            r#"{{"id":"{id}","title":"{id}","status":"in_progress",
+                "updated_at":"2026-08-29T12:00:00Z","metadata":{metadata},
+                "dependencies":[{}]}}"#,
+            deps.join(",")
+        )
+    }
+
+    /// The tree under `root`, read with `out_of_reach` as the beads whose
+    /// panes the run could not ask about.
+    fn tree_under(root: &str, beads: &[String], out_of_reach: &[&str]) -> Tree {
+        let beads = parse_shared_beads(&format!("[{}]", beads.join(","))).expect("rows parse");
+        let assembled = crate::model::tree::Nesting::of(&beads)
+            .assemble(root)
+            .expect("the rows assemble");
+        let mut joined = joined(&assembled.beads, &panes(SEAT_PANES));
+        joined.out_of_reach = out_of_reach
+            .iter()
+            .map(|id| BeadKey {
+                project: "dunwich".to_string(),
+                id: id.to_string(),
+            })
+            .collect();
+        let relations = relations(&assembled.beads);
+        build_tree(
+            "dunwich",
+            &assembled,
+            &joined,
+            &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
+            ProviderState::Answering,
+            &cfg(),
+            now(),
+        )
+    }
+
+    /// Every anomaly fired in the tree under `root`, by the bead it fired on.
+    fn fired_under(
+        root: &str,
+        beads: &[String],
+        out_of_reach: &[&str],
+    ) -> BTreeMap<String, Vec<Anomaly>> {
+        tree_under(root, beads, out_of_reach)
+            .beads
+            .into_iter()
+            .map(|n| (n.id, n.anomalies))
+            .filter(|(_, fired)| !fired.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn a_bead_firing_two_rules_is_counted_once() {
+        let old_claim = r#"{"id":"dun-8","title":"dun-8","status":"in_progress",
+                            "updated_at":"2026-07-01T12:00:00Z"}"#;
+        let t = tree_under("dun-8", &[old_claim.to_string()], &[]);
+
+        assert_eq!(
+            node(&t, "dun-8").anomalies,
             vec![
                 Anomaly::OrphanClaim { refused: None },
                 Anomaly::StaleClaim { days: 60 }
             ],
             "an old claim whose agent died is both"
         );
-        assert_eq!(node(&t, "dun-7.2").anomalies, vec![Anomaly::StalePane]);
         assert_eq!(
-            t.counts.anomalies, 2,
+            t.counts.anomalies, 1,
             "the count is beads to look at, not rules that fired"
         );
+    }
+
+    fn orphan() -> Vec<Anomaly> {
+        vec![Anomaly::OrphanClaim { refused: None }]
+    }
+
+    /// The seat convention: the pane is on the bead covering the work, and the
+    /// beads beneath it, however deep, are in progress without one.
+    #[test]
+    fn a_step_in_progress_beneath_a_seated_bead_is_not_orphaned() {
+        let fired = fired_under(
+            "dun-1",
+            &[
+                in_flight("dun-1", None, &[], true),
+                in_flight("dun-1.1", Some("dun-1"), &[], false),
+                in_flight("dun-1.1.1", Some("dun-1.1"), &[], false),
+            ],
+            &[],
+        );
+        assert_eq!(fired, BTreeMap::new());
+    }
+
+    /// A molecule's steps hang beneath the bead waiting on its outcome step
+    /// by a blocks edge, which nests them just as a parent-child edge does.
+    #[test]
+    fn a_blocker_in_progress_beneath_a_seated_bead_is_not_orphaned() {
+        let fired = fired_under(
+            "dun-2",
+            &[
+                in_flight("dun-2", None, &["dun-2.1"], true),
+                in_flight("dun-2.1", None, &[], false),
+            ],
+            &[],
+        );
+        assert_eq!(fired, BTreeMap::new());
+    }
+
+    #[test]
+    fn a_claim_with_no_seat_on_it_or_above_it_is_still_orphaned() {
+        let fired = fired_under(
+            "dun-3",
+            &[
+                in_flight("dun-3", None, &[], false),
+                in_flight("dun-3.1", Some("dun-3"), &[], false),
+            ],
+            &[],
+        );
+        assert_eq!(
+            fired,
+            BTreeMap::from([
+                ("dun-3".to_string(), orphan()),
+                ("dun-3.1".to_string(), orphan())
+            ])
+        );
+    }
+
+    #[test]
+    fn a_seat_beneath_a_claim_does_not_cover_it() {
+        let fired = fired_under(
+            "dun-4",
+            &[
+                in_flight("dun-4", None, &[], false),
+                in_flight("dun-4.1", Some("dun-4"), &[], true),
+            ],
+            &[],
+        );
+        assert_eq!(fired, BTreeMap::from([("dun-4".to_string(), orphan())]));
+    }
+
+    /// `dun-5.3` is a step of two beads, only one of which has a seat.
+    #[test]
+    fn a_seat_on_any_one_of_a_beads_parents_covers_it() {
+        let fired = fired_under(
+            "dun-5",
+            &[
+                in_flight("dun-5", None, &[], false),
+                in_flight("dun-5.1", Some("dun-5"), &["dun-5.3"], true),
+                in_flight("dun-5.2", Some("dun-5"), &["dun-5.3"], false),
+                in_flight("dun-5.3", None, &[], false),
+            ],
+            &[],
+        );
+        assert_eq!(
+            fired,
+            BTreeMap::from([
+                ("dun-5".to_string(), orphan()),
+                ("dun-5.2".to_string(), orphan()),
+            ]),
+            "dun-5.3 is covered by dun-5.1, and the unseated beads are not"
+        );
+    }
+
+    /// A seat whose pane the run could not ask about may be alive, so a claim
+    /// beneath it is not known to be orphaned.
+    #[test]
+    fn a_claim_beneath_a_seat_out_of_reach_is_not_orphaned() {
+        let fired = fired_under(
+            "dun-6",
+            &[
+                in_flight("dun-6", None, &[], false),
+                in_flight("dun-6.1", Some("dun-6"), &[], false),
+            ],
+            &["dun-6"],
+        );
+        assert_eq!(fired, BTreeMap::new());
     }
 
     /// The same forest read on a machine with no agent provider: nothing

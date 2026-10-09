@@ -790,7 +790,7 @@ All computed in the pure model. The first needs bd alone; the rest need herdr.
 | rule | condition | reading |
 |---|---|---|
 | `stale-claim` | `in_progress`, not updated in N days | beads' own `bd stale`, narrowed to claims |
-| `orphan-claim` | `in_progress`, no pane resolves for it | the agent died mid-claim — or the bead named a live pane the join refused it, in which case the refusal travels with the rule and the row says which |
+| `orphan-claim` | `in_progress`, no pane resolves for it or for any bead above it in the tree | the agent died mid-claim — or the bead named a live pane the join refused it, in which case the refusal travels with the rule and the row says which |
 | `stale-pane` | bead is closed, its pane is alive | agent finished and did not exit |
 | `unattributed` | pane alive in a configured project, no bead resolves | a pane nobody can account for |
 | `unconfigured` | pane alive in a directory no `[[projects]]` entry covers | a project `bdi` was never told about; the fix is a config entry |
@@ -810,6 +810,14 @@ on a node nothing fired on — never absent, never null.
 `orphan-claim` keys on `in_progress` alone. A bead that is `status: blocked` with
 a live pane is not an anomaly — an agent parked on it is a normal state, and
 firing on it would report every waiting agent as dead.
+
+A seat that works several beads names its pane on the one covering them all, and
+the beads beneath it are `in_progress` with no pane of their own. So a pane on a
+bead covers every bead beneath it, by either nesting edge and at any depth, and
+a bead under several beads is covered by a pane on any one of them. A pane on a
+bead says nothing for the beads above it. A bead above whose pane is out of
+reach covers too, for the same reason the bead's own would: nothing says the seat
+is gone. `stale-claim` reads bd alone, so a covered claim still goes stale.
 
 A `hooked` bead is a claim too, and neither `orphan-claim` nor `stale-claim`
 fires on it. `bd stale` leaves it out, and a hook can outlive the session of the
