@@ -11,7 +11,7 @@ use crate::model::anomaly;
 use crate::model::badges;
 use crate::model::edges::{Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
-use crate::model::tree::{self, Assembled};
+use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
 
 use super::filter::{in_flight_first, partition};
@@ -69,21 +69,16 @@ pub fn build_tree(
         .map(|project| (project, cfg.badges_for_project(project)))
         .collect();
     let project_of = |at: usize| assembled.external.get(&at).map_or(project, String::as_str);
-    let key_of = |at: usize| BeadKey {
-        project: project_of(at).to_string(),
-        id: assembled.beads[at].id.clone(),
-    };
-    let under_a_seat = under_a_seat(assembled, |at| {
-        let key = key_of(at);
-        joined.agents.contains_key(&key) || joined.out_of_reach.contains(&key)
-    });
     let beads: Vec<Node> = assembled
         .beads
         .iter()
         .enumerate()
         .map(|(at, bead)| {
             let own = project_of(at);
-            let key = key_of(at);
+            let key = BeadKey {
+                project: own.to_string(),
+                id: bead.id.clone(),
+            };
             let said = said.get(own);
             let readiness = said.map(|said| said.readiness);
             let agent = joined.agents.get(&key).cloned();
@@ -124,7 +119,7 @@ pub fn build_tree(
                     refused,
                     agents,
                     out_of_reach,
-                    under_a_seat[at],
+                    joined.under_a_seat.contains(&key),
                     &cfg.anomalies,
                     now,
                 ),
@@ -158,18 +153,6 @@ pub fn build_tree(
         orphaned_dependencies: assembled.orphaned_dependencies.clone(),
         cycles: assembled.cycles.clone(),
     }
-}
-
-/// Whether each bead sits beneath a bead `seated` holds, by whatever edge the
-/// tree nests it: a seat covers every bead beneath it, and none above.
-fn under_a_seat(assembled: &Assembled, seated: impl Fn(usize) -> bool) -> Vec<bool> {
-    let mut covered = vec![false; assembled.beads.len()];
-    for seat in (0..covered.len()).filter(|at| seated(*at)) {
-        for below in tree::beneath(&assembled.children, seat, &[]) {
-            covered[below] = true;
-        }
-    }
-    covered
 }
 
 /// The ids of the blockers outside the bead at `at`'s own answer that may
@@ -509,14 +492,16 @@ mod tests {
         )
     }
 
-    /// The tree under `root`, read with `out_of_reach` as the beads whose
-    /// panes the run could not ask about.
-    fn tree_under(root: &str, beads: &[String], out_of_reach: &[&str]) -> Tree {
+    /// The trees under each of `roots`, all read together with `out_of_reach`
+    /// as the beads whose panes the run could not ask about.
+    fn trees_under(roots: &[&str], beads: &[String], out_of_reach: &[&str]) -> Vec<Tree> {
         let beads = parse_shared_beads(&format!("[{}]", beads.join(","))).expect("rows parse");
-        let assembled = crate::model::tree::Nesting::of(&beads)
-            .assemble(root)
-            .expect("the rows assemble");
-        let mut joined = joined(&assembled.beads, &panes(SEAT_PANES));
+        let nesting = crate::model::tree::Nesting::of(&beads);
+        let assembled: Vec<Assembled> = roots
+            .iter()
+            .map(|root| nesting.assemble(root).expect("the rows assemble"))
+            .collect();
+        let mut joined = joined(&beads, &panes(SEAT_PANES));
         joined.out_of_reach = out_of_reach
             .iter()
             .map(|id| BeadKey {
@@ -524,16 +509,28 @@ mod tests {
                 id: id.to_string(),
             })
             .collect();
-        let relations = relations(&assembled.beads);
-        build_tree(
-            "dunwich",
-            &assembled,
-            &joined,
-            &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
-            ProviderState::Answering,
-            &cfg(),
-            now(),
-        )
+        for tree in &assembled {
+            joined.cover("dunwich", tree);
+        }
+        let relations = relations(&beads);
+        assembled
+            .iter()
+            .map(|tree| {
+                build_tree(
+                    "dunwich",
+                    tree,
+                    &joined,
+                    &crate::model::snapshot::said_by("dunwich", &readiness(), &relations),
+                    ProviderState::Answering,
+                    &cfg(),
+                    now(),
+                )
+            })
+            .collect()
+    }
+
+    fn tree_under(root: &str, beads: &[String], out_of_reach: &[&str]) -> Tree {
+        trees_under(&[root], beads, out_of_reach).remove(0)
     }
 
     /// Every anomaly fired in the tree under `root`, by the bead it fired on.
@@ -657,6 +654,37 @@ mod tests {
                 ("dun-5.2".to_string(), orphan()),
             ]),
             "dun-5.3 is covered by dun-5.1, and the unseated beads are not"
+        );
+    }
+
+    /// `dun-9.1` is drawn in both trees, and the seat is in only one of them.
+    /// A claim is covered or it is not, whichever tree it is read in.
+    #[test]
+    fn a_seat_in_one_tree_covers_a_claim_drawn_in_another() {
+        let trees = trees_under(
+            &["dun-9", "dun-10"],
+            &[
+                in_flight("dun-9", None, &["dun-9.1"], true),
+                in_flight("dun-10", None, &["dun-9.1"], false),
+                in_flight("dun-9.1", None, &[], false),
+            ],
+            &[],
+        );
+
+        let fired: Vec<Vec<(&str, &[Anomaly])>> = trees
+            .iter()
+            .map(|tree| {
+                tree.beads
+                    .iter()
+                    .map(|n| (n.id.as_str(), n.anomalies.as_slice()))
+                    .filter(|(_, fired)| !fired.is_empty())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            fired,
+            vec![vec![], vec![("dun-10", orphan().as_slice())]],
+            "dun-10 has no seat on it or above it, and dun-9.1 is under dun-9's"
         );
     }
 

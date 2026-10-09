@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::config::{Config, Project};
+use crate::model::tree::{self, Assembled};
 use crate::model::types::Bead;
 use crate::model::types::{Pane, PaneKey, PaneStatus};
 
@@ -167,7 +168,39 @@ pub struct Joined {
     /// nothing it holds says whether the seat behind the claim is alive. A
     /// rule reading that pane's absence has no absence to read.
     pub out_of_reach: BTreeSet<BeadKey>,
+    /// Beads sitting beneath one that holds an agent, or one whose pane is out
+    /// of reach, in any tree the run drew. Filled by `cover`, once for every
+    /// tree, before any tree is built from this.
+    pub under_a_seat: BTreeSet<BeadKey>,
     pub conflicts: Vec<Conflict>,
+}
+
+impl Joined {
+    /// Note every bead beneath a seat in `assembled`, a tree of `project`'s.
+    ///
+    /// A tree holds everything beneath its root, so every bead above another
+    /// is in a tree that holds both. A bead drawn in several trees is covered
+    /// in all of them by a seat in any one.
+    pub fn cover(&mut self, project: &str, assembled: &Assembled) {
+        let key_of = |at: usize| BeadKey {
+            project: assembled
+                .external
+                .get(&at)
+                .map_or(project, String::as_str)
+                .to_string(),
+            id: assembled.beads[at].id.clone(),
+        };
+        for seat in 0..assembled.beads.len() {
+            let key = key_of(seat);
+            if self.agents.contains_key(&key) || self.out_of_reach.contains(&key) {
+                self.under_a_seat.extend(
+                    tree::beneath(&assembled.children, seat, &[])
+                        .into_iter()
+                        .map(key_of),
+                );
+            }
+        }
+    }
 }
 
 /// The project a pane sits in: the one holding its directory, or, where none
@@ -403,6 +436,7 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
         agents,
         refused,
         out_of_reach,
+        under_a_seat: BTreeSet::new(),
         conflicts,
     }
 }

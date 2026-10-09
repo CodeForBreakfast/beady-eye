@@ -814,7 +814,8 @@ firing on it would report every waiting agent as dead.
 A seat that works several beads names its pane on the one covering them all, and
 the beads beneath it are `in_progress` with no pane of their own. So a pane on a
 bead covers every bead beneath it, by either nesting edge and at any depth, and
-a bead under several beads is covered by a pane on any one of them. A pane on a
+a bead under several beads is covered by a pane on any one of them, in whichever
+tree it is drawn. A pane on a
 bead says nothing for the beads above it. A bead above whose pane is out of
 reach covers too, for the same reason the bead's own would: nothing says the seat
 is gone. `stale-claim` reads bd alone, so a covered claim still goes stale.

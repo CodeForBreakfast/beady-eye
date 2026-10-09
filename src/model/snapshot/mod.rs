@@ -882,7 +882,8 @@ render = "⏸ waiting"
     pub(super) fn tree() -> Tree {
         let assembled = assembled(BEADS);
         let panes = panes(PANES);
-        let joined = joined(&assembled.beads, &panes);
+        let mut joined = joined(&assembled.beads, &panes);
+        joined.cover("dunwich", &assembled);
         let relations = edges::relations(&assembled.beads);
         build_tree(
             "dunwich",
