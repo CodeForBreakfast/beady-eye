@@ -6,6 +6,7 @@
 //! is the line it stays behind.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -28,7 +29,7 @@ pub trait Tracker: Sync {
     /// it depends on and the bead it hangs under. A tracker opened for a run
     /// that shows unfinished work alone may leave out a finished bead's free
     /// text.
-    fn all(&self) -> Result<Vec<Bead>, RunFailure>;
+    fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure>;
 
     /// The ids the tracker itself considers ready to start.
     fn ready(&self) -> Result<BTreeSet<String>, RunFailure>;
@@ -120,7 +121,7 @@ impl<T: Tracker + ?Sized> Tracker for &T {
         (**self).fingerprint()
     }
 
-    fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+    fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure> {
         (**self).all()
     }
 
@@ -176,6 +177,7 @@ pub mod testing {
         /// Every record the journal holds, where the tracker was opened with
         /// one.
         journal: Mutex<Option<Result<Vec<Value>, RunFailure>>>,
+        as_of: Option<DateTime<Utc>>,
         asked: Mutex<Vec<Asked>>,
     }
 
@@ -192,6 +194,7 @@ pub mod testing {
                 ready: Ok(BTreeSet::new()),
                 blocked: Ok(BTreeMap::new()),
                 journal: Mutex::new(None),
+                as_of: None,
                 asked: Mutex::new(Vec::new()),
             }
         }
@@ -248,6 +251,13 @@ pub mod testing {
             self
         }
 
+        /// The same tracker answering from what another process read, which
+        /// last vouched for it at `at`.
+        pub fn vouched_for(mut self, at: DateTime<Utc>) -> Self {
+            self.as_of = Some(at);
+            self
+        }
+
         /// A tracker with nothing to fingerprint by, which is read in full
         /// every time.
         pub fn without_a_fingerprint(mut self) -> Self {
@@ -284,9 +294,11 @@ pub mod testing {
             self.fingerprint.clone()
         }
 
-        fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+        fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure> {
             self.note(Asked::All);
-            self.all.clone()
+            self.all
+                .clone()
+                .map(|beads| beads.into_iter().map(Arc::new).collect())
         }
 
         fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
@@ -297,6 +309,10 @@ pub mod testing {
         fn blocked(&self) -> Result<BTreeMap<String, Vec<String>>, RunFailure> {
             self.note(Asked::Blocked);
             self.blocked.clone()
+        }
+
+        fn as_of(&self) -> Option<DateTime<Utc>> {
+            self.as_of
         }
 
         fn events(&self, since: u64) -> Option<Result<Vec<Value>, RunFailure>> {

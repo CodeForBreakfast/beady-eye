@@ -154,6 +154,45 @@ fn a_keystroke_walks_no_subtree() {
     assert_eq!(walks_on_this_thread() - before, 0);
 }
 
+/// A collection lands every time the watcher speaks, and most of them find
+/// every tree as it was. A tree that did not move keeps what was answered
+/// of it, so such a collection asks nothing of any tree.
+#[test]
+fn a_collection_that_moved_no_tree_walks_no_subtree() {
+    let mut forest = flatten(built(Filter::All));
+    let before = walks_on_this_thread();
+
+    forest.refresh(built(Filter::All));
+
+    assert_eq!(walks_on_this_thread() - before, 0);
+}
+
+/// A tree that did move is answered again: a child closing under
+/// `dun-7.1` is a bead more of its subtree done.
+#[test]
+fn a_collection_that_moved_a_tree_answers_it_again() {
+    let mut forest = flatten(snapshot());
+
+    let finished = edited(
+        DUNWICH,
+        r#""id":"dun-7.1.1","title":"true the mount","status":"open""#,
+        r#""id":"dun-7.1.1","title":"true the mount","status":"closed""#,
+    );
+    forest.refresh(gather(
+        vec![tree_of("dunwich", &finished)],
+        Vec::new(),
+        Filter::LiveAgents,
+    ));
+
+    assert_eq!(
+        row_of(&forest, "dun-7.1").progress,
+        Some(Progress {
+            finished: 1,
+            total: 3
+        })
+    );
+}
+
 /// A subtree the folds name nothing at or beneath is counted from its
 /// tree rather than drawn, and drawn from it only where a reader reaches
 /// in. So a key that lays the forest out again costs the count and the

@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -723,12 +723,13 @@ impl Tracker for Reader<'_> {
     /// `--all` is load-bearing: without it bd answers about open beads only,
     /// and a smaller correct-looking answer about a different population is
     /// the kind of wrong that reads as right.
-    fn all(&self) -> Result<Vec<Bead>, RunFailure> {
-        if self.unfinished_work {
+    fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure> {
+        let beads = if self.unfinished_work {
             self.every_bead_with_unfinished_text()
         } else {
             self.every_bead()
-        }
+        };
+        beads.map(|beads| beads.into_iter().map(Arc::new).collect())
     }
 
     /// bd computes readiness itself and treats it as a state of its own, so
