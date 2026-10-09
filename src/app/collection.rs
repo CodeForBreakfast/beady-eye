@@ -22,7 +22,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
-use crate::model::join::{self, Listed, ProjectRows};
+use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
     SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
@@ -343,7 +343,7 @@ impl Collection {
         // with a producer is never polled — so a refresh naming it is the
         // only chance the agent join gets.
         let (panes, provider, out_of_reach) = self.every_pane(agents);
-        self.read_wanted(cfg, trackers, wanted, &panes, now);
+        self.read_named(cfg, trackers, named, &panes, now);
         self.drawn(cfg, trackers, &panes, &out_of_reach, &provider, filter, now)
     }
 
@@ -359,7 +359,7 @@ impl Collection {
         now: DateTime<Utc>,
     ) -> Watched {
         let (panes, provider, out_of_reach) = self.every_pane(agents);
-        self.read_wanted(cfg, trackers, wanted, &panes, now);
+        self.read_named(cfg, trackers, &|project| wanted.names(project), &panes, now);
         if !self.found.values().any(|found| *found == Found::Moved) {
             let cfg = self.widened(cfg);
             return Watched {
@@ -385,11 +385,11 @@ impl Collection {
         }
     }
 
-    fn read_wanted(
+    fn read_named(
         &mut self,
         cfg: &Config,
         trackers: &dyn Trackers,
-        wanted: &Wanted,
+        named: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) {
