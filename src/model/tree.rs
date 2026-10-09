@@ -15,35 +15,51 @@ use crate::model::types::{Bead, Dependency, Edge};
 /// Everything else — letters, punctuation, digit runs of equal value —
 /// compares as written.
 pub(crate) fn numeric_id_order(a: &str, b: &str) -> std::cmp::Ordering {
-    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    // Bytes rather than chars: UTF-8 orders as the chars it encodes, and no
+    // byte of a multi-byte char is an ASCII digit.
+    let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
     loop {
-        return match (a.peek(), b.peek()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Less,
-            (Some(_), None) => std::cmp::Ordering::Greater,
+        let order = match (a.first(), b.first()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
             (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
-                let digits = |it: &mut std::iter::Peekable<std::str::Chars>| -> String {
-                    std::iter::from_fn(|| it.next_if(char::is_ascii_digit)).collect()
-                };
-                let (a_digits, b_digits) = (digits(&mut a), digits(&mut b));
-                let (a_value, b_value): (u128, u128) = (
-                    a_digits.parse().unwrap_or(u128::MAX),
-                    b_digits.parse().unwrap_or(u128::MAX),
-                );
-                match a_value.cmp(&b_value) {
-                    std::cmp::Ordering::Equal => match a_digits.cmp(&b_digits) {
-                        std::cmp::Ordering::Equal => continue,
-                        other => other,
-                    },
-                    other => other,
-                }
+                let (a_digits, a_rest) = digit_run(a);
+                let (b_digits, b_rest) = digit_run(b);
+                (a, b) = (a_rest, b_rest);
+                digits_value(a_digits)
+                    .cmp(&digits_value(b_digits))
+                    .then_with(|| a_digits.cmp(b_digits))
             }
-            (Some(_), Some(_)) => match a.next().cmp(&b.next()) {
-                std::cmp::Ordering::Equal => continue,
-                other => other,
-            },
+            (Some(x), Some(y)) => {
+                (a, b) = (&a[1..], &b[1..]);
+                x.cmp(y)
+            }
         };
+        if order.is_ne() {
+            return order;
+        }
     }
+}
+
+/// The run of ASCII digits `id` starts with, and what follows it.
+fn digit_run(id: &[u8]) -> (&[u8], &[u8]) {
+    let end = id
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .unwrap_or(id.len());
+    id.split_at(end)
+}
+
+/// The value of a run of ASCII digits, or the largest there is where it
+/// will not fit.
+fn digits_value(digits: &[u8]) -> u128 {
+    digits
+        .iter()
+        .try_fold(0u128, |value, digit| {
+            value.checked_mul(10)?.checked_add(u128::from(digit - b'0'))
+        })
+        .unwrap_or(u128::MAX)
 }
 
 /// One way down from a bead to a bead beneath it.
@@ -871,6 +887,27 @@ mod tests {
     const ROOT: &str = "r";
     use crate::collect::bd::parse_shared_beads;
     use crate::model::types::Edge;
+
+    #[test]
+    fn ids_compare_as_a_reader_reads_them() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let huge = "9".repeat(40);
+        let (beyond, further) = (format!("t.{huge}0"), format!("t.{huge}1"));
+        let cases = [
+            ("t.2", "t.10", Less),
+            ("t.10", "t.2", Greater),
+            ("t.10", "t.10", Equal),
+            ("t", "t.1", Less),
+            ("t.1a", "t.1b", Less),
+            ("t.01", "t.1", Less),
+            ("é.2", "é.10", Less),
+            ("a.1", "é.1", Less),
+            (beyond.as_str(), further.as_str(), Less),
+        ];
+        for (a, b, order) in cases {
+            assert_eq!(numeric_id_order(a, b), order, "{a} against {b}");
+        }
+    }
 
     /// A slice of this project's own tracker as `bd list --all --json`
     /// writes it: one open root, one bead in flight, and closed beads whose
