@@ -1380,13 +1380,12 @@ impl Forest {
     }
 
     /// Where the forest draws a bead at the bead it is rooted at or beneath
-    /// it, which is where a reader comes to it first: those rows are drawn
-    /// above every root the mode is holding back.
+    /// it.
     ///
     /// A bead its own tree reaches twice is drawn at the copy the reader
-    /// pressed the key on, and every copy of it is left out of the root behind
-    /// the line — so the first way down to that bead, and to everything only
-    /// it reaches, is a way down to a row nothing draws.
+    /// pressed the key on, so the first way down the tree to that bead, and
+    /// to everything only it reaches, can be a way down to a row nothing
+    /// draws.
     fn drawn_at_the_root(&self, key: &BeadKey) -> Option<Place> {
         self.focused.iter().find_map(|focused| {
             if focused.steps.last().unwrap_or(&focused.tree) == key {
