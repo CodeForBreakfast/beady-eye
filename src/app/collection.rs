@@ -22,7 +22,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
-use crate::model::join::{self, BeadKey, Listed, ProjectRows};
+use crate::model::join::{self, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
     SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
@@ -174,10 +174,39 @@ pub struct Collection {
     /// in the journal it has read to, and what the journal said since the
     /// answers were last handed over.
     journals: BTreeMap<String, Journalled>,
+    /// What the collection in hand found of each project it read.
+    found: BTreeMap<String, Found>,
+    /// For each project a watcher was last told of, the readiness its trees
+    /// gave each bead where that differs from bd's own. bd's own moves only
+    /// with a read of the project, so a project not read since says nothing
+    /// new to a watcher unless these move.
+    answered: BTreeMap<String, BTreeMap<String, BeadReadiness>>,
     /// How many reads `read` has taken in, so trees assembled from the
     /// standing set can tell when one of them has been replaced.
     reads_taken: u64,
     reached: Reached,
+}
+
+/// Whether a read found its project's tracker had moved since the read
+/// standing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Found {
+    /// Read again, or found unreachable.
+    Moved,
+    /// Nothing had moved, so the read standing still speaks for it.
+    Unmoved,
+}
+
+/// What one collection says to a watcher, and what the source reading for
+/// it arms the next read from.
+pub struct Watched {
+    /// Every project the collection reads, as a snapshot names them.
+    pub projects: Vec<String>,
+    /// When each project's read stops speaking for its tracker with nothing
+    /// written, where it does.
+    pub speaks_until: BTreeMap<String, DateTime<Utc>>,
+    /// What each project with something new to say says.
+    pub answers: Vec<Answer>,
 }
 
 /// The trees that reach into another project's answer, kept from one
@@ -269,19 +298,84 @@ impl Collection {
         // with a producer is never polled — so a refresh naming it is the
         // only chance the agent join gets.
         let (panes, provider, out_of_reach) = self.every_pane(agents);
+        self.read_wanted(cfg, trackers, wanted, &panes, now);
+        self.drawn(cfg, trackers, &panes, &out_of_reach, &provider, filter, now)
+    }
 
+    /// Read what `wanted` names, and say to a watcher what each project
+    /// standing has new to say. Where no read found anything moved, nothing
+    /// is drawn and only the projects read are spoken of.
+    pub fn watched(
+        &mut self,
+        cfg: &Config,
+        agents: &dyn Agents,
+        trackers: &dyn Trackers,
+        wanted: &Wanted,
+        now: DateTime<Utc>,
+    ) -> Watched {
+        let (panes, provider, out_of_reach) = self.every_pane(agents);
+        self.read_wanted(cfg, trackers, wanted, &panes, now);
+        if !self.found.values().any(|found| *found == Found::Moved) {
+            let cfg = self.widened(cfg);
+            return Watched {
+                projects: cfg.read().map(|project| project.name.clone()).collect(),
+                speaks_until: self.speaks_until(&cfg),
+                answers: self.vouched(),
+            };
+        }
+        let snapshot = self.drawn(
+            cfg,
+            trackers,
+            &panes,
+            &out_of_reach,
+            &provider,
+            Filter::All,
+            now,
+        );
+        let answers = self.answers(&snapshot);
+        Watched {
+            projects: snapshot.projects,
+            speaks_until: snapshot.speaks_until,
+            answers,
+        }
+    }
+
+    fn read_wanted(
+        &mut self,
+        cfg: &Config,
+        trackers: &dyn Trackers,
+        wanted: &Wanted,
+        panes: &[Pane],
+        now: DateTime<Utc>,
+    ) {
+        self.found.clear();
         let reading = self.widened(cfg);
         self.read(
             &reading,
             trackers,
             &|project| wanted.names(project),
             &|project| cfg.reads(project),
-            &panes,
+            panes,
             now,
         );
+    }
+
+    /// Everything standing drawn, reading as well any project the scope left
+    /// out that holds a drawn bead's blocker.
+    #[allow(clippy::too_many_arguments)]
+    fn drawn(
+        &mut self,
+        cfg: &Config,
+        trackers: &dyn Trackers,
+        panes: &[Pane],
+        out_of_reach: &BTreeSet<String>,
+        provider: &AgentProvider,
+        filter: Filter,
+        now: DateTime<Utc>,
+    ) -> Snapshot {
         loop {
             self.reach_across(cfg);
-            match self.draw(cfg, &panes, &out_of_reach, &provider, filter, now) {
+            match self.draw(cfg, panes, out_of_reach, provider, filter, now) {
                 Ok(snapshot) => return snapshot,
                 Err(needed) => {
                     self.read_on_demand.extend(needed.iter().cloned());
@@ -291,7 +385,7 @@ impl Collection {
                         trackers,
                         &|project| needed.contains(project),
                         &|project| cfg.reads(project),
-                        &panes,
+                        panes,
                         now,
                     );
                 }
@@ -299,62 +393,70 @@ impl Collection {
         }
     }
 
-    /// What every project standing says to a watcher, each bead with the
-    /// readiness `snapshot`, the collection just drawn from these reads, gives
-    /// it.
+    /// What each project with something new to say says to a watcher, each
+    /// bead with the readiness `snapshot`, the collection just drawn from
+    /// these reads, gives it.
     ///
-    /// Every project rather than only those just read, because a blocker
-    /// closing in one project frees a bead in another. A bead no tree reaches
-    /// takes bd's own readiness, which is all there is to say of it.
-    pub fn answers(&mut self, snapshot: &Snapshot) -> Vec<Answer> {
-        let mut drawn: BTreeMap<BeadKey, &Node> = BTreeMap::new();
+    /// A project read again says so. So does one whose trees moved a bead's
+    /// readiness, because a blocker closing in one project frees a bead in
+    /// another. A project read and found unmoved is vouched for, and any
+    /// other is not spoken of. A bead no tree reaches takes bd's own
+    /// readiness, which is all there is to say of it.
+    fn answers(&mut self, snapshot: &Snapshot) -> Vec<Answer> {
+        let mut drawn: BTreeMap<&str, BTreeMap<&str, &Node>> = BTreeMap::new();
         for node in snapshot.collected.iter().flat_map(|tree| &tree.beads) {
-            drawn.entry(node.key()).or_insert(node);
+            drawn
+                .entry(node.project.as_str())
+                .or_default()
+                .entry(node.id.as_str())
+                .or_insert(node);
         }
-        self.read
+        let mut answers = Vec::new();
+        for (project, read) in &self.read {
+            let found = self.found.get(project).copied();
+            let said = match &read.work {
+                Ok(work) => {
+                    let differing = differing_readiness(work, drawn.get(project.as_str()));
+                    let moved = self.answered.get(project) != Some(&differing);
+                    let said = (found == Some(Found::Moved) || moved)
+                        .then(|| held_by_watcher(work, &differing, read.at));
+                    self.answered.insert(project.clone(), differing);
+                    said
+                }
+                Err(failure) => (found == Some(Found::Moved))
+                    .then(|| watcher::Said::Unreachable(failure.clone())),
+            };
+            let said = said.or_else(|| {
+                (found == Some(Found::Unmoved)).then_some(watcher::Said::Vouched { at: read.at })
+            });
+            if let Some(said) = said {
+                answers.push(Answer {
+                    project: project.clone(),
+                    said,
+                    journal: self
+                        .journals
+                        .get_mut(project)
+                        .and_then(|journal| journal.said.take()),
+                });
+            }
+        }
+        answers
+    }
+
+    /// What a watcher is told where no read found anything moved: that each
+    /// project read is as current as the read.
+    fn vouched(&self) -> Vec<Answer> {
+        self.found
             .iter()
-            .map(|(project, read)| Answer {
-                project: project.clone(),
-                said: match &read.work {
-                    Ok(work) => watcher::Said::Read {
-                        at: read.at,
-                        beads: work
-                            .beads
-                            .iter()
-                            .map(|bead| {
-                                let key = BeadKey {
-                                    project: project.clone(),
-                                    id: bead.id.clone(),
-                                };
-                                let bd = BeadReadiness {
-                                    ready: work.readiness.ready.contains(&bead.id),
-                                    blocked_by: work
-                                        .readiness
-                                        .blocked_by
-                                        .get(&bead.id)
-                                        .cloned()
-                                        .unwrap_or_default(),
-                                };
-                                let (ready, blocked_by) = match drawn.get(&key) {
-                                    Some(node) => (node.ready, node.blocked_by.clone()),
-                                    None => (bd.ready, bd.blocked_by.clone()),
-                                };
-                                let held = Held {
-                                    bead: Arc::clone(bead),
-                                    ready,
-                                    blocked_by,
-                                    bd,
-                                };
-                                (key.id, held)
-                            })
-                            .collect(),
+            .filter(|(_, found)| **found == Found::Unmoved)
+            .filter_map(|(project, _)| {
+                Some(Answer {
+                    project: project.clone(),
+                    said: watcher::Said::Vouched {
+                        at: self.read.get(project)?.at,
                     },
-                    Err(failure) => watcher::Said::Unreachable(failure.clone()),
-                },
-                journal: self
-                    .journals
-                    .get_mut(project)
-                    .and_then(|journal| journal.said.take()),
+                    journal: None,
+                })
             })
             .collect()
     }
@@ -387,6 +489,9 @@ impl Collection {
         {
             match answer {
                 Ok(Refresh::Unchanged { as_of }) => {
+                    self.found
+                        .entry(project.name.clone())
+                        .or_insert(Found::Unmoved);
                     // A skipped read is a successful read: `bdi` knows the
                     // tracker has not moved, so the project is as fresh as if
                     // the cascade had run and the foot must not draw it as
@@ -401,6 +506,7 @@ impl Collection {
                     as_of,
                     journal,
                 }) => {
+                    self.found.insert(project.name.clone(), Found::Moved);
                     if let Some(journal) = journal {
                         self.journals
                             .entry(project.name.clone())
@@ -418,6 +524,7 @@ impl Collection {
                     );
                 }
                 Err(failure) => {
+                    self.found.insert(project.name.clone(), Found::Moved);
                     // Storing what the probe just read would make this
                     // failure sticky: the next probe would match it, the
                     // cascade that would have recovered is skipped, and the
@@ -621,10 +728,7 @@ impl Collection {
             .map(|(project, read)| (project.to_string(), read.at))
             .collect();
 
-        let speaks_until = self
-            .that_answered(cfg)
-            .filter_map(|(project, work)| Some((project.to_string(), work.speaks_until?)))
-            .collect();
+        let speaks_until = self.speaks_until(cfg);
 
         let read_for_reach = cfg
             .read()
@@ -655,6 +759,14 @@ impl Collection {
     fn standing<'a>(&'a self, cfg: &'a Config) -> impl Iterator<Item = (&'a str, &'a Read)> {
         cfg.read()
             .filter_map(|p| Some((p.name.as_str(), self.read.get(&p.name)?)))
+    }
+
+    /// When each project whose tracker answered stops speaking for it with
+    /// nothing written, where it does.
+    fn speaks_until(&self, cfg: &Config) -> BTreeMap<String, DateTime<Utc>> {
+        self.that_answered(cfg)
+            .filter_map(|(project, work)| Some((project.to_string(), work.speaks_until?)))
+            .collect()
     }
 
     /// The projects whose trackers answered, in the same order.
@@ -862,6 +974,66 @@ fn held_by_unread(drawn: &[Drawn<'_>], scope: &Scope) -> BTreeSet<String> {
             _ => None,
         })
         .collect()
+}
+
+/// bd's own readiness for bead `id` of `work`.
+fn bd_readiness(work: &ProjectWork, id: &str) -> BeadReadiness {
+    BeadReadiness {
+        ready: work.readiness.ready.contains(id),
+        blocked_by: work
+            .readiness
+            .blocked_by
+            .get(id)
+            .cloned()
+            .unwrap_or_default(),
+    }
+}
+
+/// The readiness the trees gave each of `work`'s beads they drew, where it
+/// differs from bd's own.
+fn differing_readiness(
+    work: &ProjectWork,
+    drawn: Option<&BTreeMap<&str, &Node>>,
+) -> BTreeMap<String, BeadReadiness> {
+    drawn
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, node)| {
+            let bd = bd_readiness(work, id);
+            (node.ready != bd.ready || node.blocked_by != bd.blocked_by).then(|| {
+                let drawn = BeadReadiness {
+                    ready: node.ready,
+                    blocked_by: node.blocked_by.clone(),
+                };
+                (id.to_string(), drawn)
+            })
+        })
+        .collect()
+}
+
+/// Every bead of `work` as the watcher holds it, read `at`, each taking the
+/// readiness `differing` gives it and bd's own otherwise.
+fn held_by_watcher(
+    work: &ProjectWork,
+    differing: &BTreeMap<String, BeadReadiness>,
+    at: DateTime<Utc>,
+) -> watcher::Said {
+    let beads = work
+        .beads
+        .iter()
+        .map(|bead| {
+            let bd = bd_readiness(work, &bead.id);
+            let given = differing.get(&bead.id).unwrap_or(&bd);
+            let held = Held {
+                bead: Arc::clone(bead),
+                ready: given.ready,
+                blocked_by: given.blocked_by.clone(),
+                bd,
+            };
+            (bead.id.clone(), held)
+        })
+        .collect();
+    watcher::Said::Read { at, beads }
 }
 
 /// A tree's beads, gathered under the project whose answer holds each.
@@ -3369,6 +3541,177 @@ prefix = "kad"
         assert!(matches!(
             answers[0].said,
             watcher::Said::Unreachable(TrackerFailure::Auth)
+        ));
+    }
+
+    // ---- what a watcher is told after the first collection --------------
+
+    /// Ferry's tracker holding its bead waiting on dunwich's epic, which bd
+    /// cannot see and so calls the bead ready.
+    fn ferry_waiting() -> Fake {
+        Fake::holding(beads(WAITING_ON_DUNWICH)).ready(["fer-2"])
+    }
+
+    /// Both projects read once, as a watcher starts.
+    fn watching_ferry_wait() -> Collection {
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", ferry_waiting());
+        let mut collection = Collection::default();
+        watched(&mut collection, &trackers, &Wanted::Everything);
+        collection
+    }
+
+    fn watched(collection: &mut Collection, trackers: &Fakes, wanted: &Wanted) -> Watched {
+        collection.watched(&two_projects(), &no_panes(), trackers, wanted, now())
+    }
+
+    /// What each answer said, by project: read, vouched for or unreachable.
+    fn said_of(watched: &Watched) -> Vec<(&str, &'static str)> {
+        watched
+            .answers
+            .iter()
+            .map(|answer| {
+                let said = match answer.said {
+                    watcher::Said::Read { .. } => "read",
+                    watcher::Said::Vouched { .. } => "vouched",
+                    watcher::Said::Unreachable(_) => "unreachable",
+                };
+                (answer.project.as_str(), said)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_watcher_starts_with_every_project_read() {
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", ferry_waiting());
+
+        let first = watched(&mut Collection::default(), &trackers, &Wanted::Everything);
+
+        assert_eq!(said_of(&first), [("dunwich", "read"), ("ferry", "read")]);
+        assert_eq!(first.projects, ["dunwich", "ferry"]);
+    }
+
+    /// The probe found nothing, so there is nothing to draw and nothing new
+    /// to say of any bead: the project read is vouched for, and no other is
+    /// spoken of.
+    #[test]
+    fn a_watcher_is_told_only_that_a_project_nothing_moved_in_is_current() {
+        let mut collection = watching_ferry_wait();
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", ferry_waiting());
+        let nested = crate::model::tree::nestings_on_this_thread();
+
+        let again = watched(&mut collection, &trackers, &dunwich_alone());
+
+        assert_eq!(said_of(&again), [("dunwich", "vouched")]);
+        assert_eq!(
+            crate::model::tree::nestings_on_this_thread() - nested,
+            0,
+            "nothing moved, so nothing was drawn"
+        );
+        assert_eq!(again.projects, ["dunwich", "ferry"]);
+    }
+
+    /// Dunwich moved without changing anything ferry's bead waits on, so
+    /// ferry has nothing new to say.
+    #[test]
+    fn a_watcher_is_told_of_a_project_that_moved_and_not_of_one_it_left_alone() {
+        let mut collection = watching_ferry_wait();
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker().moved())
+            .with("ferry", ferry_waiting());
+
+        let again = watched(&mut collection, &trackers, &dunwich_alone());
+
+        assert_eq!(said_of(&again), [("dunwich", "read")]);
+    }
+
+    /// Closing dunwich's epic frees ferry's bead, which ferry's own tracker
+    /// cannot see, so ferry is answered again though it was not read.
+    #[test]
+    fn a_watcher_is_told_of_a_bead_a_read_of_another_project_freed() {
+        let mut collection = watching_ferry_wait();
+        let closed = DUNWICH_TREE.replacen(r#""status":"in_progress""#, r#""status":"closed""#, 1);
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_holding(&closed).moved())
+            .with("ferry", ferry_waiting());
+
+        let again = watched(&mut collection, &trackers, &dunwich_alone());
+
+        assert_eq!(said_of(&again), [("dunwich", "read"), ("ferry", "read")]);
+        let freed = held(&again.answers, "ferry", "fer-2");
+        assert_eq!((freed.ready, freed.blocked_by.len()), (true, 0));
+    }
+
+    /// A project the collection was not asked to read, and whose beads it
+    /// left as they were, is not spoken of.
+    #[test]
+    fn a_watcher_is_not_told_of_a_project_the_collection_did_not_read() {
+        let mut collection = watching_ferry_wait();
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", ferry_waiting().moved());
+
+        let again = watched(&mut collection, &trackers, &ferry());
+
+        assert_eq!(said_of(&again), [("ferry", "read")]);
+    }
+
+    /// A tracker the watcher has been told it cannot reach is not said to be
+    /// unreachable again by a collection that never asked it.
+    #[test]
+    fn a_watcher_is_not_told_again_of_a_tracker_the_collection_did_not_ask() {
+        let unreachable = |dunwich| {
+            Fakes::default().with("dunwich", dunwich).with(
+                "ferry",
+                ferry_waiting().failing(Asked::All, failing(FailureKind::Auth)),
+            )
+        };
+        let mut collection = Collection::default();
+        let first = watched(
+            &mut collection,
+            &unreachable(dunwich_tracker()),
+            &Wanted::Everything,
+        );
+
+        let again = watched(
+            &mut collection,
+            &unreachable(dunwich_tracker().moved()),
+            &dunwich_alone(),
+        );
+
+        assert_eq!(
+            said_of(&first),
+            [("dunwich", "read"), ("ferry", "unreachable")]
+        );
+        assert_eq!(said_of(&again), [("dunwich", "read")]);
+    }
+
+    /// The instant a project nothing moved in is current as of travels with
+    /// it, so a consumer's freshness moves on.
+    #[test]
+    fn a_project_vouched_for_is_current_as_of_the_collection() {
+        let mut collection = watching_ferry_wait();
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", ferry_waiting());
+        let later = now() + TimeDelta::seconds(30);
+
+        let again = collection.watched(
+            &two_projects(),
+            &no_panes(),
+            &trackers,
+            &dunwich_alone(),
+            later,
+        );
+
+        assert!(matches!(
+            again.answers[0].said,
+            watcher::Said::Vouched { at } if at == later
         ));
     }
 
