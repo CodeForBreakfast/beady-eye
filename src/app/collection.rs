@@ -695,15 +695,17 @@ impl Collection {
         let cfg = &self.widened(rooted);
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
         let drawn = reaching_across(&answered, &rooted.scope, &self.reached.trees);
+        // Over every tree, focused or not, so that leaving the focus has
+        // every blocker the other trees wait on in hand already.
+        let needed = held_by_unread(&drawn, &cfg.scope);
+        if !needed.is_empty() {
+            return Err(needed);
+        }
         let focused: Vec<Drawn<'_>> = drawn
             .iter()
             .copied()
             .filter(|tree| drawn_under(&self.focus, tree))
             .collect();
-        let needed = held_by_unread(&focused, &cfg.scope);
-        if !needed.is_empty() {
-            return Err(needed);
-        }
 
         // One resolve over every project's rows at once. A pane names its bead
         // by id alone, and only the whole set tells a match from a prefix
@@ -3326,6 +3328,54 @@ path = "{FERRY}"
         );
         assert_eq!(unreachable_from_ferry(&snap), vec![]);
         assert_eq!(snap.projects, ["dunwich", "ferry"]);
+    }
+
+    /// Ferry holding the barge waiting on dunwich, and a second root of its
+    /// own waiting on nothing.
+    const WAITING_ON_DUNWICH_AND_NOT: &str = r#"[
+      {"id":"fer-2","title":"moor the barge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"fer-3","title":"paint the hull","status":"open",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A board focused away from the tree waiting on a project the run is
+    /// not reading still reads that project for it, so leaving the focus
+    /// draws the tree without asking any tracker.
+    #[test]
+    fn leaving_a_focus_draws_a_blocker_in_a_project_the_run_is_not_reading_without_a_read() {
+        let cfg = reading_ferry_where_dunwich(STATES_ITS_PREFIX);
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH_AND_NOT)));
+        let mut board = Collection::default();
+        board.focus_on([BeadKey {
+            project: "ferry".to_string(),
+            id: "fer-3".to_string(),
+        }]);
+        collected(&mut board, &cfg, &trackers);
+        let asked_while_focused = asked_of(&trackers, "dunwich");
+
+        board.focus_on(Vec::new());
+        let left = board.redraw(&cfg, &no_panes(), &trackers, Filter::All, now());
+
+        assert_eq!(asked_of(&trackers, "dunwich"), asked_while_focused);
+        assert_eq!(
+            node(tree_of(&left, "ferry"), "dun-7").title,
+            "lift the ground station"
+        );
+    }
+
+    fn collected(board: &mut Collection, cfg: &Config, trackers: &Fakes) -> Snapshot {
+        board.collect(
+            cfg,
+            &no_panes(),
+            trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        )
     }
 
     /// How many trees each project's standing read assembled.
