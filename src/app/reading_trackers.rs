@@ -10,15 +10,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use chrono::{DateTime, Utc};
 
 use crate::collect::changes::Heard;
-use crate::model::snapshot::Snapshot;
 
 use super::watcher::{Answer, ChangeSource, Said};
-use super::{Asked, Outstanding, Reading, Wanted};
+use super::{Asked, Outstanding, Reading, Wanted, Watched};
 
-/// One read of what `Wanted` names, as of the instant handed in: the
-/// collection drawn from it, and what each project standing says to the
-/// watcher.
-pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> (Snapshot, Vec<Answer>) + Send>;
+/// One read of what `Wanted` names, as of the instant handed in, and what
+/// each project with something new to say says to the watcher.
+pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> Watched + Send>;
 
 /// A change source that reads every configured project's tracker, once at
 /// the start and then whenever a project's poll comes round or a producer
@@ -64,14 +62,14 @@ impl ReadingTrackers {
         let Ok(Asked::Read(wanted)) = self.asking.1.try_recv() else {
             return false;
         };
-        let (snapshot, answers) = (self.reads)(&wanted, now);
+        let watched = (self.reads)(&wanted, now);
         self.reading.came_back(
             self.outstanding.came_back(),
-            &snapshot.projects,
-            &snapshot.speaks_until,
+            &watched.projects,
+            &watched.speaks_until,
             Utc::now(),
         );
-        self.told.extend(answers);
+        self.told.extend(watched.answers);
         true
     }
 
@@ -140,38 +138,36 @@ mod tests {
     use crate::collect::agents::testing::Fake as Provider;
     use crate::collect::changes::Reported;
     use crate::collect::tracker::testing::Fakes;
-    use crate::model::snapshot::Filter;
 
     /// Every project `trackers` holds, read through a collection as
     /// `bdi watch` reads them, with no window and nothing polling.
     fn reading(trackers: Arc<Fakes>) -> (ReadingTrackers, Sender<Heard>) {
-        polling_every(None, trackers)
+        dunwich_polling_every(None, trackers)
     }
 
-    /// As [`reading`], with every project polling `every` after each read.
-    fn polling_every(
+    /// As [`reading`], with dunwich polling `every` after each read and ferry
+    /// never polling, so whatever is said of ferry after its first read was
+    /// said for a producer.
+    fn dunwich_polling_every(
         every: Option<std::time::Duration>,
         trackers: Arc<Fakes>,
     ) -> (ReadingTrackers, Sender<Heard>) {
         let cfg = two_projects();
         let mut collection = Collection::default();
         let reads: Reads = Box::new(move |wanted, now| {
-            let snapshot = collection.collect(
+            collection.watched(
                 &cfg,
                 &Provider::holding(Vec::new()),
                 trackers.as_ref(),
                 wanted,
-                Filter::All,
                 now,
-            );
-            let answers = collection.answers(&snapshot);
-            (snapshot, answers)
+            )
         });
         let (tell, heard) = mpsc::channel();
-        let armed = ["dunwich", "ferry"]
-            .into_iter()
-            .map(|project| Armed::polling(project.to_string(), every))
-            .collect();
+        let armed = vec![
+            Armed::polling("dunwich".to_string(), every),
+            Armed::polling("ferry".to_string(), None),
+        ];
         let source = ReadingTrackers::new(
             reads,
             heard,
@@ -215,13 +211,13 @@ mod tests {
         let read_once = trackers.tracker("dunwich").asked().len();
 
         tell.send(Heard::Changed("dunwich".to_string())).unwrap();
-        let answers: Vec<Answer> = (0..2).map(|_| source.next().expect("an answer")).collect();
+        let answer = source.next().expect("an answer");
 
         assert!(
             trackers.tracker("dunwich").asked().len() > read_once,
             "dunwich's tracker was asked again"
         );
-        assert!(answers.iter().all(|a| matches!(a.said, Said::Read { .. })));
+        assert_eq!(answer.project, "dunwich");
     }
 
     #[test]
@@ -243,7 +239,7 @@ mod tests {
 
     #[test]
     fn a_producers_line_is_taken_while_polls_keep_coming_due() {
-        let (mut source, tell) = polling_every(Some(std::time::Duration::ZERO), trackers());
+        let (mut source, tell) = dunwich_polling_every(Some(std::time::Duration::ZERO), trackers());
         for _ in 0..2 {
             source.next();
         }
@@ -251,7 +247,10 @@ mod tests {
         tell.send(Heard::Covered("ferry".to_string())).unwrap();
 
         assert!(
-            (0..10).any(|_| matches!(source.next().expect("an answer").said, Said::Vouched { .. })),
+            (0..10).any(|_| {
+                let answer = source.next().expect("an answer");
+                answer.project == "ferry" && matches!(answer.said, Said::Vouched { .. })
+            }),
             "ferry's cover was never taken while polls kept coming due"
         );
     }
