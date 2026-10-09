@@ -74,6 +74,8 @@ pub enum Asked {
     Reloaded(Box<Config>),
     /// The beads the board is focused on from here on, or none. What is
     /// standing is drawn again under it, and no tracker is read for it.
+    /// Every one is answered, because the loop shows no snapshot while one
+    /// is unanswered.
     Focused(BTreeSet<BeadKey>),
 }
 

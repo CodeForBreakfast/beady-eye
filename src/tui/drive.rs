@@ -355,7 +355,7 @@ pub(super) fn drive(
     let mut showing = Showing::Forest;
     let mut drawn_at = Utc::now();
     // The collector starts focused where the view does.
-    let mut focused_on = view.focused_on();
+    let mut focus = Focus::starting(view.focused_on());
     view.draw(showing, drawn_at)?;
 
     while let Some(waited) = wait(
@@ -380,9 +380,14 @@ pub(super) fn drive(
             // each of them does about the screen it says below.
             Waited::Aged => ran_out(view, drawn_at, Utc::now()),
             Waited::Event(event) => {
-                let Some(changed) =
-                    answered(view, &mut outstanding, &mut reading, &mut showing, event)
-                else {
+                let Some(changed) = answered(
+                    view,
+                    &mut outstanding,
+                    &mut reading,
+                    &mut focus,
+                    &mut showing,
+                    event,
+                ) else {
                     return Ok(());
                 };
                 changed
@@ -397,7 +402,7 @@ pub(super) fn drive(
         let now = Utc::now();
         let told = asks_for_what_is_due(view, &mut outstanding, &mut reading, now);
         let lapsed = view.lapsed(&reading.lapsed(now));
-        refocused(view, ask, &mut focused_on);
+        focus.refocused(view, ask);
         outstanding.sends(ask, now);
         view.reread(now);
         // A run reading a config file looks at it here; a run that found no
@@ -578,6 +583,7 @@ fn answered(
     view: &mut dyn View,
     outstanding: &mut Outstanding,
     reading: &mut Reading,
+    focus: &mut Focus,
     showing: &mut Showing,
     event: Event,
 ) -> Option<bool> {
@@ -756,7 +762,9 @@ fn answered(
                 &snapshot.speaks_until,
                 Utc::now(),
             );
-            shows(view, showing, *snapshot);
+            if focus.is_answered() {
+                shows(view, showing, *snapshot);
+            }
             // Told after the rows land, and told whatever came of the
             // collection that ended: another may have been waiting behind
             // it, and where none was, a line left saying it was being
@@ -765,7 +773,10 @@ fn answered(
             true
         }
         Event::Redrawn(snapshot) => {
-            shows(view, showing, *snapshot);
+            focus.redrawn();
+            if focus.is_answered() {
+                shows(view, showing, *snapshot);
+            }
             true
         }
         Event::Tailed(answer) => view.tailed(answer, Utc::now()),
@@ -777,13 +788,44 @@ fn answered(
     Some(pressed || changed)
 }
 
-/// Tell the collector the beads the view is focused on, where they are not
-/// the ones it was last told. A key, or a collection that ended the focus,
-/// changes them.
-fn refocused(view: &dyn View, ask: &Sender<Asked>, told: &mut BTreeSet<BeadKey>) {
-    let focused_on = view.focused_on();
-    if focused_on != *told && ask.send(Asked::Focused(focused_on.clone())).is_ok() {
-        *told = focused_on;
+/// The beads the collector was last told the view is focused on, and how
+/// many of those tellings it has yet to answer with a redraw.
+///
+/// The collector answers its asks one at a time and in order, so any
+/// snapshot arriving while a telling is unanswered was drawn under a focus
+/// the view has left. Shown, it would draw the trees of that focus, and
+/// the view would take a bead it is now focused on for gone.
+struct Focus {
+    told: BTreeSet<BeadKey>,
+    unanswered: usize,
+}
+
+impl Focus {
+    fn starting(told: BTreeSet<BeadKey>) -> Self {
+        Focus {
+            told,
+            unanswered: 0,
+        }
+    }
+
+    /// Tell the collector the beads the view is focused on, where they are
+    /// not the ones it was last told. A key, or a collection that ended the
+    /// focus, changes them.
+    fn refocused(&mut self, view: &dyn View, ask: &Sender<Asked>) {
+        let focused_on = view.focused_on();
+        if focused_on != self.told && ask.send(Asked::Focused(focused_on.clone())).is_ok() {
+            self.told = focused_on;
+            self.unanswered += 1;
+        }
+    }
+
+    fn redrawn(&mut self) {
+        self.unanswered = self.unanswered.saturating_sub(1);
+    }
+
+    /// Whether a snapshot arriving now was drawn under the focus in force.
+    fn is_answered(&self) -> bool {
+        self.unanswered == 0
     }
 }
 
@@ -2544,6 +2586,44 @@ mod tests {
             view.awaited.is_empty(),
             "and nothing is said about the reads: {:?}",
             view.awaited
+        );
+    }
+
+    /// A snapshot drawn under a focus the reader has since left is not
+    /// shown, so it cannot say a bead the forest is now focused on has
+    /// gone. Only the redraw for the focus in force is shown, and a
+    /// collection landing before it still answers its read.
+    #[test]
+    fn a_snapshot_drawn_under_a_focus_since_left_is_not_shown() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Redrawn(Box::new(a_snapshot())),
+            Event::Collected(Box::new(a_snapshot())),
+            Event::Redrawn(Box::new(a_snapshot())),
+            Event::Redrawn(Box::new(a_snapshot())),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(asked.try_iter().count(), 3, "one ask for each change");
+        assert_eq!(view.collected, 1, "only the last redraw is shown");
+        assert_eq!(
+            view.awaited.last(),
+            Some(&Vec::new()),
+            "the collection still said what was left outstanding"
         );
     }
 
