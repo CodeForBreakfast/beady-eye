@@ -682,7 +682,7 @@ impl Collection {
                     .map(|(project, rows)| ProjectRows { project, rows }),
             )
             .collect();
-        let joined = &join::resolve(
+        let mut joined = join::resolve(
             &rows,
             Listed {
                 panes,
@@ -690,6 +690,12 @@ impl Collection {
             },
             rooted,
         );
+        for (project, _, read) in &drawn {
+            if let Ok(assembled) = read {
+                joined.cover(project, assembled);
+            }
+        }
+        let joined = &joined;
 
         let said: BTreeMap<&str, Said> = answered
             .iter()

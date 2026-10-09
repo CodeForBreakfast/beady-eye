@@ -64,6 +64,7 @@ fn an_empty_group_draws_nothing() {
             agents: joined.agents,
             refused: BTreeMap::new(),
             out_of_reach: BTreeSet::new(),
+            under_a_seat: BTreeSet::new(),
             conflicts: Vec::new(),
         },
         &cfg(),

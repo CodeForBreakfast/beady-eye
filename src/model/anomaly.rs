@@ -13,7 +13,7 @@ use crate::model::types::{Bead, Status};
 pub enum Anomaly {
     /// `in_progress` and untouched for longer than the configured window.
     StaleClaim { days: i64 },
-    /// `in_progress` with no pane behind it.
+    /// `in_progress` with no pane behind it or behind any bead above it.
     ///
     /// Where the bead named a live pane the join would not award it, that
     /// refusal is the reason and travels with the rule; where it named
@@ -42,12 +42,19 @@ pub enum Anomaly {
 /// did answer are still worth reading — a run that fell silent about every
 /// claim because one session hiccuped would throw away what it does know to
 /// avoid saying what it does not.
+///
+/// `seat_above` says a seat sits on a bead above this one in the tree, or on
+/// one whose pane the run could not ask about. A seat names its pane on the
+/// lowest bead covering its work and sets the beads beneath to `in_progress`
+/// without naming it on them, so a claim under a seat has its agent.
+#[allow(clippy::too_many_arguments)]
 pub fn detect(
     bead: &Bead,
     agent: Option<&AgentRef>,
     refused: Option<&Conflict>,
     agents: ProviderState,
     pane_out_of_reach: bool,
+    seat_above: bool,
     cfg: &Anomalies,
     now: DateTime<Utc>,
 ) -> Vec<Anomaly> {
@@ -62,7 +69,7 @@ pub fn detect(
 
     let mut fired = Vec::new();
 
-    if agents.answered() && agent.is_none() && !pane_out_of_reach {
+    if agents.answered() && agent.is_none() && !pane_out_of_reach && !seat_above {
         fired.push(Anomaly::OrphanClaim {
             refused: refused.cloned(),
         });
@@ -134,6 +141,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -151,6 +159,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -164,6 +173,7 @@ mod tests {
             Some(&pane(PaneStatus::Done)),
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
@@ -183,6 +193,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -196,6 +207,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
@@ -219,6 +231,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -233,6 +246,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -246,6 +260,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
@@ -269,6 +284,7 @@ mod tests {
             None,
             ProviderState::Answering,
             true,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -285,10 +301,41 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
         assert_eq!(got, vec![orphan(), Anomaly::StaleClaim { days: 60 }]);
+    }
+
+    /// The seat convention: the pane is named on the bead covering the work,
+    /// and the steps beneath it are in progress with nothing of their own to
+    /// name. The age rule reads bd alone, so a covered claim still goes stale.
+    #[test]
+    fn a_claim_beneath_a_seat_is_not_orphaned_and_is_still_aged() {
+        let covered = detect(
+            &bead("in_progress", YESTERDAY),
+            None,
+            None,
+            ProviderState::Answering,
+            false,
+            true,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(covered, Vec::new());
+
+        let neglected = detect(
+            &bead("in_progress", SIXTY_DAYS_AGO),
+            None,
+            None,
+            ProviderState::Answering,
+            false,
+            true,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(neglected, vec![Anomaly::StaleClaim { days: 60 }]);
     }
 
     #[test]
@@ -298,6 +345,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
@@ -313,6 +361,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -323,6 +372,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
@@ -341,6 +391,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &wide,
             now(),
         );
@@ -354,6 +405,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             false,
             &narrow,
             now(),
@@ -372,6 +424,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -388,6 +441,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -401,6 +455,7 @@ mod tests {
             None,
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
@@ -418,6 +473,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -432,6 +488,7 @@ mod tests {
             None,
             ProviderState::Answering,
             false,
+            false,
             &Anomalies::default(),
             now(),
         );
@@ -445,6 +502,7 @@ mod tests {
             Some(&live()),
             None,
             ProviderState::Answering,
+            false,
             false,
             &Anomalies::default(),
             now(),
