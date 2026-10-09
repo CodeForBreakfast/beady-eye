@@ -205,12 +205,19 @@ struct Watcher {
     current: BTreeMap<String, Arc<Told>>,
     /// The answers that have begun and not yet closed.
     arriving: BTreeMap<String, Told>,
+    /// How many answers have changed what a project holds, over every
+    /// connection, which numbers each project's beads.
+    changes: u64,
 }
 
 /// One project as the watcher last said it stood.
 #[derive(Debug, Clone, Default)]
 struct Told {
-    beads: BTreeMap<String, Listed>,
+    /// Shared with the answer before, and copied only by a line that
+    /// changes it.
+    beads: Arc<BTreeMap<String, Listed>>,
+    /// The change that left the beads as they stand.
+    change: u64,
     as_of: Option<DateTime<Utc>>,
     unreachable: Option<TrackerFailure>,
     /// How the watcher's config reaches the tracker, where it said.
@@ -220,7 +227,7 @@ struct Told {
 /// One bead as the watcher sent it, with the readiness bd gives it.
 #[derive(Debug, Clone)]
 struct Listed {
-    bead: Bead,
+    bead: Arc<Bead>,
     bd: BeadReadiness,
 }
 
@@ -359,14 +366,13 @@ impl Watcher {
     fn take(&mut self, line: Line) -> Option<Option<String>> {
         match line {
             Line::Bead { project, bd, row } => {
-                let bead = bead_of(row).ok()?;
+                let bead = Arc::new(bead_of(row).ok()?);
                 let listed = Listed { bead, bd };
-                self.arriving(&project)
-                    .beads
+                Arc::make_mut(&mut self.arriving(&project).beads)
                     .insert(listed.bead.id.clone(), listed);
             }
             Line::Gone { project, id } => {
-                self.arriving(&project).beads.remove(&id);
+                Arc::make_mut(&mut self.arriving(&project).beads).remove(&id);
             }
             Line::Freshness {
                 project,
@@ -378,11 +384,17 @@ impl Watcher {
                 if protocol != Some(PROTOCOL) {
                     return None;
                 }
-                let mut told = self
-                    .arriving
-                    .remove(&project)
-                    .or_else(|| self.current.get(&project).map(|told| (**told).clone()))
-                    .unwrap_or_default();
+                let standing = self.current.get(&project).map(|told| (**told).clone());
+                let mut told = match (self.arriving.remove(&project), standing) {
+                    (None, Some(standing)) => standing,
+                    (arrived, _) => {
+                        self.changes += 1;
+                        Told {
+                            change: self.changes,
+                            ..arrived.unwrap_or_default()
+                        }
+                    }
+                };
                 told.as_of = as_of;
                 told.reach = reach;
                 told.unreachable = match tracker {
@@ -540,17 +552,19 @@ fn next(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Line> {
 struct Answered(Arc<Told>);
 
 impl Tracker for Answered {
-    /// Nothing to compare against: the watcher has done the comparing.
+    /// The change that left the beads as they stand. The watcher sends only
+    /// the beads that changed, so an answer that sent none has moved nothing
+    /// a read takes.
     fn fingerprint(&self) -> Option<Result<String, RunFailure>> {
-        None
+        Some(Ok(format!("watcher change {}", self.0.change)))
     }
 
-    fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+    fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure> {
         Ok(self
             .0
             .beads
             .values()
-            .map(|listed| listed.bead.clone())
+            .map(|listed| Arc::clone(&listed.bead))
             .collect())
     }
 
@@ -723,7 +737,7 @@ path = "/srv/work/ferry"
             .all()
             .expect("the tracker answers")
             .into_iter()
-            .map(|bead| bead.id)
+            .map(|bead| bead.id.clone())
             .collect()
     }
 
@@ -1531,5 +1545,89 @@ path = "/srv/work/dunwich"
             .expect("read for itself");
 
         assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
+    /// What `watcher` holds of dunwich once it has taken each of `lines`, as
+    /// a read of it would find it.
+    fn taking(watcher: &mut Watcher, lines: &[String]) -> Answered {
+        for line in lines {
+            let line = serde_json::from_str(line).expect("a line about a watch");
+            watcher.take(line).expect("a line this run reads");
+        }
+        Answered(Arc::clone(&watcher.current["dunwich"]))
+    }
+
+    fn fingerprint(answered: &Answered) -> String {
+        answered
+            .fingerprint()
+            .expect("an answer offers a fingerprint")
+            .expect("and gives it")
+    }
+
+    fn gone(id: &str) -> String {
+        json!({ "line": "gone", "project": "dunwich", "id": id }).to_string()
+    }
+
+    /// The watcher sends a bead only where it changed, so an answer of a
+    /// freshness line alone is one in which nothing a read takes has moved.
+    #[test]
+    fn an_answer_bringing_no_bead_has_the_fingerprint_of_the_one_before() {
+        let mut watcher = Watcher::default();
+        let first = taking(
+            &mut watcher,
+            &[
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
+        );
+
+        let then = taking(&mut watcher, &[fresh("dunwich", json!("ok"))]);
+
+        assert_eq!(fingerprint(&then), fingerprint(&first));
+    }
+
+    #[test]
+    fn an_answer_bringing_a_bead_or_its_going_moves_the_fingerprint() {
+        let mut watcher = Watcher::default();
+        let first = taking(
+            &mut watcher,
+            &[
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
+        );
+        let changed = taking(
+            &mut watcher,
+            &[
+                bead("dunwich", "dun-1", false, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
+        );
+        let went = taking(
+            &mut watcher,
+            &[gone("dun-1"), fresh("dunwich", json!("ok"))],
+        );
+
+        assert_ne!(fingerprint(&changed), fingerprint(&first));
+        assert_ne!(fingerprint(&went), fingerprint(&changed));
+    }
+
+    /// A watcher found again tells each project from nothing, so its first
+    /// answer may hold less than the last one before it went.
+    #[test]
+    fn a_watcher_found_again_answers_under_a_fingerprint_never_used_before() {
+        let mut watcher = Watcher::default();
+        let before = taking(
+            &mut watcher,
+            &[
+                bead("dunwich", "dun-1", true, &[]),
+                fresh("dunwich", json!("ok")),
+            ],
+        );
+        watcher.gone(true);
+
+        let again = taking(&mut watcher, &[fresh("dunwich", json!("ok"))]);
+
+        assert_ne!(fingerprint(&again), fingerprint(&before));
     }
 }

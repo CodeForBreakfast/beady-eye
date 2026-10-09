@@ -121,7 +121,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
     let spine = Spine::default();
     let spines = BTreeMap::new();
     let mut forest = Forest {
-        facts: Arc::new(Facts::of(&snapshot, spine, &spines)),
+        facts: Arc::new(Facts::of(&snapshot, spine, &spines, None)),
         snapshot,
         folds: Folds::default(),
         spine,
@@ -799,23 +799,37 @@ impl Forest {
 
     /// Take a snapshot as the one drawn.
     fn take(&mut self, snapshot: Snapshot) {
-        self.snapshot = snapshot;
-        self.answer();
+        let earlier = std::mem::replace(&mut self.snapshot, snapshot);
+        self.facts = Arc::new(Facts::of(
+            &self.snapshot,
+            self.spine,
+            &self.spines_in_force(),
+            Some((&earlier, &self.facts)),
+        ));
     }
 
     /// Answer what layout reads of the snapshot in hand, here and not per
     /// keystroke.
-    ///
-    /// Each bead the forest is rooted at is where the rule in force over it
-    /// begins, as a rule set on its line would.
     fn answer(&mut self) {
+        self.facts = Arc::new(Facts::of(
+            &self.snapshot,
+            self.spine,
+            &self.spines_in_force(),
+            Some((&self.snapshot, &self.facts)),
+        ));
+    }
+
+    /// The rules the reader set, and on each bead the forest is rooted at
+    /// the rule in force over it, which begins there as a rule set on its
+    /// line would.
+    fn spines_in_force(&self) -> BTreeMap<Handle, Spine> {
         let mut spines = self.spines.clone();
         for place in &self.focused {
             spines
                 .entry(Handle::Bead(place.clone()))
                 .or_insert_with(|| self.spine_on(place));
         }
-        self.facts = Arc::new(Facts::of(&self.snapshot, self.spine, &spines));
+        spines
     }
 
     /// `e` and `c`: point every fold in the selected node's subtree, at every

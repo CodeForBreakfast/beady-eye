@@ -11,6 +11,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Deref;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -180,6 +181,10 @@ pub struct Collection {
     /// with a read of the project, so a project not read since says nothing
     /// new to a watcher unless these move.
     answered: BTreeMap<String, BTreeMap<String, BeadReadiness>>,
+    /// How many reads `read` has taken in, so trees assembled from the
+    /// standing set can tell when one of them has been replaced.
+    reads_taken: u64,
+    reached: Reached,
 }
 
 /// Whether a read found its project's tracker had moved since the read
@@ -202,6 +207,24 @@ pub struct Watched {
     pub speaks_until: BTreeMap<String, DateTime<Utc>>,
     /// What each project with something new to say says.
     pub answers: Vec<Answer>,
+}
+
+/// The trees that reach into another project's answer, kept from one
+/// collection to the next until what they were assembled from changes.
+#[derive(Default)]
+struct Reached {
+    from: Option<ReachedFrom>,
+    /// Each tree by its project and then its root.
+    trees: BTreeMap<String, BTreeMap<String, Assembled>>,
+}
+
+/// What a set of trees reaching across projects was assembled from.
+#[derive(PartialEq)]
+struct ReachedFrom {
+    reads_taken: u64,
+    /// Every project that answered, and whether it draws trees of its own.
+    answered: Vec<(String, bool)>,
+    not_read: Vec<(String, Option<String>)>,
 }
 
 /// One project's events journal as a collection has read it.
@@ -331,6 +354,7 @@ impl Collection {
             &reading,
             trackers,
             &|project| wanted.names(project),
+            &|project| cfg.reads(project),
             panes,
             now,
         );
@@ -350,6 +374,7 @@ impl Collection {
         now: DateTime<Utc>,
     ) -> Snapshot {
         loop {
+            self.reach_across(cfg);
             match self.draw(cfg, panes, out_of_reach, provider, filter, now) {
                 Ok(snapshot) => return snapshot,
                 Err(needed) => {
@@ -359,6 +384,7 @@ impl Collection {
                         &reading,
                         trackers,
                         &|project| needed.contains(project),
+                        &|project| cfg.reads(project),
                         panes,
                         now,
                     );
@@ -448,18 +474,21 @@ impl Collection {
     }
 
     /// Refresh every project `cfg` reads that `named` names, and keep what
-    /// each said.
+    /// each said. Only a project that `draws_trees` has its trees assembled.
     fn read(
         &mut self,
         cfg: &Config,
         trackers: &dyn Trackers,
         named: &(dyn Fn(&str) -> bool + Sync),
+        draws_trees: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) {
-        for (project, answer) in self.refresh_together(cfg, trackers, named, panes, now) {
+        for (project, answer) in
+            self.refresh_together(cfg, trackers, named, draws_trees, panes, now)
+        {
             match answer {
-                Ok(Refresh::Unchanged) => {
+                Ok(Refresh::Unchanged { as_of }) => {
                     self.found
                         .entry(project.name.clone())
                         .or_insert(Found::Unmoved);
@@ -468,7 +497,7 @@ impl Collection {
                     // the cascade had run and the foot must not draw it as
                     // stale.
                     if let Some(standing) = self.read.get_mut(&project.name) {
-                        standing.at = now;
+                        standing.at = as_of;
                     }
                 }
                 Ok(Refresh::Read {
@@ -484,6 +513,7 @@ impl Collection {
                             .or_default()
                             .read(journal);
                     }
+                    self.reads_taken += 1;
                     self.read.insert(
                         project.name.clone(),
                         Read {
@@ -499,6 +529,7 @@ impl Collection {
                     // failure sticky: the next probe would match it, the
                     // cascade that would have recovered is skipped, and the
                     // project keeps whatever partial state the failure left.
+                    self.reads_taken += 1;
                     self.read.insert(
                         project.name.clone(),
                         Read {
@@ -526,6 +557,7 @@ impl Collection {
         cfg: &'a Config,
         trackers: &dyn Trackers,
         named: &(dyn Fn(&str) -> bool + Sync),
+        draws_trees: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) -> Vec<(&'a Project, Result<Refresh, OpenFailure>)> {
@@ -543,12 +575,14 @@ impl Collection {
                         .get(&project.name)
                         .and_then(|journal| journal.seq)
                         .unwrap_or(0);
+                    let draws_trees = draws_trees(&project.name);
                     reads.spawn(move || {
                         let answer = refresh_project(
                             trackers,
                             project,
                             cfg,
                             panes,
+                            draws_trees,
                             standing.as_ref(),
                             !self.once,
                             since,
@@ -566,6 +600,33 @@ impl Collection {
                 })
                 .collect()
         })
+    }
+
+    /// Assemble again the trees reaching into another project's answer,
+    /// where what they were assembled from has changed since.
+    fn reach_across(&mut self, rooted: &Config) {
+        let cfg = &self.widened(rooted);
+        let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
+        let not_read = not_read(cfg, &answered);
+        let from = ReachedFrom {
+            reads_taken: self.reads_taken,
+            answered: answered
+                .iter()
+                .map(|(project, _)| (project.to_string(), rooted.reads(project)))
+                .collect(),
+            not_read: not_read
+                .iter()
+                .map(|(project, prefix)| (project.to_string(), prefix.map(str::to_string)))
+                .collect(),
+        };
+        if self.reached.from.as_ref() == Some(&from) {
+            return;
+        }
+        let trees = assembled_across(&answered, &not_read, &rooted.scope);
+        self.reached = Reached {
+            from: Some(from),
+            trees,
+        };
     }
 
     /// Everything standing, in config order, however much of it this
@@ -586,13 +647,7 @@ impl Collection {
         let rooted = cfg;
         let cfg = &self.widened(rooted);
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
-        let not_read: Vec<(&str, Option<&str>)> = cfg
-            .projects
-            .iter()
-            .map(|project| (project.name.as_str(), project.prefix.as_deref()))
-            .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
-            .collect();
-        let drawn = reaching_across(&answered, &not_read, &rooted.scope);
+        let drawn = reaching_across(&answered, &rooted.scope, &self.reached.trees);
         let needed = held_by_unread(&drawn, &cfg.scope);
         if !needed.is_empty() {
             return Err(needed);
@@ -607,7 +662,7 @@ impl Collection {
         let reached: Vec<(&str, Vec<Arc<Bead>>)> = drawn
             .iter()
             .filter_map(|(project, _, read)| match read {
-                Ok(Cow::Owned(assembled)) => Some(by_project(project, assembled)),
+                Ok(Assembly::Across(assembled)) => Some(by_project(project, assembled)),
                 _ => None,
             })
             .flatten()
@@ -615,7 +670,7 @@ impl Collection {
         let rows: Vec<ProjectRows<'_>> = drawn
             .iter()
             .filter_map(|(project, _, read)| match read {
-                Ok(Cow::Borrowed(assembled)) => Some(ProjectRows {
+                Ok(Assembly::Own(assembled)) => Some(ProjectRows {
                     project,
                     rows: &assembled.beads,
                 }),
@@ -800,10 +855,51 @@ impl Collection {
 
 /// One root's tree as a collection draws it: its project, its root, and the
 /// tree, or why there is none.
-type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
+type Drawn<'a> = (&'a str, &'a str, Result<Assembly<'a>, &'a RootUnread>);
 
-/// Every root's tree in a project `rooted` reads, reaching into another
-/// project's answer where a bead in it waits on a bead that project holds.
+/// A tree assembled from its own project's answer, or across every answer.
+#[derive(Clone, Copy)]
+enum Assembly<'a> {
+    Own(&'a Assembled),
+    Across(&'a Assembled),
+}
+
+impl Deref for Assembly<'_> {
+    type Target = Assembled;
+
+    fn deref(&self) -> &Assembled {
+        match self {
+            Assembly::Own(assembled) | Assembly::Across(assembled) => assembled,
+        }
+    }
+}
+
+/// Every root's tree in a project `rooted` reads, taking the one `reached`
+/// assembled across every answer where there is one.
+fn reaching_across<'a>(
+    answered: &[(&'a str, &'a ProjectWork)],
+    rooted: &Scope,
+    reached: &'a BTreeMap<String, BTreeMap<String, Assembled>>,
+) -> Vec<Drawn<'a>> {
+    answered
+        .iter()
+        .filter(|(project, _)| rooted.reads(project))
+        .flat_map(|&(project, work)| {
+            work.roots.iter().map(move |(root, read)| {
+                let drawn = read.as_ref().map(|assembled| {
+                    reached
+                        .get(project)
+                        .and_then(|trees| trees.get(root))
+                        .map_or(Assembly::Own(assembled), Assembly::Across)
+                });
+                (project, root.as_str(), drawn)
+            })
+        })
+        .collect()
+}
+
+/// The trees in a project `rooted` reads that reach into another project's
+/// answer, each by its project and its root.
 ///
 /// A project's read assembled its trees from its own answer alone, and a
 /// bead waiting on work that answer does not hold is one each tree already
@@ -811,41 +907,56 @@ type Drawn<'a> = (&'a str, &'a str, Result<Cow<'a, Assembled>, &'a RootUnread>);
 /// every answer, and a run with none reads nothing twice. `not_read` is the
 /// configured projects that gave no answer, each with the prefix its config
 /// states.
-fn reaching_across<'a>(
-    answered: &[(&'a str, &'a ProjectWork)],
-    not_read: &[(&'a str, Option<&'a str>)],
+fn assembled_across(
+    answered: &[(&str, &ProjectWork)],
+    not_read: &[(&str, Option<&str>)],
     rooted: &Scope,
-) -> Vec<Drawn<'a>> {
-    let roots = || answered.iter().filter(|(project, _)| rooted.reads(project));
-    let waits_elsewhere = |read: &Result<Assembled, RootUnread>| {
-        read.as_ref()
-            .is_ok_and(|assembled| !assembled.orphaned_dependencies.is_empty())
-    };
-    let across = roots()
-        .any(|(_, work)| work.roots.iter().any(|(_, read)| waits_elsewhere(read)))
-        .then(|| {
-            Across::of(
-                answered
-                    .iter()
-                    .map(|(project, work)| (*project, Nesting::of(&work.beads))),
-                not_read.iter().copied(),
-            )
-        });
-
-    roots()
+) -> BTreeMap<String, BTreeMap<String, Assembled>> {
+    let waiting: Vec<(&str, &str)> = answered
+        .iter()
+        .filter(|(project, _)| rooted.reads(project))
         .flat_map(|&(project, work)| {
-            let across = across.as_ref();
-            work.roots.iter().map(move |(root, read)| {
-                let drawn = match read {
-                    Ok(assembled) => Ok(across
-                        .filter(|_| waits_elsewhere(read))
-                        .and_then(|across| across.assemble(project, root).ok())
-                        .map_or(Cow::Borrowed(assembled), Cow::Owned)),
-                    Err(why) => Err(why),
-                };
-                (project, root.as_str(), drawn)
-            })
+            work.roots
+                .iter()
+                .filter(|(_, read)| {
+                    read.as_ref()
+                        .is_ok_and(|assembled| !assembled.orphaned_dependencies.is_empty())
+                })
+                .map(move |(root, _)| (project, root.as_str()))
         })
+        .collect();
+    if waiting.is_empty() {
+        return BTreeMap::new();
+    }
+
+    let across = Across::of(
+        answered
+            .iter()
+            .map(|(project, work)| (*project, Nesting::of(&work.beads))),
+        not_read.iter().copied(),
+    );
+    let mut trees: BTreeMap<String, BTreeMap<String, Assembled>> = BTreeMap::new();
+    for (project, root) in waiting {
+        if let Ok(assembled) = across.assemble(project, root) {
+            trees
+                .entry(project.to_string())
+                .or_default()
+                .insert(root.to_string(), assembled);
+        }
+    }
+    trees
+}
+
+/// The projects `cfg` configures that gave no answer, each with the prefix
+/// its config states.
+fn not_read<'a>(
+    cfg: &'a Config,
+    answered: &[(&str, &ProjectWork)],
+) -> Vec<(&'a str, Option<&'a str>)> {
+    cfg.projects
+        .iter()
+        .map(|project| (project.name.as_str(), project.prefix.as_deref()))
+        .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
         .collect()
 }
 
@@ -1421,7 +1532,7 @@ mod tests {
             self.inner.fingerprint()
         }
 
-        fn all(&self) -> Result<Vec<crate::model::types::Bead>, RunFailure> {
+        fn all(&self) -> Result<Vec<Arc<crate::model::types::Bead>>, RunFailure> {
             self.inner.all()
         }
 
@@ -1846,6 +1957,38 @@ mod tests {
             !trees_of(&after, "dunwich").is_empty(),
             "and everything the skipped read stood on is still drawn"
         );
+    }
+
+    /// A tracker answering from what another process read is as fresh as
+    /// that process last vouched for, whether the read was skipped or not.
+    #[test]
+    fn a_skipped_read_of_an_answer_read_elsewhere_is_as_fresh_as_that_answer() {
+        let cfg = one_project();
+        let earlier = now();
+        let vouched = earlier + chrono::Duration::seconds(20);
+        let later = earlier + chrono::Duration::seconds(30);
+        let mut standing = Collection::default();
+        standing.collect(
+            &cfg,
+            &panes(),
+            &dunwich_with(dunwich_tracker().vouched_for(earlier)),
+            &Wanted::Everything,
+            Filter::All,
+            earlier,
+        );
+
+        let trackers = dunwich_with(dunwich_tracker().vouched_for(vouched));
+        let after = standing.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &dunwich_alone(),
+            Filter::All,
+            later,
+        );
+
+        assert_eq!(trackers.tracker("dunwich").asked(), [Asked::Fingerprint]);
+        assert_eq!(after.read_at["dunwich"], vouched);
     }
 
     /// Skipping the read must not skip the drawing. What a node says about
@@ -2461,6 +2604,49 @@ path = "{}"
         assert_eq!(nested_to_draw(&trackers), 2);
     }
 
+    /// A collection that reads nothing new draws the trees reaching across
+    /// projects as the last one assembled them.
+    #[test]
+    fn a_collection_reading_nothing_new_reads_no_answer_again_to_reach_across() {
+        let trackers = ferry_waiting_on_dunwich();
+        let mut standing = Collection::default();
+        collect(&mut standing, &no_panes(), &trackers, &Wanted::Everything);
+
+        let before = crate::model::tree::nestings_on_this_thread();
+        collect(&mut standing, &no_panes(), &trackers, &Wanted::Everything);
+
+        assert_eq!(crate::model::tree::nestings_on_this_thread() - before, 0);
+    }
+
+    /// Dunwich's epic under a new title.
+    const RETITLED_IN_DUNWICH: &str = r#"[
+      {"id":"dun-7","title":"lift the relay station","status":"in_progress",
+       "priority":1,"issue_type":"epic"}
+    ]"#;
+
+    /// A tree reaching across projects is assembled again once an answer it
+    /// reaches into has moved.
+    #[test]
+    fn a_tree_reaching_across_draws_the_blocker_as_its_project_last_said_it() {
+        let mut standing = Collection::default();
+        collect(
+            &mut standing,
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+        );
+
+        let retitled = Fakes::default()
+            .with("dunwich", Fake::holding(beads(RETITLED_IN_DUNWICH)).moved())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)));
+        let snap = collect(&mut standing, &no_panes(), &retitled, &dunwich_alone());
+
+        assert_eq!(
+            node(tree_of(&snap, "ferry"), "dun-7").title,
+            "lift the relay station"
+        );
+    }
+
     /// The refresh gate reaches the trackers and stops there. A provider
     /// reports on the sessions on the machine rather than on a project, so a
     /// collection asks it which sessions there are once and each session for
@@ -2995,6 +3181,67 @@ path = "{FERRY}"
         );
         assert_eq!(unreachable_from_ferry(&snap), vec![]);
         assert_eq!(snap.projects, ["dunwich", "ferry"]);
+    }
+
+    /// How many trees each project's standing read assembled.
+    fn trees_assembled(standing: &Collection) -> BTreeMap<&str, usize> {
+        standing
+            .read
+            .iter()
+            .filter_map(|(project, read)| {
+                Some((project.as_str(), read.work.as_ref().ok()?.roots.len()))
+            })
+            .collect()
+    }
+
+    /// Only a project the run reads draws trees of its own, so one read for
+    /// what those trees reach in it has none assembled.
+    #[test]
+    fn a_project_read_only_for_what_another_reaches_in_it_assembles_no_trees() {
+        let mut standing = Collection::default();
+        standing.collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            trees_assembled(&standing),
+            BTreeMap::from([("dunwich", 0), ("ferry", 1)])
+        );
+    }
+
+    /// A project the run comes to read for itself has its trees assembled,
+    /// though its tracker has not moved since it was read on demand.
+    #[test]
+    fn a_project_read_on_demand_and_then_for_itself_has_its_trees_assembled() {
+        let trackers = ferry_waiting_on_dunwich();
+        let mut standing = Collection::default();
+        standing.collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        let both = reading_ferry_where_dunwich(STATES_ITS_PREFIX)
+            .scoped_to(&["dunwich".to_string(), "ferry".to_string()])
+            .expect("both are configured");
+        standing.collect(
+            &both,
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_ne!(trees_assembled(&standing)["dunwich"], 0);
     }
 
     /// dunwich's bead waits on kadath's, so reading dunwich for ferry's

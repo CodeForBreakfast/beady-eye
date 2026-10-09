@@ -89,6 +89,7 @@ pub(super) struct ReadAt {
     fingerprint: String,
     named: BTreeSet<String>,
     roots: BTreeSet<String>,
+    draws_trees: bool,
     speaks_until: Option<DateTime<Utc>>,
 }
 
@@ -101,12 +102,14 @@ impl ReadAt {
         fingerprint: &str,
         named: &BTreeSet<String>,
         roots: &BTreeSet<String>,
+        draws_trees: bool,
         now: DateTime<Utc>,
     ) -> bool {
         self.project == *project
             && self.fingerprint == fingerprint
             && self.named == *named
             && self.roots == *roots
+            && self.draws_trees == draws_trees
             && self.speaks_until.is_none_or(|until| now < until)
     }
 }
@@ -124,8 +127,8 @@ fn speaks_until(beads: &[Arc<Bead>], read_at: DateTime<Utc>) -> Option<DateTime<
 /// What one refresh of one project did.
 pub(super) enum Refresh {
     /// Nothing has moved since the read that is standing, so there is nothing
-    /// to replace it with.
-    Unchanged,
+    /// to replace it with. It speaks for the tracker as of `as_of`.
+    Unchanged { as_of: DateTime<Utc> },
     /// What the tracker says now, and what it was read against. `None` where
     /// the probe could not answer, which has every later refresh read in full
     /// rather than compare against a state nobody established. `as_of` is
@@ -133,7 +136,7 @@ pub(super) enum Refresh {
     /// tracker answered from what another process read.
     ///
     /// `at` and `work` are behind a box because `Unchanged` is the usual
-    /// answer and carries nothing: a project that has not moved would
+    /// answer and carries only its date: a project that has not moved would
     /// otherwise be handed back on the stack as the size of one that had.
     /// `ReadAt` holds a whole `Project`, so it grows whenever a project entry
     /// gains a field.
@@ -163,12 +166,16 @@ pub(super) enum Refresh {
 ///
 /// The journal is read after `since` before the beads are, so every record
 /// read has a bead read at least as new as it.
+///
+/// A project that `draws_trees` has its trees assembled. One read only for
+/// what other projects' trees reach in it has none.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn refresh_project(
     trackers: &dyn Trackers,
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
+    draws_trees: bool,
     standing: Option<&ReadAt>,
     probing: bool,
     since: u64,
@@ -186,13 +193,13 @@ pub(super) fn refresh_project(
     let roots = roots_named(cfg, project);
 
     if let (Some(fingerprint), Some(standing)) = (probed.as_deref(), standing) {
-        if standing.still_speaks_for(project, fingerprint, &named, &roots, now) {
-            return Ok(Refresh::Unchanged);
+        if standing.still_speaks_for(project, fingerprint, &named, &roots, draws_trees, now) {
+            return Ok(Refresh::Unchanged { as_of });
         }
     }
 
     let journal = tracker.events(since);
-    let work = read_project(tracker.as_ref(), project, cfg, panes, now)?;
+    let work = read_project(tracker.as_ref(), project, cfg, panes, draws_trees, now)?;
     let journal_answered = !matches!(journal, Some(Err(_)));
     let at = probed.filter(|_| journal_answered).map(|fingerprint| {
         Box::new(ReadAt {
@@ -200,6 +207,7 @@ pub(super) fn refresh_project(
             fingerprint,
             named,
             roots,
+            draws_trees,
             speaks_until: work.speaks_until,
         })
     });
@@ -221,13 +229,14 @@ fn read_project(
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
+    draws_trees: bool,
     now: DateTime<Utc>,
 ) -> Result<ProjectWork, RunFailure> {
     let (beads, (ready, blocked_by)) = together(
         || tracker.all(),
         || together(|| tracker.ready(), || tracker.blocked()),
     );
-    let beads: Vec<Arc<Bead>> = beads?.into_iter().map(Arc::new).collect();
+    let beads = beads?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -236,6 +245,27 @@ fn read_project(
         blocked_by: blocked_by?,
     };
 
+    Ok(ProjectWork {
+        readiness,
+        relations: edges::relations(&beads),
+        roots: if draws_trees {
+            trees(&beads, project, cfg, panes)
+        } else {
+            Vec::new()
+        },
+        speaks_until: speaks_until(&beads, now),
+        beads,
+    })
+}
+
+/// Each root's tree in one project's answer, in id order, or why it has
+/// none.
+fn trees(
+    beads: &[Arc<Bead>],
+    project: &Project,
+    cfg: &Config,
+    panes: &[Pane],
+) -> Vec<(String, Result<Assembled, RootUnread>)> {
     // Every bead this read of the tracker turned up, and the bead each one
     // hangs under. A parent chain that leaves it has run off the end of what
     // `bdi` read, and there is no tree to draw from where it went — so the
@@ -248,12 +278,12 @@ fn read_project(
     // The edges are read before discovery rather than after it, because a
     // bead with no parent is a root only where nothing nests it, and nothing
     // outside the edges can say whether anything does.
-    let nesting = Nesting::of(&beads);
+    let nesting = Nesting::of(beads);
 
     let mut roots = roots_named(cfg, project);
     let mut ancestors: BTreeMap<String, Climbed> = BTreeMap::new();
     let mut climbed: BTreeSet<Climbed> = BTreeSet::new();
-    for bead in unfinished(&beads) {
+    for bead in unfinished(beads) {
         climbed.extend(root_of(bead, &parents, &mut ancestors));
     }
     for named in beads_named_here(panes, project, cfg) {
@@ -285,14 +315,7 @@ fn read_project(
         .collect();
     read.extend(what_no_root_reached(&nesting, &read));
     read.sort_by(|(one, _), (two, _)| one.cmp(two));
-
-    Ok(ProjectWork {
-        readiness,
-        relations: edges::relations(&beads),
-        roots: read,
-        speaks_until: speaks_until(&beads, now),
-        beads,
-    })
+    read
 }
 
 /// The beads the discovered roots left off the screen, each drawn from the
@@ -669,7 +692,7 @@ dunwich = ["dun-4"]
         let tracker = dunwich_tracker().also(beads(MAST_TREE)).also(beads(lost));
 
         let before = nestings_on_this_thread();
-        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], now())
+        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], true, now())
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
@@ -987,6 +1010,7 @@ dunwich = ["dun-4"]
             &before.projects[0],
             &before,
             &[],
+            true,
             None,
             true,
             0,
@@ -1002,6 +1026,7 @@ dunwich = ["dun-4"]
             &after.projects[0],
             &after,
             &[],
+            true,
             at.as_deref(),
             true,
             0,
@@ -1037,7 +1062,7 @@ dunwich = ["dun-c3"]
         .expect("the config parses");
         let tracker = dunwich_holding(CHAIN_OF_PARENTLESS);
 
-        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], now())
+        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], true, now())
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
@@ -1383,9 +1408,18 @@ dunwich = ["dun-c3"]
         );
         let cfg = one_project();
 
-        let refreshed =
-            refresh_project(&trackers, &cfg.projects[0], &cfg, &[], None, true, 0, now())
-                .expect("the beads are read");
+        let refreshed = refresh_project(
+            &trackers,
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            None,
+            true,
+            0,
+            now(),
+        )
+        .expect("the beads are read");
 
         let Refresh::Read { at, journal, .. } = refreshed else {
             panic!("a project nothing has read is read in full")
@@ -1895,7 +1929,7 @@ dunwich = ["bdi-404"]
             Tracker::fingerprint(&self.inner)
         }
 
-        fn all(&self) -> Result<Vec<Bead>, RunFailure> {
+        fn all(&self) -> Result<Vec<Arc<Bead>>, RunFailure> {
             self.at.arrive("all");
             Tracker::all(&self.inner)
         }
