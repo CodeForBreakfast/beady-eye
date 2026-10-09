@@ -657,6 +657,48 @@ fn putting_the_forest_back_opens_what_has_been_shut_over_the_bead() {
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
 }
 
+/// A fold the reader opened while the forest was focused stays open once
+/// the forest is put back, and when the same bead is focused again.
+#[test]
+fn a_fold_opened_while_focused_stays_open_through_leaving_and_focusing_again() {
+    let mut forest = flatten(snapshot());
+    focus_on(&mut forest, "dun-7");
+    assert_eq!(fold_of(&forest, "dun-7.1"), Some(false));
+    select_bead(&mut forest, "dun-7.1");
+    assert!(forest.apply(Action::ToggleFold));
+
+    assert!(forest.apply(Action::FocusForest));
+    assert_eq!(
+        fold_of(&forest, "dun-7.1"),
+        Some(true),
+        "{:#?}",
+        sketch(&forest)
+    );
+
+    focus_on(&mut forest, "dun-7");
+    assert_eq!(
+        fold_of(&forest, "dun-7.1"),
+        Some(true),
+        "{:#?}",
+        sketch(&forest)
+    );
+}
+
+/// A project the reader shut before focusing a bead in another one is
+/// still shut once the forest is put back.
+#[test]
+fn a_project_shut_before_focusing_stays_shut_once_the_forest_is_put_back() {
+    let mut forest = flatten(snapshot());
+    select_project(&mut forest, "ferry");
+    assert!(forest.apply(Action::ToggleFold));
+    assert!(drawn_here(&forest, "▸ ferry"), "{:#?}", sketch(&forest));
+
+    focus_on(&mut forest, "dun-7");
+    assert!(forest.apply(Action::FocusForest));
+
+    assert!(drawn_here(&forest, "▸ ferry"), "{:#?}", sketch(&forest));
+}
+
 /// A bead that moved is still the bead. What ends the mode is the bead
 /// going out of the collection, and a tracker that reparented it has done
 /// nothing of the kind.
