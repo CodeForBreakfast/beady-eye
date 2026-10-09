@@ -1650,6 +1650,44 @@ dunwich = ["bdi-404"]
         );
     }
 
+    /// A board focused on one tree still reports a root that config names
+    /// and the tracker lacks. The root has no tree to build, and the report
+    /// is how a bead focused in it says why it is missing.
+    #[test]
+    fn a_root_config_names_that_the_tracker_lacks_is_reported_under_any_focus() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+
+[roots.explicit]
+dunwich = ["dun-404"]
+"#
+        ))
+        .expect("the config parses");
+        let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
+        let mut board = Collection::default();
+        board.focus_on([crate::model::join::BeadKey {
+            project: "dunwich".to_string(),
+            id: "dun-4".to_string(),
+        }]);
+
+        let snap = board.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            rooted_at(&snap, "dun-404").tracker,
+            TrackerState::RootNotFound
+        );
+    }
+
     /// The bare form is the same root where only one project is read.
     #[test]
     fn a_bare_root_named_on_the_command_line_is_read_as_the_qualified_one_is() {

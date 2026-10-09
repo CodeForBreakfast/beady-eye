@@ -698,7 +698,7 @@ impl Collection {
         let focused: Vec<Drawn<'_>> = drawn
             .iter()
             .copied()
-            .filter(|tree| holds_any(&self.focus, tree))
+            .filter(|tree| drawn_under(&self.focus, tree))
             .collect();
         let needed = held_by_unread(&focused, &cfg.scope);
         if !needed.is_empty() {
@@ -1014,9 +1014,11 @@ fn not_read<'a>(
         .collect()
 }
 
-/// Whether a tree holds one of the beads in `focus`, which every tree does
-/// where it is empty. A root no tree was read for holds only itself.
-fn holds_any(focus: &BTreeSet<BeadKey>, (project, root, read): &Drawn<'_>) -> bool {
+/// Whether a tree is drawn under `focus`: where it holds one of its beads,
+/// or where `focus` is empty. A root no tree was read for is drawn under
+/// any focus. It has nothing to build, and its report is how a bead
+/// focused in it says why it is missing.
+fn drawn_under(focus: &BTreeSet<BeadKey>, (project, _, read): &Drawn<'_>) -> bool {
     let holds = |project: &str, id: &str| {
         focus
             .iter()
@@ -1030,7 +1032,7 @@ fn holds_any(focus: &BTreeSet<BeadKey>, (project, root, read): &Drawn<'_>) -> bo
                     &bead.id,
                 )
             }),
-            Err(_) => holds(project, root),
+            Err(_) => true,
         }
 }
 
