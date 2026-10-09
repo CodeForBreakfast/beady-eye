@@ -387,9 +387,7 @@ impl Forest {
         let project = match handle {
             Handle::Bead(place) => return self.live_beneath(place),
             Handle::Project(project) => project,
-            Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, Some(project)) => {
-                project
-            }
+            Handle::Group(GroupKind::HiddenTrees, Some(project)) => project,
             _ => return BTreeSet::new(),
         };
         self.snapshot
@@ -457,15 +455,10 @@ impl Forest {
             _ => return chain,
         };
         chain.extend(place.forebears().map(Handle::Bead));
-        // A line the mode is holding back is behind the line it put it
-        // behind, and the group the filter would have put its tree in is not
-        // drawn at all while the forest is rooted at one bead.
-        if self.held_back(place) {
-            chain.push(Handle::Group(
-                GroupKind::OutOfTheWay,
-                Some(place.tree.project.clone()),
-            ));
-        } else if self.hidden(&place.tree) {
+        // A line the mode is holding back is drawn nowhere, and the group the
+        // filter would have put its tree in is not drawn at all while the
+        // forest is rooted at one bead.
+        if !self.held_back(place) && self.hidden(&place.tree) {
             chain.push(Handle::Group(
                 GroupKind::HiddenTrees,
                 Some(place.tree.project.clone()),
@@ -480,7 +473,7 @@ impl Forest {
     ///
     /// The rest of such a bead's own root is held back as much as another root
     /// is: the mode draws the bead where a root is drawn and stops there, so
-    /// the beads above it are behind the line the other roots are behind.
+    /// the beads above it are drawn nowhere.
     fn held_back(&self, place: &Place) -> bool {
         !self.focused.is_empty() && self.focused_over(place).is_none()
     }
@@ -777,6 +770,16 @@ impl Forest {
     /// than drawn whole.
     pub fn is_focused(&self) -> bool {
         !self.focused.is_empty()
+    }
+
+    /// The beads the forest is focused on, with the ones the command line
+    /// named that no collection has drawn yet.
+    pub fn focused_on(&self) -> BTreeSet<BeadKey> {
+        self.focused
+            .iter()
+            .map(|place| place.key().clone())
+            .chain(self.named.iter().cloned())
+            .collect()
     }
 
     /// The rule in force on one line: the one set on it, the one set on the
@@ -1274,13 +1277,10 @@ impl Forest {
     fn first_bead_under(&self) -> Option<Place> {
         let resting_on = self.lines.get(self.selected)?;
         let shut_over = match &resting_on.content {
-            Content::Group(group) if resting_on.folded == Some(false) => layout::first_bead_of(
-                &self.snapshot,
-                group.kind,
-                group.project.as_deref(),
-                &self.rooted(),
-            )
-            .and_then(|key| self.place_of(&key)),
+            Content::Group(group) if resting_on.folded == Some(false) => {
+                layout::first_bead_of(&self.snapshot, group.kind, group.project.as_deref())
+                    .and_then(|key| self.place_of(&key))
+            }
             _ => None,
         };
         shut_over.or_else(|| {
@@ -1603,6 +1603,9 @@ impl Forest {
         if self.focused.contains(place) {
             return true;
         }
+        if self.held_back(place) {
+            return false;
+        }
         // A tracker that could not be read keeps its root and has no nodes,
         // so its header is drawn with nothing beneath it to walk to.
         if place.steps.is_empty() {
@@ -1664,7 +1667,7 @@ fn stepped_to(
 fn passing(handle: &Handle) -> bool {
     matches!(
         handle,
-        Handle::Elided(_) | Handle::Group(GroupKind::HiddenTrees | GroupKind::OutOfTheWay, _)
+        Handle::Elided(_) | Handle::Group(GroupKind::HiddenTrees, _)
     )
 }
 

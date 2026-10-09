@@ -352,6 +352,27 @@ fn a_named_bead_waiting_on_a_project_read_on_demand_is_focused_as_shift_f_focuse
     assert_eq!(forest(&repaint(&mut named, ROWS + 1)), focused);
 }
 
+/// A board started on a bead builds only that bead's tree, and putting the
+/// forest back builds the rest of the project again.
+#[test]
+fn putting_back_the_forest_a_named_bead_started_in_draws_the_rest_of_its_project() {
+    let mut named = launched("put-back", &["fer-2"]);
+    let focused = forest(&repaint(&mut named, ROWS + 1));
+    assert!(
+        !focused.iter().any(|row| row.contains(FERRYS_OTHER_TREE)),
+        "ferry's other tree is drawn while focused: {focused:#?}"
+    );
+
+    named.send(FOCUS);
+    named.settle(A_SILENCE, GIVING_UP);
+    let put_back = forest(&repaint(&mut named, ROWS));
+
+    assert!(
+        put_back.iter().any(|row| row.contains(FERRYS_OTHER_TREE)),
+        "putting the forest back left ferry's other tree undrawn: {put_back:#?}"
+    );
+}
+
 /// A `bdi` started in ferry's directory, given `arguments`, with dunwich
 /// stating its prefix, and its first collection drawn.
 fn launched(named: &str, arguments: &[&str]) -> Driven {

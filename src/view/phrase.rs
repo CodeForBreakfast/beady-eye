@@ -501,23 +501,6 @@ pub fn conflicts(count: usize) -> String {
     format!("{count} conflicting {claim}")
 }
 
-/// The trees the forest is not drawing because the reader rooted it at one
-/// bead.
-///
-/// *Trees*, the noun the live-agent filter's line uses over the same kind of
-/// thing, and the noun for what is counted: each one is a root of the forest,
-/// and a root whose tracker refused holds no beads and is still a tree. The
-/// bead the mode stands on is not among them — the root it stands in is, for
-/// the part of it the mode stopped drawing.
-///
-/// Nothing here says why they are behind the line. Why the reader asked for
-/// one bead is theirs, and a line guessing at it would be a claim this
-/// program cannot make.
-pub fn other_trees(count: usize) -> String {
-    let tree = if count == 1 { "tree" } else { "trees" };
-    format!("{count} other {tree}")
-}
-
 /// Trees the live-agent filter is holding back, and how many of those carry
 /// findings that are therefore not on screen.
 ///

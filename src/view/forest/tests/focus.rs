@@ -28,8 +28,7 @@ fn naming_a_bead_starts_the_forest_as_focusing_it_does() {
     }
 }
 
-/// Several named are each drawn as a root, and everything else goes
-/// behind the lines focus draws.
+/// Several named are each drawn as a root, and nothing else is drawn.
 #[test]
 fn naming_several_beads_draws_each_as_a_root() {
     let forest = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("harbour", "hbr-3")]);
@@ -43,10 +42,8 @@ fn naming_several_beads_draws_each_as_a_root() {
             "▾ dunwich",
             "  ├─▸ ○ dun-7.1 re-point the dish",
             "  │   └── ! OrphanedDependencies(1)",
-            "  ├─▸ [OutOfTheWay dunwich] 1",
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
-            "  ├─▸ [OutOfTheWay ferry] 1",
             "  └── [Unattributed ferry] 1",
             "▾ harbour",
             "  └─▸ ○ hbr-3 dredge the channel",
@@ -58,12 +55,10 @@ fn naming_several_beads_draws_each_as_a_root() {
 }
 
 /// Two named in one tree are both drawn as roots, and the root above them
-/// goes behind the line without either.
+/// is drawn nowhere.
 #[test]
 fn naming_two_beads_in_one_tree_draws_both_and_holds_back_the_rest() {
-    let mut forest = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("dunwich", "dun-7.7")]);
-
-    open_the_line_holding_roots_back(&mut forest, "dunwich");
+    let forest = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("dunwich", "dun-7.7")]);
 
     assert_eq!(
         sketch(&forest)
@@ -76,26 +71,15 @@ fn naming_two_beads_in_one_tree_draws_both_and_holds_back_the_rest() {
             "  │   └── ! OrphanedDependencies(1)",
             "  ├── ○ dun-7.7 log the survey marks",
             "  │   └── ! OrphanedDependencies(1)",
-            "  ├── [OutOfTheWay dunwich] 1",
-            "  │   └─▸ ◐ dun-7 lift the ground station",
-            "  │       └── ! OrphanedDependencies(1)",
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
-            "  ├─▸ [OutOfTheWay ferry] 1",
             "  └── [Unattributed ferry] 1",
-            "▾ harbour",
-            "  └─▸ [OutOfTheWay harbour] 1",
             "▸ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
         ]
     );
 
-    let behind = *lines_of(&forest, "dun-7")
-        .first()
-        .expect("dun-7 is behind the line");
-    step_onto(&mut forest, behind);
-    assert!(forest.apply(Action::ExpandOrChild));
     let copies_of = |id: &str| {
         forest
             .lines()
@@ -108,15 +92,15 @@ fn naming_two_beads_in_one_tree_draws_both_and_holds_back_the_rest() {
             .count()
     };
     assert_eq!(
-        copies_of("dun-7.4"),
-        1,
-        "dun-7 opened: {:#?}",
+        (copies_of("dun-7"), copies_of("dun-7.4")),
+        (0, 0),
+        "the root above them is drawn: {:#?}",
         sketch(&forest)
     );
     assert_eq!(
         (copies_of("dun-7.1"), copies_of("dun-7.7")),
         (1, 1),
-        "the root behind the line draws neither named bead again: {:#?}",
+        "a named bead is drawn more than once: {:#?}",
         sketch(&forest)
     );
 }
@@ -233,8 +217,7 @@ fn a_named_bead_its_tracker_reports_missing_is_let_go() {
 }
 
 /// Every root but the one focused goes, and so does every other project's
-/// tree. The project lines stay, because what is holding their roots back
-/// hangs under them.
+/// tree. A project's line stays only where something still hangs under it.
 #[test]
 fn focusing_a_root_leaves_it_the_only_one_drawn() {
     let mut forest = flatten(snapshot());
@@ -257,10 +240,7 @@ fn focusing_a_root_leaves_it_the_only_one_drawn() {
             "  │   └─▸ … 3 more",
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
-            "  ├─▸ [OutOfTheWay ferry] 1",
             "  └── [Unattributed ferry] 1",
-            "▾ harbour",
-            "  └─▸ [OutOfTheWay harbour] 1",
             "▸ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
@@ -268,11 +248,10 @@ fn focusing_a_root_leaves_it_the_only_one_drawn() {
     );
 }
 
-/// Every other root is one line away rather than gone, under the project
-/// it belongs to. Dunwich's own root is behind that line too, for the part
-/// of it the mode stopped drawing: the beads above the focused bead.
+/// Every other root is drawn nowhere, and so are the beads above the
+/// focused bead in its own root.
 #[test]
-fn the_roots_the_mode_stops_drawing_go_behind_one_line_per_project() {
+fn the_roots_the_mode_stops_drawing_are_drawn_nowhere() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
 
@@ -285,13 +264,9 @@ fn the_roots_the_mode_stops_drawing_go_behind_one_line_per_project() {
             "▾ dunwich",
             "  ├─▸ ○ dun-7.1 re-point the dish",
             "  │   └── ! OrphanedDependencies(1)",
-            "  ├─▸ [OutOfTheWay dunwich] 1",
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
-            "  ├─▸ [OutOfTheWay ferry] 1",
             "  └── [Unattributed ferry] 1",
-            "▾ harbour",
-            "  └─▸ [OutOfTheWay harbour] 1",
             "▸ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
@@ -299,86 +274,48 @@ fn the_roots_the_mode_stops_drawing_go_behind_one_line_per_project() {
     );
 }
 
-/// One line away means the line opens onto them. They rest shut inside it,
-/// as the trees the filter is holding back do.
-///
 /// Ferry's root was on the screen and harbour's was behind the filter, and
-/// the line opens onto either, because one line stands for both sets.
+/// the mode draws neither.
 #[test]
-fn opening_the_line_over_the_held_back_roots_draws_them() {
-    for (project, root) in [
-        ("ferry", "fer-2 unread"),
-        ("harbour", "hbr-3 dredge the channel"),
-    ] {
-        let mut forest = flatten(snapshot());
-        focus_on(&mut forest, "dun-7.1");
+fn the_held_back_roots_are_drawn_nowhere() {
+    let mut forest = flatten(snapshot());
+    focus_on(&mut forest, "dun-7.1");
 
-        open_the_line_holding_roots_back(&mut forest, project);
-
-        assert!(drawn_here(&forest, root), "{:#?}", sketch(&forest));
+    for root in ["fer-2", "hbr-3"] {
+        assert!(!drawn_here(&forest, root), "{root}: {:#?}", sketch(&forest));
     }
 }
 
-/// Which row one project's held-back roots are behind.
-fn the_line_holding_roots_back(forest: &Forest, project: &str) -> usize {
-    forest
-        .lines()
-        .iter()
-        .position(|line| {
-            matches!(&line.content, Content::Group(group)
-            if group.kind == GroupKind::OutOfTheWay
-                && group.project.as_deref() == Some(project))
-        })
-        .unwrap_or_else(|| panic!("no line holds {project} back: {:#?}", sketch(forest)))
+/// The rows one project draws, its own line first, without the things in
+/// its groups. Nothing for a project the forest does not draw.
+fn rows_of_project(forest: &Forest, project: &str) -> Vec<String> {
+    let rows = sketch(forest);
+    let Some(start) = rows.iter().position(|row| *row == format!("▾ {project}")) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .skip(start)
+        .enumerate()
+        .take_while(|(n, row)| *n == 0 || row.starts_with(' '))
+        .map(|(_, row)| row)
+        .filter(|row| !row.contains("── - "))
+        .cloned()
+        .collect()
 }
 
-/// Step onto that line and open it, with the keys a reader has.
-fn open_the_line_holding_roots_back(forest: &mut Forest, project: &str) {
-    let at = the_line_holding_roots_back(forest, project);
-    step_onto(forest, at);
-    assert!(forest.apply(Action::ExpandOrChild));
-}
-
-/// What the line holding one project's roots back says it stands over.
-fn held_by_the_line(forest: &Forest, project: &str) -> Counts {
-    forest
-        .lines()
-        .iter()
-        .find_map(|line| match &line.content {
-            Content::Group(group)
-                if group.kind == GroupKind::OutOfTheWay
-                    && group.project.as_deref() == Some(project) =>
-            {
-                group.held.clone()
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("no counts on {project}'s line: {:#?}", sketch(forest)))
-}
-
-/// The line stands over open work with seats and anomalies on it, which is
-/// the whole reason the reader pressed the key, so it counts them rather
-/// than saying a number of roots and leaving them unsaid.
+/// A project holding no focused bead draws no line over its roots, so no
+/// count of the seats and anomalies in them either. Only its panes on no
+/// bead are left under it.
 #[test]
-fn the_line_over_the_held_back_roots_counts_the_seats_and_anomalies_in_them() {
+fn no_line_counts_the_seats_and_anomalies_in_the_held_back_roots() {
     let mut forest = flatten(snapshot());
     select_hidden_tree(&mut forest);
     assert!(forest.apply(Action::FocusForest));
 
-    let held = held_by_the_line(&forest, "dunwich");
-
-    assert_eq!(held, counts_of(&forest, "dunwich", "dun-7"));
-    assert!(held.live_agents > 0, "dunwich is where the agents are");
-}
-
-/// What one of a project's trees adds up to, by its root.
-fn counts_of(forest: &Forest, project: &str, root: &str) -> Counts {
-    forest
-        .snapshot()
-        .tree(&key(project, root))
-        .unwrap_or_else(|| panic!("{project} has no tree at {root}"))
-        .counts
-        .clone()
+    assert_eq!(
+        rows_of_project(&forest, "dunwich"),
+        vec!["▾ dunwich", "  └── [Unattributed dunwich] 2"]
+    );
 }
 
 /// The reader asked to finish the bead they pressed the key on, so that is
@@ -493,12 +430,12 @@ fn the_key_roots_the_forest_afresh_once_the_focused_bead_has_gone() {
 
 /// A tracker that did not answer has not said the focused bead is gone, so
 /// the mode holds through it: still focused, the selection still on the
-/// bead, and every other project still behind its line.
+/// bead, and every other project drawn as it was.
 #[test]
 fn a_read_of_the_focused_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
-    let was = behind_the_line_elsewhere(&forest);
+    let was = elsewhere(&forest);
 
     forest.refresh(dunwich_failed());
 
@@ -508,7 +445,7 @@ fn a_read_of_the_focused_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
         sketch(&forest)
     );
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
-    assert_eq!(behind_the_line_elsewhere(&forest), was);
+    assert_eq!(elsewhere(&forest), was);
     assert!(
         drawn_here(&forest, "⚠ dun-7.1 unread"),
         "nothing stands where the bead was: {:#?}",
@@ -520,7 +457,7 @@ fn a_read_of_the_focused_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
 #[test]
 fn a_read_of_a_named_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
     let mut forest = named_on_the_command_line(&[("dunwich", "dun-7.1")]);
-    let was = behind_the_line_elsewhere(&forest);
+    let was = elsewhere(&forest);
 
     forest.refresh(dunwich_failed());
 
@@ -530,7 +467,7 @@ fn a_read_of_a_named_beads_tracker_that_failed_leaves_the_mode_as_it_was() {
         sketch(&forest)
     );
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
-    assert_eq!(behind_the_line_elsewhere(&forest), was);
+    assert_eq!(elsewhere(&forest), was);
 }
 
 /// A focused root its tracker would not read this time is not known to
@@ -553,11 +490,6 @@ fn a_focused_root_that_stopped_reading_stays_focused_until_it_reads_again() {
     assert!(
         !drawn_here(&forest, "hbr-3 dredge the channel"),
         "every root is back: {:#?}",
-        sketch(&forest)
-    );
-    assert!(
-        !drawn_here(&forest, "[OutOfTheWay dunwich]"),
-        "the focused root went behind the line: {:#?}",
         sketch(&forest)
     );
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7")));
@@ -672,44 +604,43 @@ fn dunwich_failed() -> Snapshot {
     )
 }
 
-/// The lines the mode holds the other projects' roots behind, as drawn.
-fn behind_the_line_elsewhere(forest: &Forest) -> Vec<String> {
-    sketch(forest)
-        .into_iter()
-        .filter(|row| row.contains("[OutOfTheWay ferry]") || row.contains("[OutOfTheWay harbour]"))
-        .collect()
+/// What the projects holding no focused bead draw.
+fn elsewhere(forest: &Forest) -> Vec<String> {
+    [
+        rows_of_project(forest, "ferry"),
+        rows_of_project(forest, "harbour"),
+    ]
+    .concat()
 }
 
-/// Going to a bead opens what is shut over it, and under this mode what is
-/// shut over every other root is the line the mode put them behind. A
-/// search that found a bead it cannot reach is a search that failed.
+/// A bead the mode is holding back is drawn nowhere, so there is nothing to
+/// go to and the selection stays where it was.
 #[test]
-fn going_to_a_held_back_bead_opens_the_line_holding_its_root() {
+fn going_to_a_held_back_bead_leaves_the_selection_where_it_was() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
 
     assert!(
-        forest.go_to(&key("harbour", "hbr-3")),
-        "cannot reach harbour: {:#?}",
+        !forest.go_to(&key("harbour", "hbr-3")),
+        "went to harbour: {:#?}",
         sketch(&forest)
     );
-    assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
 }
 
-/// A root the filter was showing as much as one it was not. The mode holds
-/// both back behind the one line, so that line is what is shut over either.
+/// A root the filter was showing as much as one it was not.
 #[test]
-fn going_to_a_bead_in_a_root_the_filter_was_showing_opens_it_as_well() {
+fn going_to_a_bead_in_a_root_the_filter_was_showing_leaves_it_as_well() {
     let mut forest = flatten(snapshot());
     select_hidden_tree(&mut forest);
     assert!(forest.apply(Action::FocusForest));
 
     assert!(
-        forest.go_to(&key("dunwich", "dun-7.1")),
-        "cannot reach dunwich: {:#?}",
+        !forest.go_to(&key("dunwich", "dun-7.1")),
+        "went to dunwich: {:#?}",
         sketch(&forest)
     );
-    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
+    assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
 }
 
 /// The reader is put back on the bead they were finishing even where they
@@ -882,8 +813,8 @@ fn asking_to_root_the_forest_at_a_line_that_is_not_a_bead_does_nothing() {
 ///
 /// It reads whole the way a root does, and the beads under it read against
 /// it. A column of ids is read by putting the drawn root in front of each
-/// one, so a suffix cut against a root that is behind the line names a
-/// bead that is not there.
+/// one, so a suffix cut against a root that is not drawn names a bead that
+/// is not there.
 #[test]
 fn focusing_a_bead_under_a_root_draws_it_where_that_root_was() {
     let mut forest = flatten(snapshot());
@@ -901,21 +832,16 @@ fn focusing_a_bead_under_a_root_draws_it_where_that_root_was() {
             "  │   ├── ! OrphanedDependencies(1)",
             "  │   ├── ○ .1 true the mount",
             "  │   └── ○ .2 seal the feed horn",
-            "  ├─▸ [OutOfTheWay dunwich] 1",
         ]
     );
 }
 
-/// The mode stops drawing the beads above the focused one, and *degrade,
-/// never disappear* binds over them as it does over a whole root: they go
-/// behind the same line, under the project they are in, and the root they
-/// hang from rests shut there as a held-back root does.
+/// The mode stops drawing the beads above the focused one, as it stops
+/// drawing every other root.
 #[test]
-fn the_beads_above_the_focused_bead_go_behind_the_line_as_a_root_does() {
+fn the_beads_above_the_focused_bead_are_drawn_nowhere() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
-
-    open_the_line_holding_roots_back(&mut forest, "dunwich");
 
     assert_eq!(
         sketch(&forest)
@@ -926,39 +852,28 @@ fn the_beads_above_the_focused_bead_go_behind_the_line_as_a_root_does() {
             "▾ dunwich",
             "  ├─▸ ○ dun-7.1 re-point the dish",
             "  │   └── ! OrphanedDependencies(1)",
-            "  ├── [OutOfTheWay dunwich] 1",
-            "  │   └─▸ ◐ dun-7 lift the ground station",
-            "  │       └── ! OrphanedDependencies(1)",
         ]
     );
 }
 
-/// What is behind the line reads against the root it is drawn under, as it
-/// does with the mode off. Only the drawing rooted at one bead shortens
-/// against that bead, and the roots behind the line are not that drawing.
+/// And the beads beside it, which hang from a bead above it.
 #[test]
-fn a_bead_behind_the_line_reads_against_the_root_it_hangs_under() {
+fn the_beads_beside_the_focused_bead_are_drawn_nowhere() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
-    open_the_line_holding_roots_back(&mut forest, "dunwich");
-
-    toggle_fold_of(&mut forest, "dun-7");
 
     assert!(
-        drawn_here(&forest, "○ .7 log the survey marks"),
+        !drawn_here(&forest, "log the survey marks"),
         "{:#?}",
         sketch(&forest)
     );
 }
 
-/// The focused bead is drawn where a root is drawn, so the line the rest
-/// of its root is behind leaves it there rather than drawing it twice.
+/// The focused bead is drawn where a root is drawn, and nowhere else.
 #[test]
-fn the_line_leaves_the_focused_bead_to_the_root_of_the_forest() {
+fn the_focused_bead_is_drawn_once() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
-
-    open_the_line_holding_roots_back(&mut forest, "dunwich");
 
     assert_eq!(
         sketch(&forest)
@@ -971,95 +886,72 @@ fn the_line_leaves_the_focused_bead_to_the_root_of_the_forest() {
     );
 }
 
-/// A seat on a bead above the focused one is a seat nothing else on the
-/// screen says is there, so the line standing over that bead counts it.
+/// No line stands over the beads above the focused one, so nothing counts
+/// the seats on them.
 #[test]
-fn the_line_counts_the_seats_above_the_focused_bead() {
+fn no_line_counts_the_seats_above_the_focused_bead() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
 
-    let held = held_by_the_line(&forest, "dunwich");
-
     assert_eq!(
-        held.live_agents,
-        counts_of(&forest, "dunwich", "dun-7").live_agents,
-        "every seat in dunwich is on a bead the mode stopped drawing"
-    );
-    assert!(held.live_agents > 0, "dunwich is where the agents are");
-}
-
-/// It counts what it is standing over rather than the whole root the beads
-/// came from. The focused bead and what hangs beneath it are on the screen,
-/// and a line counting those sends a reader looking for rows they are
-/// already reading.
-#[test]
-fn the_line_counts_only_the_beads_the_mode_stopped_drawing() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7.1");
-
-    let held = held_by_the_line(&forest, "dunwich");
-
-    assert_eq!(
-        held.total,
-        counts_of(&forest, "dunwich", "dun-7").total - 3,
-        "dun-7.1 and the two beads beneath it are drawn at the root"
+        rows_of_project(&forest, "dunwich"),
+        vec![
+            "▾ dunwich",
+            "  ├─▸ ○ dun-7.1 re-point the dish",
+            "  │   └── ! OrphanedDependencies(1)",
+            "  └── [Unattributed dunwich] 2",
+        ]
     );
 }
 
-/// Going to a bead opens what is shut over it, and what is shut over a
-/// bead above the focused one is the line the rest of its root is behind.
+/// Going to a bead above the focused one finds nothing drawn to go to.
 #[test]
-fn going_to_a_bead_above_the_focused_one_opens_the_line_it_is_behind() {
+fn going_to_a_bead_above_the_focused_one_leaves_the_selection_where_it_was() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
 
     assert!(
-        forest.go_to(&key("dunwich", "dun-7")),
-        "cannot reach the bead above: {:#?}",
+        !forest.go_to(&key("dunwich", "dun-7")),
+        "went to the bead above: {:#?}",
         sketch(&forest)
     );
-    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7")));
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-7.1")));
 }
 
-/// A run says what opening it would draw. Where the bead the forest is
-/// rooted at came out of one, the run behind the line stands for the
-/// siblings it left there rather than counting a bead drawn at the root of
-/// the forest.
+/// A bead the focused one came out of a run with is drawn nowhere, and
+/// neither is the run.
 #[test]
-fn a_run_behind_the_line_leaves_the_focused_bead_out_of_its_count() {
+fn a_sibling_from_the_run_the_focused_bead_came_out_of_is_drawn_nowhere() {
     let mut forest = flatten(snapshot());
     assert!(forest.go_to(&key("dunwich", "dun-7.2")), "no such bead");
     assert!(forest.apply(Action::FocusForest));
 
     assert!(
-        forest.go_to(&key("dunwich", "dun-7.3")),
-        "cannot reach a bead in the run: {:#?}",
+        !forest.go_to(&key("dunwich", "dun-7.3")),
+        "went to a bead in the run: {:#?}",
         sketch(&forest)
     );
-
     assert!(
-        drawn_here(&forest, "… 2 more"),
-        "the run stands for the siblings left in it: {:#?}",
+        !drawn_here(&forest, " more"),
+        "a run is drawn: {:#?}",
         sketch(&forest)
     );
 }
 
-/// And a run with the focused bead somewhere beneath one of its members
-/// stands for one bead fewer for the same reason, rather than for what the
-/// whole tree would have put behind it.
+/// And so is a run with the focused bead somewhere beneath one of its
+/// members.
 #[test]
-fn a_run_behind_the_line_leaves_out_a_focused_bead_beneath_a_member() {
+fn a_run_holding_a_bead_above_the_focused_one_is_drawn_nowhere() {
     let mut forest = flatten(depot());
     assert!(forest.go_to(&key("dunwich", "dep-1.2.1")), "no such bead");
     assert!(forest.apply(Action::FocusForest));
 
     assert!(
-        forest.go_to(&key("dunwich", "dep-1.3")),
-        "cannot reach the run: {:#?}",
+        !forest.go_to(&key("dunwich", "dep-1.3")),
+        "went to the run: {:#?}",
         sketch(&forest)
     );
-
-    assert!(drawn_here(&forest, "… 5 more"), "{:#?}", sketch(&forest));
+    assert!(!drawn_here(&forest, "… 5 more"), "{:#?}", sketch(&forest));
 }
 
 /// A bead reachable more than once is drawn once for every way down to it,
@@ -1154,7 +1046,7 @@ fn a_collection_that_filed_the_focused_root_under_another_stays_rooted_at_it() {
         sketch(&forest)
     );
     assert!(
-        drawn_here(&forest, "[OutOfTheWay dunwich]"),
+        !drawn_here(&forest, "dredge the channel"),
         "still rooted at one bead: {:#?}",
         sketch(&forest)
     );
@@ -1182,37 +1074,27 @@ fn a_search_counts_from_the_bead_the_forest_is_rooted_at() {
     assert_eq!((found, at), (key("dunwich", "hbr-3.1"), 1));
 }
 
-/// Stepping through matches from a row that is not a bead carries on from
-/// where the reader is standing, and a shut line is asked what it holds
-/// rather than read past. This line holds beads exactly as the filter's
-/// does, so a reader standing on it steps into what is behind it.
+/// Stepping through matches from below the focused tree goes round to the
+/// top of it, since no root is drawn after it to step into.
 #[test]
-fn stepping_from_the_shut_line_carries_on_into_the_roots_behind_it() {
+fn stepping_from_below_the_focused_tree_goes_round_to_its_top() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
     forest.seek_here("the");
-    let at = the_line_holding_roots_back(&forest, "dunwich");
-    step_onto(&mut forest, at);
-    assert_eq!(
-        forest.lines()[at].folded,
-        Some(false),
-        "the line rests shut"
-    );
+    forest.apply(Action::Move(Motion::LastRow));
 
     let landed = forest.next_match(true);
 
     let Some(Landed::On { key: found, .. }) = landed else {
         panic!("nothing matched: {landed:?}")
     };
-    assert_eq!(found, key("dunwich", "dun-7"));
+    assert_eq!(found, key("dunwich", "dun-7.1"));
 }
 
-/// A root whose tracker refused leads its project whatever the filter
-/// says, and it holds no bead. The line has to look past it for the bead
-/// it stands on, or a reader stepping off it walks past everything it
-/// holds and wraps round to the top of the screen.
+/// A root whose tracker refused is a root like any other, and the mode
+/// draws it nowhere.
 #[test]
-fn stepping_from_the_shut_line_reaches_past_a_root_holding_no_bead() {
+fn a_held_back_root_whose_tracker_refused_is_drawn_nowhere() {
     let mut forest = flatten(gather(
         vec![
             tree_of("dunwich", DUNWICH),
@@ -1223,16 +1105,8 @@ fn stepping_from_the_shut_line_reaches_past_a_root_holding_no_bead() {
         Filter::LiveAgents,
     ));
     focus_on(&mut forest, "dun-7.1");
-    forest.seek_here("the");
-    let at = the_line_holding_roots_back(&forest, "dunwich");
-    step_onto(&mut forest, at);
 
-    let landed = forest.next_match(true);
-
-    let Some(Landed::On { key: found, .. }) = landed else {
-        panic!("nothing matched: {landed:?}")
-    };
-    assert_eq!(found, key("dunwich", "dun-7"));
+    assert!(!drawn_here(&forest, "dun-0"), "{:#?}", sketch(&forest));
 }
 
 /// Open every fold on the screen, with the keys a reader has, until the
@@ -1304,17 +1178,14 @@ fn a_search_enumerates_the_beads_in_the_order_the_rows_draw_them() {
     }
 }
 
-/// A search counts the matches it can take the reader to, and a line it
-/// can open is a match it can take them to.
+/// A search counts the matches it can take the reader to, and a bead above
+/// the focused one is drawn nowhere to be taken to.
 #[test]
-fn a_search_counts_a_bead_above_the_focused_one() {
+fn a_search_does_not_count_a_bead_above_the_focused_one() {
     let mut forest = flatten(snapshot());
     focus_on(&mut forest, "dun-7.1");
 
     let landed = forest.seek_here("lift the ground station");
 
-    let Landed::On { key: found, .. } = landed else {
-        panic!("nothing matched: {landed:?}")
-    };
-    assert_eq!(found, key("dunwich", "dun-7"));
+    assert!(matches!(landed, Landed::Nowhere(_)), "{landed:?}");
 }

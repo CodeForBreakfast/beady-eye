@@ -7,19 +7,18 @@ use crate::view::fitted::{Fitted, GAP};
 use crate::view::lines::{Group, GroupKind, Item};
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::{AGENT, WARNING};
+use crate::view::row::WARNING;
 
-use super::{beside, pane_marker, sentence};
+use super::{pane_marker, sentence};
 
-/// The line a group is drawn as. Two of them hold roots nothing went wrong in
-/// — a key put them there and a key takes them back out — so those two are
-/// the ones drawn without a warning.
+/// The line a group is drawn as. The hidden trees are roots nothing went
+/// wrong in — a key put them there and a key takes them back out — so that
+/// group is the one drawn without a warning.
 pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
     let (said, hidden) = match group.kind {
         GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
         GroupKind::Conflicts => (phrase::conflicts(group.count), false),
         GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
-        GroupKind::OutOfTheWay => (phrase::other_trees(group.count), true),
         GroupKind::Unattributed => (phrase::unattributed(group.count), false),
         GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
     };
@@ -29,48 +28,11 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
     } else {
         (format!("{WARNING} {said}"), palette::ATTENTION)
     };
-    let state = match group.kind {
-        GroupKind::OutOfTheWay => out_of_the_way_counts(group),
-        _ => Vec::new(),
-    };
-
     Fitted::new(
         vec![Span::raw(prefix.to_string()), Span::styled(said, style)],
         Vec::new(),
-        state,
+        Vec::new(),
     )
-}
-
-/// What a line standing over the beads the mode put out of the way says
-/// beside itself: the seats in there and the beads wanting looking at.
-///
-/// The reader asked for one bead, so the rest go; what they did not ask for
-/// was to be told there is nobody on them. Said in the words a line resting
-/// shut over the same things already uses.
-fn out_of_the_way_counts(group: &Group) -> Vec<Span<'static>> {
-    let mut said = Vec::new();
-    let Some(counts) = &group.held else {
-        return said;
-    };
-    if counts.live_agents > 0 {
-        beside(
-            &mut said,
-            Span::styled(
-                format!("{AGENT} {}", phrase::agents_beneath(counts.live_agents)),
-                palette::AGENT,
-            ),
-        );
-    }
-    if counts.anomalies > 0 {
-        beside(
-            &mut said,
-            Span::styled(
-                format!("{WARNING} {}", phrase::anomalies_beneath(counts.anomalies)),
-                palette::ATTENTION,
-            ),
-        );
-    }
-    said
 }
 
 /// The scope, where the directory chose it. Nothing went wrong, so it is
@@ -199,7 +161,6 @@ mod tests {
             project: Some("summit-works".into()),
             count: 4,
             with_findings: 0,
-            held: None,
         };
         let broken = Group {
             with_findings: 2,
@@ -261,64 +222,9 @@ mod tests {
         );
     }
 
-    /// The reader rooted the forest at one bead and everything else went
-    /// behind this line, open work and the seats on it included. So the line
-    /// says how many, rather than leaving a reader to read one number as the
-    /// whole truth about what is back there.
-    ///
-    /// Asserted as one string rather than cell by cell, because two cells
-    /// that abut read as one that names neither, and a `contains` on each of
-    /// them alone passes either way.
-    #[test]
-    fn a_line_over_the_beads_put_out_of_the_way_says_its_seats_and_what_wants_looking_at() {
-        let group = Group {
-            kind: GroupKind::OutOfTheWay,
-            project: Some("summit-works".into()),
-            count: 3,
-            with_findings: 0,
-            held: Some(Counts {
-                total: 12,
-                finished: 4,
-                live_agents: 2,
-                anomalies: 1,
-            }),
-        };
-
-        let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
-
-        assert!(drawn[0].contains("3 other trees"), "{drawn:?}");
-        assert!(
-            drawn[0].ends_with("2 agents beneath  ⚠ 1 bead to check"),
-            "{drawn:?}"
-        );
-    }
-
-    /// And says neither where there is neither. A nought said is a column
-    /// spent telling a reader about nothing.
-    #[test]
-    fn a_line_over_one_quiet_bead_put_out_of_the_way_says_nothing_of_seats_at_all() {
-        let group = Group {
-            kind: GroupKind::OutOfTheWay,
-            project: Some("summit-works".into()),
-            count: 1,
-            with_findings: 0,
-            held: Some(Counts {
-                total: 9,
-                finished: 9,
-                live_agents: 0,
-                anomalies: 0,
-            }),
-        };
-
-        let drawn = Painted::of(group_line(SHUT, &group), 120, 1).rows();
-
-        assert_eq!(drawn[0].trim_end(), "▸ 1 other tree");
-    }
-
-    /// A group holding something that went wrong is marked as such. The two
-    /// that hold whole roots are not: the reader asked for those roots to be
-    /// out of the way, one with the filter and one with the key that roots the
-    /// forest at a bead.
+    /// A group holding something that went wrong is marked as such. The one
+    /// that holds whole roots is not: the reader asked the filter for those
+    /// roots to be out of the way.
     #[test]
     fn only_a_group_holding_roots_the_reader_put_away_is_drawn_without_a_warning() {
         for kind in every_kind() {
@@ -327,14 +233,13 @@ mod tests {
                 project: None,
                 count: 2,
                 with_findings: 0,
-                held: None,
             };
             let drawn = Painted::of(group_line(SHUT, &group), 80, 1).rows();
             let marked = drawn[0].contains(WARNING);
 
             assert_eq!(
                 marked,
-                !matches!(kind, GroupKind::HiddenTrees | GroupKind::OutOfTheWay),
+                kind != GroupKind::HiddenTrees,
                 "{kind:?}: {drawn:?}"
             );
         }
@@ -366,7 +271,6 @@ mod tests {
                 project: None,
                 count: 2,
                 with_findings: 0,
-                held: None,
             };
             let painted = Painted::of(group_line(SHUT, &group), 80, 1).row(0);
 

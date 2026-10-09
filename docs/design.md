@@ -1133,29 +1133,18 @@ there is none. A bead the command line named never lets go: the view was
 started to show it, so when it leaves the view stays where it was and that line
 says the bead is gone. A bead that closes is still in the collection, so
 closing the focused bead does not end the mode, and a bead the tracker has
-moved is followed to where it moved to. Everything the mode stops drawing goes behind
-one collapsed line per project rather than off the screen, which is *degrade,
-never disappear* binding here as everywhere: every other root and every other
-project's, and the focused bead's own root for the part of it that is left —
-the beads above that bead and every branch off them, with the bead itself left
-to the root of the forest rather than drawn a second time. That line says how
-many trees it stands over, in the noun the filter's line uses, because a root
-whose tracker refused holds no beads and is still a tree. It stands over open work
-with seats on it, which the filter's own line never does, so it also says how many
-seats and how many beads want looking at and never claims there are none. Those
-it counts off the beads it is standing over rather than off the roots they came from,
-because the beads on the screen are not behind it. Its
-own project's line keeps it, so a reader opens the project where it already
-was. It is a group like the others: it rests shut, the keys that open a group
-open it, and the roots inside it rest shut as the filter's do. A bead in one of
-them is reached by the keys that reach any bead, the line opening to let the
-selection in, so looking a bead up in another root is not paid for with the
-put-back key. A search offers what it can take the reader to, which under this
-mode is every bead the forest holds: the ones beneath the focused bead, and the
-ones behind the line, which it opens on the way. The key that brings them
-back acts on the whole screen, so the line does not name it: while the forest is
-focused the foot offers `F` among its keys and says the forest is focused, once
-however many projects keep such a line, and both go when it is put back.
+moved is followed to where it moved to. The mode draws the focused beads and
+what hangs beneath them, and nothing else: no other root, no other project's,
+and none of the beads above a focused bead or the branches off them. No line
+stands in for what it stopped drawing. A project's own line stays only where
+something still hangs under it, such as a pane on no bead, and an unread
+tracker is still reported as it is everywhere else. A board focused this way
+builds only the trees it draws, and putting the forest back builds the rest
+from what was last read, without reading a tracker again. Going to a bead the
+mode does not draw finds nothing to go to, and a search offers only what is
+drawn. The key that puts the forest back acts on the whole screen: while the
+forest is focused the foot offers `F` among its keys and says the forest is
+focused, and both go when it is put back.
 
 **A finished branch draws as one line and rests shut.** Its glyph, its
 fraction and its fold marker already say *finished, and holds more*; opening it
@@ -3405,8 +3394,7 @@ contradict the rule it exists to serve. Hidden trees is a group nothing went
 wrong in — the filter put them there and a key takes them back out — so it is
 drawn without a warning. It does not name that key: a project's line says only
 what is so of that project, and a key that acts on the whole screen is offered
-once, among the foot's keys. The roots `Shift+F` puts out of the way are the
-other group read that way. A group that said only how many trees it hides
+once, among the foot's keys. A group that said only how many trees it hides
 would read as "nothing to see here" while hiding broken ones, so it also says
 how many of them carry findings: *4 trees with no live agent · 1 with
 findings*. The findings stay hidden — the reader asked for that — but the group

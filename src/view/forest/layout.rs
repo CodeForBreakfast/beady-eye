@@ -14,12 +14,12 @@
 //! the lines the folds name, and everything over them, are drawn here.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::config;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::{Link, OrphanedDependency};
 use crate::model::types::Edge;
 use crate::view::draw::identity_widths;
@@ -160,7 +160,8 @@ pub(super) fn group_drawn(
 /// Whether a project's line is drawn: where anything hangs under it — a tree
 /// shown or hidden, a bead the forest is rooted at, or a pane working in its
 /// paths that no bead claims — or where nothing has read it yet, which is
-/// every project on the first frame of a run.
+/// every project on the first frame of a run. Rooted at any bead, the forest
+/// draws no tree but the ones it is rooted in.
 ///
 /// A project with nothing beneath it is drawn only where nothing has read
 /// it. A tracker that answered and held nothing, and one that refused, are
@@ -171,11 +172,12 @@ pub(super) fn project_drawn(snapshot: &Snapshot, project: &str, rooted: &[Rooted
     rooted
         .iter()
         .any(|rooted| rooted.place.tree.project == project)
-        || snapshot.trees.iter().any(|tree| tree.project == project)
-        || snapshot
-            .hidden_trees
-            .iter()
-            .any(|hidden| hidden.project == project)
+        || rooted.is_empty()
+            && (snapshot.trees.iter().any(|tree| tree.project == project)
+                || snapshot
+                    .hidden_trees
+                    .iter()
+                    .any(|hidden| hidden.project == project))
         || snapshot
             .unattributed
             .iter()
@@ -212,14 +214,9 @@ pub(super) fn first_bead_of(
     snapshot: &Snapshot,
     kind: GroupKind,
     project: Option<&str>,
-    rooted: &[Rooted],
 ) -> Option<BeadKey> {
     let roots: Vec<&Arc<Tree>> = match kind {
         GroupKind::HiddenTrees => hidden_trees(snapshot, project),
-        GroupKind::OutOfTheWay => out_of_the_way(snapshot, project, rooted)
-            .into_iter()
-            .map(|root| root.tree)
-            .collect(),
         _ => return None,
     };
     // A root whose tracker refused has a row and no bead, and it leads its
@@ -237,9 +234,7 @@ pub(super) fn first_bead_of(
 /// and within a project the trees in the order `draw_project` puts them.
 ///
 /// Rooted at one bead, that is the bead's own tree walked from the bead, and
-/// then every root behind the line in the order the line opens onto them —
-/// the bead's own tree among them, walked from its root for the part of it
-/// the mode stopped drawing.
+/// no other.
 ///
 /// `snapshot.trees` cannot answer this. It is in the order the projects were
 /// read, which is why `snapshot.projects` exists at all — a project drawn
@@ -253,11 +248,6 @@ pub(super) fn first_bead_of(
 /// in that chain, so going to a bead opens the project over it exactly as it
 /// opens the folds. An order that left those trees out would be an order a
 /// search could not use.
-///
-/// The third of each triple is `Behind::without`: the beads, by their places
-/// among the tree's beads, that the root behind the line leaves out because
-/// the mode draws them where the forest is rooted instead. Empty everywhere
-/// else, since only a root holding a focused bead ever holds one back.
 pub(super) fn walked<'a>(
     snapshot: &'a Snapshot,
     rooted: &[Rooted],
@@ -292,11 +282,6 @@ pub(super) fn walked<'a>(
                     Some((tree, way.clone(), Vec::new()))
                 }),
         );
-        drawn.extend(
-            out_of_the_way(snapshot, Some(project), rooted)
-                .into_iter()
-                .map(|root| (Arc::as_ref(root.tree), vec![0], root.without)),
-        );
     }
     drawn
 }
@@ -307,7 +292,10 @@ fn group_of(
     project: Option<&str>,
     rooted: &[Rooted],
 ) -> Option<Group> {
-    let (count, with_findings, held) = match kind {
+    let (count, with_findings) = match kind {
+        // The group draws whole trees, and one bead is the only root there is
+        // while the forest is rooted at any.
+        GroupKind::HiddenTrees if !rooted.is_empty() => return None,
         GroupKind::HiddenTrees => {
             let hidden = snapshot
                 .hidden_trees
@@ -316,121 +304,16 @@ fn group_of(
             (
                 hidden.clone().count(),
                 hidden.filter(|hidden| hidden.findings).count(),
-                None,
             )
         }
-        // Counted off the beads behind the line rather than off the roots they
-        // came from: this line is all a reader gets of what is behind it, and
-        // the bead the forest is rooted at is on the screen already.
-        GroupKind::OutOfTheWay => {
-            let held = out_of_the_way(snapshot, project, rooted);
-            let counts = Counts::over(held.iter().flat_map(Behind::beads));
-            (held.len(), 0, Some(counts))
-        }
-        _ => (group_items(snapshot, kind, project).len(), 0, None),
+        _ => (group_items(snapshot, kind, project).len(), 0),
     };
     (count > 0).then_some(Group {
         kind,
         project: project.map(str::to_string),
         count,
         with_findings,
-        held,
     })
-}
-
-/// One root drawn behind a group's line, and the beads of it the forest is
-/// drawing somewhere else.
-///
-/// Only a root a focused bead stands in has such beads. The mode draws each
-/// where a root is drawn, so what is left behind the line is the beads above
-/// them and every branch off those.
-struct Behind<'a> {
-    tree: &'a Arc<Tree>,
-    /// The beads drawn elsewhere, by their places among the tree's beads.
-    without: Vec<usize>,
-}
-
-impl<'a> Behind<'a> {
-    /// The beads this root leaves behind the line: every one it reaches
-    /// without stepping onto a bead drawn elsewhere, which is where the
-    /// drawing stops as well.
-    fn beads(&self) -> Vec<&'a Bead> {
-        reached(self.tree, [0], &self.without)
-            .into_iter()
-            .filter_map(|at| self.tree.beads.get(at))
-            .collect()
-    }
-}
-
-/// Every bead a walk from `from` reaches, `from` included, without stepping
-/// onto a bead the forest is drawing somewhere else.
-///
-/// Which is what a count of what a line stands over has to be walked with: the
-/// drawing stops at those beads, so a count that went past one names work the
-/// reader is already looking at.
-fn reached(
-    tree: &Tree,
-    from: impl IntoIterator<Item = usize>,
-    without: &[usize],
-) -> BTreeSet<usize> {
-    let mut walked = BTreeSet::new();
-    let mut left: Vec<usize> = from.into_iter().collect();
-    while let Some(at) = left.pop() {
-        if without.contains(&at) || !walked.insert(at) {
-            continue;
-        }
-        left.extend(
-            tree.children
-                .get(at)
-                .into_iter()
-                .flatten()
-                .map(|link| link.bead),
-        );
-    }
-    walked
-}
-
-/// What one project put out of the way because the forest is rooted at its
-/// focused beads: every root it collected that holds none of them, and each
-/// one that does for the part of it the mode stopped drawing. None at all
-/// where the forest is rooted at no bead.
-///
-/// Shown and hidden alike. The mode moves what the filter was showing as well
-/// as what it was not, and one line standing for both sets is the only line
-/// that adds up.
-fn out_of_the_way<'a>(
-    snapshot: &'a Snapshot,
-    project: Option<&str>,
-    rooted: &[Rooted],
-) -> Vec<Behind<'a>> {
-    if rooted.is_empty() {
-        return Vec::new();
-    }
-    snapshot
-        .collected
-        .iter()
-        .filter(|tree| Some(tree.project.as_str()) == project)
-        .filter_map(|tree| {
-            let root = root_key(tree);
-            let focused: Vec<&Rooted> = rooted
-                .iter()
-                .filter(|rooted| rooted.place.tree == root)
-                .collect();
-            // A root that is itself focused leaves nothing here: the whole
-            // tree hangs beneath it, so the mode stopped drawing none of it.
-            if focused.iter().any(|rooted| rooted.place.steps.is_empty()) {
-                return None;
-            }
-            Some(Behind {
-                tree,
-                without: focused
-                    .iter()
-                    .filter_map(|rooted| rooted.way.as_ref().ok())
-                    .map(|way| *way.last().expect("a way down ends somewhere"))
-                    .collect(),
-            })
-        })
-        .collect()
 }
 
 /// Every group the snapshot could draw, in the order it draws them: each
@@ -712,10 +595,6 @@ impl<'a> Layout<'a> {
         };
         let groups: Vec<Group> = GroupKind::UNDER_A_PROJECT
             .into_iter()
-            // The group of trees the filter is holding back draws whole trees,
-            // and one bead is the only root there is while the forest is
-            // rooted at any.
-            .filter(|kind| self.rooted.is_empty() || *kind != GroupKind::HiddenTrees)
             .filter_map(|kind| group_of(self.snapshot, kind, Some(&project), self.rooted))
             .collect();
         let mut entries = roots.len() + groups.len();
@@ -778,14 +657,14 @@ impl<'a> Layout<'a> {
             trunk.push(!last);
         }
         let children = match kind {
-            GroupKind::HiddenTrees | GroupKind::OutOfTheWay => {
-                let roots = self.roots_in(kind, project.as_deref());
+            GroupKind::HiddenTrees => {
+                let roots = hidden_trees(self.snapshot, project.as_deref());
                 let count = roots.len();
                 roots
                     .into_iter()
                     .enumerate()
-                    .map(|(n, root)| {
-                        self.tree_layout(root.tree, over, true, None, root.without)
+                    .map(|(n, tree)| {
+                        self.tree_layout(tree, over, true, None, Vec::new())
                             .draw(trunk, n + 1 == count)
                     })
                     .collect()
@@ -796,21 +675,6 @@ impl<'a> Layout<'a> {
             trunk.pop();
         }
         Node::drawn(line, children)
-    }
-
-    /// The roots one of the two groups that stand over roots is standing over,
-    /// for the project it is one of.
-    fn roots_in(&self, kind: GroupKind, project: Option<&str>) -> Vec<Behind<'a>> {
-        match kind {
-            GroupKind::OutOfTheWay => out_of_the_way(self.snapshot, project, self.rooted),
-            _ => hidden_trees(self.snapshot, project)
-                .into_iter()
-                .map(|tree| Behind {
-                    tree,
-                    without: Vec::new(),
-                })
-                .collect(),
-        }
     }
 
     fn draw_items(&self, items: Vec<Item>, trunk: &[bool]) -> Vec<Node> {
@@ -1715,7 +1579,7 @@ fn group_items(snapshot: &Snapshot, kind: GroupKind, project: Option<&str>) -> V
             .collect(),
         // These two hold whole roots, drawn as trees rather than as things in
         // a group.
-        GroupKind::HiddenTrees | GroupKind::OutOfTheWay => Vec::new(),
+        GroupKind::HiddenTrees => Vec::new(),
         GroupKind::Unattributed => snapshot
             .unattributed
             .iter()

@@ -8,7 +8,6 @@ use crate::collect::herdr::parse_agent_list;
 use crate::config::{Config, Scope};
 use crate::model::join::{self, Joined, Listed, ProjectRows};
 use crate::model::snapshot;
-use crate::model::snapshot::Counts;
 use crate::model::snapshot::{
     a_provider, build_tree, Collected, FailedProject, ProviderState, Readiness, TrackerFailure,
     TrackerState, A_PROVIDER,
@@ -1269,10 +1268,10 @@ fn on_screen(forest: &Forest) -> Reported {
                 GroupKind::FailedProjects => found.failed_projects += count,
                 GroupKind::Unattributed => found.loose_panes += count,
                 GroupKind::Unconfigured => found.unconfigured_panes += count,
-                // Neither holds a finding of its own: each stands over
-                // whole roots, and what is wrong inside one of those is
-                // the root's to report when the group is opened.
-                GroupKind::HiddenTrees | GroupKind::OutOfTheWay => {}
+                // Holds no finding of its own: it stands over whole
+                // roots, and what is wrong inside one of those is the
+                // root's to report when the group is opened.
+                GroupKind::HiddenTrees => {}
             },
             _ => {}
         }

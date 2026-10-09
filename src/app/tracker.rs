@@ -570,6 +570,7 @@ mod tests {
     use super::*;
     use crate::app::fixtures::*;
     use crate::app::run;
+    use crate::app::{Collection, Wanted};
     use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -1613,18 +1614,38 @@ dunwich = ["bdi-404"]
             .collect()
     }
 
-    /// `bdi dunwich:dun-4` asks to be shown that tree, and the view focuses
+    /// A board started on the beads the command line names, focused on them
+    /// as the screen is.
+    fn focused_on_the_named(cfg: &Config) -> Collection {
+        let mut board = Collection::default();
+        board.focus_on(cfg.roots.named_beads());
+        board
+    }
+
+    /// `bdi dunwich:dun-4` asks to be shown that tree, and the board focuses
     /// it. The read is the one an unnamed start makes, with the named tree in
-    /// it even where nothing is open in it for discovery to find.
+    /// it even where nothing is open in it for discovery to find, and only
+    /// the named tree is drawn until the focus is left.
     #[test]
     fn a_root_named_on_the_command_line_is_read_beside_the_ones_discovery_finds() {
         let cfg = with_roots_on_the_command_line(one_project(), &["dunwich:dun-4"]);
         let trackers = dunwich_with(dunwich_tracker().also(beads(MAST_TREE)));
+        let mut board = focused_on_the_named(&cfg);
 
-        let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
+        let focused = board.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        board.focus_on(Vec::new());
+        let left = board.redraw(&cfg, &panes(), &trackers, Filter::All, now());
 
+        assert_eq!(drawn_roots(&focused), vec![("dunwich", "dun-4")]);
         assert_eq!(
-            drawn_roots(&snap),
+            drawn_roots(&left),
             vec![("dunwich", "dun-7"), ("dunwich", "dun-4")]
         );
     }
@@ -1644,7 +1665,8 @@ dunwich = ["bdi-404"]
     }
 
     /// The config's own roots are still read, so leaving the focus the named
-    /// root starts in puts back the forest an unnamed start draws.
+    /// root starts in puts back the forest an unnamed start draws, and every
+    /// collection after it keeps that forest current.
     #[test]
     fn a_root_named_on_the_command_line_leaves_the_roots_the_config_names() {
         let cfg = with_roots_on_the_command_line(one_project_with_a_root_named(), &["dun-4"]);
@@ -1656,15 +1678,49 @@ dunwich = ["bdi-404"]
             Filter::All,
             now(),
         );
+        let mut board = focused_on_the_named(&cfg);
 
-        let snap = run(&cfg, &panes(), &trackers, Filter::All, now());
+        let focused = board.collect(
+            &cfg,
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+        board.focus_on(Vec::new());
+        let left = board.redraw(&cfg, &panes(), &trackers, Filter::All, now());
+        let retitled = dunwich_with(
+            dunwich_holding(
+                &DUNWICH_TREE.replace("lift the ground station", "lift the relay station"),
+            )
+            .also(beads(MAST_TREE))
+            .moved(),
+        );
+        let later = board.collect(
+            &cfg,
+            &panes(),
+            &retitled,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
 
+        assert_eq!(drawn_roots(&focused), vec![("dunwich", "dun-4")]);
+        assert_eq!(
+            focused.unattributed, unnamed.unattributed,
+            "a pane on a bead in a tree the focus left out is still placed"
+        );
         let mut expected = drawn_roots(&unnamed);
         expected.push(("dunwich", "dun-4"));
         expected.sort();
-        let mut drawn = drawn_roots(&snap);
+        let mut drawn = drawn_roots(&left);
         drawn.sort();
         assert_eq!(drawn, expected);
+        assert_eq!(
+            node(rooted_at(&later, "dun-7"), "dun-7").title,
+            "lift the relay station"
+        );
     }
 
     /// A bead below a root is focused where its root draws it, so what is read

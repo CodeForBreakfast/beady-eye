@@ -375,6 +375,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
         )
     });
     let mut collection = crate::app::Collection::default();
+    // Focused from the first collection, as the screen is.
+    collection.focus_on(cfg.roots.named_beads());
     // Each project read through the watcher while one answers for it, and
     // read here while none does. Looked for again at the refresh interval,
     // which is as long as a project read here waits for its next poll.
@@ -419,6 +421,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
                     trackers.asks_again();
                 }
                 Some(collection.collect(&cfg, &listing, &*trackers, &wanted, filter, Utc::now()))
+            }
+            Asked::Focused(beads) => {
+                collection.focus_on(beads);
+                Some(collection.redraw(&cfg, &listing, &*trackers, filter, Utc::now()))
             }
         }),
         reload,
