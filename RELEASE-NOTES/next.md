@@ -12,7 +12,7 @@ Minor release, **0.25.0 → 0.26.0**. Nothing needs changing to upgrade. To crop
 
 **A gate with no open blocker reads as ready.** Before, `bdi` read every gate as not ready.
 
-**Boards and the watcher cost less on a busy tracker.** The watcher draws nothing when a read finds nothing new, and a board skips a push that moved nothing it shows, while every board stays as current as before. A board now spends a third or less of the CPU it did, and holds over 40% less memory. The watcher spends about half the CPU, and its peak memory falls by about a third.
+**Boards and the watcher cost less on a busy tracker.** The watcher skips most of its work when a read finds nothing new, and a board skips a push that moved nothing it shows, while every board stays as current as before. A board now spends a third or less of the CPU it did, and holds over 40% less memory. The watcher spends about half the CPU, and its peak memory falls by about a third.
 
 ## Maintenance
 
