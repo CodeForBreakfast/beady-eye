@@ -701,10 +701,16 @@ impl Collection {
         if !needed.is_empty() {
             return Err(needed);
         }
-        let focused: Vec<Drawn<'_>> = drawn
+        let (focused, left_out): (Vec<Drawn<'_>>, Vec<Drawn<'_>>) = drawn
             .iter()
             .copied()
-            .filter(|tree| drawn_under(&self.focus, tree))
+            .partition(|tree| drawn_under(&self.focus, tree));
+        let out_of_focus: BTreeSet<BeadKey> = left_out
+            .iter()
+            .map(|(project, root, _)| BeadKey {
+                project: project.to_string(),
+                id: root.to_string(),
+            })
             .collect();
 
         // One resolve over every project's rows at once. A pane names its bead
@@ -792,7 +798,7 @@ impl Collection {
             .map(|project| project.name.clone())
             .collect();
 
-        Ok(snapshot::build(
+        let mut snapshot = snapshot::build(
             Collected {
                 trees,
                 failed_projects,
@@ -806,7 +812,9 @@ impl Collection {
             agents.clone(),
             filter,
             now,
-        ))
+        );
+        snapshot.out_of_focus = out_of_focus;
+        Ok(snapshot)
     }
 
     /// What has been read, in the order the config names the projects. The

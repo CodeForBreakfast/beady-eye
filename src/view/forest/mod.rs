@@ -250,6 +250,7 @@ impl Forest {
         // the nearest of its forebears that survived.
         let ancestry = self.ancestry();
         let folded_over = self.folded_over();
+        let out_of_focus = std::mem::take(&mut self.snapshot.out_of_focus);
         // A collection carries the filter the command line asked for, which
         // is nobody's answer to `a`. So the one in hand goes on the new
         // snapshot, exactly as the folds and the cursor do.
@@ -266,7 +267,7 @@ impl Forest {
         if self.focused != focused {
             self.answer();
         }
-        self.spend_folds(&folded_over);
+        self.spend_folds(&folded_over, &out_of_focus);
         // A root whose tracker stopped reading, or started again, is the
         // same line under the other kind of handle.
         self.cursor = ancestry
@@ -350,11 +351,26 @@ impl Forest {
     /// stands unrooted, because the mode draws the bead it is rooted at
     /// apart from the line the scope was set on, and the way down to what
     /// arrived under that bead runs through both.
-    fn spend_folds(&mut self, folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>) {
+    ///
+    /// Nothing in a tree the last snapshot's focus left unbuilt has arrived:
+    /// that snapshot did not know what was there, and coming back into sight
+    /// is not arriving.
+    fn spend_folds(
+        &mut self,
+        folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>,
+        out_of_focus: &BTreeSet<BeadKey>,
+    ) {
+        let unknown: BTreeSet<BeadKey> = self
+            .snapshot
+            .collected
+            .iter()
+            .filter(|tree| out_of_focus.contains(&root_key(tree)))
+            .flat_map(|tree| tree.beads.iter().map(|bead| bead.key()))
+            .collect();
         let spent: Vec<(Handle, BTreeSet<BeadKey>)> = folded_over
             .iter()
             .filter_map(|(handle, over)| {
-                let arrived = &self.live_under(handle) - over;
+                let arrived = &(&self.live_under(handle) - over) - &unknown;
                 (!arrived.is_empty()).then(|| (handle.clone(), arrived))
             })
             .collect();

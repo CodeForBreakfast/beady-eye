@@ -1645,9 +1645,17 @@ dunwich = ["bdi-404"]
 
         assert_eq!(drawn_roots(&focused), vec![("dunwich", "dun-4")]);
         assert_eq!(
+            focused.out_of_focus,
+            BTreeSet::from([crate::model::join::BeadKey {
+                project: "dunwich".to_string(),
+                id: "dun-7".to_string(),
+            }])
+        );
+        assert_eq!(
             drawn_roots(&left),
             vec![("dunwich", "dun-7"), ("dunwich", "dun-4")]
         );
+        assert!(left.out_of_focus.is_empty());
     }
 
     /// A board focused on one tree still reports a root that config names

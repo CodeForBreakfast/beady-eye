@@ -1708,6 +1708,7 @@ mod tests {
             read_at: BTreeMap::new(),
             speaks_until: BTreeMap::new(),
             collected: trees,
+            out_of_focus: BTreeSet::new(),
             projects: vec!["grove".to_string()],
             scope: Scope::default(),
         }

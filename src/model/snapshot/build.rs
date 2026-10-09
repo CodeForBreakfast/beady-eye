@@ -1,7 +1,7 @@
 //! One project's rows drawn as a tree, and every project's trees gathered
 //! into the snapshot, with the live panes that belong to none of them.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -280,6 +280,7 @@ pub fn build(
         conflicts: joined.conflicts.clone(),
         projects_named_without_git: cfg.projects_named_without_git(),
         collected: trees,
+        out_of_focus: BTreeSet::new(),
         read_at,
         speaks_until,
         projects: cfg.read().map(|p| p.name.clone()).collect(),

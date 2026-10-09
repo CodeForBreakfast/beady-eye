@@ -280,7 +280,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
     use crate::app::Wanted;
@@ -538,6 +538,7 @@ mod tests {
             agents: a_provider(agents),
             filter: Filter::All,
             collected: trees.clone(),
+            out_of_focus: BTreeSet::new(),
             trees,
             projects,
             scope: Scope::default(),

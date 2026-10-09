@@ -3,7 +3,7 @@
 //! A fixture used on one side of a seam belongs in the module that side is
 //! in; these are the ones both sides want.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -63,6 +63,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         read_at: BTreeMap::new(),
         speaks_until: BTreeMap::new(),
         collected: vec![tree],
+        out_of_focus: BTreeSet::new(),
         projects: vec!["arkham".to_string()],
         scope: Scope::default(),
     }

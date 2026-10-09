@@ -1231,3 +1231,31 @@ fn a_search_does_not_count_a_bead_above_the_focused_one() {
 
     assert!(matches!(landed, Landed::Nowhere(_)), "{landed:?}");
 }
+
+/// A fold the reader shut over live work in another tree stays shut once
+/// the forest is put back. The board focused on one tree built no other,
+/// and the live work coming back into sight is not live work arriving.
+#[test]
+fn a_fold_shut_over_live_work_in_a_tree_the_focus_left_out_stays_shut() {
+    let panes = panes_on(&["wha-2.1"]);
+    let mut forest = flatten(overlapping(&panes));
+    select_bead(&mut forest, "wha-2");
+    assert!(forest.apply(Action::ToggleFold));
+    assert_eq!(fold_of(&forest, "wha-2"), Some(false));
+
+    focus_on(&mut forest, "qua-1");
+    let mut narrowed = overlapping(&panes);
+    narrowed.trees.retain(|tree| tree.root == "qua-1");
+    narrowed.collected.retain(|tree| tree.root == "qua-1");
+    narrowed.out_of_focus = BTreeSet::from([key("dunwich", "wha-2")]);
+    forest.refresh(narrowed);
+    forest.apply(Action::FocusForest);
+    forest.refresh(overlapping(&panes));
+
+    assert_eq!(
+        fold_of(&forest, "wha-2"),
+        Some(false),
+        "{:#?}",
+        sketch(&forest)
+    );
+}
