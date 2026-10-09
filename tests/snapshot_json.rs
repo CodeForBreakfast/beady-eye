@@ -285,7 +285,7 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(tree["cycles"], json!([]));
     assert_eq!(
         tree["counts"],
-        json!({"total": 5, "finished": 1, "live_agents": 2, "anomalies": 3})
+        json!({"total": 5, "finished": 1, "live_agents": 2, "anomalies": 2})
     );
 }
 
@@ -349,7 +349,7 @@ fn a_node_carries_every_field_the_contract_names() {
                 "drawn_on": "own",
             }],
             "agent": null,
-            "anomalies": [{"rule": "orphan-claim"}],
+            "anomalies": [],
             "orphaned_dependencies": [],
         })
     );
@@ -389,13 +389,24 @@ fn a_node_carries_every_anomaly_that_fires_on_it() {
 
     assert_eq!(
         node(tree, "dun-7.3")["anomalies"],
-        json!([{"rule": "orphan-claim"}, {"rule": "stale-claim", "days": 60}])
+        json!([{"rule": "stale-claim", "days": 60}]),
+        "under dun-7's pane, so only its age is held against it"
     );
     assert_eq!(
         node(tree, "dun-7.2")["anomalies"],
         json!([{"rule": "stale-pane"}])
     );
     assert_eq!(node(tree, "dun-7")["anomalies"], json!([]));
+
+    let unseated = dunwich_with(Fake::holding(beads(
+        r#"[{"id":"dun-8","title":"survey the quay","status":"in_progress",
+             "updated_at":"2026-07-01T09:00:00Z"}]"#,
+    )));
+    let emitted = emit(&panes(), &unseated, Filter::All);
+    assert_eq!(
+        node(&emitted["trees"][0], "dun-8")["anomalies"],
+        json!([{"rule": "orphan-claim"}, {"rule": "stale-claim", "days": 60}])
+    );
 }
 
 #[test]
