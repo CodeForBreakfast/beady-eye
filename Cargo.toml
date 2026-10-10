@@ -1,6 +1,6 @@
 [package]
 name = "beady-eye"
-version = "0.25.0"
+version = "0.26.0"
 edition = "2021"
 rust-version = "1.88"
 description = "One unblinking eye over all your beads trackers. Shows the trees of work and the agents on them, wakes an agent when a bead it waits on changes, and settles pull-request waits from GitHub."
