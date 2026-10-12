@@ -484,6 +484,9 @@ mod tests {
         Project {
             name: name.to_string(),
             path: path.into(),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,

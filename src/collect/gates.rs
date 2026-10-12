@@ -541,6 +541,9 @@ mod tests {
         Project {
             name: name.to_string(),
             path: PathBuf::from(format!("/nowhere/{name}")),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,

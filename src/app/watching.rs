@@ -627,6 +627,7 @@ mod tests {
                 "exec".to_string(),
                 ".".to_string(),
             ]),
+            server: None,
         };
         let line: Value =
             serde_json::from_str(&freshness_line("dunwich", &reach, None, None, &Events::Off))
