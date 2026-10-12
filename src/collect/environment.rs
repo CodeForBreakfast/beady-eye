@@ -51,6 +51,37 @@ pub fn ambient_credential() -> Option<String> {
     std::env::var(CREDENTIAL_VAR).ok()
 }
 
+/// The variables bd reads as config that say who is writing rather than
+/// where: the actor a response is recorded under.
+const SAYS_WHO: [&str; 2] = ["BEADS_ACTOR", "BD_ACTOR"];
+
+/// Whether bd could take `name` as a choice of tracker. bd reads its server
+/// and database from `BEADS_` variables, and any config key from a `BD_` one,
+/// so every one of those counts bar the credential, which only authenticates,
+/// and the actor.
+fn picks_a_tracker(name: &str) -> bool {
+    (name.starts_with("BEADS_") || name.starts_with("BD_"))
+        && name != CREDENTIAL_VAR
+        && !SAYS_WHO.contains(&name)
+}
+
+/// Take the caller's choice of tracker out of `bdi`'s own environment, so no
+/// child started after this inherits it: not the command that enters the
+/// project's directory, and not bd.
+///
+/// A permission rule naming a project reads the command line, and a variable
+/// the caller exported is not on it. What entering the directory sets still
+/// reaches bd, because that is the project's own config.
+pub fn forget_the_callers_tracker() {
+    let chosen: Vec<_> = std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| name.to_str().is_some_and(picks_a_tracker))
+        .collect();
+    for name in chosen {
+        std::env::remove_var(name);
+    }
+}
+
 /// The environment one project's tracker is read with.
 ///
 /// A shell that has entered the project's directory is already configured for
@@ -511,6 +542,27 @@ mod tests {
     use crate::collect::run::testing::{every_failure_kind, FakeRunner};
     use crate::collect::run::{FailureKind, RealRunner};
     use std::path::PathBuf;
+
+    #[test]
+    fn every_beads_and_bd_variable_picks_a_tracker_bar_the_credential_and_the_actor() {
+        for name in [
+            "BEADS_DOLT_SERVER_DATABASE",
+            "BEADS_DOLT_SERVER_HOST",
+            "BEADS_DIR",
+            "BD_DB",
+        ] {
+            assert!(picks_a_tracker(name), "{name}");
+        }
+        for name in [
+            "BEADS_DOLT_PASSWORD",
+            "BEADS_ACTOR",
+            "BD_ACTOR",
+            "PATH",
+            "BEADSX",
+        ] {
+            assert!(!picks_a_tracker(name), "{name}");
+        }
+    }
 
     /// A project's directory, named so that nothing is ever there.
     ///

@@ -9,7 +9,9 @@
 #                         was, with what.
 #   BDI_SHIM_DIRENV_ENV   file holding what `env -0` writes in the directory
 #                         this was asked to enter. Where it names one that is
-#                         there, the shim answers with it; where it does not,
+#                         there, the shim answers with what it inherited and
+#                         then that file, which wins as an `.envrc` wins over
+#                         what direnv inherits; where it does not,
 #                         the refusal below stands. That is what lets one
 #                         suite be both a machine that has direnv and a
 #                         machine that has not.
@@ -22,6 +24,7 @@ if [ -n "${BDI_SHIM_DIRENV_RAN:-}" ]; then
 fi
 
 if [ -n "${BDI_SHIM_DIRENV_ENV:-}" ] && [ -f "${BDI_SHIM_DIRENV_ENV}" ]; then
+  env -0
   cat "${BDI_SHIM_DIRENV_ENV}"
   exit 0
 fi

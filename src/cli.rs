@@ -586,6 +586,7 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
         );
     };
     let argv = bd::passed_through(&project.path, asked)?;
+    environment::forget_the_callers_tracker();
     let env = environment::tracker_env(
         &RealRunner,
         project,
