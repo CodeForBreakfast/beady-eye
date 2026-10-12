@@ -263,7 +263,7 @@ mod tests {
     use chrono::Utc;
     use pretty_assertions::assert_eq;
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
     /// A herdr that remembers what it was asked. It answers nothing, because
@@ -386,6 +386,7 @@ mod tests {
             read_at: BTreeMap::new(),
             speaks_until: BTreeMap::new(),
             collected: vec![tree],
+            out_of_focus: BTreeSet::new(),
             projects: vec!["dunwich".to_string()],
             scope: Scope::default(),
         }

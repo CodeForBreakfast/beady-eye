@@ -6,6 +6,7 @@
 //! terminal, a forest or a tail, and nothing that produces an event names
 //! the loop.
 
+use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use ratatui::crossterm::event::KeyEvent;
 use crate::app::{armed_unread, Arming, Asked, Awaited, Outstanding, Reading, Wanted};
 use crate::collect::changes::Heard;
 use crate::collect::panes::Answer;
+use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Notch, Typing};
 
@@ -43,6 +45,9 @@ pub(super) enum Event {
     Covered(String),
     /// A collection has come back.
     Collected(Box<Snapshot>),
+    /// What was standing, drawn again under a new focus. No read was asked
+    /// for it, so it answers none.
+    Redrawn(Box<Snapshot>),
     /// The provider has said what is on a pane, or would not say.
     Tailed(Answer),
     /// Something outside has asked `bdi` to stop.
@@ -261,6 +266,11 @@ pub(super) trait View {
     /// the view down when the answer is no.
     fn bead_still_shown(&self) -> bool;
 
+    /// The beads the forest is focused on, or none. The loop tells the
+    /// collector whenever this changes, so a collection builds only the
+    /// trees the screen draws.
+    fn focused_on(&self) -> BTreeSet<BeadKey>;
+
     /// Go to the bead the bead view's ring is on, reporting whether it went.
     ///
     /// Nothing where the ring is on no bead, or on one the forest draws
@@ -344,6 +354,8 @@ pub(super) fn drive(
 ) -> anyhow::Result<()> {
     let mut showing = Showing::Forest;
     let mut drawn_at = Utc::now();
+    // The collector starts focused where the view does.
+    let mut focus = Focus::starting(view.focused_on());
     view.draw(showing, drawn_at)?;
 
     while let Some(waited) = wait(
@@ -368,9 +380,14 @@ pub(super) fn drive(
             // each of them does about the screen it says below.
             Waited::Aged => ran_out(view, drawn_at, Utc::now()),
             Waited::Event(event) => {
-                let Some(changed) =
-                    answered(view, &mut outstanding, &mut reading, &mut showing, event)
-                else {
+                let Some(changed) = answered(
+                    view,
+                    &mut outstanding,
+                    &mut reading,
+                    &mut focus,
+                    &mut showing,
+                    event,
+                ) else {
                     return Ok(());
                 };
                 changed
@@ -385,6 +402,7 @@ pub(super) fn drive(
         let now = Utc::now();
         let told = asks_for_what_is_due(view, &mut outstanding, &mut reading, now);
         let lapsed = view.lapsed(&reading.lapsed(now));
+        focus.refocused(view, ask);
         outstanding.sends(ask, now);
         view.reread(now);
         // A run reading a config file looks at it here; a run that found no
@@ -565,6 +583,7 @@ fn answered(
     view: &mut dyn View,
     outstanding: &mut Outstanding,
     reading: &mut Reading,
+    focus: &mut Focus,
     showing: &mut Showing,
     event: Event,
 ) -> Option<bool> {
@@ -743,20 +762,21 @@ fn answered(
                 &snapshot.speaks_until,
                 Utc::now(),
             );
-            view.collected(*snapshot);
-            // A collection that moved the selection off the bead the view
-            // was opened on takes the view down with it: drawn from the
-            // selection, it would show another bead, or nothing, under a
-            // title the reader did not open, and a forest that looked
-            // ordinary would go on answering keys as a bead.
-            if *showing == Showing::Bead && !view.bead_still_shown() {
-                *showing = Showing::Forest;
+            if focus.is_answered() {
+                shows(view, showing, *snapshot);
             }
             // Told after the rows land, and told whatever came of the
             // collection that ended: another may have been waiting behind
             // it, and where none was, a line left saying it was being
             // read would say so over rows that had already arrived.
             view.collecting(outstanding.awaited());
+            true
+        }
+        Event::Redrawn(snapshot) => {
+            focus.redrawn();
+            if focus.is_answered() {
+                shows(view, showing, *snapshot);
+            }
             true
         }
         Event::Tailed(answer) => view.tailed(answer, Utc::now()),
@@ -766,6 +786,60 @@ fn answered(
         Event::Signalled => return None,
     };
     Some(pressed || changed)
+}
+
+/// The beads the collector was last told the view is focused on, and how
+/// many of those tellings it has yet to answer with a redraw.
+///
+/// The collector answers its asks one at a time and in order, so any
+/// snapshot arriving while a telling is unanswered was drawn under a focus
+/// the view has left. Shown, it would draw the trees of that focus, and
+/// the view would take a bead it is now focused on for gone.
+struct Focus {
+    told: BTreeSet<BeadKey>,
+    unanswered: usize,
+}
+
+impl Focus {
+    fn starting(told: BTreeSet<BeadKey>) -> Self {
+        Focus {
+            told,
+            unanswered: 0,
+        }
+    }
+
+    /// Tell the collector the beads the view is focused on, where they are
+    /// not the ones it was last told. A key, or a collection that ended the
+    /// focus, changes them.
+    fn refocused(&mut self, view: &dyn View, ask: &Sender<Asked>) {
+        let focused_on = view.focused_on();
+        if focused_on != self.told && ask.send(Asked::Focused(focused_on.clone())).is_ok() {
+            self.told = focused_on;
+            self.unanswered += 1;
+        }
+    }
+
+    fn redrawn(&mut self) {
+        self.unanswered = self.unanswered.saturating_sub(1);
+    }
+
+    /// Whether a snapshot arriving now was drawn under the focus in force.
+    fn is_answered(&self) -> bool {
+        self.unanswered == 0
+    }
+}
+
+/// Show a snapshot in place of the one on the screen.
+fn shows(view: &mut dyn View, showing: &mut Showing, snapshot: Snapshot) {
+    view.collected(snapshot);
+    // A collection that moved the selection off the bead the view was
+    // opened on takes the view down with it: drawn from the selection, it
+    // would show another bead, or nothing, under a title the reader did not
+    // open, and a forest that looked ordinary would go on answering keys as
+    // a bead.
+    if *showing == Showing::Bead && !view.bead_still_shown() {
+        *showing = Showing::Forest;
+    }
 }
 
 /// Ask for a read, and say so on the screen at the instant it was asked for
@@ -851,6 +925,9 @@ mod tests {
         /// was opened on, for the tests about one landing behind the view.
         collection_moves_the_selection: bool,
         collected: usize,
+        /// The beads the forest is focused on, which a test sets between
+        /// events as a key or a collection would.
+        focused_on: BTreeSet<BeadKey>,
         /// What the view was told is outstanding, in the order it was told.
         /// What and not how many: a project line answers for its own rows, so
         /// a test that only counted could not tell a refresh of one project
@@ -1011,8 +1088,15 @@ mod tests {
             self.kept += 1;
         }
 
+        /// Shift+F focuses the forest on one bead, and puts it back where it
+        /// was focused, as the forest does.
         fn apply(&mut self, action: Action) -> bool {
             self.applied.push(action);
+            if action == Action::FocusForest && self.focused_on.is_empty() {
+                self.focused_on.insert(a_focused_bead());
+            } else if action == Action::FocusForest {
+                self.focused_on.clear();
+            }
             !(action == Action::ShowBead && self.not_a_bead)
         }
 
@@ -1033,6 +1117,10 @@ mod tests {
 
         fn bead_still_shown(&self) -> bool {
             !(self.collection_moves_the_selection && self.collected > 0)
+        }
+
+        fn focused_on(&self) -> BTreeSet<BeadKey> {
+            self.focused_on.clone()
         }
 
         fn follow(&mut self) -> bool {
@@ -1118,6 +1206,9 @@ mod tests {
             Asked::Read(wanted) => wanted,
             Asked::Reloaded(cfg) => {
                 panic!("nobody wrote a config, and the collector was sent {cfg:?}")
+            }
+            Asked::Focused(beads) => {
+                panic!("nothing focused the forest, and the collector was sent {beads:?}")
             }
         }
     }
@@ -2449,6 +2540,91 @@ mod tests {
             Box::new(Config::from_toml),
             Utc::now(),
         )
+    }
+
+    fn a_focused_bead() -> BeadKey {
+        BeadKey {
+            project: "arkham".to_string(),
+            id: "ark-1".to_string(),
+        }
+    }
+
+    /// The collector is told the beads the forest is focused on each time
+    /// they change, and only then. What it draws again for them answers no
+    /// read, so nothing outstanding is said to have come back.
+    #[test]
+    fn the_collector_is_told_when_the_focus_changes_and_its_redraw_answers_no_read() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Redrawn(Box::new(a_snapshot())),
+            Event::Key(key(KeyCode::Char('j'))),
+            Event::Key(key(KeyCode::Char('F'))),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(
+            asked.try_iter().collect::<Vec<_>>(),
+            [
+                Asked::Focused(BTreeSet::from([a_focused_bead()])),
+                Asked::Focused(BTreeSet::new())
+            ]
+        );
+        assert_eq!(view.collected, 1, "the redraw is shown");
+        assert!(
+            view.awaited.is_empty(),
+            "and nothing is said about the reads: {:?}",
+            view.awaited
+        );
+    }
+
+    /// A snapshot drawn under a focus the reader has since left is not
+    /// shown, so it cannot say a bead the forest is now focused on has
+    /// gone. Only the redraw for the focus in force is shown, and a
+    /// collection landing before it still answers its read.
+    #[test]
+    fn a_snapshot_drawn_under_a_focus_since_left_is_not_shown() {
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let events = waiting(vec![
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Key(key(KeyCode::Char('F'))),
+            Event::Redrawn(Box::new(a_snapshot())),
+            Event::Collected(Box::new(a_snapshot())),
+            Event::Redrawn(Box::new(a_snapshot())),
+            Event::Redrawn(Box::new(a_snapshot())),
+        ]);
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        assert_eq!(asked.try_iter().count(), 3, "one ask for each change");
+        assert_eq!(view.collected, 1, "only the last redraw is shown");
+        assert_eq!(
+            view.awaited.last(),
+            Some(&Vec::new()),
+            "the collection still said what was left outstanding"
+        );
     }
 
     /// The collector is told the config the reader has written, and it is
