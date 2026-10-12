@@ -1215,7 +1215,7 @@ detached
     fn a_project_on_a_server_is_not_asked_where_it_is_worked() {
         let path = a_config_file_holding(
             "on-a-server",
-            "[dolt]\nhost = \"db.example.invalid\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n\n[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
+            "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"reader\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n\n[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
         );
         let runner =
             FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);

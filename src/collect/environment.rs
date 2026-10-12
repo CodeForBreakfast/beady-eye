@@ -196,16 +196,13 @@ pub fn trackers_kept_here() -> Option<PathBuf> {
 /// `.beads`, so they say it whatever an environment command produced.
 fn where_it_sits(server: &Server) -> Env {
     [
-        ("BEADS_DOLT_SERVER_HOST", Some(server.host.clone())),
-        (
-            "BEADS_DOLT_SERVER_PORT",
-            server.port.map(|port| port.to_string()),
-        ),
-        ("BEADS_DOLT_SERVER_DATABASE", Some(server.database.clone())),
+        ("BEADS_DOLT_SERVER_HOST", server.host.clone()),
+        ("BEADS_DOLT_SERVER_PORT", server.port.to_string()),
+        ("BEADS_DOLT_SERVER_DATABASE", server.database.clone()),
         ("BEADS_DOLT_SERVER_USER", server.user.clone()),
     ]
     .into_iter()
-    .filter_map(|(name, value)| Some((name.to_string(), value?)))
+    .map(|(name, value)| (name.to_string(), value))
     .collect()
 }
 
@@ -912,9 +909,9 @@ mod tests {
             path: dir.join("arkham"),
             server: Some(Server {
                 host: "db.example.invalid".to_string(),
-                port: Some(3306),
+                port: 3306,
                 database: "arkham".to_string(),
-                user: Some("arkham".to_string()),
+                user: "arkham".to_string(),
             }),
             ..ambient_project()
         }
@@ -961,27 +958,6 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// What `[dolt]` leaves unsaid is bd's to default, so `bdi` says nothing
-    /// about it rather than a value of its own.
-    #[test]
-    fn a_server_with_no_port_or_user_tells_bd_neither() {
-        let dir = a_fresh_directory("no-port-or-user");
-        let mut project = on_a_server(&dir);
-        project.server = Some(Server {
-            port: None,
-            user: None,
-            ..project.server.unwrap()
-        });
-
-        let env = tracker_env(&FakeRunner::default(), &project, None, None).unwrap();
-
-        assert_eq!(
-            env.keys().collect::<Vec<_>>(),
-            ["BEADS_DOLT_SERVER_DATABASE", "BEADS_DOLT_SERVER_HOST"]
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
     /// The server's word outranks whatever entering an environment produced,
     /// since the config said where this tracker sits.
     #[test]
@@ -995,16 +971,21 @@ mod tests {
             "mise exec -- env -0",
             &exported(&[
                 ("BEADS_DOLT_SERVER_DATABASE", "dunwich"),
+                ("BEADS_DOLT_SERVER_PORT", "3307"),
+                ("BEADS_DOLT_SERVER_USER", "dunwich"),
                 ("PATH", "/mise/bin"),
             ]),
         );
 
         let env = tracker_env(&runner, &project, None, None).unwrap();
 
-        assert_eq!(
-            env.get("BEADS_DOLT_SERVER_DATABASE").map(String::as_str),
-            Some("arkham")
-        );
+        for (name, value) in [
+            ("BEADS_DOLT_SERVER_DATABASE", "arkham"),
+            ("BEADS_DOLT_SERVER_PORT", "3306"),
+            ("BEADS_DOLT_SERVER_USER", "arkham"),
+        ] {
+            assert_eq!(env.get(name).map(String::as_str), Some(value), "{name}");
+        }
         assert_eq!(env.get("PATH").map(String::as_str), Some("/mise/bin"));
         assert_eq!(
             runner.call("mise exec -- env -0").cwd.as_deref(),

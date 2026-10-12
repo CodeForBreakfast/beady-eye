@@ -78,7 +78,7 @@ fn a_response_reaches_a_tracker_on_a_server() {
     std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
-        "[dolt]\nhost = \"db.example.invalid\"\n\n\
+        "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"kadath\"\n\n\
          [[projects]]\nname = \"kadath\"\ndatabase = \"kadath\"\n",
     )
     .expect("the config is ours to write");

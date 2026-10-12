@@ -305,7 +305,6 @@ pub struct Reach {
 #[serde(default, deny_unknown_fields)]
 pub struct Dolt {
     pub host: Option<String>,
-    /// bd's own default where it is not written.
     pub port: Option<u16>,
     pub user: Option<String>,
 }
@@ -337,11 +336,19 @@ impl Dolt {
         let Some(host) = &self.host else {
             anyhow::bail!("{name} names a database, but [dolt] names no host to find it on");
         };
+        let Some(port) = self.port else {
+            anyhow::bail!("{name} names a database, but [dolt] names no port to find it on");
+        };
+        let Some(user) = project.user.clone().or_else(|| self.user.clone()) else {
+            anyhow::bail!(
+                "{name} names a database, but neither it nor [dolt] names a user to read it as"
+            );
+        };
         Ok(Some(Server {
             host: host.clone(),
-            port: self.port,
+            port,
             database: database.clone(),
-            user: project.user.clone().or_else(|| self.user.clone()),
+            user,
         }))
     }
 }
@@ -351,11 +358,9 @@ impl Dolt {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Server {
     pub host: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
+    pub port: u16,
     pub database: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
+    pub user: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -2151,15 +2156,15 @@ path = "/home/user/kadath"
             [
                 Some(Server {
                     host: "db.example.invalid".to_string(),
-                    port: Some(3306),
+                    port: 3306,
                     database: "arkham".to_string(),
-                    user: Some("arkham".to_string()),
+                    user: "arkham".to_string(),
                 }),
                 Some(Server {
                     host: "db.example.invalid".to_string(),
-                    port: Some(3306),
+                    port: 3306,
                     database: "dunwich".to_string(),
-                    user: Some("reader".to_string()),
+                    user: "reader".to_string(),
                 }),
                 None,
             ]
@@ -2226,7 +2231,7 @@ path = "/home/user/kadath"
     fn projects_on_two_servers_do_not_reach_alike() {
         let on = |host: &str| {
             Config::from_toml(&format!(
-                "[dolt]\nhost = \"{host}\"\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n"
+                "[dolt]\nhost = \"{host}\"\nport = 3306\nuser = \"reader\"\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n"
             ))
             .expect("parses")
             .keeping_trackers_in(Some(Path::new("/k")))
@@ -2271,6 +2276,31 @@ path = "/home/user/kadath"
             err.contains("arkham") && err.contains("[dolt]"),
             "got: {err}"
         );
+    }
+
+    /// bd takes a port or a user it is not told from wherever else it finds
+    /// one, the shell `bdi` was started in included, so a database entry
+    /// says both.
+    #[test]
+    fn a_database_with_no_port_to_find_it_on_is_refused() {
+        let err = Config::from_toml(
+            "[dolt]\nhost = \"db.example.invalid\"\nuser = \"reader\"\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("arkham") && err.contains("port"), "got: {err}");
+    }
+
+    #[test]
+    fn a_database_with_no_user_to_read_it_as_is_refused() {
+        let err = Config::from_toml(
+            "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("arkham") && err.contains("user"), "got: {err}");
     }
 
     /// bd reads a checkout's user from the checkout, so a user written beside

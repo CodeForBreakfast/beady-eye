@@ -194,7 +194,7 @@ its project. The entry names the tracker's **`database`** in place of a
 ```toml
 [dolt]
 host = "db.example.invalid"
-port = 3306        # bd's own default where it is not written
+port = 3306
 user = "reader"    # the user every entry below is read as, unless it names its own
 
 [[projects]]
@@ -205,7 +205,9 @@ credential_command = "secret-tool lookup tracker innsmouth"
 ```
 
 bd is told where the tracker is in `BEADS_DOLT_SERVER_HOST`, `_PORT`,
-`_DATABASE` and `_USER`, and finds no `.beads` of the project's. So `bdi` runs
+`_DATABASE` and `_USER`, and finds no `.beads` of the project's. An entry
+needs all four, because bd would take any it is not told from the shell `bdi`
+was started in. So `bdi` runs
 it in a directory of its own under `~/.cache/beady-eye/trackers/`, one per
 database, and makes that directory again whenever it is gone. The password
 comes from the entry's `credential_command` or the shell `bdi` was started in,

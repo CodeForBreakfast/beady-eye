@@ -68,7 +68,7 @@ fn a_tracker_named_by_its_database_lists_what_its_checkout_lists() {
     .expect("the config is ours to write");
     let on_a_server = a_home_configured_with(
         "server-database",
-        "[dolt]\nhost = \"db.example.invalid\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n",
+        "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"reader\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n",
     );
     let read = |home: &Path| {
         let bd = ShimmedTracker::beside(home);
