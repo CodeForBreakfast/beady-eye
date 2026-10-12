@@ -6,14 +6,16 @@
 //! password in any of them. Every question asked with it is in `bd`.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
 use crate::collect::run::{found_on_path, Env, RunFailure, Runner, PATH};
 use crate::collect::tracker::OpenFailure;
-use crate::config::{Command, Project};
+use crate::config::{Command, Project, Server};
 
 /// What `bdi` runs inside a project's environment command to read the
 /// environment back. NUL-separated, because a value may hold a newline.
@@ -152,6 +154,9 @@ pub fn tracker_env(
     let mut env = ambient.map_or_else(Env::new, |password| {
         Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())])
     });
+    if project.server.is_some() {
+        kept_for_a_server(&project.path).map_err(|_| OpenFailure::NoEnvironment)?;
+    }
     if let Some(command) = project
         .environment_command
         .clone()
@@ -164,6 +169,9 @@ pub fn tracker_env(
         .map_err(|_| OpenFailure::NoEnvironment)?;
         env.extend(captured);
     }
+    if let Some(server) = &project.server {
+        env.extend(where_it_sits(server));
+    }
     if let Some(command) = &project.credential_command {
         let password = runner
             .run("sh", &["-c", command], Some(&project.path), &lending(&env))
@@ -174,6 +182,78 @@ pub fn tracker_env(
         );
     }
     Ok(env)
+}
+
+/// What a tracker with no checkout keeps in the directory `bdi` reads it
+/// from. bd finds a tracker only from a `.beads` holding a `metadata.json` or
+/// a `config.yaml`, and this one says no more than that the tracker is on a
+/// server, so that where on it comes from [`where_it_sits`] alone.
+///
+/// An empty `config.yaml` would do as much, but bd 1.3.0 then reads a
+/// tracker on a server only where its host is not this machine's.
+const ON_A_SERVER: &str = r#"{"backend":"dolt","dolt_mode":"server"}"#;
+
+/// Make the directory a tracker on a server is read from, where it is not
+/// already made. bd writes its locks there, so it is `bdi`'s own rather than
+/// anywhere shared.
+fn kept_for_a_server(dir: &Path) -> std::io::Result<()> {
+    let beads = dir.join(".beads");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(PRIVATE_DIRECTORY)
+        .create(&beads)?;
+    let metadata = beads.join("metadata.json");
+    if std::fs::read(&metadata).is_ok_and(|held| held == ON_A_SERVER.as_bytes()) {
+        return Ok(());
+    }
+    written_whole(&metadata, |writing| {
+        writing.write_all(ON_A_SERVER.as_bytes())
+    })
+}
+
+/// Writes `file` under a name no other writer uses and renames it into
+/// place, so a reader finds the old contents or the new and never part of
+/// either, even while another thread of this process writes the same file.
+fn written_whole(
+    file: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    static WRITES: AtomicU64 = AtomicU64::new(0);
+    let partial = file.with_extension(format!(
+        "{}.{}",
+        std::process::id(),
+        WRITES.fetch_add(1, Ordering::Relaxed)
+    ));
+    write(
+        &mut std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(PRIVATE_FILE)
+            .open(&partial)?,
+    )?;
+    std::fs::rename(partial, file)
+}
+
+/// Where this user's trackers on a server are read from, one directory per
+/// database, beside the environments [`EnvironmentCache`] keeps. Whatever is
+/// there `bdi` makes again when it is gone.
+pub fn trackers_kept_here() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("HOME")?).join(".cache/beady-eye/trackers"))
+}
+
+/// The variables bd reads where a tracker sits before anything in its
+/// `.beads`, so they say it whatever an environment command produced.
+fn where_it_sits(server: &Server) -> Env {
+    [
+        ("BEADS_DOLT_SERVER_HOST", server.host.clone()),
+        ("BEADS_DOLT_SERVER_PORT", server.port.to_string()),
+        ("BEADS_DOLT_SERVER_DATABASE", server.database.clone()),
+        ("BEADS_DOLT_SERVER_USER", server.user.clone()),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value))
+    .collect()
 }
 
 /// What entering each project's directory produced on an earlier run, kept
@@ -265,16 +345,9 @@ impl EnvironmentCache {
             .recursive(true)
             .mode(PRIVATE_DIRECTORY)
             .create(&self.dir)?;
-        let file = self.file_for(&kept.path);
-        let partial = file.with_extension(std::process::id().to_string());
-        let mut writing = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(PRIVATE_FILE)
-            .open(&partial)?;
-        serde_json::to_writer(&mut writing, kept)?;
-        std::fs::rename(partial, file)
+        written_whole(&self.file_for(&kept.path), |writing| {
+            Ok(serde_json::to_writer(writing, kept)?)
+        })
     }
 
     /// One file per project, so projects read side by side never write the
@@ -508,6 +581,9 @@ mod tests {
         Project {
             name: "arkham".to_string(),
             path: project_dir(),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,
@@ -752,6 +828,9 @@ mod tests {
         let project = Project {
             name: "arkham".to_string(),
             path: project_dir(),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             prefix: None,
@@ -855,6 +934,9 @@ mod tests {
         let project = Project {
             name: "arkham".to_string(),
             path: project_dir(),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: Some("op read the/password".to_string()),
             prefix: None,
@@ -883,6 +965,142 @@ mod tests {
             call.env.is_empty(),
             "the credential command gets no credential"
         );
+    }
+
+    /// A project on a server, read in a directory under `dir`.
+    fn on_a_server(dir: &Path) -> Project {
+        Project {
+            path: dir.join("arkham"),
+            server: Some(Server {
+                host: "db.example.invalid".to_string(),
+                port: 3306,
+                database: "arkham".to_string(),
+                user: "arkham".to_string(),
+            }),
+            ..ambient_project()
+        }
+    }
+
+    fn a_fresh_directory(named: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// bd is told where the tracker sits by the variables it reads first, and
+    /// finds a tracker at all only from a `.beads` saying it is on a server,
+    /// which `bdi` writes into the directory it keeps for it.
+    #[test]
+    fn a_project_on_a_server_is_read_with_where_its_tracker_sits() {
+        let dir = a_fresh_directory("on-a-server");
+        let runner = FakeRunner::default();
+
+        let env = tracker_env(&runner, &on_a_server(&dir), Some("hunter2"), None).unwrap();
+
+        assert_eq!(
+            env,
+            Env::from([
+                (CREDENTIAL_VAR.to_string(), "hunter2".to_string()),
+                (
+                    "BEADS_DOLT_SERVER_HOST".to_string(),
+                    "db.example.invalid".to_string()
+                ),
+                ("BEADS_DOLT_SERVER_PORT".to_string(), "3306".to_string()),
+                (
+                    "BEADS_DOLT_SERVER_DATABASE".to_string(),
+                    "arkham".to_string()
+                ),
+                ("BEADS_DOLT_SERVER_USER".to_string(), "arkham".to_string()),
+            ])
+        );
+        let metadata = std::fs::read_to_string(dir.join("arkham/.beads/metadata.json"))
+            .expect("bdi wrote the tracker's metadata");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&metadata).unwrap(),
+            serde_json::json!({"backend": "dolt", "dolt_mode": "server"})
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The server's word outranks whatever entering an environment produced,
+    /// since the config said where this tracker sits.
+    #[test]
+    fn a_server_projects_environment_cannot_move_its_tracker() {
+        let dir = a_fresh_directory("environment-cannot-move");
+        let project = Project {
+            environment_command: Some(Command::Line("mise exec --".to_string())),
+            ..on_a_server(&dir)
+        };
+        let runner = FakeRunner::default().with(
+            "mise exec -- env -0",
+            &exported(&[
+                ("BEADS_DOLT_SERVER_DATABASE", "dunwich"),
+                ("BEADS_DOLT_SERVER_PORT", "3307"),
+                ("BEADS_DOLT_SERVER_USER", "dunwich"),
+                ("PATH", "/mise/bin"),
+            ]),
+        );
+
+        let env = tracker_env(&runner, &project, None, None).unwrap();
+
+        for (name, value) in [
+            ("BEADS_DOLT_SERVER_DATABASE", "arkham"),
+            ("BEADS_DOLT_SERVER_PORT", "3306"),
+            ("BEADS_DOLT_SERVER_USER", "arkham"),
+        ] {
+            assert_eq!(env.get(name).map(String::as_str), Some(value), "{name}");
+        }
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/mise/bin"));
+        assert_eq!(
+            runner.call("mise exec -- env -0").cwd.as_deref(),
+            Some(dir.join("arkham").as_path()),
+            "the environment is entered in the directory kept for the tracker"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Two entries naming one database keep one directory, and a collection
+    /// reads them at once.
+    #[test]
+    fn entries_sharing_a_database_are_first_read_together() {
+        for attempt in 0..20 {
+            let dir = a_fresh_directory(&format!("first-read-together-{attempt}"));
+            let readers = 8;
+            let start = std::sync::Barrier::new(readers);
+            std::thread::scope(|scope| {
+                for _ in 0..readers {
+                    scope.spawn(|| {
+                        start.wait();
+                        kept_for_a_server(&dir).expect("the directory is kept");
+                    });
+                }
+            });
+            assert_eq!(
+                std::fs::read_to_string(dir.join(".beads/metadata.json")).unwrap(),
+                ON_A_SERVER
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    /// A directory that cannot be made is a tracker bd cannot find, so the
+    /// project is not read and its credential command does not run.
+    #[test]
+    fn a_server_project_whose_directory_cannot_be_made_is_not_read() {
+        let file = std::env::temp_dir().join(format!("bdi-kept-in-a-file-{}", std::process::id()));
+        std::fs::write(&file, "").unwrap();
+        let project = Project {
+            credential_command: Some("op read the/password".to_string()),
+            ..on_a_server(&file)
+        };
+
+        let failure = tracker_env(&FakeRunner::default(), &project, None, None).unwrap_err();
+
+        assert!(
+            matches!(failure, OpenFailure::NoEnvironment),
+            "got {failure:?}"
+        );
+        std::fs::remove_file(file).unwrap();
     }
 
     /// A single-tracker setup configures no credential and reaches its tracker
@@ -922,6 +1140,9 @@ mod tests {
         Project {
             name: "arkham".to_string(),
             path: project_dir(),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: Some(command.to_string()),
             prefix: None,

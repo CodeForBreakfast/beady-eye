@@ -38,6 +38,17 @@ credential_command = "secret-tool lookup tracker kadath"
 key    = "metadata.delivery_pr"
 render = "⇢ kadath/{}"
 
+[[projects]]
+name = "innsmouth"
+database = "innsmouth"
+user = "innsmouth"
+credential_command = "secret-tool lookup tracker innsmouth"
+
+[dolt]
+host = "db.example.invalid"
+port = 3306
+user = "reader"
+
 [roots.explicit]
 arkham = ["ark-1", "ark-10"]
 
@@ -106,8 +117,11 @@ cloned into differently-named directories.
 
 ## `[[projects]]`
 
-A `name` and the `path` of its repository. The name is how `bdi` tells one
-tracker's beads from another's, so no two projects share one.
+A `name` and the `path` of its repository, or the `database` its tracker
+keeps on a Dolt server, as
+[A project with no checkout](#a-project-with-no-checkout) describes. The
+name is how `bdi` tells one tracker's beads from another's, so no two
+projects share one.
 
 **`environment_command`** is the wrapper you would type yourself to enter the
 project's environment. A directory with an `.envrc`, on a machine with direnv,
@@ -170,6 +184,43 @@ The watcher reads the whole journal once when it starts, to find where it
 ends, and sends none of it. Where bd has pruned the journal past a record the
 watcher had not yet read, the watcher tells each consumer once that the
 journal is unreadable, and then sends the records bd kept.
+
+### A project with no checkout
+
+A tracker on a Dolt server can be read from a machine holding no checkout of
+its project. The entry names the tracker's **`database`** in place of a
+`path`, and **`[dolt]`** names the server every such entry sits on:
+
+```toml
+[dolt]
+host = "db.example.invalid"
+port = 3306
+user = "reader"    # the user every entry below is read as, unless it names its own
+
+[[projects]]
+name = "innsmouth"
+database = "innsmouth"
+user = "innsmouth"
+credential_command = "secret-tool lookup tracker innsmouth"
+```
+
+bd is told where the tracker is in `BEADS_DOLT_SERVER_HOST`, `_PORT`,
+`_DATABASE` and `_USER`, and finds no `.beads` of the project's. An entry
+needs all four, because bd would take any it is not told from the shell `bdi`
+was started in. So `bdi` runs
+it in a directory of its own under `~/.cache/beady-eye/trackers/`, one per
+database, and makes that directory again whenever it is gone. The password
+comes from the entry's `credential_command` or the shell `bdi` was started in,
+as it does for a checkout. A user that only reads the database is enough for
+`bdi`'s view and the watcher. `bdi bd`'s `human respond` and `bdi gates` write,
+and on a Dolt server bd's own commit of a write needs every privilege on the
+database.
+
+Without a checkout there is no environment to enter, so the tracker is read
+with the `bd` on `bdi`'s own `PATH`, unless the entry names an
+`environment_command` that supplies another. A project with no checkout holds
+no directory, so the directory `bdi` starts in never chooses it. It is read
+wherever `bdi` reads every project, and under `--project`.
 
 ## `[roots.explicit]`
 
@@ -1121,7 +1172,9 @@ behind something that terminates TLS.
 `bdi` speaks to no database. It asks bd, so what it reads is what bd reads. A
 tracker on a Dolt server authenticates, and the password reaches bd in
 `BEADS_DOLT_PASSWORD`, from the shell `bdi` was started in or from that
-project's `credential_command`. The store `bd init` makes is embedded Dolt,
+project's `credential_command`. Where the tracker is comes from the project's
+checkout, or from `[dolt]` for a project naming a `database`. The store
+`bd init` makes is embedded Dolt,
 authenticates to nothing, and needs neither.
 
 The two part company over the cheap question of whether anything moved, which

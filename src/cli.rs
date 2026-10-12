@@ -577,7 +577,8 @@ fn watcher_refused(refused: &changes::Refused) -> String {
 fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Result<ExitCode> {
     let text = std::fs::read_to_string(config)
         .with_context(|| format!("reading the config at {}", config.display()))?;
-    let cfg = Config::from_toml(&text)?;
+    let cfg = Config::from_toml(&text)?
+        .keeping_trackers_in(environment::trackers_kept_here().as_deref())?;
     let Some(project) = cfg.projects.iter().find(|p| p.name == project) else {
         anyhow::bail!(
             "{project} is not a project the config at {} names",
@@ -643,8 +644,9 @@ fn config_for_this_run(
     runner: &dyn Runner,
     launch: &Launch<'_>,
 ) -> anyhow::Result<Config> {
-    let cfg = scoped(Config::from_toml(text)?, runner, launch)?
-        .with_roots_named_on_the_command_line(launch.roots)?;
+    let cfg = Config::from_toml(text)?
+        .keeping_trackers_in(environment::trackers_kept_here().as_deref())?;
+    let cfg = scoped(cfg, runner, launch)?.with_roots_named_on_the_command_line(launch.roots)?;
     Ok(discovery::with_the_working_trees_git_lists(cfg, runner))
 }
 
@@ -1208,6 +1210,35 @@ detached
         std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
+    /// A project on a server has no checkout for git to be asked about, and
+    /// is read from the directory kept for its database.
+    #[test]
+    fn a_project_on_a_server_is_not_asked_where_it_is_worked() {
+        let path = a_config_file_holding(
+            "on-a-server",
+            "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"reader\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n\n[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
+        );
+        let runner =
+            FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
+
+        let cfg = read_config(&runner, &path, &every_project())
+            .expect("the config is ours to read")
+            .config;
+
+        assert_eq!(
+            directories_entered(&runner),
+            [Some(PathBuf::from("/srv/work/dunwich"))]
+        );
+        assert!(
+            cfg.projects[0]
+                .path
+                .ends_with(".cache/beady-eye/trackers/arkham"),
+            "read from {}",
+            cfg.projects[0].path.display()
+        );
+        std::fs::remove_file(&path).expect("the file is ours to remove");
+    }
+
     /// A run with no config file at all still has a scope to honour. The
     /// project it discovers is one project, so a scope naming a different one
     /// selects nothing and is refused — rather than starting on the project
@@ -1460,6 +1491,9 @@ detached
         crate::config::Project {
             name: "dunwich".to_string(),
             path: PathBuf::from("/srv/work/dunwich"),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,

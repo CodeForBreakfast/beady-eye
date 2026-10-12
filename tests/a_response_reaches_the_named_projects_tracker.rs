@@ -146,6 +146,31 @@ fn a_database_the_projects_own_directory_sets_still_reaches_bd() {
     assert_eq!(tracker.calls(), [RESPONDED]);
 }
 
+/// A project read from its server takes a response the same way, from the
+/// directory `bdi` keeps for its database.
+#[test]
+fn a_response_reaches_a_tracker_on_a_server() {
+    let home = std::env::temp_dir().join(format!("bdi-respond-on-a-server-{}", std::process::id()));
+    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
+    std::fs::write(
+        home.join(".config/beady-eye/config.toml"),
+        "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"kadath\"\n\n\
+         [[projects]]\nname = \"kadath\"\ndatabase = \"kadath\"\n",
+    )
+    .expect("the config is ours to write");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("kadath", RESPONDED, CLOSED);
+
+    let out = bdi(&home, &tracker, "bd kadath human respond kad-1 -r yes");
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(said(&out.stdout), CLOSED);
+    assert!(home
+        .join(".cache/beady-eye/trackers/kadath/.beads/metadata.json")
+        .exists());
+    std::fs::remove_dir_all(home).expect("the home is ours to remove");
+}
+
 /// What bd says and how it exits are the caller's, so a widget can tell a
 /// bead already closed from one recorded.
 #[test]
