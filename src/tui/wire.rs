@@ -201,10 +201,17 @@ fn report(source: &mut dyn Changes, to: &Sender<Event>) {
 /// both has to know nothing about where either has got to.
 pub(super) fn collector(mut collect: Collecting, asked: &Receiver<Asked>, to: &Sender<Event>) {
     while let Ok(asked) = asked.recv() {
+        let redrawn = matches!(asked, Asked::Focused(_));
         let Some(snapshot) = collect(asked) else {
             continue;
         };
-        if to.send(Event::Collected(Box::new(snapshot))).is_err() {
+        let snapshot = Box::new(snapshot);
+        let event = if redrawn {
+            Event::Redrawn(snapshot)
+        } else {
+            Event::Collected(snapshot)
+        };
+        if to.send(event).is_err() {
             return;
         }
     }
