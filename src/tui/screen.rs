@@ -5,6 +5,7 @@
 //! putting it back however the run ends is what its `Drop` is for. They are
 //! one module because the drawing reaches into the rows it draws.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
 
@@ -1207,6 +1208,10 @@ impl View for Screen {
         self.shown.bead_still_shown()
     }
 
+    fn focused_on(&self) -> BTreeSet<BeadKey> {
+        self.shown.forest.focused_on()
+    }
+
     fn follow(&mut self) -> bool {
         self.shown.follow_related()
     }
@@ -1703,6 +1708,7 @@ mod tests {
             read_at: BTreeMap::new(),
             speaks_until: BTreeMap::new(),
             collected: trees,
+            out_of_focus: BTreeSet::new(),
             projects: vec!["grove".to_string()],
             scope: Scope::default(),
         }
@@ -4710,7 +4716,7 @@ mod tests {
         snapshot
     }
 
-    /// The rows of a line over roots a key put behind it, whichever key.
+    /// The rows of a line over roots the filter put behind it.
     fn lines_holding_roots_back(shown: &mut Shown) -> Vec<String> {
         let rows = forest_band(shown, 100, 24);
         shown
@@ -4720,7 +4726,7 @@ mod tests {
             .enumerate()
             .filter(|(_, line)| {
                 matches!(&line.content, Content::Group(group)
-                    if matches!(group.kind, GroupKind::OutOfTheWay | GroupKind::HiddenTrees))
+                    if group.kind == GroupKind::HiddenTrees)
             })
             .map(|(at, _)| rows[at].trim_end().to_string())
             .collect()
@@ -4737,10 +4743,7 @@ mod tests {
             .forest
             .focus_when_drawn(vec![bead("grove", "grv-1.1")]);
 
-        assert_eq!(
-            lines_holding_roots_back(&mut shown),
-            vec!["  └─▸ 1 other tree", "  └─▸ 1 other tree"]
-        );
+        assert_eq!(lines_holding_roots_back(&mut shown), Vec::<String>::new());
         let foot = foot_of(&mut shown, 100, 24);
         assert!(foot.contains("F whole forest"), "{foot:?}");
         assert!(foot.contains("showing focused beads"), "{foot:?}");

@@ -572,6 +572,12 @@ pub struct Snapshot {
     /// trackers again. Not part of the JSON contract.
     #[serde(skip)]
     pub collected: Vec<Arc<Tree>>,
+    /// The roots of the trees the board's focus left unbuilt. What is
+    /// beneath them is unknown to this snapshot, which is not the same as
+    /// nothing being there. Not part of the JSON contract: `--json` is
+    /// never focused.
+    #[serde(skip)]
+    pub out_of_focus: BTreeSet<BeadKey>,
     /// When each configured project's tracker was last read.
     ///
     /// Not `generated_at`, which is when the snapshot was drawn. A refresh
@@ -653,6 +659,7 @@ impl Snapshot {
             conflicts: Vec::new(),
             projects_named_without_git,
             collected: Vec::new(),
+            out_of_focus: BTreeSet::new(),
             read_at: BTreeMap::new(),
             speaks_until: BTreeMap::new(),
             projects,

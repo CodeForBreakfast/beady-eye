@@ -22,7 +22,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
-use crate::model::join::{self, Listed, ProjectRows};
+use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
     SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
@@ -72,6 +72,11 @@ pub enum Asked {
     Read(Wanted),
     /// The config the collector works to from here on.
     Reloaded(Box<Config>),
+    /// The beads the board is focused on from here on, or none. What is
+    /// standing is drawn again under it, and no tracker is read for it.
+    /// Every one is answered, because the loop shows no snapshot while one
+    /// is unanswered.
+    Focused(BTreeSet<BeadKey>),
 }
 
 /// A read that has been asked for and has not come back: what it is to
@@ -185,6 +190,9 @@ pub struct Collection {
     /// standing set can tell when one of them has been replaced.
     reads_taken: u64,
     reached: Reached,
+    /// The beads the board is focused on. Only a tree holding one of them
+    /// is drawn, and every tree is where there are none.
+    focus: BTreeSet<BeadKey>,
 }
 
 /// Whether a read found its project's tracker had moved since the read
@@ -290,15 +298,54 @@ impl Collection {
         filter: Filter,
         now: DateTime<Utc>,
     ) -> Snapshot {
+        self.drawn_after(
+            cfg,
+            agents,
+            trackers,
+            &|project| wanted.names(project),
+            filter,
+            now,
+        )
+    }
+
+    /// Draw everything standing again, reading no tracker that has been read
+    /// already.
+    pub fn redraw(
+        &mut self,
+        cfg: &Config,
+        agents: &dyn Agents,
+        trackers: &dyn Trackers,
+        filter: Filter,
+        now: DateTime<Utc>,
+    ) -> Snapshot {
+        self.drawn_after(cfg, agents, trackers, &|_| false, filter, now)
+    }
+
+    /// Draw from here on only the trees holding one of `beads`, or every
+    /// tree where there are none.
+    pub fn focus_on(&mut self, beads: impl IntoIterator<Item = BeadKey>) {
+        self.focus = beads.into_iter().collect();
+    }
+
+    /// Read what `named` names, and draw everything standing.
+    fn drawn_after(
+        &mut self,
+        cfg: &Config,
+        agents: &dyn Agents,
+        trackers: &dyn Trackers,
+        named: &(dyn Fn(&str) -> bool + Sync),
+        filter: Filter,
+        now: DateTime<Utc>,
+    ) -> Snapshot {
         // The provider is the second tier: without its panes there is no agent
         // to join and no filter to apply, and every tracker still reads.
         //
-        // Read again however few projects `wanted` names: it is a few local
+        // Read again however few projects `named` names: it is a few local
         // calls, the join it feeds is across every project, and a project
         // with a producer is never polled — so a refresh naming it is the
         // only chance the agent join gets.
         let (panes, provider, out_of_reach) = self.every_pane(agents);
-        self.read_wanted(cfg, trackers, wanted, &panes, now);
+        self.read_named(cfg, trackers, named, &panes, now);
         self.drawn(cfg, trackers, &panes, &out_of_reach, &provider, filter, now)
     }
 
@@ -314,7 +361,7 @@ impl Collection {
         now: DateTime<Utc>,
     ) -> Watched {
         let (panes, provider, out_of_reach) = self.every_pane(agents);
-        self.read_wanted(cfg, trackers, wanted, &panes, now);
+        self.read_named(cfg, trackers, &|project| wanted.names(project), &panes, now);
         if !self.found.values().any(|found| *found == Found::Moved) {
             let cfg = self.widened(cfg);
             return Watched {
@@ -340,11 +387,11 @@ impl Collection {
         }
     }
 
-    fn read_wanted(
+    fn read_named(
         &mut self,
         cfg: &Config,
         trackers: &dyn Trackers,
-        wanted: &Wanted,
+        named: &(dyn Fn(&str) -> bool + Sync),
         panes: &[Pane],
         now: DateTime<Utc>,
     ) {
@@ -353,7 +400,7 @@ impl Collection {
         self.read(
             &reading,
             trackers,
-            &|project| wanted.names(project),
+            named,
             &|project| cfg.reads(project),
             panes,
             now,
@@ -648,17 +695,32 @@ impl Collection {
         let cfg = &self.widened(rooted);
         let answered: Vec<(&str, &ProjectWork)> = self.that_answered(cfg).collect();
         let drawn = reaching_across(&answered, &rooted.scope, &self.reached.trees);
+        // Over every tree, focused or not, so that leaving the focus has
+        // every blocker the other trees wait on in hand already.
         let needed = held_by_unread(&drawn, &cfg.scope);
         if !needed.is_empty() {
             return Err(needed);
         }
+        let (focused, left_out): (Vec<Drawn<'_>>, Vec<Drawn<'_>>) = drawn
+            .iter()
+            .copied()
+            .partition(|tree| drawn_under(&self.focus, tree));
+        let out_of_focus: BTreeSet<BeadKey> = left_out
+            .iter()
+            .map(|(project, root, _)| BeadKey {
+                project: project.to_string(),
+                id: root.to_string(),
+            })
+            .collect();
 
         // One resolve over every project's rows at once. A pane names its bead
         // by id alone, and only the whole set tells a match from a prefix
         // collision. A tree that reached into another project holds beads of
         // both, and each is that project's row. It joins against the projects
         // that root trees, so a pane in one read only for what they reach is
-        // joined as a pane in a project left out would be.
+        // joined as a pane in a project left out would be. Every tree joins,
+        // drawn or not, so a pane on a bead the focus leaves out is placed
+        // rather than reported as on no bead.
         let reached: Vec<(&str, Vec<Arc<Bead>>)> = drawn
             .iter()
             .filter_map(|(project, _, read)| match read {
@@ -709,7 +771,7 @@ impl Collection {
                 )
             })
             .collect();
-        let trees = drawn
+        let trees = focused
             .iter()
             .map(|(project, root, read)| match read {
                 Ok(assembled) => {
@@ -742,7 +804,7 @@ impl Collection {
             .map(|project| project.name.clone())
             .collect();
 
-        Ok(snapshot::build(
+        let mut snapshot = snapshot::build(
             Collected {
                 trees,
                 failed_projects,
@@ -756,7 +818,9 @@ impl Collection {
             agents.clone(),
             filter,
             now,
-        ))
+        );
+        snapshot.out_of_focus = out_of_focus;
+        Ok(snapshot)
     }
 
     /// What has been read, in the order the config names the projects. The
@@ -964,6 +1028,28 @@ fn not_read<'a>(
         .map(|project| (project.name.as_str(), project.prefix.as_deref()))
         .filter(|(project, _)| !answered.iter().any(|(answering, _)| answering == project))
         .collect()
+}
+
+/// Whether a tree is drawn under `focus`: where it holds one of its beads,
+/// or where `focus` is empty. A root no tree was read for is drawn under
+/// any focus. It has nothing to build, and its report is how a bead
+/// focused in it says why it is missing.
+fn drawn_under(focus: &BTreeSet<BeadKey>, (project, _, read): &Drawn<'_>) -> bool {
+    let holds = |project: &str, id: &str| {
+        focus
+            .iter()
+            .any(|key| key.project == project && key.id == id)
+    };
+    focus.is_empty()
+        || match read {
+            Ok(assembled) => assembled.beads.iter().enumerate().any(|(at, bead)| {
+                holds(
+                    assembled.external.get(&at).map_or(project, String::as_str),
+                    &bead.id,
+                )
+            }),
+            Err(_) => true,
+        }
 }
 
 /// The projects holding a blocker some drawn bead waits on, where `scope`
@@ -2653,6 +2739,75 @@ path = "{}"
         );
     }
 
+    /// A board focused on a tree that reaches into another project draws
+    /// what it reaches there, as that project last said it, and draws no
+    /// other tree.
+    #[test]
+    fn a_focused_tree_draws_what_it_reaches_in_another_project_as_it_moves() {
+        let mut board = Collection::default();
+        board.focus_on(vec![BeadKey {
+            project: "ferry".to_string(),
+            id: "fer-2".to_string(),
+        }]);
+        let first = collect(
+            &mut board,
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+        );
+
+        let retitled = Fakes::default()
+            .with("dunwich", Fake::holding(beads(RETITLED_IN_DUNWICH)).moved())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)));
+        let snap = collect(&mut board, &no_panes(), &retitled, &dunwich_alone());
+
+        for drawn in [&first, &snap] {
+            assert_eq!(
+                drawn
+                    .trees
+                    .iter()
+                    .map(|tree| (tree.project.as_str(), tree.root.as_str()))
+                    .collect::<Vec<_>>(),
+                vec![("ferry", "fer-2")]
+            );
+        }
+        assert_eq!(
+            node(tree_of(&first, "ferry"), "dun-7").title,
+            "lift the ground station"
+        );
+        assert_eq!(
+            node(tree_of(&snap, "ferry"), "dun-7").title,
+            "lift the relay station"
+        );
+    }
+
+    #[test]
+    fn a_board_focused_on_a_bead_reached_from_another_project_draws_the_tree_reaching_it() {
+        let mut board = Collection::default();
+        board.focus_on(vec![BeadKey {
+            project: "dunwich".to_string(),
+            id: "dun-7".to_string(),
+        }]);
+
+        let snap = collect(
+            &mut board,
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+        );
+
+        assert!(
+            snap.trees
+                .iter()
+                .any(|tree| (tree.project.as_str(), tree.root.as_str()) == ("ferry", "fer-2")),
+            "{:?}",
+            snap.trees
+                .iter()
+                .map(|tree| (&tree.project, &tree.root))
+                .collect::<Vec<_>>()
+        );
+    }
+
     /// The refresh gate reaches the trackers and stops there. A provider
     /// reports on the sessions on the machine rather than on a project, so a
     /// collection asks it which sessions there are once and each session for
@@ -3187,6 +3342,95 @@ path = "{FERRY}"
         );
         assert_eq!(unreachable_from_ferry(&snap), vec![]);
         assert_eq!(snap.projects, ["dunwich", "ferry"]);
+    }
+
+    /// Ferry holding the barge waiting on dunwich, and a second root of its
+    /// own waiting on nothing.
+    const WAITING_ON_DUNWICH_AND_NOT: &str = r#"[
+      {"id":"fer-2","title":"moor the barge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"fer-3","title":"paint the hull","status":"open",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A board focused away from the tree waiting on a project the run is
+    /// not reading still reads that project for it, so leaving the focus
+    /// draws the tree without asking any tracker.
+    #[test]
+    fn leaving_a_focus_draws_a_blocker_in_a_project_the_run_is_not_reading_without_a_read() {
+        let cfg = reading_ferry_where_dunwich(STATES_ITS_PREFIX);
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH_AND_NOT)));
+        let mut board = Collection::default();
+        board.focus_on([BeadKey {
+            project: "ferry".to_string(),
+            id: "fer-3".to_string(),
+        }]);
+        collected(&mut board, &cfg, &trackers);
+        let asked_while_focused = asked_of(&trackers, "dunwich");
+
+        board.focus_on(Vec::new());
+        let left = board.redraw(&cfg, &no_panes(), &trackers, Filter::All, now());
+
+        assert_eq!(asked_of(&trackers, "dunwich"), asked_while_focused);
+        assert_eq!(
+            node(tree_of(&left, "ferry"), "dun-7").title,
+            "lift the ground station"
+        );
+    }
+
+    /// `dun-3` is in flight beneath both roots, with the seat on `dun-1`.
+    const ONE_STEP_UNDER_TWO_ROOTS: &str = r#"[
+      {"id":"dun-1","title":"lift the ground station","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3","type":"blocks"}],
+       "priority":1,"issue_type":"task","metadata":{"agent_pane":"w:p1"}},
+      {"id":"dun-2","title":"survey the ridge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-3","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"dun-3","title":"re-point the dish","status":"in_progress",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A focused board draws the claim as an unfocused one does, so a seat in
+    /// a tree the focus leaves out still covers it.
+    #[test]
+    fn a_seat_in_a_tree_the_focus_left_out_still_covers_a_claim_in_the_focus() {
+        let mut board = Collection::default();
+        board.focus_on([BeadKey {
+            project: "dunwich".to_string(),
+            id: "dun-2".to_string(),
+        }]);
+
+        let snap = board.collect(
+            &one_project(),
+            &Provider::holding(vec![pane("w:p1", DUNWICH, PaneStatus::Working)]),
+            &dunwich_with(Fake::holding(beads(ONE_STEP_UNDER_TWO_ROOTS))),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.trees
+                .iter()
+                .map(|tree| tree.root.as_str())
+                .collect::<Vec<_>>(),
+            ["dun-2"]
+        );
+        assert_eq!(orphaned(&snap), Vec::<&str>::new());
+    }
+
+    fn collected(board: &mut Collection, cfg: &Config, trackers: &Fakes) -> Snapshot {
+        board.collect(
+            cfg,
+            &no_panes(),
+            trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        )
     }
 
     /// How many trees each project's standing read assembled.
