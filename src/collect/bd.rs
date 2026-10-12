@@ -1501,6 +1501,9 @@ mod tests {
         Project {
             name: "arkham".to_string(),
             path: project_dir(),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,

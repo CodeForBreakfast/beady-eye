@@ -43,6 +43,8 @@ pub struct Config {
     pub tail: Tail,
     #[serde(default)]
     pub row: Layout,
+    #[serde(default)]
+    pub dolt: Dolt,
     /// Which of `projects` this run reads, and what chose them. The rest stay
     /// here rather than being dropped: a pane is placed by which configured
     /// project holds its directory, whether or not that project is read.
@@ -125,7 +127,24 @@ impl Scope {
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub name: String,
+    /// The project's checkout, which bd finds its tracker from. A project on
+    /// a server names a `database` instead, and this is then the directory
+    /// `bdi` keeps for that database, which [`Config::keeping_trackers_in`]
+    /// fills in.
+    #[serde(default)]
     pub path: PathBuf,
+    /// The tracker's database on the server `[dolt]` names, for a host with
+    /// no checkout of the project.
+    #[serde(default)]
+    pub database: Option<String>,
+    /// The user this project's database is read as, where it is not the one
+    /// `[dolt]` names.
+    #[serde(default)]
+    pub user: Option<String>,
+    /// Where the tracker sits on its server, settled from `database`, `user`
+    /// and `[dolt]` once the whole config has been read.
+    #[serde(skip)]
+    pub server: Option<Server>,
     /// A command that runs another command in the environment this project's
     /// tracker is read in — `direnv exec .`, `nix develop -c`, `mise exec --`.
     /// `bdi` appends the probe that reads the environment back, so the config
@@ -245,6 +264,9 @@ impl Project {
     /// it at all: the depth of the deepest working tree the directory sits
     /// under, so a project inside another wins the paths they share.
     pub fn holds(&self, path: &Path) -> Option<usize> {
+        if self.server.is_some() {
+            return None;
+        }
         std::iter::once(&self.path)
             .chain(&self.worktrees)
             .filter(|tree| path.starts_with(tree))
@@ -261,16 +283,84 @@ impl Project {
                 .environment_command
                 .as_ref()
                 .map(|command| command.words().into_iter().map(str::to_string).collect()),
+            server: self.server.clone(),
         }
     }
 }
 
-/// The directory a project's tracker is read in, and the environment
-/// command it is read through: what decides which tracker bd reaches.
+/// The directory a project's tracker is read in, the environment command it
+/// is read through, and the server it sits on where it has no checkout: what
+/// decides which tracker bd reaches.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Reach {
     pub path: PathBuf,
     pub environment_command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<Server>,
+}
+
+/// The Dolt server that every project naming a `database` sits on, named as
+/// bd's own `dolt.host`, `dolt.port` and `dolt.user` name it.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Dolt {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub user: Option<String>,
+}
+
+impl Dolt {
+    /// Where `project`'s tracker sits on this server, or nothing for a
+    /// project read through its checkout.
+    fn server_of(&self, project: &Project) -> anyhow::Result<Option<Server>> {
+        let name = &project.name;
+        let checked_out = !project.path.as_os_str().is_empty();
+        let Some(database) = &project.database else {
+            if !checked_out {
+                anyhow::bail!("{name} names neither a path nor a database; name one of them");
+            }
+            if project.user.is_some() {
+                anyhow::bail!(
+                    "{name} names a user beside its path, and bd takes a checkout's user from \
+                     the checkout; remove it, or name a database in place of the path"
+                );
+            }
+            return Ok(None);
+        };
+        if checked_out {
+            anyhow::bail!("{name} names both a path and a database; name one of them");
+        }
+        if database.is_empty() || database == ".." || database.contains(['/', '\\']) {
+            anyhow::bail!("{name}'s database {database:?} is not a database name");
+        }
+        let Some(host) = &self.host else {
+            anyhow::bail!("{name} names a database, but [dolt] names no host to find it on");
+        };
+        let Some(port) = self.port else {
+            anyhow::bail!("{name} names a database, but [dolt] names no port to find it on");
+        };
+        let Some(user) = project.user.clone().or_else(|| self.user.clone()) else {
+            anyhow::bail!(
+                "{name} names a database, but neither it nor [dolt] names a user to read it as"
+            );
+        };
+        Ok(Some(Server {
+            host: host.clone(),
+            port,
+            database: database.clone(),
+            user,
+        }))
+    }
+}
+
+/// Where one tracker sits on a Dolt server, as bd is told it with
+/// `BEADS_DOLT_SERVER_HOST`, `_PORT`, `_DATABASE` and `_USER`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Server {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -892,6 +982,7 @@ impl Config {
             theme: Theme::default(),
             tail: Tail::default(),
             row: Layout::default(),
+            dolt: Dolt::default(),
             scope: Scope::default(),
             named_without_git: false,
         }
@@ -955,7 +1046,10 @@ impl Config {
                  now a root; remove it"
             );
         }
-        let cfg: Config = table.try_into()?;
+        let mut cfg: Config = table.try_into()?;
+        for project in &mut cfg.projects {
+            project.server = cfg.dolt.server_of(project)?;
+        }
         if cfg.projects.is_empty() {
             anyhow::bail!("config names no projects; bdi has nothing to read");
         }
@@ -1007,6 +1101,26 @@ impl Config {
             );
         }
         Ok(cfg)
+    }
+
+    /// The config with each project on a server read in the directory kept
+    /// for its database under `kept_in`. bd finds a tracker only from a
+    /// directory holding a `.beads`, so a project with no checkout is read
+    /// from one `bdi` makes.
+    pub fn keeping_trackers_in(mut self, kept_in: Option<&Path>) -> anyhow::Result<Self> {
+        for project in &mut self.projects {
+            let Some(server) = &project.server else {
+                continue;
+            };
+            let Some(kept_in) = kept_in else {
+                anyhow::bail!(
+                    "{} is read from a directory under $HOME, and this session has no $HOME",
+                    project.name
+                );
+            };
+            project.path = kept_in.join(&server.database);
+        }
+        Ok(self)
     }
 
     /// The projects this run reads, in the order the config names them.
@@ -1319,6 +1433,11 @@ wheel_notch_lines = 1
 [theme]
 background = "light"
 
+[dolt]
+host = "db.example.invalid"
+port = 3306
+user = "reader"
+
 [tail.crop]
 claude = "claude-code"
 
@@ -1369,6 +1488,9 @@ path = "/home/user/dev/cinder"
                 Project {
                     name: "arkham".to_string(),
                     path: PathBuf::from("/home/user/arkham"),
+                    database: None,
+                    user: None,
+                    server: None,
                     environment_command: None,
                     credential_command: Some("secret-tool lookup tracker arkham".to_string()),
                     prefix: None,
@@ -1380,6 +1502,9 @@ path = "/home/user/dev/cinder"
                 Project {
                     name: "kadath".to_string(),
                     path: PathBuf::from("/home/user/dev/kadath"),
+                    database: None,
+                    user: None,
+                    server: None,
                     environment_command: None,
                     credential_command: Some(
                         "cat /home/user/dev/kadath/.beads-password".to_string()
@@ -1441,6 +1566,14 @@ path = "/home/user/dev/cinder"
                     drawn_on: DrawnOn::Own,
                 },
             ]
+        );
+        assert_eq!(
+            cfg.dolt,
+            Dolt {
+                host: Some("db.example.invalid".to_string()),
+                port: Some(3306),
+                user: Some("reader".to_string()),
+            }
         );
         assert_eq!(cfg.anomalies.stale_claim_days, 7);
         assert_eq!(cfg.join.pane_key, "herdr_pane");
@@ -1696,6 +1829,9 @@ title = ["title", "badge.metadata.jira", "badges"]
         Project {
             name: name.to_string(),
             path: PathBuf::from("/home/user").join(name),
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,
@@ -1985,6 +2121,214 @@ path = "/home/user/dev/kadath"
             cfg.projects[0].credential_command.as_deref(),
             Some("secret-tool lookup tracker arkham")
         );
+    }
+
+    const TWO_ON_A_SERVER_ONE_CHECKED_OUT: &str = r#"
+[dolt]
+host = "db.example.invalid"
+port = 3306
+user = "reader"
+
+[[projects]]
+name = "arkham"
+database = "arkham"
+user = "arkham"
+credential_command = "secret-tool lookup tracker arkham"
+
+[[projects]]
+name = "dunwich"
+database = "dunwich"
+
+[[projects]]
+name = "kadath"
+path = "/home/user/kadath"
+"#;
+
+    /// A host holding no checkout names the tracker by where it sits on the
+    /// server, and the entry's own user outranks the one `[dolt]` names.
+    #[test]
+    fn a_project_may_name_its_database_on_the_server_in_place_of_a_path() {
+        let cfg = Config::from_toml(TWO_ON_A_SERVER_ONE_CHECKED_OUT).expect("parses");
+
+        let servers: Vec<_> = cfg.projects.iter().map(|p| p.server.clone()).collect();
+        assert_eq!(
+            servers,
+            [
+                Some(Server {
+                    host: "db.example.invalid".to_string(),
+                    port: 3306,
+                    database: "arkham".to_string(),
+                    user: "arkham".to_string(),
+                }),
+                Some(Server {
+                    host: "db.example.invalid".to_string(),
+                    port: 3306,
+                    database: "dunwich".to_string(),
+                    user: "reader".to_string(),
+                }),
+                None,
+            ]
+        );
+    }
+
+    /// The tracker is read in a directory `bdi` keeps for it, one per
+    /// database, and a project with a checkout is read where it always was.
+    #[test]
+    fn a_project_on_a_server_is_read_in_a_directory_kept_for_its_database() {
+        let cfg = Config::from_toml(TWO_ON_A_SERVER_ONE_CHECKED_OUT)
+            .expect("parses")
+            .keeping_trackers_in(Some(Path::new("/home/user/.cache/beady-eye/trackers")))
+            .expect("there is somewhere to keep them");
+
+        let paths: Vec<_> = cfg.projects.iter().map(|p| p.path.clone()).collect();
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from("/home/user/.cache/beady-eye/trackers/arkham"),
+                PathBuf::from("/home/user/.cache/beady-eye/trackers/dunwich"),
+                PathBuf::from("/home/user/kadath"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_project_on_a_server_with_nowhere_to_keep_its_directory_is_refused() {
+        let err = Config::from_toml(TWO_ON_A_SERVER_ONE_CHECKED_OUT)
+            .expect("parses")
+            .keeping_trackers_in(None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("arkham"), "got: {err}");
+    }
+
+    #[test]
+    fn a_config_naming_no_project_on_a_server_needs_nowhere_to_keep_one() {
+        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
+
+        assert_eq!(cfg.clone().keeping_trackers_in(None).ok(), Some(cfg));
+    }
+
+    /// A project on a server has no directory of its own, so no pane and no
+    /// directory `bdi` starts in is put down to it.
+    #[test]
+    fn a_project_on_a_server_holds_no_directory() {
+        let cfg = Config::from_toml(TWO_ON_A_SERVER_ONE_CHECKED_OUT)
+            .expect("parses")
+            .keeping_trackers_in(Some(Path::new("/home/user/.cache/beady-eye/trackers")))
+            .expect("there is somewhere to keep them");
+
+        assert_eq!(
+            cfg.projects[0].holds(Path::new("/home/user/.cache/beady-eye/trackers/arkham")),
+            None
+        );
+    }
+
+    /// Two entries reach alike only where they reach the same database on the
+    /// same server, since the directory kept for each is named for the
+    /// database alone.
+    #[test]
+    fn projects_on_two_servers_do_not_reach_alike() {
+        let on = |host: &str| {
+            Config::from_toml(&format!(
+                "[dolt]\nhost = \"{host}\"\nport = 3306\nuser = \"reader\"\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n"
+            ))
+            .expect("parses")
+            .keeping_trackers_in(Some(Path::new("/k")))
+            .expect("kept")
+            .projects[0]
+                .reach()
+        };
+
+        assert_ne!(on("db.example.invalid"), on("other.example.invalid"));
+    }
+
+    #[test]
+    fn a_project_naming_both_a_path_and_a_database_is_refused() {
+        let err = Config::from_toml(
+            "[dolt]\nhost = \"db.example.invalid\"\n[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\ndatabase = \"arkham\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("arkham") && err.contains("both"), "got: {err}");
+    }
+
+    #[test]
+    fn a_project_naming_neither_a_path_nor_a_database_is_refused() {
+        let err = Config::from_toml("[[projects]]\nname = \"arkham\"\n")
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            err.contains("arkham") && err.contains("neither"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_database_with_no_host_to_find_it_on_is_refused() {
+        let err = Config::from_toml("[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n")
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            err.contains("arkham") && err.contains("[dolt]"),
+            "got: {err}"
+        );
+    }
+
+    /// bd takes a port or a user it is not told from wherever else it finds
+    /// one, the shell `bdi` was started in included, so a database entry
+    /// says both.
+    #[test]
+    fn a_database_with_no_port_to_find_it_on_is_refused() {
+        let err = Config::from_toml(
+            "[dolt]\nhost = \"db.example.invalid\"\nuser = \"reader\"\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("arkham") && err.contains("port"), "got: {err}");
+    }
+
+    #[test]
+    fn a_database_with_no_user_to_read_it_as_is_refused() {
+        let err = Config::from_toml(
+            "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("arkham") && err.contains("user"), "got: {err}");
+    }
+
+    /// bd reads a checkout's user from the checkout, so a user written beside
+    /// a path would be one `bdi` silently never passes on.
+    #[test]
+    fn a_user_beside_a_path_is_refused() {
+        let err = Config::from_toml(
+            "[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\nuser = \"arkham\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("arkham") && err.contains("user"), "got: {err}");
+    }
+
+    /// The directory is named for the database, so a database that is not a
+    /// single plain name could put it anywhere.
+    #[test]
+    fn a_database_that_would_name_some_other_directory_is_refused() {
+        for database in ["..", "a/b", ""] {
+            let err = Config::from_toml(&format!(
+                "[dolt]\nhost = \"db.example.invalid\"\n[[projects]]\nname = \"arkham\"\ndatabase = \"{database}\"\n"
+            ))
+            .unwrap_err()
+            .to_string();
+
+            assert!(err.contains("database"), "{database:?} got: {err}");
+        }
     }
 
     /// A project that names no command is read in the environment `bdi`

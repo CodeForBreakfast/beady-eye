@@ -585,6 +585,7 @@ mod tests {
         Reach {
             path: "/srv/work/dunwich".into(),
             environment_command: None,
+            server: None,
         }
     }
 
