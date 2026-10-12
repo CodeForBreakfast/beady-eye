@@ -1,6 +1,6 @@
 id = "codeforbreakfast.beady-eye"
 name = "beady-eye"
-version = "0.25.0"
+version = "0.26.0"
 min_herdr_version = "0.9.1"
 platforms = ["linux", "macos"]
 description = "Shows the trees of work and the agents on them, wakes an agent when a bead it waits on changes, and settles pull-request waits from GitHub."

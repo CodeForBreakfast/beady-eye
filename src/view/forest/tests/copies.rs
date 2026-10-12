@@ -63,7 +63,12 @@ fn assert_held_exactly(forest: &Forest, trees: &[Arc<Tree>]) {
 /// they had never been looking at.
 #[test]
 fn folding_one_copy_of_a_bead_drawn_twice_leaves_the_other_open() {
-    let mut forest = flatten(overlapping(&panes_on(&["qua-1.2", "wha-2.1"])));
+    let mut forest = flatten(overlapping(&panes_on(&[
+        "qua-1.2",
+        "qua-1.2.1",
+        "wha-2.1",
+        "wha-2.2",
+    ])));
     let [upper, lower] = copies_of(&forest, "qua-1.2");
 
     step_onto(&mut forest, lower);
