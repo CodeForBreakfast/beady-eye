@@ -1,9 +1,18 @@
-//! The pull request a beads `gh:pr` gate waits on.
+//! What a beads gate `bdi gates` settles waits on: a pull request for a
+//! `gh:pr` gate, an issue for a `gh:issue` gate, and a repository's next
+//! release for a `gh:release` gate.
 
 use crate::model::types::Bead;
 
 /// The `await_type` bd gives a gate that waits on a pull request.
 pub const PULL_REQUEST: &str = "gh:pr";
+
+/// The `await_type` of a gate that waits on an issue closing.
+pub const ISSUE: &str = "gh:issue";
+
+/// The `await_type` of a gate that waits on a repository publishing a
+/// release after the gate was made.
+pub const RELEASE: &str = "gh:release";
 
 /// The metadata key naming what a gh:pr gate waits for its pull request to
 /// do, where that is anything but its merge.
@@ -36,6 +45,9 @@ pub enum Fault {
     AwaitIdNotANumber(String),
     /// The gate's [`AWAITS`] metadata names nothing `bdi gates` waits for.
     UnknownAwaits(String),
+    /// The gate does not say when it was made, so no release can be told to
+    /// have come after it.
+    Undated,
 }
 
 /// Whether `gate` waits on a pull request, whichever one that is.
@@ -89,7 +101,7 @@ pub fn host(repo: &str) -> Option<&str> {
     repository(repo).and_then(|repository| repository.host)
 }
 
-/// The number of the pull request `gate` waits on.
+/// The number of the pull request or issue `gate` waits on.
 pub fn number(gate: &Bead) -> Result<u64, Fault> {
     let id = gate.value("await_id").ok_or(Fault::NoAwaitId)?;
     id.parse()

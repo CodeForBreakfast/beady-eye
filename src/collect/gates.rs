@@ -17,6 +17,7 @@ use crate::collect::github::{self, Observed};
 use crate::collect::pr_events::{self, Event, Outcome};
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
+use crate::collect::upstream::UpstreamGate;
 use crate::config::Project;
 use crate::model::gate::{self, Fault, Until};
 use crate::model::types::Bead;
@@ -52,27 +53,34 @@ pub struct PullRequest {
     pub number: u64,
 }
 
-/// One configured project's open gh:pr gates, or why its tracker did not
-/// give them.
+/// The open gates one tracker holds that `bdi gates` settles.
+#[derive(Debug, Default)]
+pub struct OpenGates {
+    pub pull_requests: Vec<PrGate>,
+    pub upstream: Vec<UpstreamGate>,
+}
+
+/// One configured project's open gates that `bdi gates` settles, or why its
+/// tracker did not give them.
 #[derive(Debug)]
 pub struct ProjectGates {
     pub project: String,
-    pub gates: Result<Vec<PrGate>, OpenFailure>,
+    pub gates: Result<OpenGates, OpenFailure>,
 }
 
-/// Every configured project's open gh:pr gates that are `wanted`. A project
-/// whose tracker does not answer is reported with its failure, and the rest
-/// are read.
+/// Every configured project's open gates that `bdi gates` settles and whose
+/// repo is `wanted`, in the order of `projects`. A project whose tracker does
+/// not answer is reported with its failure, and the rest are read.
 pub fn across(
     cli: &Cli,
     projects: &[Project],
-    wanted: impl Fn(&PrGate) -> bool,
+    wanted: impl Fn(Option<&str>) -> bool,
 ) -> Vec<ProjectGates> {
     projects
         .iter()
         .map(|project| ProjectGates {
             project: project.name.clone(),
-            gates: cli.pr_gates(project, &wanted),
+            gates: cli.gates(project, &wanted),
         })
         .collect()
 }
@@ -269,15 +277,7 @@ fn settle_asked_together<'a>(
 
 /// `pr` as GitHub has it, asked `fields` beside its state.
 fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, RunFailure> {
-    let repo = gate::repository(&pr.repo).ok_or_else(|| RunFailure {
-        kind: FailureKind::Gone,
-        program: "gh".to_string(),
-        detail: format!(
-            "{} is not OWNER/REPO or HOST/OWNER/REPO, so GitHub has no such repository",
-            pr.repo
-        ),
-        unreadable: None,
-    })?;
+    let repo = github::repository(&pr.repo)?;
     github::pull_requests(gh, &repo, &[pr.number], fields)?.remove(0)
 }
 
@@ -592,7 +592,11 @@ mod tests {
 
         let read = read(&runner, &[project("arkham")]);
 
-        let gates = read[0].gates.as_ref().expect("the tracker answered");
+        let gates = &read[0]
+            .gates
+            .as_ref()
+            .expect("the tracker answered")
+            .pull_requests;
         let ids: Vec<&str> = gates.iter().map(|gate| gate.id.as_str()).collect();
         assert_eq!(ids, ["ark-6pp", "ark-tg0", "ark-eb1", "ark-0i5"]);
         assert_eq!(
@@ -626,7 +630,11 @@ mod tests {
 
         let read = read(&runner, &[project("arkham")]);
 
-        let gates = read[0].gates.as_ref().expect("the tracker answered");
+        let gates = &read[0]
+            .gates
+            .as_ref()
+            .expect("the tracker answered")
+            .pull_requests;
         assert!(gates.iter().all(|gate| gate.id != "ark-77f"));
         assert!(runner
             .calls()
@@ -640,7 +648,11 @@ mod tests {
 
         let read = read(&runner, &[project("arkham")]);
 
-        let gates = read[0].gates.as_ref().expect("the tracker answered");
+        let gates = &read[0]
+            .gates
+            .as_ref()
+            .expect("the tracker answered")
+            .pull_requests;
         assert_eq!(
             the_gate(gates, "ark-6pp"),
             &PrGate {
@@ -659,7 +671,11 @@ mod tests {
 
         let read = read(&runner, &[project("arkham")]);
 
-        let gates = read[0].gates.as_ref().expect("the tracker answered");
+        let gates = &read[0]
+            .gates
+            .as_ref()
+            .expect("the tracker answered")
+            .pull_requests;
         assert_eq!(
             the_gate(gates, "ark-tg0").awaits,
             Err(vec![Fault::AwaitIdNotANumber("the-ninth".to_string())])
@@ -737,7 +753,15 @@ mod tests {
             answered => panic!("arkham's tracker answered {answered:?}"),
         }
         assert_eq!(read[1].project, "dunwich");
-        assert_eq!(read[1].gates.as_ref().expect("dunwich answered").len(), 4);
+        assert_eq!(
+            read[1]
+                .gates
+                .as_ref()
+                .expect("dunwich answered")
+                .pull_requests
+                .len(),
+            4
+        );
     }
 
     #[test]
@@ -2357,7 +2381,7 @@ mod tests {
         let gone = RunFailure {
             kind: FailureKind::Gone,
             program: "gh".to_string(),
-            detail: "gh found no such repository or pull request on GitHub".to_string(),
+            detail: "gh found no such repository, pull request or issue on GitHub".to_string(),
             unreadable: None,
         };
         let runner = FakeRunner::default().failing(&queried(7..=7), gone.clone());

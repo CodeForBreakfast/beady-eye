@@ -7,8 +7,9 @@
 //! text a tail shows, one for the socket a setup pokes to say a project's
 //! work changed, one for what a running watcher says of each tracker, one for
 //! the pull requests each tracker's gates wait on, one for what each thing a
-//! pull request does means to those gates, and one for GitHub's webhook
-//! deliveries about them.
+//! pull request does means to those gates, one for the gates waiting on an
+//! issue or a release, and one for GitHub's webhook deliveries about pull
+//! requests.
 
 pub mod agents;
 pub mod bd;
@@ -22,6 +23,7 @@ pub mod panes;
 pub mod pr_events;
 pub mod run;
 pub mod tracker;
+pub mod upstream;
 pub mod watched;
 pub mod webhook;
 pub mod worktree;

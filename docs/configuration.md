@@ -669,8 +669,8 @@ What `bdi gates` settles, and how often.
 `poll_seconds` is how long `bdi gates` waits after one look at the gates before
 the next. The default is 60.
 
-`owners` names the repository owners whose pull requests this `bdi gates`
-settles, matched in any case. A gate on a repository of any other owner is left
+`owners` names the repository owners whose gates this `bdi gates` settles,
+matched in any case. A gate on a repository of any other owner is left
 alone and not reported. Where `owners` is empty, which is the default, every
 gate is settled. A gate whose `repo` names no owner is settled only then. A
 delivery from GitHub is held to the same rule.
@@ -956,8 +956,10 @@ SIGTERM, SIGINT or SIGHUP stops it and removes its socket.
 
 ## Settling pull-request gates
 
-`bdi gates` settles every configured project's gh:pr gates. It looks at every
-open gh:pr gate, asks GitHub once about each pull request one of them waits
+`bdi gates` settles every configured project's gh:pr gates, and the gh:issue
+and gh:release gates that
+[A wait on an issue or a release](#a-wait-on-an-issue-or-a-release) describes.
+It looks at every open gh:pr gate, asks GitHub once about each pull request one of them waits
 on, and acts on what GitHub says:
 
 | the pull request | what `bdi gates` does |
@@ -993,7 +995,8 @@ repository:
 | permission | what `bdi gates` reads with it | without it |
 |---|---|---|
 | *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
-| *Contents* | the merge commit and the head commit | no merge is settled and no failing checks are told |
+| *Contents* | the merge commit, the head commit and the repository's releases | no merge is settled, no failing checks are told, and no gh:release gate is settled |
+| *Issues* | whether an issue is open or closed | no gh:issue gate is settled |
 | *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing checks are told |
 
 A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
@@ -1016,7 +1019,7 @@ dunwich/arkham#18 has failing checks: arkham told ark-7mw
 dunwich/arkham#18 was reviewed: arkham told ark-7mw
 dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
-kadath: its gh:pr gates could not be read: the tracker did not answer
+kadath: its gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
 dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token
 arkham: gate ark-6pp cannot be settled: it names no repo
@@ -1060,6 +1063,42 @@ $ systemctl --user enable --now bdi-gates
 
 As with the watcher, each tracker is reached with the environment the unit
 starts in, and so is `gh`.
+
+### A wait on an issue or a release
+
+A bead can also wait on an issue closing, or on a repository publishing its
+next release, usually in someone else's repository. Whoever waits records the
+wait as a gate, and names the repository in `repo` metadata as for a gh:pr
+gate:
+
+```console
+$ bd gate create --type=gh:issue --blocks dun-9 --await-id=31
+$ bd gate create --type=gh:release --blocks dun-11
+```
+
+On each look, `bdi gates` asks GitHub about every open gh:issue and gh:release
+gate as well, once for each issue and once for each repository's releases,
+however many gates wait on them:
+
+| the gate | what closes it |
+|---|---|
+| gh:issue, with the issue's number as its await id | the issue closing, whatever the reason |
+| gh:release, with no await id | the first release the repository publishes after the gate was made. A prerelease counts and a draft does not. It reads the ten releases the repository made last |
+
+Neither tells the bead anything while it waits, and a closed gate starts
+nothing. [`[gates] owners`](#gates) and `excluded_owners` hold these gates to
+the same rule as gh:pr gates. A rate limit stops the look's asking here too,
+and the next look asks again. Deliveries from GitHub settle only pull requests,
+so these gates close on a look.
+
+Each look reports one line for each gate closed and each failure:
+
+```
+dunwich/arkham#31 closed: kadath closed gate kad-4p1
+dunwich/arkham published v2.1.0: kadath closed gate kad-9sw
+dunwich/arkham#33: GitHub did not answer for it, so kadath left gate kad-2ze open: gh found no such repository, pull request or issue on GitHub
+kadath: gate kad-7tc cannot be settled: it names no repo
+```
 
 ### Taking GitHub's deliveries
 

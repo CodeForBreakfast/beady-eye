@@ -1,5 +1,5 @@
-//! What GitHub says of a pull request now, and of the rate limit asking
-//! spends, read through `gh`.
+//! What GitHub says of a pull request, an issue or a repository's releases
+//! now, and of the rate limit asking spends, read through `gh`.
 
 use std::collections::BTreeMap;
 
@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
-use crate::model::gate::Repository;
+use crate::model::gate::{self, Repository};
 
 /// Where a pull request stands on GitHub, which every event reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,10 +83,7 @@ impl QueryError {
 
 /// Each of `numbers` in `repo` as GitHub has it now, in the order asked, read
 /// in one query, so the caller bounds how many there are. Each is asked its
-/// `state` and `fields`, which name fields of GraphQL's `PullRequest`. The
-/// owner and name go to `gh` as variables rather than into the query, since
-/// a gate's writer chose them. `gh` picks the host for a `repo` that names
-/// none, `GH_HOST` included, exactly as `bd gate check` has it pick.
+/// `state` and `fields`, which name fields of GraphQL's `PullRequest`.
 ///
 /// An answer whose every error refuses one pull request's field is read for
 /// all it does hold, and each refusal is handed back with the pull request
@@ -107,17 +104,8 @@ pub fn pull_requests(
             )
         })
         .collect();
-    let query = format!(
-        "query=query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{{}}}}}",
-        asked.join(" ")
-    );
-    let owner = format!("owner={}", repo.owner);
-    let name = format!("name={}", repo.name);
-    let mut args = vec!["api", "graphql"];
-    if let Some(host) = repo.host {
-        args.extend(["--hostname", host]);
-    }
-    args.extend(["-f", &owner, "-f", &name, "-f", &query]);
+    let args = graphql(repo, &asked.join(" "));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let queried = match runner.run_keeping_stdout("gh", &args, None, &Env::new()) {
         Ok(out) => serde_json::from_str::<Queried>(&out).map_err(|e| RunFailure::parse("gh", e))?,
         Err(printed) => match serde_json::from_str::<Queried>(&printed.stdout) {
@@ -203,6 +191,135 @@ pub fn open_pull_requests_headed_by(
         })
         .map(|pull_request| pull_request.number)
         .collect())
+}
+
+/// Whether issue `number` in `repo` is closed, for whatever reason. GraphQL's
+/// `issue` answers only for an issue, so the number of a pull request is one
+/// GitHub does not have.
+pub fn issue_closed(
+    runner: &dyn Runner,
+    repo: &Repository,
+    number: u64,
+) -> Result<bool, RunFailure> {
+    let answer = asked(runner, repo, &format!("issue(number:{number}){{state}}"))?;
+    match answer.pointer("/issue/state").and_then(Value::as_str) {
+        Some("OPEN") => Ok(false),
+        Some("CLOSED") => Ok(true),
+        unknown => Err(RunFailure::parse(
+            "gh",
+            format!(
+                "an issue state bdi does not know: {}",
+                unknown.unwrap_or("none")
+            ),
+        )),
+    }
+}
+
+/// A release a repository has published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    pub tag: String,
+    pub published: DateTime<Utc>,
+}
+
+/// How many of a repository's releases are read, the newest made first.
+// ponytail: a release published from a draft made before this many newer
+// ones is not seen. Page through them if a repository ever works that way.
+const RELEASES_READ: usize = 10;
+
+/// One release as GraphQL lists it. A draft has no `publishedAt`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Listed {
+    tag_name: String,
+    is_draft: bool,
+    published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize)]
+struct Releases {
+    nodes: Vec<Listed>,
+}
+
+/// The releases `repo` has published, among the [`RELEASES_READ`] it made
+/// last. A draft is not published until it stops being one.
+pub fn published_releases(
+    runner: &dyn Runner,
+    repo: &Repository,
+) -> Result<Vec<Release>, RunFailure> {
+    let answer = asked(
+        runner,
+        repo,
+        &format!(
+            "releases(first:{RELEASES_READ},orderBy:{{field:CREATED_AT,direction:DESC}})\
+             {{nodes{{tagName isDraft publishedAt}}}}"
+        ),
+    )?;
+    let releases: Releases = answer
+        .get("releases")
+        .map(|releases| serde_json::from_value(releases.clone()))
+        .ok_or_else(|| RunFailure::parse("gh", "the answer holds no releases"))?
+        .map_err(|e| RunFailure::parse("gh", e))?;
+    Ok(releases
+        .nodes
+        .into_iter()
+        .filter(|listed| !listed.is_draft)
+        .filter_map(|listed| {
+            Some(Release {
+                tag: listed.tag_name,
+                published: listed.published_at?,
+            })
+        })
+        .collect())
+}
+
+/// `repo` taken apart, or a failure saying GitHub can have no such
+/// repository.
+pub fn repository(repo: &str) -> Result<Repository<'_>, RunFailure> {
+    gate::repository(repo).ok_or_else(|| RunFailure {
+        kind: FailureKind::Gone,
+        program: "gh".to_string(),
+        detail: format!(
+            "{repo} is not OWNER/REPO or HOST/OWNER/REPO, so GitHub has no such repository"
+        ),
+        unreadable: None,
+    })
+}
+
+/// What GitHub answers for `fields` of `repo`, which fails as a whole on any
+/// error GraphQL gives.
+fn asked(runner: &dyn Runner, repo: &Repository, fields: &str) -> Result<Value, RunFailure> {
+    let args = graphql(repo, fields);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = runner.run("gh", &args, None, &Env::new())?;
+    let answer: Value = serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
+    answer
+        .pointer("/data/repository")
+        .filter(|repository| repository.is_object())
+        .cloned()
+        .ok_or_else(|| RunFailure::parse("gh", "the answer names no repository"))
+}
+
+/// The arguments to `gh` asking GraphQL for `fields` of `repo`. The owner and
+/// name go to `gh` as variables rather than into the query, since a gate's
+/// writer chose them. `gh` picks the host for a `repo` that names none,
+/// `GH_HOST` included, exactly as `bd gate check` has it pick.
+fn graphql(repo: &Repository, fields: &str) -> Vec<String> {
+    let mut args = vec!["api".to_string(), "graphql".to_string()];
+    if let Some(host) = repo.host {
+        args.extend(["--hostname".to_string(), host.to_string()]);
+    }
+    args.extend([
+        "-f".to_string(),
+        format!("owner={}", repo.owner),
+        "-f".to_string(),
+        format!("name={}", repo.name),
+        "-f".to_string(),
+        format!(
+            "query=query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{{fields}}}}}"
+        ),
+    ]);
+    args
 }
 
 /// Where `fields` say their pull request stands. GraphQL gives `state` as
@@ -589,5 +706,80 @@ mod tests {
                 "{printed}"
             );
         }
+    }
+
+    const ISSUE_31: &str = "gh api graphql -f owner=example -f name=ark -f \
+                            query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                            name:$name){issue(number:31){state}}}";
+
+    fn issue_answer(state: &str) -> String {
+        format!(r#"{{"data":{{"repository":{{"issue":{{"state":"{state}"}}}}}}}}"#)
+    }
+
+    #[test]
+    fn an_issue_github_says_is_closed_is_closed_and_one_it_says_is_open_is_not() {
+        for (state, closed) in [("CLOSED", true), ("OPEN", false)] {
+            let runner = FakeRunner::default().with(ISSUE_31, &issue_answer(state));
+
+            assert_eq!(issue_closed(&runner, &ark(None), 31), Ok(closed), "{state}");
+        }
+    }
+
+    #[test]
+    fn an_issue_is_asked_of_the_host_its_repository_is_on() {
+        let on_forge = ISSUE_31.replace("graphql", "graphql --hostname forge.invalid");
+        let runner = FakeRunner::default().with(&on_forge, &issue_answer("CLOSED"));
+
+        assert_eq!(
+            issue_closed(&runner, &ark(Some("forge.invalid")), 31),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn an_issue_in_a_state_bdi_does_not_know_is_a_parse_failure() {
+        let runner = FakeRunner::default().with(ISSUE_31, &issue_answer("LOCKED"));
+
+        let failure = issue_closed(&runner, &ark(None), 31).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Parse);
+    }
+
+    const RELEASES: &str = "gh api graphql -f owner=example -f name=ark -f \
+                            query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                            name:$name){releases(first:10,orderBy:{field:CREATED_AT,direction:\
+                            DESC}){nodes{tagName isDraft publishedAt}}}}";
+
+    /// v1.3.0 is a draft, v1.2.0-rc.1 a prerelease and v1.1.0 a release, as
+    /// GitHub lists them, the newest made first.
+    const LISTED_RELEASES: &str = r#"{"data":{"repository":{"releases":{"nodes":[
+        {"tagName":"v1.3.0","isDraft":true,"publishedAt":null},
+        {"tagName":"v1.2.0-rc.1","isDraft":false,"publishedAt":"2026-10-08T09:30:00Z"},
+        {"tagName":"v1.1.0","isDraft":false,"publishedAt":"2026-09-30T14:00:00Z"}]}}}}"#;
+
+    #[test]
+    fn a_repository_has_published_every_release_it_lists_but_a_draft() {
+        let runner = FakeRunner::default().with(RELEASES, LISTED_RELEASES);
+
+        assert_eq!(
+            published_releases(&runner, &ark(None)),
+            Ok(vec![
+                Release {
+                    tag: "v1.2.0-rc.1".to_string(),
+                    published: "2026-10-08T09:30:00Z".parse().unwrap(),
+                },
+                Release {
+                    tag: "v1.1.0".to_string(),
+                    published: "2026-09-30T14:00:00Z".parse().unwrap(),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn an_answer_holding_no_releases_is_a_parse_failure() {
+        let runner = FakeRunner::default().with(RELEASES, r#"{"data":{"repository":null}}"#);
+
+        let failure = published_releases(&runner, &ark(None)).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Parse);
     }
 }
