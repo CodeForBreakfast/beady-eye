@@ -1234,27 +1234,64 @@ fn a_search_does_not_count_a_bead_above_the_focused_one() {
 
 /// A fold the reader shut over live work in another tree stays shut once
 /// the forest is put back. The board focused on one tree built no other,
-/// and the live work coming back into sight is not live work arriving.
+/// and the live work coming back into sight is not live work arriving,
+/// even on `qua-1.2`, which the focused tree holds too.
 #[test]
 fn a_fold_shut_over_live_work_in_a_tree_the_focus_left_out_stays_shut() {
-    let panes = panes_on(&["wha-2.1"]);
-    let mut forest = flatten(overlapping(&panes));
-    select_bead(&mut forest, "wha-2");
-    assert!(forest.apply(Action::ToggleFold));
-    assert_eq!(fold_of(&forest, "wha-2"), Some(false));
+    for live in ["wha-2.1", "qua-1.2"] {
+        let panes = panes_on(&[live]);
+        let mut forest = flatten(overlapping(&panes));
+        select_bead(&mut forest, "wha-2");
+        assert!(forest.apply(Action::ToggleFold));
+        assert_eq!(fold_of(&forest, "wha-2"), Some(false));
 
+        focus_on(&mut forest, "qua-1");
+        let mut narrowed = overlapping(&panes);
+        narrowed.trees.retain(|tree| tree.root == "qua-1");
+        narrowed.collected.retain(|tree| tree.root == "qua-1");
+        narrowed.out_of_focus = BTreeSet::from([key("dunwich", "wha-2")]);
+        forest.refresh(narrowed);
+        forest.apply(Action::FocusForest);
+        forest.refresh(overlapping(&panes));
+
+        assert_eq!(
+            fold_of(&forest, "wha-2"),
+            Some(false),
+            "live on {live}: {:#?}",
+            sketch(&forest)
+        );
+    }
+}
+
+/// The focused tree was built, so live work arriving in it is arriving,
+/// even on a bead a tree the focus left out shares with it. `qua-1.2` is
+/// open, so it is quiet until the agent arrives on it.
+#[test]
+fn live_work_arriving_on_a_bead_the_focused_tree_shares_spends_a_fold_shut_over_it() {
+    let opened = |rows: &str| {
+        rows.replace(
+            r#""id":"qua-1.2","title":"cut the haul road","status":"in_progress""#,
+            r#""id":"qua-1.2","title":"cut the haul road","status":"open""#,
+        )
+    };
+    let (quarry, wharf) = (opened(QUARRY), opened(WHARF));
+    let pair = |panes: &[Pane]| overlapping_as(&quarry, &wharf, panes);
+    let mut forest = flatten(pair(&[]));
     focus_on(&mut forest, "qua-1");
-    let mut narrowed = overlapping(&panes);
+    let mut narrowed = pair(&[]);
     narrowed.trees.retain(|tree| tree.root == "qua-1");
     narrowed.collected.retain(|tree| tree.root == "qua-1");
     narrowed.out_of_focus = BTreeSet::from([key("dunwich", "wha-2")]);
     forest.refresh(narrowed);
+    toggle_fold_of(&mut forest, "qua-1");
+    assert_eq!(fold_of(&forest, "qua-1"), Some(false));
+
     forest.apply(Action::FocusForest);
-    forest.refresh(overlapping(&panes));
+    forest.refresh(pair(&panes_on(&["qua-1.2"])));
 
     assert_eq!(
-        fold_of(&forest, "wha-2"),
-        Some(false),
+        fold_of(&forest, "qua-1"),
+        Some(true),
         "{:#?}",
         sketch(&forest)
     );

@@ -1113,9 +1113,14 @@ fn tower_staffed(on: &[&str]) -> Snapshot {
 /// pane naming a bead reaches it whichever tree draws it. `alone` takes a
 /// single tree, and the overlap these tests are about needs two.
 fn overlapping(panes: &[Pane]) -> Snapshot {
+    overlapping_as(QUARRY, WHARF, panes)
+}
+
+/// The pair as `quarry` and `wharf` hold them.
+fn overlapping_as(quarry: &str, wharf: &str, panes: &[Pane]) -> Snapshot {
     let cfg = cfg();
-    let quarry = assembled(QUARRY);
-    let wharf = assembled(WHARF);
+    let quarry = assembled(quarry);
+    let wharf = assembled(wharf);
     let mut rows = quarry.beads.clone();
     rows.extend(wharf.beads.clone());
     let joined = join::resolve(

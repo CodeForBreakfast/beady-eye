@@ -352,23 +352,31 @@ impl Forest {
     /// apart from the line the scope was set on, and the way down to what
     /// arrived under that bead runs through both.
     ///
-    /// Nothing in a tree the last snapshot's focus left unbuilt has arrived:
-    /// that snapshot did not know what was there, and coming back into sight
-    /// is not arriving.
+    /// Nothing has arrived under a fold in a tree the last snapshot's focus
+    /// left unbuilt, nor on a bead only such a tree holds: that snapshot did
+    /// not know what was there, and coming back into sight is not arriving.
     fn spend_folds(
         &mut self,
         folded_over: &BTreeMap<Handle, BTreeSet<BeadKey>>,
         out_of_focus: &BTreeSet<BeadKey>,
     ) {
-        let unknown: BTreeSet<BeadKey> = self
+        let (unbuilt, built): (Vec<&Arc<Tree>>, Vec<&Arc<Tree>>) = self
             .snapshot
             .collected
             .iter()
-            .filter(|tree| out_of_focus.contains(&root_key(tree)))
-            .flat_map(|tree| tree.beads.iter().map(|bead| bead.key()))
-            .collect();
+            .partition(|tree| out_of_focus.contains(&root_key(tree)));
+        let keys = |trees: Vec<&Arc<Tree>>| -> BTreeSet<BeadKey> {
+            trees
+                .into_iter()
+                .flat_map(|tree| tree.beads.iter().map(|bead| bead.key()))
+                .collect()
+        };
+        let unknown = &keys(unbuilt) - &keys(built);
         let spent: Vec<(Handle, BTreeSet<BeadKey>)> = folded_over
             .iter()
+            .filter(|(handle, _)| {
+                !matches!(handle, Handle::Bead(place) if out_of_focus.contains(&place.tree))
+            })
             .filter_map(|(handle, over)| {
                 let arrived = &(&self.live_under(handle) - over) - &unknown;
                 (!arrived.is_empty()).then(|| (handle.clone(), arrived))
