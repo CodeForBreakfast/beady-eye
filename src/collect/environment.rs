@@ -9,6 +9,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -162,8 +163,8 @@ pub fn tracker_env(
 const ON_A_SERVER: &str = r#"{"backend":"dolt","dolt_mode":"server"}"#;
 
 /// Make the directory a tracker on a server is read from, where it is not
-/// already made. bd writes its locks there on a write, so it is `bdi`'s own
-/// rather than anywhere shared.
+/// already made. bd writes its locks there, so it is `bdi`'s own rather than
+/// anywhere shared.
 fn kept_for_a_server(dir: &Path) -> std::io::Result<()> {
     let beads = dir.join(".beads");
     std::fs::DirBuilder::new()
@@ -174,15 +175,33 @@ fn kept_for_a_server(dir: &Path) -> std::io::Result<()> {
     if std::fs::read(&metadata).is_ok_and(|held| held == ON_A_SERVER.as_bytes()) {
         return Ok(());
     }
-    let partial = metadata.with_extension(std::process::id().to_string());
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(PRIVATE_FILE)
-        .open(&partial)?
-        .write_all(ON_A_SERVER.as_bytes())?;
-    std::fs::rename(partial, metadata)
+    written_whole(&metadata, |writing| {
+        writing.write_all(ON_A_SERVER.as_bytes())
+    })
+}
+
+/// Writes `file` under a name no other writer uses and renames it into
+/// place, so a reader finds the old contents or the new and never part of
+/// either, even while another thread of this process writes the same file.
+fn written_whole(
+    file: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    static WRITES: AtomicU64 = AtomicU64::new(0);
+    let partial = file.with_extension(format!(
+        "{}.{}",
+        std::process::id(),
+        WRITES.fetch_add(1, Ordering::Relaxed)
+    ));
+    write(
+        &mut std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(PRIVATE_FILE)
+            .open(&partial)?,
+    )?;
+    std::fs::rename(partial, file)
 }
 
 /// Where this user's trackers on a server are read from, one directory per
@@ -295,16 +314,9 @@ impl EnvironmentCache {
             .recursive(true)
             .mode(PRIVATE_DIRECTORY)
             .create(&self.dir)?;
-        let file = self.file_for(&kept.path);
-        let partial = file.with_extension(std::process::id().to_string());
-        let mut writing = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(PRIVATE_FILE)
-            .open(&partial)?;
-        serde_json::to_writer(&mut writing, kept)?;
-        std::fs::rename(partial, file)
+        written_whole(&self.file_for(&kept.path), |writing| {
+            Ok(serde_json::to_writer(writing, kept)?)
+        })
     }
 
     /// One file per project, so projects read side by side never write the
@@ -993,6 +1005,30 @@ mod tests {
             "the environment is entered in the directory kept for the tracker"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Two entries naming one database keep one directory, and a collection
+    /// reads them at once.
+    #[test]
+    fn entries_sharing_a_database_are_first_read_together() {
+        for attempt in 0..20 {
+            let dir = a_fresh_directory(&format!("first-read-together-{attempt}"));
+            let readers = 8;
+            let start = std::sync::Barrier::new(readers);
+            std::thread::scope(|scope| {
+                for _ in 0..readers {
+                    scope.spawn(|| {
+                        start.wait();
+                        kept_for_a_server(&dir).expect("the directory is kept");
+                    });
+                }
+            });
+            assert_eq!(
+                std::fs::read_to_string(dir.join(".beads/metadata.json")).unwrap(),
+                ON_A_SERVER
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     /// A directory that cannot be made is a tracker bd cannot find, so the
