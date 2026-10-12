@@ -1428,6 +1428,11 @@ wheel_notch_lines = 1
 [theme]
 background = "light"
 
+[dolt]
+host = "db.example.invalid"
+port = 3306
+user = "reader"
+
 [tail.crop]
 claude = "claude-code"
 
@@ -1556,6 +1561,14 @@ path = "/home/user/dev/cinder"
                     drawn_on: DrawnOn::Own,
                 },
             ]
+        );
+        assert_eq!(
+            cfg.dolt,
+            Dolt {
+                host: Some("db.example.invalid".to_string()),
+                port: Some(3306),
+                user: Some("reader".to_string()),
+            }
         );
         assert_eq!(cfg.anomalies.stale_claim_days, 7);
         assert_eq!(cfg.join.pane_key, "herdr_pane");

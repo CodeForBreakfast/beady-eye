@@ -88,7 +88,7 @@ coin one — and say so.**
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
-| **reach** | *coined* | the `path` and `environment_command` a project's config entry gives, which together decide the tracker bd reaches. Neither project names the pair. |
+| **reach** | *coined* | the `path` and `environment_command` a project's config entry gives, and the server and database where the entry names a database in place of a checkout. Together they decide the tracker bd reaches. Neither project names them together. |
 | **covered** | *coined* | a project something outside `bdi` has said it is watching, with nothing changed: a `covered <project>` line on the inbound channel. A covered line, and a read of the project coming back, each vouch for its rows for `[changes] covered_for_seconds`. A project that does not poll and that nothing has vouched for in that time has **lapsed**, and its mark says so. Neither project names this: the channel is `bdi`'s own. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
@@ -1244,6 +1244,7 @@ reproduce, and the rungs compose rather than excluding one another:
 | `credential_command = "…"` | the environment above, with the command's stdout as the credential |
 | `environment_command = "…"` | what that command produces, `bdi` appending its own `env -0` to read it back |
 | both commands | what the environment command produces, with the credential command run inside it and its stdout replacing the password |
+| `database = "…"` in place of a `path` | any of the above, entered in a directory `bdi` keeps for the database, with the server `[dolt]` names set in bd's `BEADS_DOLT_SERVER_*` variables over whatever the environment holds |
 
 The environment command is a wrapper the reader would type themselves —
 `direnv exec .`, `nix develop -c`, `mise exec --` — and it runs in the
@@ -2199,7 +2200,10 @@ last known, and `as_of` says how old that is. A project that has never been
 read is sent no beads, and its `as_of` is `null`. `events` is explained under
 *bd's events*. `reach` is the `path` and `environment_command` the watcher's
 config gives the project, which together decide the tracker bd reaches, with
-the command as a list of words. A consumer watching one bead is sent its
+the command as a list of words. A project read from its server with no
+checkout adds `server`, which holds its `host` and `database`, and its `port`
+and `user` where the config names them. Its `path` is then the directory
+`bdi` keeps for that database. A consumer watching one bead is sent its
 project's freshness line.
 
 `protocol` is the version of every line the watcher sends about a watch. A
