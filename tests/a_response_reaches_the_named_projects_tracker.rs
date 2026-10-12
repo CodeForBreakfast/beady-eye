@@ -39,6 +39,16 @@ fn a_home_naming_two_projects(named: &str, settings: &str) -> PathBuf {
 }
 
 fn bdi(home: &Path, tracker: &ShimmedTracker, args: &str) -> Output {
+    bdi_exporting(home, tracker, args, &[])
+}
+
+/// `bdi` run from a shell that also exports `exported`.
+fn bdi_exporting(
+    home: &Path,
+    tracker: &ShimmedTracker,
+    args: &str,
+    exported: &[(&str, &str)],
+) -> Output {
     Command::new(env!("CARGO_BIN_EXE_bdi"))
         .args(args.split_whitespace())
         .current_dir(home)
@@ -47,6 +57,7 @@ fn bdi(home: &Path, tracker: &ShimmedTracker, args: &str) -> Output {
         .env_remove("BEADS_DOLT_PASSWORD")
         .env_remove("BDI_PROJECT")
         .envs(tracker.environment())
+        .envs(exported.iter().copied())
         .output()
         .expect("bdi runs")
 }
@@ -67,6 +78,71 @@ fn a_response_is_run_against_the_named_projects_tracker_and_bd_answers_the_calle
 
     assert!(out.status.success(), "{}", said(&out.stderr));
     assert_eq!(said(&out.stdout), CLOSED);
+    assert_eq!(tracker.calls(), [RESPONDED]);
+}
+
+/// A permission rule reads the command line, and an exported variable is not
+/// on it. So a database the caller exports never reaches bd, and the response
+/// lands where kadath's own config says. Only kadath has an answer, so a
+/// redirected call is refused.
+#[test]
+fn a_database_the_caller_exports_does_not_redirect_the_response() {
+    let home = a_home_naming_two_projects("respond-ignores-exported-database", "");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("kadath", RESPONDED, CLOSED);
+
+    let out = bdi_exporting(
+        &home,
+        &tracker,
+        "bd kadath human respond kad-1 -r yes",
+        &[("BEADS_DOLT_SERVER_DATABASE", "arkham")],
+    );
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(said(&out.stdout), CLOSED);
+    assert_eq!(tracker.calls(), [RESPONDED]);
+}
+
+/// Entering the directory inherits the caller's shell, so the variable would
+/// otherwise come back in what direnv captured.
+#[test]
+fn a_database_the_caller_exports_does_not_come_back_through_direnv() {
+    let home = a_home_naming_two_projects("respond-ignores-database-via-direnv", "");
+    std::fs::write(home.join("kadath/.envrc"), "use flake\n").expect("the .envrc is ours to write");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.enters_with(&[]);
+    tracker.answers_for("kadath", RESPONDED, CLOSED);
+
+    let out = bdi_exporting(
+        &home,
+        &tracker,
+        "bd kadath human respond kad-1 -r yes",
+        &[("BEADS_DOLT_SERVER_DATABASE", "arkham")],
+    );
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(tracker.direnv_runs().len(), 1, "kadath was entered");
+    assert_eq!(tracker.calls(), [RESPONDED]);
+}
+
+/// What the project's own directory sets is its own config, so it still
+/// picks the database over the caller's.
+#[test]
+fn a_database_the_projects_own_directory_sets_still_reaches_bd() {
+    let home = a_home_naming_two_projects("respond-keeps-the-projects-database", "");
+    std::fs::write(home.join("kadath/.envrc"), "use flake\n").expect("the .envrc is ours to write");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.enters_with(&[("BEADS_DOLT_SERVER_DATABASE", "kadath-db")]);
+    tracker.answers_for("kadath-db", RESPONDED, CLOSED);
+
+    let out = bdi_exporting(
+        &home,
+        &tracker,
+        "bd kadath human respond kad-1 -r yes",
+        &[("BEADS_DOLT_SERVER_DATABASE", "arkham")],
+    );
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
     assert_eq!(tracker.calls(), [RESPONDED]);
 }
 
