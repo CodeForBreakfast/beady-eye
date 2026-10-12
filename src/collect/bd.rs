@@ -2,7 +2,7 @@
 //!
 //! The one module that spells `bd -C <path> --readonly …`, and the two ways
 //! `bdi` writes: the `bd -C <path> human respond …` that `bdi bd` passes
-//! through, and the gate resolve and comment that settle a gh:pr gate. Each question the
+//! through, and the gate resolve and comment that settle a gate. Each question the
 //! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
 //! here and nowhere else. The roots to draw the rows under are read off the
 //! rows themselves, in `app::tracker`.
@@ -19,9 +19,10 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
-use crate::collect::gates::{PrGate, Wait};
+use crate::collect::gates::{OpenGates, PrGate, Wait};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
+use crate::collect::upstream::UpstreamGate;
 use crate::config::Project;
 use crate::model::gate;
 use crate::model::types::{Bead, Dependency, Edge, Printed, Status};
@@ -412,23 +413,33 @@ impl Cli<'_> {
         })
     }
 
-    /// Every open gh:pr gate `project`'s tracker holds that is `wanted`.
-    pub fn pr_gates(
+    /// Every open gate `project`'s tracker holds that `bdi gates` settles and
+    /// whose repo is `wanted`, from one listing of them.
+    pub fn gates(
         &self,
         project: &Project,
-        wanted: impl Fn(&PrGate) -> bool,
-    ) -> Result<Vec<PrGate>, OpenFailure> {
-        Ok(self.reader(project)?.pr_gates(wanted)?)
+        wanted: impl Fn(Option<&str>) -> bool,
+    ) -> Result<OpenGates, OpenFailure> {
+        let reader = self.reader(project)?;
+        let listed = reader.listed_gates()?;
+        Ok(OpenGates {
+            pull_requests: reader.pr_gates_of(&listed, |gate| wanted(gate.repo.as_deref()))?,
+            upstream: listed
+                .iter()
+                .filter_map(UpstreamGate::of)
+                .filter(|gate| wanted(gate.repo.as_deref()))
+                .collect(),
+        })
     }
 
-    /// `project`'s tracker, opened once to settle the gh:pr gates waiting on
-    /// a pull request.
+    /// `project`'s tracker, opened once to settle the gates waiting on one
+    /// thing.
     pub fn settling(&self, project: &Project) -> Result<Settling<'_>, OpenFailure> {
         Ok(Settling(self.reader(project)?))
     }
 }
 
-/// One project's tracker opened to settle its gh:pr gates.
+/// One project's tracker opened to settle its gates.
 ///
 /// Settling a gate is the second of the two ways `bdi` writes to a tracker,
 /// beside the `human respond` that `bdi bd` passes through. `resolve` and
@@ -658,17 +669,32 @@ impl Reader<'_> {
 
     /// Every open gh:pr gate `wanted` holds of, each with the beads it holds
     /// back.
+    fn pr_gates(&self, wanted: impl Fn(&PrGate) -> bool) -> Result<Vec<PrGate>, RunFailure> {
+        self.pr_gates_of(&self.listed_gates()?, wanted)
+    }
+
+    /// Every open gate the tracker holds, whatever it waits on.
+    fn listed_gates(&self) -> Result<Vec<Bead>, RunFailure> {
+        let listed = self.asked(&["gate", "list", "--limit", "0", "--json"])?;
+        rows(&listed, "gate")
+    }
+
+    /// The gh:pr gates among `listed` that `wanted` holds of, each with the
+    /// beads it holds back.
     ///
     /// `bd list` leaves gates out, and neither `bd gate list` nor `bd show`
     /// carries the beads a gate holds back. `bd dep list` takes several ids
     /// but answers one flat array that does not say which bead hangs on which
     /// id, so it is asked once per gate, and only of a gate that is wanted.
-    fn pr_gates(&self, wanted: impl Fn(&PrGate) -> bool) -> Result<Vec<PrGate>, RunFailure> {
-        let listed = self.asked(&["gate", "list", "--limit", "0", "--json"])?;
-        rows(&listed, "gate")?
-            .into_iter()
-            .filter(gate::awaits_a_pull_request)
-            .map(|gate| PrGate::of(&gate, Vec::new()))
+    fn pr_gates_of(
+        &self,
+        listed: &[Bead],
+        wanted: impl Fn(&PrGate) -> bool,
+    ) -> Result<Vec<PrGate>, RunFailure> {
+        listed
+            .iter()
+            .filter(|gate| gate::awaits_a_pull_request(gate))
+            .map(|gate| PrGate::of(gate, Vec::new()))
             .filter(|gate| wanted(gate))
             .map(|mut gate| {
                 let held = self.asked(&[

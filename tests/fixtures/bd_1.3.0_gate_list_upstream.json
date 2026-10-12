@@ -1,0 +1,49 @@
+[
+  {
+    "id": "ark-6dq",
+    "title": "an issue somewhere",
+    "description": "Ad-hoc gate blocking ark-bn7",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-12T07:32:29Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-12T07:32:29Z",
+    "await_type": "gh:issue",
+    "await_id": "31"
+  },
+  {
+    "id": "ark-8dq",
+    "title": "example/ark publishes a release",
+    "description": "Ad-hoc gate blocking ark-bxj",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-12T07:32:28Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-12T07:32:29Z",
+    "metadata": {
+      "repo": "example/ark"
+    },
+    "await_type": "gh:release"
+  },
+  {
+    "id": "ark-zl0",
+    "title": "example/ark closes issue 31",
+    "description": "Ad-hoc gate blocking ark-22a",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-12T07:32:28Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-12T07:32:28Z",
+    "metadata": {
+      "repo": "example/ark"
+    },
+    "await_type": "gh:issue",
+    "await_id": "31"
+  }
+]

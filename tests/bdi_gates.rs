@@ -1,4 +1,5 @@
-//! `bdi gates` closes the gate on a merged pull request, and goes on looking
+//! `bdi gates` closes the gate on a merged pull request, a closed issue or a
+//! release published since the gate was made, and goes on looking
 //! through a GitHub that refuses it and a tracker that does not answer,
 //! reporting each. Listening, it settles the pull request a delivery signed
 //! with its secret names, and refuses every other.
@@ -340,6 +341,54 @@ fn a_merged_pull_request_closes_the_gate_waiting_on_it() {
     assert_eq!(github.calls(), [queried()]);
 }
 
+/// ark-zl0 waits on example/ark#31 closing, and ark-8dq on example/ark
+/// publishing a release after it was made, on 2026-10-12.
+const UPSTREAM: &str = include_str!("fixtures/bd_1.3.0_gate_list_upstream.json");
+
+const ISSUE_31: &str = "api graphql -f owner=example -f name=ark -f \
+                        query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                        name:$name){issue(number:31){state}}}";
+
+const RELEASES: &str = "api graphql -f owner=example -f name=ark -f \
+                        query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                        name:$name){releases(first:10,orderBy:{field:CREATED_AT,direction:\
+                        DESC}){nodes{tagName isDraft publishedAt}}}}";
+
+#[test]
+fn a_closed_issue_and_a_release_published_since_close_the_gates_waiting_on_them() {
+    let home = a_home_looking_every("upstream", &["arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("arkham", "gate list --limit 0 --json", UPSTREAM);
+    let closing_zl0 = "gate resolve ark-zl0 --reason example/ark#31 closed.";
+    let closing_8dq = "gate resolve ark-8dq --reason example/ark published v1.2.0.";
+    tracker.answers_for("arkham", closing_zl0, "✓ Gate resolved: ark-zl0\n");
+    tracker.answers_for("arkham", closing_8dq, "✓ Gate resolved: ark-8dq\n");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(
+        ISSUE_31,
+        r#"{"data":{"repository":{"issue":{"state":"CLOSED"}}}}"#,
+    );
+    github.answers_with(
+        RELEASES,
+        r#"{"data":{"repository":{"releases":{"nodes":[
+            {"tagName":"v1.2.0","isDraft":false,"publishedAt":"2026-10-13T09:00:00Z"},
+            {"tagName":"v1.1.0","isDraft":false,"publishedAt":"2026-10-11T09:00:00Z"}]}}}}"#,
+    );
+
+    let settling = Settling::started(&home, &tracker, &github);
+
+    settling.says("example/ark published v1.2.0: arkham closed gate ark-8dq");
+    settling.says("example/ark#31 closed: arkham closed gate ark-zl0");
+    let calls = tracker.calls();
+    assert!(
+        [closing_zl0, closing_8dq]
+            .iter()
+            .all(|closing| calls.iter().any(|call| call == closing)),
+        "{calls:?}"
+    );
+    assert_eq!(github.calls(), [RELEASES, ISSUE_31]);
+}
+
 /// GitHub answers a pull request in an organisation whose single sign-on
 /// authorisation has lapsed with a refusal, and gh exits non-zero until
 /// someone runs `gh auth refresh`. The words are not a capture, and bdi
@@ -461,7 +510,7 @@ fn a_tracker_that_does_not_answer_is_reported_and_the_others_are_settled() {
 
     let settling = Settling::started(&home, &tracker, &github);
 
-    settling.says("dunwich: its gh:pr gates could not be read: the tracker did not answer");
+    settling.says("dunwich: its gates could not be read: the tracker did not answer");
     settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
 }
 

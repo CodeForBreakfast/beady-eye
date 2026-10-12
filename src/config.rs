@@ -718,19 +718,19 @@ pub struct Watcher {
     pub socket: Option<PathBuf>,
 }
 
-/// Which gh:pr gates `bdi gates` settles, and how often it looks.
+/// Which gates `bdi gates` settles, and how often it looks.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Gates {
     /// How long `bdi gates` waits after one look at the gates before the
     /// next.
     pub poll_seconds: u64,
-    /// The repository owners whose pull requests this `bdi gates` settles,
+    /// The repository owners whose gates this `bdi gates` settles,
     /// in any case. Empty settles every owner's. Two instances signed in to
     /// GitHub as different accounts each name their own owners, and each
     /// leaves the other's gates alone.
     pub owners: Vec<String>,
-    /// The repository owners whose pull requests this `bdi gates` leaves to
+    /// The repository owners whose gates this `bdi gates` leaves to
     /// another, in any case, whatever `owners` says. One instance can settle
     /// every owner's but those a second instance names in its `owners`.
     pub excluded_owners: Vec<String>,

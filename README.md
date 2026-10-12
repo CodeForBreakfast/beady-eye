@@ -14,10 +14,11 @@ else you leave lying about, and each thing you let it see gives it more to do.
   at once, and tells anything connected to it the moment a bead it watches
   changes. Add Claude Code with the beady-eye plugin, and a sleeping session
   is woken by the bead it waits on.
-- **It settles waits on pull requests.** Add `gh`, and `bdi gates` asks GitHub
-  where each awaited pull request stands. A merge ends the bead's wait. A
-  failing check, a conflict, a review or a comment is passed on to the bead
-  that waits.
+- **It settles waits on pull requests, issues and releases.** Add `gh`, and
+  `bdi gates` asks GitHub where each awaited pull request stands. A merge ends
+  the bead's wait. A failing check, a conflict, a review or a comment is passed
+  on to the bead that waits. An issue closing, or a repository publishing its
+  next release, ends a wait on it too.
 
 ![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
@@ -362,6 +363,12 @@ about pull requests, their reviews and comments, check suites and statuses, and
 settles a pull request when GitHub says it moved rather than at the next look.
 "Settling pull-request gates" in [docs/configuration.md](docs/configuration.md)
 has a unit to run it under, the webhook, and every line it prints.
+
+A bead can wait on someone else's repository the same way. A `gh:issue` gate,
+with the issue's number as its await id, closes once that issue closes. A
+`gh:release` gate, with no await id, closes once the repository publishes a
+release after the gate was made. Both name their repository in `repo`, and
+`bdi gates` settles them on each look.
 
 ## Being seen
 

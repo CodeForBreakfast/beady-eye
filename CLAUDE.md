@@ -4,8 +4,9 @@
 root, annotated with the live agent on each node. The eye only looks, and
 each thing it does in the world is a pseudopod, a limb grown for one job. It
 has two: `bdi bd` passes `bd human respond` through to carry a person's answer
-to a bead, and `bdi gates` settles a gh:pr gate once GitHub says its pull
-request has merged, closed, or left draft. Every other bd command line `bdi`
+to a bead, and `bdi gates` settles a gate once GitHub says its pull request
+has merged, closed, or left draft, its issue has closed, or its repository has
+published a release. Every other bd command line `bdi`
 spells is a read, and `collect/` spells all of them.
 `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
 measurements.
@@ -16,9 +17,10 @@ measurements.
 - The reading side: which `bd`, `herdr` and `gh` command lines it spells, and
   how it parses what they print.
 - The two pseudopods. One carries a person's answer to the bead that asked.
-  The other settles a gh:pr gate: it re-reads the pull request from GitHub,
-  closes the gate on a merge, and on a close without one tells the beads the
-  gate holds back.
+  The other settles a gate: it re-reads the pull request from GitHub, closes
+  the gate on a merge, and on a close without one tells the beads the gate
+  holds back. A gate on an issue or a release closes once the issue closes or
+  a release is published.
 - The model that joins the two sources, including the anomalies where they
   disagree, and the words and colours `bdi` draws.
 - The `bdi` configuration format: `[[badges]]`, `join.pane_key` and the rest.
@@ -34,8 +36,8 @@ measurements.
   project. `bdi` draws what herdr reports.
 - **Every other write to a tracker.** `bdi` never creates a bead, and it
   writes only through its pseudopods. `bdi bd`'s `human respond` records a
-  person's answer and closes the bead that asked. Settling a gh:pr gate closes
-  the gate or comments on the beads it holds back. Whoever runs `bdi` does
+  person's answer and closes the bead that asked. Settling a gate closes it or
+  comments on the beads it holds back. Whoever runs `bdi` does
   everything else with `bd`, creating the gate included.
 - **How agents are organised.** `bdi` knows no roles, orchestration model or
   skill names. A convention a setup keeps in bead metadata is named in the

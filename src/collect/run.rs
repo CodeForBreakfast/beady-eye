@@ -498,7 +498,7 @@ impl RunFailure {
         } else if program == GH && said.contains(NOT_ON_GITHUB) {
             (
                 FailureKind::Gone,
-                format!("{program} found no such repository or pull request on GitHub"),
+                format!("{program} found no such repository, pull request or issue on GitHub"),
             )
         } else if program == GH && said.contains(RATE_LIMIT) {
             (

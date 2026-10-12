@@ -1,18 +1,18 @@
-//! One look at every configured project's gh:pr gates, which `bdi gates`
-//! takes on its poll: each pull request they wait on is settled once, where
-//! its repository's owner is one this `bdi gates` settles for. A delivery
-//! from GitHub settles the one pull request it names, by the same rule.
+//! One look at every configured project's gh:pr, gh:issue and gh:release
+//! gates, which `bdi gates` takes on its poll: each pull request, issue or
+//! repository's releases they wait on is asked of GitHub once, where its
+//! repository's owner is one this `bdi gates` settles for. A delivery from
+//! GitHub settles the one pull request it names, by the same rule.
 
 use chrono::{DateTime, Utc};
 
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
-use crate::collect::gates::{
-    self, Awaited, Done, PrGate, PullRequest, Settled, Told, Unseen, Waiting,
-};
+use crate::collect::gates::{self, Awaited, Done, PullRequest, Settled, Told, Unseen, Waiting};
 use crate::collect::github;
 use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
+use crate::collect::upstream::{Answer, Upstream};
 use crate::collect::webhook::Commit;
 use crate::config::{Gates, Project};
 use crate::model::gate::{self, Fault};
@@ -21,13 +21,13 @@ use crate::model::snapshot::TrackerFailure;
 /// Something a look at the gates found to report.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Found {
-    /// A project's tracker did not say which gh:pr gates it holds open.
+    /// A project's tracker did not say which gates it holds open.
     TrackerUnread {
         project: String,
         failure: TrackerFailure,
     },
-    /// A gate cannot name the pull request it waits on, or what it waits for
-    /// that pull request to do, so nothing settles it.
+    /// A gate cannot name what it waits on, or what it waits for that to do,
+    /// so nothing settles it.
     Unsettleable {
         project: String,
         gate: String,
@@ -55,6 +55,22 @@ pub enum Found {
     RateLimited {
         pull_request: PullRequest,
         resets: Option<DateTime<Utc>>,
+    },
+    /// GitHub did not say whether what a gh:issue or gh:release gate waits on
+    /// has happened, so the gate was left open.
+    UpstreamUnread {
+        project: String,
+        gate: String,
+        upstream: Upstream,
+        failure: RunFailure,
+    },
+    /// What a gh:issue or gh:release gate waits on `happened`, and what came
+    /// of closing the gate.
+    Ended {
+        project: String,
+        gate: String,
+        happened: String,
+        done: Result<(), TrackerFailure>,
     },
     /// A write settling a pull request asked of one bead, for what the pull
     /// request did, and what came of it.
@@ -88,13 +104,13 @@ pub struct Settling {
     pub github: Read,
 }
 
-/// Read every open gh:pr gate across `projects`, then settle each pull
-/// request one of them waits on, once however many gates wait on it, asking
-/// GitHub about each repository's together, until GitHub refuses one for its
-/// rate limit. A gate whose repository `settles` leaves to another
-/// `bdi gates` is passed over without a word. No tracker is asked about a
-/// pull request that has done nothing new to the gates waiting on it, which
-/// `told` says of the beads they hold back.
+/// Read every open gate across `projects`, then settle each pull request one
+/// of them waits on, once however many gates wait on it, asking GitHub about
+/// each repository's together, and then each gh:issue and gh:release gate,
+/// until GitHub refuses one for its rate limit. A gate whose repository
+/// `settles` leaves to another `bdi gates` is passed over without a word. No
+/// tracker is asked about a pull request that has done nothing new to the
+/// gates waiting on it, which `told` says of the beads they hold back.
 pub fn look(
     cli: &Cli,
     gh: &dyn Runner,
@@ -104,22 +120,27 @@ pub fn look(
 ) -> Settling {
     let mut found = Vec::new();
     let mut awaited: Vec<Vec<Awaited>> = Vec::new();
-    let settled_here = |gate: &PrGate| settles.settles(gate.repo.as_deref().and_then(gate::owner));
-    for read in gates::across(cli, projects, settled_here) {
+    let mut upstream = Vec::new();
+    let settled_here = |repo: Option<&str>| settles.settles(repo.and_then(gate::owner));
+    for (project, read) in projects
+        .iter()
+        .zip(gates::across(cli, projects, settled_here))
+    {
+        let name = &read.project;
         let open = match read.gates {
             Ok(open) => open,
             Err(failure) => {
                 found.push(Found::TrackerUnread {
-                    project: read.project,
+                    project: name.clone(),
                     failure: open_failure(&failure),
                 });
                 continue;
             }
         };
-        for gate in open {
+        for gate in open.pull_requests {
             match gate.awaits {
                 Err(faults) => found.push(Found::Unsettleable {
-                    project: read.project.clone(),
+                    project: name.clone(),
                     gate: gate.id,
                     faults,
                 }),
@@ -127,12 +148,22 @@ pub fn look(
                     &mut awaited,
                     wait.pull_request,
                     Waiting {
-                        project: read.project.clone(),
+                        project: name.clone(),
                         until: wait.until,
                         blocks: gate.blocks,
                         made: gate.made,
                     },
                 ),
+            }
+        }
+        for gate in open.upstream {
+            match gate.awaits {
+                Err(faults) => found.push(Found::Unsettleable {
+                    project: name.clone(),
+                    gate: gate.id,
+                    faults,
+                }),
+                Ok(waits) => upstream.push((project, gate.id, waits)),
             }
         }
     }
@@ -148,7 +179,69 @@ pub fn look(
             }
         }
     }
-    Settling { found, github }
+    let ended = ended(cli, gh, &upstream);
+    found.extend(ended.found);
+    Settling {
+        found,
+        github: github.max(ended.github),
+    }
+}
+
+/// Ask GitHub once about each thing the gates `waiting` wait on, and close
+/// each gate whose wait has ended, until GitHub refuses one for its rate
+/// limit.
+// ponytail: a rate limit stops this look but sets no wait of its own, so the
+// next look asks once more. Say it as `Found::RateLimited` if upstream gates
+// ever outnumber the pull requests that already set that wait.
+fn ended(cli: &Cli, gh: &dyn Runner, waiting: &[(&Project, String, Upstream)]) -> Settling {
+    let mut answers: Vec<(&Upstream, Result<Answer, RunFailure>)> = Vec::new();
+    let mut settling = Settling::default();
+    for (project, gate, upstream) in waiting {
+        let answer = match answers.iter().find(|(asked, _)| asked.asks_as(upstream)) {
+            Some((_, answer)) => answer.clone(),
+            None => {
+                let answer = upstream.ask(gh);
+                answers.push((upstream, answer.clone()));
+                answer
+            }
+        };
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(failure) => {
+                settling.github = settling.github.max(Read::Refused);
+                let rate_limited = failure.kind == FailureKind::RateLimited;
+                settling.found.push(Found::UpstreamUnread {
+                    project: project.name.clone(),
+                    gate: gate.clone(),
+                    upstream: upstream.clone(),
+                    failure,
+                });
+                if rate_limited {
+                    break;
+                }
+                continue;
+            }
+        };
+        settling.github = Read::Answered;
+        let Some(happened) = upstream.ended(&answer) else {
+            continue;
+        };
+        let done = cli
+            .settling(project)
+            .map_err(|failure| open_failure(&failure))
+            .and_then(|tracker| {
+                tracker
+                    .resolve(gate, &format!("{happened}."))
+                    .map_err(|failure| tracker_failure(&failure))
+            });
+        settling.found.push(Found::Ended {
+            project: project.name.clone(),
+            gate: gate.clone(),
+            happened,
+            done,
+        });
+    }
+    settling
 }
 
 /// Add `gate` to those waiting on `pull_request`, grouped by repository.
@@ -919,7 +1012,7 @@ mod tests {
         RunFailure {
             kind: FailureKind::Gone,
             program: "gh".to_string(),
-            detail: "gh found no such repository or pull request on GitHub".to_string(),
+            detail: "gh found no such repository, pull request or issue on GitHub".to_string(),
             unreadable: None,
         }
     }
@@ -1112,5 +1205,237 @@ mod tests {
         );
         assert_eq!(found_second, [no_number("arkham")]);
         assert_eq!(gate_lists_read(&second), 1);
+    }
+
+    /// ark-zl0 waits on example/ark#31 closing, ark-8dq on example/ark
+    /// publishing a release after 2026-10-12T07:32:28Z, and ark-6dq names no
+    /// repo.
+    const UPSTREAM: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list_upstream.json");
+
+    const ISSUE_31: &str = "gh api graphql -f owner=example -f name=ark -f \
+                            query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                            name:$name){issue(number:31){state}}}";
+
+    const RELEASES: &str = "gh api graphql -f owner=example -f name=ark -f \
+                            query=query($owner:String!,$name:String!){repository(owner:$owner,\
+                            name:$name){releases(first:10,orderBy:{field:CREATED_AT,direction:\
+                            DESC}){nodes{tagName isDraft publishedAt}}}}";
+
+    fn issue(state: &str) -> String {
+        format!(r#"{{"data":{{"repository":{{"issue":{{"state":"{state}"}}}}}}}}"#)
+    }
+
+    /// Releases published at each time given, the newest made first.
+    fn published(releases: &[(&str, &str)]) -> String {
+        let nodes: Vec<String> = releases
+            .iter()
+            .map(|(tag, at)| {
+                format!(r#"{{"tagName":"{tag}","isDraft":false,"publishedAt":"{at}"}}"#)
+            })
+            .collect();
+        format!(
+            r#"{{"data":{{"repository":{{"releases":{{"nodes":[{}]}}}}}}}}"#,
+            nodes.join(",")
+        )
+    }
+
+    /// Nothing published since the gates in [`UPSTREAM`] were made.
+    fn published_before() -> String {
+        published(&[("v1.1.0", "2026-10-11T09:00:00Z")])
+    }
+
+    fn upstream_in(project: &str) -> FakeRunner {
+        FakeRunner::default().with(&gate_list(project), UPSTREAM)
+    }
+
+    fn closing(project: &str, gate: &str, reason: &str) -> String {
+        format!("bd -C /nowhere/{project} gate resolve {gate} --reason {reason}")
+    }
+
+    fn ended(project: &str, gate: &str, happened: &str) -> Found {
+        Found::Ended {
+            project: project.to_string(),
+            gate: gate.to_string(),
+            happened: happened.to_string(),
+            done: Ok(()),
+        }
+    }
+
+    #[test]
+    fn a_look_closes_a_gate_whose_upstream_issue_has_closed() {
+        let runner = upstream_in("arkham")
+            .with(ISSUE_31, &issue("CLOSED"))
+            .with(RELEASES, &published_before())
+            .with(&closing("arkham", "ark-zl0", "example/ark#31 closed."), "");
+
+        let Settling { found, github } = looked(&runner, &[project("arkham")], &Gates::default());
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-6dq", Fault::NoRepo),
+                ended("arkham", "ark-zl0", "example/ark#31 closed"),
+            ]
+        );
+        assert_eq!(github, Read::Answered);
+    }
+
+    #[test]
+    fn a_look_closes_a_gate_on_the_first_release_published_after_the_gate_was_made() {
+        let runner = upstream_in("arkham")
+            .with(ISSUE_31, &issue("OPEN"))
+            .with(
+                RELEASES,
+                &published(&[
+                    ("v1.3.0", "2026-10-14T09:00:00Z"),
+                    ("v1.2.0", "2026-10-13T09:00:00Z"),
+                    ("v1.1.0", "2026-10-11T09:00:00Z"),
+                ]),
+            )
+            .with(
+                &closing("arkham", "ark-8dq", "example/ark published v1.2.0."),
+                "",
+            );
+
+        let found = looked(&runner, &[project("arkham")], &Gates::default()).found;
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-6dq", Fault::NoRepo),
+                ended("arkham", "ark-8dq", "example/ark published v1.2.0"),
+            ]
+        );
+    }
+
+    /// The runner panics on any call it was not given, so closing either gate
+    /// would fail the test.
+    #[test]
+    fn a_look_leaves_open_a_gate_whose_issue_is_open_and_one_no_release_has_come_after() {
+        let runner = upstream_in("arkham")
+            .with(ISSUE_31, &issue("OPEN"))
+            .with(RELEASES, &published_before());
+
+        let Settling { found, github } = looked(&runner, &[project("arkham")], &Gates::default());
+
+        assert_eq!(found, [unsettleable("arkham", "ark-6dq", Fault::NoRepo)]);
+        assert_eq!(github, Read::Answered);
+    }
+
+    #[test]
+    fn the_gh_pr_gates_and_the_upstream_gates_of_a_tracker_are_settled_on_the_one_look() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .merging(&gate_list("arkham"), UPSTREAM)
+            .with(&queried("ark"), QUERIED)
+            .with(&resolving_42("arkham"), "")
+            .with(ISSUE_31, &issue("CLOSED"))
+            .with(RELEASES, &published_before())
+            .with(&closing("arkham", "ark-zl0", "example/ark#31 closed."), "");
+
+        let found = looked(&runner, &[project("arkham")], &Gates::default()).found;
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-6pp", Fault::NoRepo),
+                no_number("arkham"),
+                unsettleable("arkham", "ark-6dq", Fault::NoRepo),
+                settling("arkham"),
+                ended("arkham", "ark-zl0", "example/ark#31 closed"),
+            ]
+        );
+        assert_eq!(
+            gate_lists_read(&runner),
+            2,
+            "one to find the gates and one to settle #42, as before"
+        );
+    }
+
+    #[test]
+    fn an_issue_gates_in_two_projects_wait_on_is_asked_of_github_once_and_settled_in_both() {
+        let runner = upstream_in("arkham")
+            .with(&gate_list("dunwich"), UPSTREAM)
+            .with(ISSUE_31, &issue("CLOSED"))
+            .with(RELEASES, &published_before())
+            .with(&closing("arkham", "ark-zl0", "example/ark#31 closed."), "")
+            .with(&closing("dunwich", "ark-zl0", "example/ark#31 closed."), "");
+
+        let found = looked(
+            &runner,
+            &[project("arkham"), project("dunwich")],
+            &owners(&["example"]),
+        )
+        .found;
+
+        assert_eq!(
+            found,
+            [
+                ended("arkham", "ark-zl0", "example/ark#31 closed"),
+                ended("dunwich", "ark-zl0", "example/ark#31 closed"),
+            ]
+        );
+        assert_eq!(asked_github(&runner), [RELEASES, ISSUE_31]);
+    }
+
+    #[test]
+    fn an_upstream_gate_github_does_not_answer_for_is_reported_and_left_open() {
+        let runner = upstream_in("arkham")
+            .failing(ISSUE_31, unavailable("gh"))
+            .failing(RELEASES, unavailable("gh"));
+
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &owners(&["example"]));
+
+        assert_eq!(
+            found,
+            [
+                Found::UpstreamUnread {
+                    project: "arkham".to_string(),
+                    gate: "ark-8dq".to_string(),
+                    upstream: Upstream::Release {
+                        repo: "example/ark".to_string(),
+                        after: "2026-10-12T07:32:28Z".parse().unwrap(),
+                    },
+                    failure: unavailable("gh"),
+                },
+                Found::UpstreamUnread {
+                    project: "arkham".to_string(),
+                    gate: "ark-zl0".to_string(),
+                    upstream: Upstream::Issue {
+                        repo: "example/ark".to_string(),
+                        number: 31,
+                    },
+                    failure: unavailable("gh"),
+                },
+            ]
+        );
+        assert_eq!(github, Read::Refused);
+    }
+
+    /// The runner panics on any call it was not given, so asking after the
+    /// issue would fail the test.
+    #[test]
+    fn a_look_refused_for_a_rate_limit_asks_after_no_more_upstream_gates() {
+        let runner = upstream_in("arkham").failing(RELEASES, rate_limited());
+
+        let found = looked(&runner, &[project("arkham")], &owners(&["example"])).found;
+
+        assert_eq!(asked_github(&runner), [RELEASES]);
+        assert!(
+            matches!(found[..], [Found::UpstreamUnread { ref failure, .. }] if failure.kind == FailureKind::RateLimited),
+            "{found:?}"
+        );
+    }
+
+    /// The runner panics on any call it was not given.
+    #[test]
+    fn an_upstream_gate_whose_owner_this_bdi_gates_does_not_settle_for_is_passed_over() {
+        let runner = upstream_in("arkham");
+
+        let Settling { found, github } =
+            looked(&runner, &[project("arkham")], &owners(&["miskatonic"]));
+
+        assert_eq!(found, []);
+        assert_eq!(github, Read::Unasked);
     }
 }

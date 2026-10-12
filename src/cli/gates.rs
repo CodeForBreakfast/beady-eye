@@ -1,6 +1,6 @@
-//! `bdi gates`: every configured project's gh:pr gates, settled on a poll
-//! and, where it listens, on each of GitHub's deliveries, with what each
-//! settling found said on stdout.
+//! `bdi gates`: every configured project's gh:pr, gh:issue and gh:release
+//! gates, settled on a poll and, where it listens, a pull request's gates on
+//! each of GitHub's deliveries, with what each settling found said on stdout.
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -214,7 +214,7 @@ fn started(gates: &Gates, projects: usize, listening: Option<SocketAddr>) -> Str
         None => String::new(),
     };
     format!(
-        "bdi gates: settling the gh:pr gates of {projects} project{plural}, for {owners}, every \
+        "bdi gates: settling the gh:pr, gh:issue and gh:release gates of {projects} project{plural}, for {owners}, every \
          {}s{deliveries}",
         gates.poll_seconds
     )
@@ -251,7 +251,7 @@ fn refused(heard: &Heard) -> Option<&'static str> {
 fn reported(found: &Found) -> Option<String> {
     let line = match found {
         Found::TrackerUnread { project, failure } => format!(
-            "{project}: its gh:pr gates could not be read: {}",
+            "{project}: its gates could not be read: {}",
             phrase::tracker_failure(failure)
         ),
         Found::Unsettleable {
@@ -298,6 +298,27 @@ fn reported(found: &Found) -> Option<String> {
              so GitHub is asked nothing more for at least {}s",
             UNSAID_WAIT.as_secs()
         ),
+        Found::UpstreamUnread {
+            project,
+            gate,
+            upstream,
+            failure,
+        } => format!(
+            "{upstream}: GitHub did not answer for it, so {project} left gate {gate} open: \
+             {failure}"
+        ),
+        Found::Ended {
+            project,
+            gate,
+            happened,
+            done,
+        } => match done {
+            Ok(()) => format!("{happened}: {project} closed gate {gate}"),
+            Err(failure) => format!(
+                "{happened}: {project} could not close gate {gate}: {}",
+                phrase::tracker_failure(failure)
+            ),
+        },
         Found::Settling {
             pull_request,
             happening,
@@ -342,6 +363,7 @@ fn fault(fault: &Fault) -> String {
         Fault::UnknownAwaits(awaits) => {
             format!("it awaits “{awaits}”, which is neither ready_for_review nor approved")
         }
+        Fault::Undated => "it does not say when it was made".to_string(),
     }
 }
 
@@ -583,7 +605,7 @@ mod tests {
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
             started(&Gates::default(), 1, None),
-            "bdi gates: settling the gh:pr gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories, \
              every 60s"
         );
         assert_eq!(
@@ -596,7 +618,7 @@ mod tests {
                 2,
                 None
             ),
-            "bdi gates: settling the gh:pr gates of 2 projects, for repositories owned by \
+            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 2 projects, for repositories owned by \
              example, miskatonic, every 300s"
         );
         assert_eq!(
@@ -608,7 +630,7 @@ mod tests {
                 1,
                 None
             ),
-            "bdi gates: settling the gh:pr gates of 1 project, for every owner's repositories \
+            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories \
              except those owned by miskatonic, every 60s"
         );
     }
