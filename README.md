@@ -318,8 +318,10 @@ to a bead that asked for one. It runs that project's `bd` the way the eye reads
 it, so whatever asks needs no map of trackers or credentials. No other `bd`
 command is passed, and no flag but `-r`/`--response`. A response that starts
 with a dash goes after `--`. Nothing after the project can pick another
-tracker, so a permission rule on `bdi bd <project>` holds a caller to that one
-project.
+tracker, and neither can a `BEADS_` or `BD_` variable the caller exports.
+What the project's own directory sets still applies. So a permission rule on
+`bdi bd <project>` holds a caller to that one project, provided the caller
+cannot choose the `HOME` or `PATH` that `bdi` runs with.
 
 `bdi gates` settles the beads waiting on pull requests. Whoever opens the pull
 request records the wait as a beads gate on its number, and `bdi gates` never
