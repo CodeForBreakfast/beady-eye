@@ -73,6 +73,9 @@ pub fn from_the_current_directory(
         ..Config::naming(vec![Project {
             name,
             path: root,
+            database: None,
+            user: None,
+            server: None,
             environment_command: None,
             credential_command: None,
             prefix: None,
@@ -116,7 +119,11 @@ pub fn scoped_to_the_directory(config: Config, runner: &dyn Runner, cwd: &Path) 
 /// the project — never the whole repository a subdirectory happens to sit in.
 pub fn with_the_working_trees_git_lists(mut config: Config, runner: &dyn Runner) -> Config {
     let scope = config.scope.clone();
-    for project in config.projects.iter_mut().filter(|p| scope.reads(&p.name)) {
+    for project in config
+        .projects
+        .iter_mut()
+        .filter(|p| scope.reads(&p.name) && p.server.is_none())
+    {
         let listed = worktrees_of(runner, &project.path);
         project.worktrees = the_same_place_in_each(&listed, &project.path);
     }
@@ -342,6 +349,9 @@ detached
             vec![Project {
                 name: "ground-station".to_string(),
                 path: PathBuf::from("/srv/work/dunwich"),
+                database: None,
+                user: None,
+                server: None,
                 environment_command: None,
                 credential_command: None,
                 prefix: None,
@@ -1174,6 +1184,9 @@ path = "/tmp/seat-b/wt/crates/dish"
             vec![Project {
                 name: "loose".to_string(),
                 path: PathBuf::from("/srv/loose"),
+                database: None,
+                user: None,
+                server: None,
                 environment_command: None,
                 credential_command: None,
                 prefix: None,
