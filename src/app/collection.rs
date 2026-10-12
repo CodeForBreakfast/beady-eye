@@ -3381,6 +3381,47 @@ path = "{FERRY}"
         );
     }
 
+    /// `dun-3` is in flight beneath both roots, with the seat on `dun-1`.
+    const ONE_STEP_UNDER_TWO_ROOTS: &str = r#"[
+      {"id":"dun-1","title":"lift the ground station","status":"in_progress",
+       "dependencies":[{"depends_on_id":"dun-3","type":"blocks"}],
+       "priority":1,"issue_type":"task","metadata":{"agent_pane":"w:p1"}},
+      {"id":"dun-2","title":"survey the ridge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-3","type":"blocks"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"dun-3","title":"re-point the dish","status":"in_progress",
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// A focused board draws the claim as an unfocused one does, so a seat in
+    /// a tree the focus leaves out still covers it.
+    #[test]
+    fn a_seat_in_a_tree_the_focus_left_out_still_covers_a_claim_in_the_focus() {
+        let mut board = Collection::default();
+        board.focus_on([BeadKey {
+            project: "dunwich".to_string(),
+            id: "dun-2".to_string(),
+        }]);
+
+        let snap = board.collect(
+            &one_project(),
+            &Provider::holding(vec![pane("w:p1", DUNWICH, PaneStatus::Working)]),
+            &dunwich_with(Fake::holding(beads(ONE_STEP_UNDER_TWO_ROOTS))),
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.trees
+                .iter()
+                .map(|tree| tree.root.as_str())
+                .collect::<Vec<_>>(),
+            ["dun-2"]
+        );
+        assert_eq!(orphaned(&snap), Vec::<&str>::new());
+    }
+
     fn collected(board: &mut Collection, cfg: &Config, trackers: &Fakes) -> Snapshot {
         board.collect(
             cfg,
