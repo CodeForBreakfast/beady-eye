@@ -435,7 +435,7 @@ test('asking about a bead stops waiting in time, and names the projects that did
 
   const answer = asking(path, ['summit-works', 'harbour'])
   const { connection } = await watcher.next()
-  const hungUp = new Promise((resolve) => connection.on('end', resolve))
+  const hungUp = new Promise((resolve) => connection.on('close', resolve))
   connection.write(said(beadLine, freshness))
   const alive = setInterval(
     () => connection.write(said({ line: 'alive' })),
