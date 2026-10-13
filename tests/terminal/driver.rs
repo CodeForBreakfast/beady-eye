@@ -233,16 +233,16 @@ impl Driven {
     /// preceded it and reports no latency at all, which cost bdi-7ao.43 a
     /// wrong reading. So this is what a test calls before it sends, and
     /// [`Driven::answer_to`] is what it calls after.
+    ///
+    /// The quiet is timed from when the last bytes arrived, not from when a
+    /// wait saw them: a wait that wakes late finds a write since its last
+    /// look nearly every time, and would never see a gap that was there.
     #[track_caller]
     pub fn settle(&mut self, quiet: Duration, patience: Duration) {
-        let mut heard = self.heard();
-        let mut silent_since = Instant::now();
+        let settling_from = self.started.elapsed();
         self.wait_until(patience, "stopped drawing", |driven| {
-            if driven.heard() != heard {
-                heard = driven.heard();
-                silent_since = Instant::now();
-            }
-            silent_since.elapsed() >= quiet
+            let silent_since = driven.last_heard_at().max(settling_from);
+            driven.started.elapsed() - silent_since >= quiet
         });
     }
 
@@ -537,10 +537,10 @@ impl Driven {
             .collect()
     }
 
-    /// How many runs of bytes have arrived, which is what a wait watches for
-    /// movement rather than the bytes themselves.
-    fn heard(&self) -> usize {
-        self.said.lock().expect("the drain is running").len()
+    /// When the last run of bytes arrived, counted from when `bdi` started.
+    fn last_heard_at(&self) -> Duration {
+        let said = self.said.lock().expect("the drain is running");
+        said.last().map_or(Duration::ZERO, |said| said.at)
     }
 
     /// The master as a `File`, which every caller must `forget` rather than

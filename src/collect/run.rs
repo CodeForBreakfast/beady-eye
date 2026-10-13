@@ -662,6 +662,13 @@ fn told(program: &str, args: &[&str], cwd: Option<&Path>, env: &Env) -> Command 
     cmd.args(args);
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
+        // macOS's posix_spawn starts a program found through a relative
+        // `PATH` entry in a new working directory, then answers ENOENT and
+        // leaves it running unwaited. A `PATH` the child is told steers std
+        // off posix_spawn, to a search made from the directory it was given.
+        if let Some(path) = std::env::var_os("PATH") {
+            cmd.env("PATH", path);
+        }
     }
     for inherited in NEVER_INHERITED {
         cmd.env_remove(inherited);
