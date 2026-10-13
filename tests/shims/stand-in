@@ -1,0 +1,10 @@
+#!/bin/sh
+# A program a test owns, linked in under the name of the one it stands in for.
+# It writes down what it was asked, a call to a line, in the file the test
+# names in BDI_STAND_IN_WAS_HANDED.
+#
+# It is checked in and linked to rather than written by each test, because a
+# script a test has just written can refuse to run with "Text file busy": a
+# sibling test thread that spawns a process while the write is open hands the
+# child that open handle until the child execs.
+printf '%s\n' "$*" >>"$BDI_STAND_IN_WAS_HANDED"
