@@ -40,6 +40,9 @@ export const aWatcherAt = async (at: string) => {
   const server: Server = createServer((connection) => {
     held.push(connection)
     connection.setEncoding('utf8')
+    // A session can hang up as a line is written. The write fails and closes
+    // the connection, as it does in `bdi watch`, and that is no failure.
+    connection.on('error', () => {})
     connection.once('data', (asked) => {
       const accepted = { connection, asked: String(asked) }
       const waiter = waiting.shift()
