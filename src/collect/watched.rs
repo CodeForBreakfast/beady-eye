@@ -482,6 +482,15 @@ fn watch(
     }
 }
 
+/// How long a watcher may take to answer a run asking only whether it is
+/// there, which is a run waiting to open its screen.
+const ANSWERING_WITHIN: Duration = Duration::from_secs(2);
+
+/// Whether a watcher answers at `at`.
+pub fn answers(at: Option<&Path>) -> bool {
+    at.is_some_and(|at| connected_to(at, ANSWERING_WITHIN).is_some())
+}
+
 /// A connection to the watcher at `at`, giving up on it where it takes no
 /// connection, or any one write, within `patience`. Nothing where the socket
 /// is one another user could have put there.
