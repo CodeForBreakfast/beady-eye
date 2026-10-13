@@ -33,10 +33,8 @@ use std::process::{Command, Output};
 
 use terminal::shims::{shim, shims_first_over_a_stand_in, A_PANE, A_SESSION};
 
-/// Where the stand-in writes down what it was asked. It is handed over in the
-/// environment rather than written into the script, because the path is a
-/// temporary directory's and a `TMPDIR` holding a space would otherwise be
-/// split by the shell that runs it — a redirect to somewhere else, or none.
+/// Where `tests/shims/stand-in` writes down what it was asked. The path is a
+/// temporary directory's, and a `TMPDIR` holding a space must not split it.
 const WAS_HANDED: &str = "BDI_STAND_IN_WAS_HANDED";
 
 /// A subcommand the shim has never been taught, spelled as herdr takes it.
@@ -64,16 +62,9 @@ impl AStandIn {
         let _ = std::fs::remove_file(&handed_on);
 
         let program = directory.join(named);
-        std::fs::write(
-            &program,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"${WAS_HANDED}\"\n"),
-        )
-        .expect("the stand-in is ours to write");
-        std::fs::set_permissions(
-            &program,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("the stand-in is ours to make runnable");
+        let _ = std::fs::remove_file(&program);
+        std::os::unix::fs::symlink(shim("stand-in"), &program)
+            .expect("the stand-in is ours to link");
 
         Self {
             directory,
