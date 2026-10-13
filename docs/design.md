@@ -1997,6 +1997,10 @@ from, so a late heartbeat or two does not read as a producer that has gone.
 A polled project never lapses: its poll keeps it current, and that is the
 reader's choice rather than a producer failing where nobody can see.
 
+**A view refused the socket beside a watcher says nothing.** The watcher
+takes the socket from whatever holds it, and the view reads through the
+watcher, so every change pushed there reaches the view and nothing is polled.
+
 **A socket that cannot be opened is said twice, deliberately, and the two are
 not copies.** No path to put it at, or another `bdi` already watching the
 one it has, and this one polls everything exactly as it did before. The notice
@@ -2109,6 +2113,21 @@ the rest of its life. The socket takes a producer's lines too, a bare project
 name and `covered <project>`, and answers them as the inbound channel does. A
 second `bdi watch` finds the first by connecting, as a view finds another
 view, and exits saying which socket is taken.
+
+**The watcher takes the views' inbound channel as well.** Once it holds its own
+socket, it binds the path a view would watch, putting aside whatever socket is
+there, live or not. A view holding that path can pass a producer's line on
+only once it has found the watcher, and a view from an older release passes
+nothing on and removes the name when it exits. So the watcher looks at the
+name every two seconds, and takes it back once the name is gone or what holds
+it is dead. A live socket there is left alone, as a view started after the
+watcher leaves the watcher's, so two watchers with sockets of their own do
+not take the path back and forth: the later one keeps it. The watcher stops
+looking once the name of its own socket no longer holds it. Where the path is
+the watcher's own socket, that socket already hears producers and nothing
+more is taken. Where something that is not a socket is at the path, or the
+way down is one other users may write in, or another watcher holds it, the
+watcher says so once on `stderr` and hears producers on its own socket only.
 
 **A run of `bdi` believes only a socket that is the user's own.** Before it
 connects, it makes the same checks on the way down that the watcher makes,
@@ -2355,8 +2374,9 @@ project's name to the watcher on a connection of its own, which the watcher
 takes as it takes a producer's. The run starting sends none, because the
 watcher has already read every project. The view still asks the agent
 provider and still makes the join, because the watcher does neither. It
-keeps its own inbound channel, and passes on to the watcher each line a
-producer says there, because the view draws what the watcher holds. `bdi --json` and `--beads` watch the same way, read as far as each
+keeps an inbound channel it opened before the watcher took it, and passes on
+to the watcher each line a producer says there, because the view draws what
+the watcher holds. `bdi --json` and `--beads` watch the same way, read as far as each
 project's freshness line and hang up.
 
 **Where none is running, a view reads its trackers itself**, as *Refresh*

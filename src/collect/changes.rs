@@ -18,6 +18,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 use std::{fmt, fs, thread};
 
 /// The variable naming the directory this login session owns, which is where
@@ -391,9 +392,23 @@ impl Drop for Socket {
     /// Leaving one behind instead costs nothing: a socket of ours that
     /// nothing is watching is what the next run reclaims.
     fn drop(&mut self) {
-        if file_at(&self.at) == self.bound {
+        if (self.still_held())() {
             let _ = fs::remove_file(&self.at);
         }
+    }
+}
+
+impl Socket {
+    /// Whether the name still holds the file this run bound, asked whenever
+    /// the answer is called for and wherever it is carried.
+    pub fn still_held(&self) -> impl Fn() -> bool + Send + 'static {
+        let (at, bound) = (self.at.clone(), self.bound);
+        move || file_at(&at) == bound
+    }
+
+    /// Whether `at` names the file this run bound, however it is spelled.
+    pub fn is_at(&self, at: &Path) -> bool {
+        self.bound.is_some() && file_at(at) == self.bound
     }
 }
 
@@ -455,20 +470,110 @@ pub fn serve(
     each: impl Fn(UnixStream) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
-    let channel = bind(&at)?;
+    listening(at, reclaim, Arc::new(each))
+}
+
+/// What to do with a name some other socket already holds.
+type InUse = fn(&Path) -> Result<UnixListener, Refused>;
+
+fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
+    at: PathBuf,
+    in_use: InUse,
+    each: Arc<F>,
+) -> Result<Socket, Refused> {
+    let channel = bind(&at, in_use)?;
     // Read before anything else this run does, so the name has had as little
     // time as it can to change hands. It cannot be read from the channel
     // instead: a bound socket's descriptor stats as its own inode on sockfs,
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
 
-    let each = Arc::new(each);
     thread::spawn(move || accept(&channel, &each));
 
     Ok(Socket { at, bound })
 }
 
-fn bind(at: &Path) -> Result<UnixListener, Refused> {
+/// The inbound channel at `at`, taken from whatever socket holds it, live or
+/// not. Every `every` after that, for as long as `holding` says, it is taken
+/// back where the name has gone or what holds it now is dead. Each time it
+/// cannot be taken, `lost` is told why, once until it is taken again. Nothing
+/// where there is no path, as there is none for a view either.
+///
+/// For `bdi watch`, which every view reads through, so a change pushed to
+/// any view's socket is one it has to hear. A view holding the name can pass
+/// a line on only to a watcher it has found, and an older view passes none
+/// on and takes the name away with it when it exits. A view started later
+/// leaves a live socket alone, so only the first take puts one aside. Taking
+/// it back leaves a live one alone too, so two watchers with sockets of their
+/// own do not take it back and forth.
+pub fn keep(
+    at: Option<PathBuf>,
+    reported: &Reported,
+    changed: Sender<Heard>,
+    every: Duration,
+    holding: impl Fn() -> bool + Send + 'static,
+    lost: impl Fn(&Refused) + Send + 'static,
+) -> Kept {
+    let kept = Arc::new(Mutex::new(None));
+    let Some(at) = at else {
+        return Kept { _held: kept };
+    };
+    let reported = reported.clone();
+    let each = Arc::new(move |writer| hear(writer, &reported, &changed));
+    let take = move |in_use| listening(at.clone(), in_use, Arc::clone(&each));
+
+    let mut said = match take(take_over) {
+        Ok(socket) => {
+            *locked(&kept) = Some(socket);
+            false
+        }
+        Err(refused) => {
+            lost(&refused);
+            true
+        }
+    };
+    let keeping = Arc::downgrade(&kept);
+    thread::spawn(move || loop {
+        thread::sleep(every);
+        let Some(kept) = keeping.upgrade() else {
+            return;
+        };
+        if !holding() {
+            return;
+        }
+        let mut socket = locked(&kept);
+        if socket.as_ref().is_some_and(|socket| socket.still_held()()) {
+            continue;
+        }
+        // ponytail: the socket lost keeps its accepting thread and its
+        // descriptor until the run exits, once for each time the name is
+        // taken from it.
+        match take(reclaim) {
+            Ok(taken) => {
+                *socket = Some(taken);
+                said = false;
+            }
+            Err(refused) => {
+                *socket = None;
+                if !std::mem::replace(&mut said, true) {
+                    lost(&refused);
+                }
+            }
+        }
+    });
+    Kept { _held: kept }
+}
+
+/// The channel [`keep`] holds, which comes off the filesystem with this.
+pub struct Kept {
+    _held: Arc<Mutex<Option<Socket>>>,
+}
+
+fn locked<T>(held: &Mutex<T>) -> MutexGuard<'_, T> {
+    held.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn bind(at: &Path, in_use: InUse) -> Result<UnixListener, Refused> {
     let directory = directory_holding(at);
 
     // Made this user's own from the moment it exists, rather than left to
@@ -490,7 +595,7 @@ fn bind(at: &Path) -> Result<UnixListener, Refused> {
 
     let channel = match UnixListener::bind(at) {
         Ok(channel) => channel,
-        Err(taken) if taken.kind() == ErrorKind::AddrInUse => reclaim(at)?,
+        Err(taken) if taken.kind() == ErrorKind::AddrInUse => in_use(at)?,
         Err(why) => return Err(Refused::Unopenable(at.to_path_buf(), why)),
     };
 
@@ -643,7 +748,13 @@ fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
     if UnixStream::connect(at).is_ok() {
         return Err(Refused::AlreadyWatching(at.to_path_buf()));
     }
+    take_over(at)
+}
 
+/// The socket at the path put aside for this run's own, whether anything is
+/// watching it or not. What is not a socket is left where it is, as
+/// [`reclaim`] leaves it.
+fn take_over(at: &Path) -> Result<UnixListener, Refused> {
     if !is_a_socket(at) {
         return Err(Refused::NotASocket(at.to_path_buf()));
     }
@@ -1201,6 +1312,24 @@ mod tests {
         }
     }
 
+    /// Wait until no process holds the socket at `at` open.
+    ///
+    /// Dropping a listener does not close the socket while a child holds a
+    /// copy, and a child forked by another test in this process while the
+    /// listener was open holds one until it execs. Until then the socket
+    /// still accepts, and a run reclaiming it is right to call it watched.
+    fn nothing_holds_open(at: &Path) {
+        let deadline = std::time::Instant::now() + A_MOMENT;
+        while UnixStream::connect(at).is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "something still holds {} open",
+                at.display()
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     /// A `UnixListener` leaves its file behind, so a run that crashed leaves
     /// one nothing is watching.
     #[test]
@@ -1210,6 +1339,7 @@ mod tests {
             .expect("a directory to put the socket in");
         drop(UnixListener::bind(&at).expect("a socket the crashed run left"));
         assert!(at.exists(), "the crashed run's socket is still there");
+        nothing_holds_open(&at);
 
         let reported = watching(["arkham", "ferry"]);
         let (_socket, changes) = open(&at, &reported);
@@ -1560,9 +1690,149 @@ mod tests {
         assert!(!at.exists(), "the next run has nothing to reclaim");
     }
 
-    /// Told nothing, `bdi` watches where it has always watched, so a run
-    /// with no config keeps the path every producer already written against
-    /// it uses.
+    #[test]
+    fn a_socket_is_at_its_path_however_it_is_spelled() {
+        let at = a_socket_path("spelled-twice");
+        let (socket, _changes) = open(&at, &watching(["arkham"]));
+        let directory = at.parent().expect("the socket is in a directory");
+        let respelled = directory
+            .join(".")
+            .join(at.file_name().expect("the socket has a name"));
+
+        assert!(socket.is_at(&respelled));
+        assert!(!socket.is_at(&directory.join("elsewhere.sock")));
+    }
+
+    /// Short, so a test waits out several of them in a moment.
+    const A_TICK: Duration = Duration::from_millis(20);
+
+    /// A keeper of the socket at `at`, taking it back every tick for as long
+    /// as `holding`, with what it hears and each refusal it says.
+    fn kept(
+        at: &Path,
+        reported: &Reported,
+        holding: impl Fn() -> bool + Send + 'static,
+    ) -> (Kept, Receiver<Heard>, Receiver<String>) {
+        let (changed, changes) = mpsc::channel();
+        let (said, refusals) = mpsc::channel();
+        let kept = keep(
+            Some(at.to_path_buf()),
+            reported,
+            changed,
+            A_TICK,
+            holding,
+            move |refused| {
+                let _ = said.send(refused.to_string());
+            },
+        );
+        (kept, changes, refusals)
+    }
+
+    /// The keeper is the watcher, which every view reads through, so a
+    /// socket a view holds is one it takes rather than leaves.
+    #[test]
+    fn a_socket_another_bdi_is_watching_is_taken_by_a_keeper() {
+        let at = a_socket_path("kept-from-a-view");
+        let reported = watching(["arkham"]);
+        let (_view, _views_changes) = open(&at, &reported);
+
+        let (_kept, changes, refusals) = kept(&at, &reported, || true);
+
+        say(&at, &[("arkham\n", "ok arkham")]);
+        assert_eq!(
+            changes.recv_timeout(A_MOMENT).ok(),
+            Some(Heard::Changed("arkham".to_string()))
+        );
+        assert!(refusals.try_recv().is_err(), "nothing stood in the way");
+    }
+
+    /// An older view removes the name it watched as it exits, whoever holds
+    /// it by then.
+    #[test]
+    fn a_kept_socket_whose_name_is_taken_away_is_taken_back() {
+        let at = a_socket_path("kept-taken-back");
+        let reported = watching(["arkham"]);
+        let (_kept, changes, _) = kept(&at, &reported, || true);
+
+        std::fs::remove_file(&at).expect("the name is ours to remove");
+        let giving_up = std::time::Instant::now() + A_MOMENT;
+        while !at.exists() {
+            assert!(std::time::Instant::now() < giving_up, "never taken back");
+            thread::sleep(A_TICK);
+        }
+
+        say(&at, &[("arkham\n", "ok arkham")]);
+        assert!(changes.recv_timeout(A_MOMENT).is_ok());
+    }
+
+    /// Two watchers on sockets of their own share the views' path, and the
+    /// later one keeps it rather than the two taking it back and forth.
+    #[test]
+    fn a_keeper_leaves_a_socket_another_keeper_took() {
+        let at = a_socket_path("kept-by-another");
+        let reported = watching(["arkham"]);
+        let (_first, firsts_changes, firsts_refusals) = kept(&at, &reported, || true);
+        let (_second, seconds_changes, _) = kept(&at, &reported, || true);
+        thread::sleep(A_TICK * 10);
+
+        say(&at, &[("arkham\n", "ok arkham")]);
+        assert!(seconds_changes.recv_timeout(A_MOMENT).is_ok());
+        assert!(firsts_changes.try_recv().is_err(), "the first took it back");
+        let said: Vec<String> = firsts_refusals.try_iter().collect();
+        assert_eq!(said.len(), 1, "{said:?}");
+    }
+
+    /// A keeper that no longer holds what made it the keeper leaves the
+    /// socket to whichever run does, rather than the two taking it back and
+    /// forth.
+    #[test]
+    fn a_keeper_no_longer_holding_takes_nothing_back() {
+        let at = a_socket_path("kept-let-go");
+        let holding = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let asked = Arc::clone(&holding);
+        let (_kept, _, _) = kept(&at, &watching(["arkham"]), move || {
+            asked.load(std::sync::atomic::Ordering::SeqCst)
+        });
+
+        holding.store(false, std::sync::atomic::Ordering::SeqCst);
+        std::fs::remove_file(&at).expect("the name is ours to remove");
+        thread::sleep(A_TICK * 10);
+
+        assert!(!at.exists(), "the name was taken back");
+    }
+
+    /// What is in the way is said once, not once a tick, and is left where
+    /// it is as a view leaves it.
+    #[test]
+    fn a_keeper_says_once_what_is_in_the_way_and_leaves_it() {
+        let at = a_socket_path("kept-not-a-socket");
+        std::fs::create_dir_all(at.parent().expect("the socket is in a directory"))
+            .expect("a directory to put the socket in");
+        std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
+
+        let (_kept, _, refusals) = kept(&at, &watching(["arkham"]), || true);
+        thread::sleep(A_TICK * 10);
+
+        let said: Vec<String> = refusals.try_iter().collect();
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].contains("is not a socket"), "{said:?}");
+        assert_eq!(
+            std::fs::read_to_string(&at).ok().as_deref(),
+            Some("what the reader meant to keep")
+        );
+    }
+
+    #[test]
+    fn the_kept_socket_goes_with_the_keeper() {
+        let at = a_socket_path("kept-removed-on-exit");
+        let (kept, _, _) = kept(&at, &watching(["arkham"]), || true);
+        assert!(at.exists());
+
+        drop(kept);
+
+        assert!(!at.exists(), "the next run has nothing to reclaim");
+    }
+
     /// Told nothing, `bdi` watches where it has always watched, so a run
     /// with no config keeps the path every producer already written against
     /// it uses.
