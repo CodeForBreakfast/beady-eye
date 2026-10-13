@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{
-    a_home_naming_one_project_settled, die_with, Producer, ENTER_ALTERNATE_SCREEN,
-    THE_DESCRIBED_SUBTREE,
+    a_home_naming_one_project_settled, a_socket_of_its_own, die_with, the_socket_under, Producer,
+    ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
 };
 
 /// `a`, which shows every tree rather than only those with a live agent. No
@@ -55,6 +55,7 @@ fn bdi_watch(home: &Path, tracker: &ShimmedTracker) -> Command {
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DOLT_PASSWORD")
         .env_remove("BDI_PROJECT")
+        .env("XDG_RUNTIME_DIR", home)
         .envs(tracker.environment())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -191,9 +192,23 @@ struct Consumer {
 }
 
 impl Consumer {
+    /// Connected once the watcher takes connections, which is a moment
+    /// after its socket appears: `bind` names it before `listen`.
     fn connected_to(at: &Path) -> Self {
-        let speaking = UnixStream::connect(at)
-            .unwrap_or_else(|why| panic!("bdi watch is on {} ({why})", at.display()));
+        let giving_up = Instant::now() + GIVING_UP;
+        let speaking = loop {
+            match UnixStream::connect(at) {
+                Err(why)
+                    if why.kind() == ErrorKind::ConnectionRefused && Instant::now() < giving_up =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                connected => {
+                    break connected
+                        .unwrap_or_else(|why| panic!("bdi watch is on {} ({why})", at.display()))
+                }
+            }
+        };
         let watching = speaking
             .try_clone()
             .expect("the connection is ours to read");
@@ -769,6 +784,55 @@ fn the_refresh_key_has_the_watcher_a_view_reads_through_read_again() {
         "the watcher asking its tracker",
     );
     stopped(watcher);
+}
+
+/// A board started before the watcher holds the changes socket, and the
+/// watcher takes it from the board: a push there reaches every board reading
+/// through the watcher, without waiting for this one to find the watcher.
+#[test]
+fn a_change_pushed_after_a_board_started_first_reaches_the_watchers_boards() {
+    let (home, tracker) = a_home_with_a_watcher_configured("watch-takes-changes");
+    let mut environment = tracker.environment();
+    environment.push(a_socket_of_its_own(&home));
+    let mut board = Driven::bdi(40, 120, home.clone(), &environment);
+    board.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
+    until(|| the_socket_under(&home).exists(), "the board's socket");
+    let watcher = watching_in(&home, &tracker);
+    let mut another_board = Consumer::connected_to(&watching_at(&home));
+    another_board.sends("watch arkham").hears_an_answer();
+
+    let answer = Producer::connected_to(&the_socket_under(&home)).says("arkham");
+    let heard = another_board.hears_an_answer();
+
+    stopped(watcher);
+    assert_eq!(answer, "ok arkham");
+    assert_eq!(heard.len(), 1, "{heard:?}");
+}
+
+/// A config naming the watcher's own socket for the views' as well leaves
+/// the watcher one socket, which hears producers and serves views alike.
+#[test]
+fn a_views_socket_named_as_the_watchers_own_stays_the_watchers() {
+    let (home, tracker) = a_home_with_a_watcher_configured("watch-one-socket");
+    let config = home.join(".config/beady-eye/config.toml");
+    let mut text = std::fs::read_to_string(&config).expect("the config was just written");
+    text.push_str(&format!(
+        "\n[changes]\nsocket = \"{}\"\n",
+        watching_at(&home).display()
+    ));
+    std::fs::write(&config, text).expect("the config is ours to write");
+    let watcher = watching_in(&home, &tracker);
+
+    let answer = Producer::connected_to(&watching_at(&home)).says("arkham");
+    let watched = Consumer::connected_to(&watching_at(&home))
+        .sends("watch arkham")
+        .hears_an_answer();
+
+    let out = stopped(watcher);
+    assert_eq!(answer, "ok arkham");
+    assert!(!watched.is_empty());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(!said.contains("hears producers only"), "{said}");
 }
 
 /// A test that panics before it stops its watcher must not leave it behind.
