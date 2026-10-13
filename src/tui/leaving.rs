@@ -23,7 +23,9 @@ const LEAVING_WITHIN: Duration = Duration::from_secs(3);
 /// Discarding the queue wakes a write blocked on it, which would fill it again
 /// before exit stops the writer. So the terminal is told to discard output
 /// first, and a BSD terminal's write checks that each time round its loop.
-/// The terminal is left discarding, as it is left showing the last screen.
+/// The flag outlives `bdi` until the next key typed at the terminal, or a
+/// shell resetting the terminal's modes, clears it. It cannot be cleared
+/// before exit, because `bdi`'s own writes would fill the queue again.
 pub(super) fn leave_by_the_deadline() {
     thread::spawn(|| {
         thread::sleep(LEAVING_WITHIN);
