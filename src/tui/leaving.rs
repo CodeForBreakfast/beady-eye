@@ -19,14 +19,32 @@ const LEAVING_WITHIN: Duration = Duration::from_secs(3);
 /// terminal waits for its output queue to empty, and the last close happens
 /// inside exit, where nothing can interrupt it: a process left there sits in
 /// `ps`'s `E` state for as long as the terminal goes undrained.
+///
+/// Discarding the queue wakes a write blocked on it, which would fill it again
+/// before exit stops the writer. So the terminal is told to discard output
+/// first, and a BSD terminal's write checks that each time round its loop.
+/// The flag outlives `bdi` until the next key typed at the terminal, or a
+/// shell resetting the terminal's modes, clears it. It cannot be cleared
+/// before exit, because `bdi`'s own writes would fill the queue again.
 pub(super) fn leave_by_the_deadline() {
     thread::spawn(|| {
         thread::sleep(LEAVING_WITHIN);
+        discard_output();
         unsafe {
             libc::tcflush(libc::STDOUT_FILENO, libc::TCOFLUSH);
             libc::_exit(libc::EXIT_FAILURE);
         }
     });
+}
+
+fn discard_output() {
+    unsafe {
+        let mut terminal = std::mem::zeroed::<libc::termios>();
+        if libc::tcgetattr(libc::STDOUT_FILENO, &mut terminal) == 0 {
+            terminal.c_lflag |= libc::FLUSHO;
+            libc::tcsetattr(libc::STDOUT_FILENO, libc::TCSANOW, &terminal);
+        }
+    }
 }
 
 /// Wait for the terminal to take everything written to it, under the
