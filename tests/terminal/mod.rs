@@ -217,8 +217,7 @@ pub fn a_home_naming_one_project(named: &str) -> PathBuf {
 /// of the test has to picture, and every one of these tests is about what
 /// `bdi` does with a config a person could have written.
 pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
+    let home = an_empty_home(named);
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
@@ -230,12 +229,27 @@ pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf
     home
 }
 
+/// A `HOME` named for the test and the process, holding only its config
+/// directory. Nothing removes a home once its test is done, so a later run
+/// whose process gets the same id is handed this one with whatever the
+/// earlier run left in it.
+fn an_empty_home(named: &str) -> PathBuf {
+    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    match std::fs::remove_dir_all(&home) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            panic!("the home an earlier run left is ours to clear: {error}")
+        }
+        _ => {}
+    }
+    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
+    home
+}
+
 /// A `HOME` whose config does not parse, for a test whose subject is a `bdi`
 /// that exits before it has drawn anything: reading the config is the first
 /// thing `bdi` does, and a config it cannot read is an error on the way out.
 pub fn a_home_whose_config_does_not_parse(named: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
+    let home = an_empty_home(named);
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         "[[projects]\nthis is not toml\n",
@@ -625,6 +639,12 @@ pub fn over_the_loose_roots(
     over(named, THE_LOOSE_ROOTS, SHOW_EVERY_ROOT, rows, cols, settled)
 }
 
+/// The mark a project wears once a collection has read it whole, drawn in the
+/// frame that draws the collection's rows. A walk typed before it lands on a
+/// forest with no tree in it yet, and a quiet spell does not say it has come:
+/// a `bdi` held off the processor goes quiet mid-collection.
+const COLLECTED: &[u8] = "✓".as_bytes();
+
 /// A `bdi` on a pty of this size over one capture, walked to where the tests
 /// using it start.
 fn over(
@@ -642,8 +662,7 @@ fn over(
     environment.push(a_socket_of_its_own(&home));
 
     let mut bdi = driver::Driven::bdi(rows, cols, home, &environment);
-    bdi.read_until(ENTER_ALTERNATE_SCREEN, driver::GIVING_UP);
-    bdi.settle(settled, driver::GIVING_UP);
+    bdi.read_until(COLLECTED, driver::GIVING_UP);
     bdi.send(walk);
     bdi.settle(settled, driver::GIVING_UP);
     (bdi, tracker)

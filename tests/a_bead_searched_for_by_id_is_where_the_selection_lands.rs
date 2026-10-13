@@ -14,7 +14,7 @@
 
 mod terminal;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::{contains, over_the_described_subtree, window_over};
@@ -105,10 +105,13 @@ const THE_PROMPT_STILL_UP: &[u8] = "/bdi-404".as_bytes();
 #[test]
 fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
     let (mut bdi, _tracker) = over_the_described_subtree("searched", ROWS, COLS, A_SILENCE);
+    let mut rows = ROWS;
 
     bdi.send(SHUT_THE_TREE);
     bdi.settle(A_SILENCE, GIVING_UP);
-    let shut = repaint(&mut bdi, ROWS + 1);
+    let shut = repaint_until(&mut bdi, &mut rows, |screen| {
+        !contains(screen, THE_SEARCHED_BEADS_TITLE)
+    });
     assert!(
         !contains(&shut, THE_SEARCHED_BEADS_TITLE),
         "the bead is drawn with its tree shut, so the search below has no \
@@ -119,7 +122,7 @@ fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
 
     bdi.send(TYPE_AN_ID);
     bdi.settle(A_SILENCE, GIVING_UP);
-    let typing = repaint(&mut bdi, ROWS);
+    let typing = repaint_until(&mut bdi, &mut rows, |screen| contains(screen, THE_PROMPT));
     assert!(
         contains(&typing, THE_PROMPT),
         "the characters typed after `/` are not on the foot, so either the \
@@ -133,7 +136,9 @@ fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
     bdi.settle(A_SILENCE, GIVING_UP);
     bdi.send(ENTER);
     bdi.settle(A_SILENCE, GIVING_UP);
-    let landed = repaint(&mut bdi, ROWS + 1);
+    let landed = repaint_until(&mut bdi, &mut rows, |screen| {
+        window_over(screen).as_deref() == Some(THE_SEARCHED_BEAD)
+    });
     assert_eq!(
         window_over(&landed).as_deref(),
         Some(THE_SEARCHED_BEAD),
@@ -149,6 +154,7 @@ fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
 #[test]
 fn an_id_pasted_into_the_prompt_takes_the_reader_to_that_bead() {
     let (mut bdi, _tracker) = over_the_described_subtree("pasted", ROWS, COLS, A_SILENCE);
+    let mut rows = ROWS;
     bdi.send(SHUT_THE_TREE);
     bdi.settle(A_SILENCE, GIVING_UP);
 
@@ -160,7 +166,9 @@ fn an_id_pasted_into_the_prompt_takes_the_reader_to_that_bead() {
     bdi.send(ENTER);
     bdi.settle(A_SILENCE, GIVING_UP);
 
-    let landed = repaint(&mut bdi, ROWS + 1);
+    let landed = repaint_until(&mut bdi, &mut rows, |screen| {
+        window_over(screen).as_deref() == Some(THE_SEARCHED_BEAD)
+    });
     assert_eq!(
         window_over(&landed).as_deref(),
         Some(THE_SEARCHED_BEAD),
@@ -176,12 +184,15 @@ fn an_id_pasted_into_the_prompt_takes_the_reader_to_that_bead() {
 #[test]
 fn the_search_moves_as_the_id_is_typed_and_esc_puts_the_tree_back() {
     let (mut bdi, _tracker) = over_the_described_subtree("incsearch", ROWS, COLS, A_SILENCE);
+    let mut rows = ROWS;
     bdi.send(SHUT_THE_TREE);
     bdi.settle(A_SILENCE, GIVING_UP);
 
     bdi.send(TYPE_AN_ID);
     bdi.settle(A_SILENCE, GIVING_UP);
-    let typing = repaint(&mut bdi, ROWS + 1);
+    let typing = repaint_until(&mut bdi, &mut rows, |screen| {
+        contains(screen, THE_PROMPT) && contains(screen, THE_SEARCHED_BEADS_TITLE)
+    });
     assert!(
         contains(&typing, THE_PROMPT) && contains(&typing, THE_SEARCHED_BEADS_TITLE),
         "with the prompt still up, the search has not opened the fold over \
@@ -192,7 +203,9 @@ fn the_search_moves_as_the_id_is_typed_and_esc_puts_the_tree_back() {
 
     bdi.send(ESC);
     bdi.settle(A_SILENCE, GIVING_UP);
-    let abandoned = repaint(&mut bdi, ROWS);
+    let abandoned = repaint_until(&mut bdi, &mut rows, |screen| {
+        !contains(screen, THE_SEARCHED_BEADS_TITLE)
+    });
     assert!(
         !contains(&abandoned, THE_SEARCHED_BEADS_TITLE),
         "Esc left open the fold the search opened. The screen it drew: \
@@ -203,7 +216,9 @@ fn the_search_moves_as_the_id_is_typed_and_esc_puts_the_tree_back() {
 
     bdi.send(ENTER);
     bdi.settle(A_SILENCE, GIVING_UP);
-    let window = repaint(&mut bdi, ROWS + 1);
+    let window = repaint_until(&mut bdi, &mut rows, |screen| {
+        window_over(screen).as_deref() == Some(THE_TREES_HEADER)
+    });
     assert_eq!(
         window_over(&window).as_deref(),
         Some(THE_TREES_HEADER),
@@ -221,6 +236,7 @@ fn the_search_moves_as_the_id_is_typed_and_esc_puts_the_tree_back() {
 #[test]
 fn home_puts_what_is_typed_next_at_the_start_of_the_id() {
     let (mut bdi, _tracker) = over_the_described_subtree("home", ROWS, COLS, A_SILENCE);
+    let mut rows = ROWS;
     bdi.send(SHUT_THE_TREE);
     bdi.settle(A_SILENCE, GIVING_UP);
 
@@ -233,7 +249,9 @@ fn home_puts_what_is_typed_next_at_the_start_of_the_id() {
     bdi.send(ENTER);
     bdi.settle(A_SILENCE, GIVING_UP);
 
-    let landed = repaint(&mut bdi, ROWS + 1);
+    let landed = repaint_until(&mut bdi, &mut rows, |screen| {
+        window_over(screen).as_deref() == Some(THE_SEARCHED_BEAD)
+    });
     assert_eq!(
         window_over(&landed).as_deref(),
         Some(THE_SEARCHED_BEAD),
@@ -249,11 +267,14 @@ fn home_puts_what_is_typed_next_at_the_start_of_the_id() {
 #[test]
 fn an_id_no_tracker_read_holds_is_said_at_the_foot() {
     let (mut bdi, _tracker) = over_the_described_subtree("unfound", ROWS, COLS, A_SILENCE);
+    let mut rows = ROWS;
 
     bdi.send(SEARCH_FOR_A_BEAD_NOBODY_HAS);
     bdi.settle(A_SILENCE, GIVING_UP);
 
-    let said = repaint(&mut bdi, ROWS + 1);
+    let said = repaint_until(&mut bdi, &mut rows, |screen| {
+        contains(screen, THE_ID_THAT_REACHED_NOTHING) && !contains(screen, THE_PROMPT_STILL_UP)
+    });
     assert!(
         contains(&said, THE_ID_THAT_REACHED_NOTHING),
         "a search that reached nothing said nothing. The screen it drew: \
@@ -272,8 +293,27 @@ fn an_id_no_tracker_read_holds_is_said_at_the_foot() {
 
 /// The screen as it stands, rather than as it differs from the frame before:
 /// a resize is answered by drawing every cell again.
+///
+/// It draws the screen again until the screen `shows` what the keys typed so
+/// far lead to, or until the driver gives up, and hands the last screen back
+/// either way for the test to assert on.
+/// A quiet spell after the keys does not say `bdi` has answered them all: a
+/// `bdi` held off the processor is quiet with keys still unread. And ratatui
+/// takes the new size at whichever frame it draws next, so a resize sent
+/// then is answered with the screen part of the way through them.
+///
+/// Each attempt flips `rows`, the height the terminal has, between the two
+/// heights these tests use, because a resize to the size the terminal
+/// already has draws nothing.
 #[track_caller]
-fn repaint(bdi: &mut Driven, rows: u16) -> Vec<u8> {
-    let repainted = bdi.resize(rows, COLS);
-    bdi.answer_to(repainted, GIVING_UP)
+fn repaint_until(bdi: &mut Driven, rows: &mut u16, shows: impl Fn(&[u8]) -> bool) -> Vec<u8> {
+    let giving_up = Instant::now() + GIVING_UP;
+    loop {
+        *rows = if *rows == ROWS { ROWS + 1 } else { ROWS };
+        let repainted = bdi.resize(*rows, COLS);
+        let screen = bdi.answer_to(repainted, GIVING_UP);
+        if shows(&screen) || Instant::now() >= giving_up {
+            return screen;
+        }
+    }
 }

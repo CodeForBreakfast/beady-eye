@@ -662,6 +662,13 @@ fn told(program: &str, args: &[&str], cwd: Option<&Path>, env: &Env) -> Command 
     cmd.args(args);
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
+        // macOS's posix_spawn starts a program found through a relative
+        // `PATH` entry in a new working directory, then answers ENOENT and
+        // leaves it running unwaited. A `PATH` the child is told steers std
+        // off posix_spawn, to a search made from the directory it was given.
+        if let Some(path) = std::env::var_os("PATH") {
+            cmd.env("PATH", path);
+        }
     }
     for inherited in NEVER_INHERITED {
         cmd.env_remove(inherited);
@@ -1781,10 +1788,15 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("the directory is ours to make");
         let program = dir.join("bdi-broken-interpreter");
-        std::fs::write(&program, "#!/bdi-no-such-interpreter\nexit 0\n")
-            .expect("the file is ours to write");
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
-            .expect("the mode is ours to set");
+        let _ = std::fs::remove_file(&program);
+        std::os::unix::fs::symlink(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/shims/bdi-broken-interpreter"
+            ),
+            &program,
+        )
+        .expect("the link is ours to make");
         (dir, program)
     }
 

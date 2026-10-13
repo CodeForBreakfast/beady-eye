@@ -864,13 +864,14 @@ test('a watcher down again soon after a restart is given a minute of its own', a
 
   connection.end()
   ;(await watcher.next()).connection.write(said(theBead(), freshness('summit-works')))
+  while (!(await use('watching')).text?.includes('answering')) await Bun.sleep(5)
   await Bun.sleep(quietFor * 0.6)
+  const stopped = performance.now()
   watcher.stop()
-  await Bun.sleep(quietFor * 0.6)
-  const back = await aWatcherAt(place.at as string)
-  ;(await back.next()).connection.write(said(startedLine, freshness('summit-works')))
+  const down = await use.nextMessage()
 
-  expect(await use.nextMessage()).toEqual(started)
+  expect(performance.now() - stopped).toBeGreaterThanOrEqual(quietFor)
+  expect(down.meta).toEqual({ watcher: 'down' })
 })
 
 test('a watcher down for a minute wakes the session once, naming the beads it cannot watch', async () => {

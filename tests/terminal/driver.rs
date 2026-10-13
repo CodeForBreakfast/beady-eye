@@ -27,6 +27,8 @@
 
 use std::io::Write;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -90,12 +92,29 @@ struct Said {
 /// test proving the loop answered during a hang passing without proving it,
 /// and passing quietly.
 #[derive(Clone, Copy)]
-pub struct Mark(usize);
+pub struct Mark {
+    at: usize,
+    /// Whether the answer is the whole screen drawn again, as it is to a
+    /// resize, rather than a frame drawing only what changed.
+    whole_screen: bool,
+}
+
+/// What ratatui writes once a frame's cells are out. It hides the cursor, or,
+/// where the frame asked for one, as the search prompt does, shows it and
+/// then moves it there.
+const THE_CURSOR_HIDDEN: &[u8] = b"\x1b[?25l";
+const THE_CURSOR_SHOWN: &[u8] = b"\x1b[?25h";
+
+/// What ratatui writes first when the terminal has changed size, flushed on
+/// its own before it paints anything.
+const THE_SCREEN_CLEARS: &[u8] = b"\x1b[2J";
 
 /// A `bdi` drawing on a pty of our own, that we can type at.
 pub struct Driven {
     child: Child,
     terminal: Arc<OwnedFd>,
+    /// The far end of `terminal`, which is `bdi`'s.
+    their_end: PathBuf,
     home: PathBuf,
     started: Instant,
     said: Arc<Mutex<Vec<Said>>>,
@@ -154,6 +173,7 @@ impl Driven {
         let (ours, theirs) = a_pty(rows, cols);
         let started = Instant::now();
         let child = bdi_on(&theirs, &home, arguments, environment);
+        let their_end = the_path_of(&theirs);
         drop(theirs);
 
         let terminal = Arc::new(ours);
@@ -169,6 +189,7 @@ impl Driven {
         Self {
             child,
             terminal,
+            their_end,
             home,
             started,
             said,
@@ -212,16 +233,16 @@ impl Driven {
     /// preceded it and reports no latency at all, which cost bdi-7ao.43 a
     /// wrong reading. So this is what a test calls before it sends, and
     /// [`Driven::answer_to`] is what it calls after.
+    ///
+    /// The quiet is timed from when the last bytes arrived, not from when a
+    /// wait saw them: a wait that wakes late finds a write since its last
+    /// look nearly every time, and would never see a gap that was there.
     #[track_caller]
     pub fn settle(&mut self, quiet: Duration, patience: Duration) {
-        let mut heard = self.heard();
-        let mut silent_since = Instant::now();
+        let settling_from = self.started.elapsed();
         self.wait_until(patience, "stopped drawing", |driven| {
-            if driven.heard() != heard {
-                heard = driven.heard();
-                silent_since = Instant::now();
-            }
-            silent_since.elapsed() >= quiet
+            let silent_since = driven.last_heard_at().max(settling_from);
+            driven.started.elapsed() - silent_since >= quiet
         });
     }
 
@@ -269,6 +290,30 @@ impl Driven {
         );
     }
 
+    /// Stop the terminal taking what `bdi` writes, as a terminal nobody drains
+    /// does once its queue is full: the next write blocks, and so does every
+    /// one after it. Taken back up when what this returns is dropped.
+    ///
+    /// Stopped rather than left undrained, because a full queue is a race
+    /// with the drain thread and a stop is not: with the slave's output
+    /// stopped, a write blocks however little it has to say. Raw mode does
+    /// not undo it, since it is a stop asked for by `tcflow` rather than by a
+    /// character the terminal read.
+    pub fn stop_taking_output(&self) -> OutputStopped {
+        let slave = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOCTTY)
+            .open(&self.their_end)
+            .expect("the far end of our own pty is ours to open");
+        assert_eq!(
+            unsafe { libc::tcflow(slave.as_raw_fd(), libc::TCOOFF) },
+            0,
+            "the terminal's output is ours to stop"
+        );
+        OutputStopped(slave)
+    }
+
     /// How `bdi` exited, where it has, with whatever it wrote on the way out
     /// read.
     ///
@@ -278,7 +323,7 @@ impl Driven {
     /// interval says only that the drain did not run in it, and a drain the
     /// scheduler held off for one would have this report a `bdi` that never
     /// said what it said on the way out.
-    fn exited(&mut self) -> Option<ExitStatus> {
+    pub fn exited(&mut self) -> Option<ExitStatus> {
         let exited = self.child.try_wait().expect("bdi is ours to ask after")?;
         self.hear_what_is_waiting();
         Some(exited)
@@ -306,7 +351,10 @@ impl Driven {
     pub fn mark(&self) -> Mark {
         let mut said = self.said.lock().expect("the drain is running");
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
-        Mark(said.len())
+        Mark {
+            at: said.len(),
+            whole_screen: false,
+        }
     }
 
     /// Read until `bdi` has died, and hand back everything it wrote after
@@ -363,7 +411,10 @@ impl Driven {
         );
         let mut said = self.said.lock().expect("the drain is running");
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
-        let at = Mark(said.len());
+        let at = Mark {
+            at: said.len(),
+            whole_screen: false,
+        };
         let mut terminal = self.as_file();
         terminal.write_all(keys).expect("the terminal takes keys");
         terminal.flush().expect("the terminal takes keys");
@@ -383,7 +434,10 @@ impl Driven {
     pub fn resize(&mut self, rows: u16, cols: u16) -> Mark {
         let mut said = self.said.lock().expect("the drain is running");
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
-        let at = Mark(said.len());
+        let at = Mark {
+            at: said.len(),
+            whole_screen: true,
+        };
         let size = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -398,31 +452,39 @@ impl Driven {
         at
     }
 
-    /// Everything `bdi` wrote after `since`, waiting up to `patience` for the
-    /// first of it.
+    /// What `bdi` wrote after `since`, once it has finished a frame there.
+    /// After a resize that is the whole screen drawn again, from the clear
+    /// that opens it, so a frame `bdi` drew before it read the resize is not
+    /// taken for the screen.
+    ///
+    /// A frame is waited for by its last bytes rather than by a quiet glance.
+    /// `bdi` does not write a frame in one burst: the clear goes out alone
+    /// before anything is painted, and the cells follow through stdout's
+    /// buffer a kilobyte at a time. On a loaded machine `bdi` is held off
+    /// between any two of those writes for longer than a glance.
     #[track_caller]
     pub fn answer_to(&mut self, since: Mark, patience: Duration) -> Vec<u8> {
-        let giving_up = Instant::now() + patience;
-        self.wait_until(patience, "answered", |driven| driven.heard() > since.0);
-        // Then let it settle, so a frame arriving in several reads is answered
-        // whole rather than by its first chunk. A glance that hears nothing is
-        // the end of it: `bdi` writes a frame in one burst. Emptied at the end
-        // of the glance rather than watched across it, so nothing is left in
-        // the pty for the drain to append after the answer has been taken.
-        while Instant::now() < giving_up {
-            let before = self.heard();
-            std::thread::sleep(A_GLANCE);
-            self.hear_what_is_waiting();
-            if self.heard() == before {
-                break;
+        let wanted = if since.whole_screen {
+            "drew the whole screen again"
+        } else {
+            "finished a frame"
+        };
+        let mut answer = Vec::new();
+        self.wait_until(patience, wanted, |driven| {
+            match the_answer(&driven.said_since(since), since.whole_screen) {
+                Some(finished) => {
+                    answer = finished.to_vec();
+                    true
+                }
+                None => false,
             }
-        }
-        self.said_since(since)
+        });
+        answer
     }
 
     /// Everything `bdi` wrote after `since`, as it stands now.
     fn said_since(&self, since: Mark) -> Vec<u8> {
-        self.said.lock().expect("the drain is running")[since.0..]
+        self.said.lock().expect("the drain is running")[since.at..]
             .iter()
             .flat_map(|said| said.bytes.iter().copied())
             .collect()
@@ -475,10 +537,10 @@ impl Driven {
             .collect()
     }
 
-    /// How many runs of bytes have arrived, which is what a wait watches for
-    /// movement rather than the bytes themselves.
-    fn heard(&self) -> usize {
-        self.said.lock().expect("the drain is running").len()
+    /// When the last run of bytes arrived, counted from when `bdi` started.
+    fn last_heard_at(&self) -> Duration {
+        let said = self.said.lock().expect("the drain is running");
+        said.last().map_or(Duration::ZERO, |said| said.at)
     }
 
     /// The master as a `File`, which every caller must `forget` rather than
@@ -486,6 +548,33 @@ impl Driven {
     /// close whatever the next open handed out.
     fn as_file(&self) -> std::fs::File {
         unsafe { std::fs::File::from_raw_fd(self.terminal.as_raw_fd()) }
+    }
+}
+
+/// A terminal whose output [`Driven::stop_taking_output`] stopped.
+///
+/// Dropped before the `Driven` it came from, so declare it after: a `bdi`
+/// still writing to a stopped terminal is killed mid-write by that drop, and
+/// on Darwin a process cannot finish dying while its terminal holds output
+/// nobody will take.
+pub struct OutputStopped(std::fs::File);
+
+/// Where a terminal lives, asked with the reentrant call because the tests
+/// in a binary run on threads of their own.
+fn the_path_of(terminal: &std::fs::File) -> PathBuf {
+    let mut name = [0 as libc::c_char; 256];
+    assert_eq!(
+        unsafe { libc::ttyname_r(terminal.as_raw_fd(), name.as_mut_ptr(), name.len()) },
+        0,
+        "our own pty has a name"
+    );
+    let name = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) };
+    PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes()))
+}
+
+impl Drop for OutputStopped {
+    fn drop(&mut self) {
+        unsafe { libc::tcflow(self.0.as_raw_fd(), libc::TCOON) };
     }
 }
 
@@ -576,4 +665,35 @@ fn read_now(terminal: &OwnedFd, started: Instant) -> Option<Said> {
         at: started.elapsed(),
         bytes: buffer[..read as usize].to_vec(),
     })
+}
+
+/// Everything said after a mark, or after a resize everything from the last
+/// clear, once a frame there has finished. `None` while a frame is still
+/// arriving.
+fn the_answer(said: &[u8], whole_screen: bool) -> Option<&[u8]> {
+    let answer = if whole_screen {
+        let cleared = said
+            .windows(THE_SCREEN_CLEARS.len())
+            .rposition(|bytes| bytes == THE_SCREEN_CLEARS)?;
+        &said[cleared..]
+    } else {
+        said
+    };
+    ends_a_frame(answer).then_some(answer)
+}
+
+/// Whether nothing but the cursor's move follows the cursor being hidden or
+/// shown, which is the last thing a frame writes.
+fn ends_a_frame(said: &[u8]) -> bool {
+    let Some(toggled) = said
+        .windows(THE_CURSOR_HIDDEN.len())
+        .rposition(|bytes| bytes == THE_CURSOR_HIDDEN || bytes == THE_CURSOR_SHOWN)
+    else {
+        return false;
+    };
+    match &said[toggled + THE_CURSOR_HIDDEN.len()..] {
+        [] => true,
+        [b'\x1b', b'[', at @ .., b'H'] => at.iter().all(|b| b.is_ascii_digit() || *b == b';'),
+        _ => false,
+    }
 }
