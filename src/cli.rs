@@ -384,8 +384,9 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // read here while none does. Looked for again at the refresh interval,
     // which is as long as a project read here waits for its next poll.
     let (heard_from_the_watcher, from_the_watcher) = mpsc::channel();
+    let watcher_at = changes::where_the_watcher_is(cfg.watcher.socket.clone());
     let trackers = Arc::new(Through::staying(
-        changes::where_the_watcher_is(cfg.watcher.socket.clone()).as_deref(),
+        watcher_at.as_deref(),
         cfg.read().map(|project| project.name.as_str()),
         bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
         heard_from_the_watcher,
@@ -404,6 +405,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         agents,
         Hearing {
             watching_at,
+            watcher_at,
             from_the_watcher,
             passing_on: Box::new(move |heard| passing_on.passes_on(heard.clone())),
         },
@@ -520,18 +522,40 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let (heard_by, heard) = mpsc::channel();
     let at = changes::where_the_watcher_is(socket.or_else(|| cfg.watcher.socket.clone()));
     let serving = (Arc::clone(&held), reported.clone());
+    let producing = heard_by.clone();
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
-    let _socket = match changes::serve(at, move |connection| {
+    let _socket = match changes::serve(at.clone(), move |connection| {
         let (held, reported) = &serving;
         serve(connection, held, reported, &heard_by);
     }) {
         Ok(socket) => socket,
         Err(refused) => {
-            eprintln!("bdi watch cannot start: {}", watcher_refused(&refused));
+            eprintln!(
+                "bdi watch cannot start: {}",
+                watcher_refused(&refused, CHOOSING_THE_WATCHERS_SOCKET)
+            );
             return Ok(ExitCode::FAILURE);
         }
     };
+    let watcher_at = at.unwrap_or_default();
+    // Every view reads through the watcher, so a change pushed to the socket
+    // a view would watch is one the watcher has to hear, whichever started
+    // first. Held, as the watcher's own socket is.
+    let _changes = changes::keep(
+        changes::where_writers_find_bdi(cfg.changes.socket.clone()),
+        &reported,
+        producing,
+        CHANGES_TAKEN_BACK_EVERY,
+        _socket.still_held(),
+        move |refused| {
+            eprintln!(
+                "bdi watch hears producers only on {}: {}",
+                watcher_at.display(),
+                watcher_refused(refused, CHOOSING_THE_VIEWS_SOCKET)
+            );
+        },
+    );
 
     let reading = crate::app::Reading::of(armed, reported).unread(armed_unread(&arms, &cfg));
     let outstanding = Outstanding::for_a_run(cfg.tui.unanswered_after());
@@ -548,26 +572,39 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Why the watcher's socket could not be opened, and what to do about it.
-fn watcher_refused(refused: &changes::Refused) -> String {
+/// Why one of the watcher's sockets could not be opened, and what to do
+/// about it, where `choose` says how its path is chosen.
+fn watcher_refused(refused: &changes::Refused, choose: &str) -> String {
     use changes::Refused;
     match refused {
-        Refused::NoRuntimeDirectory => "this session has no XDG_RUNTIME_DIR to put the socket in; choose a path with --socket, or with socket under [watcher] in the config".to_string(),
+        Refused::NoRuntimeDirectory => format!("this session has no XDG_RUNTIME_DIR to put the socket in; choose a path {choose}"),
         Refused::AlreadyWatching(at) => format!(
             "another bdi watch is running on {}",
             at.display()
         ),
         Refused::NotASocket(at) => format!(
-            "{} is not a socket, so bdi will not use it; choose another path with --socket, or with socket under [watcher] in the config",
+            "{} is not a socket, so bdi will not use it; choose another path {choose}",
             at.display()
         ),
         Refused::NameOthersMayTake(directory) => format!(
-            "other users may take a name in {}, so a socket under it is not bdi's alone; choose a path outside it with --socket, or with socket under [watcher] in the config",
+            "other users may take a name in {}, so a socket under it is not bdi's alone; choose a path outside it {choose}",
             directory.display()
         ),
         Refused::Unopenable(at, error) => format!("{} could not be opened: {error}", at.display()),
     }
 }
+
+/// How the path of the watcher's own socket is chosen.
+const CHOOSING_THE_WATCHERS_SOCKET: &str =
+    "with --socket, or with socket under [watcher] in the config";
+
+/// How the path of the socket views watch is chosen. `bdi watch`'s
+/// `--socket` names its own socket and not this one.
+const CHOOSING_THE_VIEWS_SOCKET: &str = "with socket under [changes] in the config";
+
+/// How soon the watcher takes back the socket views watch once something
+/// else has taken its name, which an older view does as it exits.
+const CHANGES_TAKEN_BACK_EVERY: Duration = Duration::from_secs(2);
 
 /// `bdi bd`: bd run against `project`'s tracker on the terminal `bdi` was
 /// run on, and exiting as bd exits.
