@@ -25,6 +25,7 @@ mod fixtures;
 mod clipboard;
 mod drive;
 mod keys;
+mod leaving;
 mod reload;
 mod screen;
 mod wire;

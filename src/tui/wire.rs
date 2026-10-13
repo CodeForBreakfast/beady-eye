@@ -19,6 +19,7 @@ use crate::collect::panes::{Aside, Panes};
 use crate::view::{Notch, Notice};
 
 use super::drive::Event;
+use super::leaving;
 use super::{Collecting, Hearing, PassingOn};
 
 /// The inbound channel, or nothing and the two things said in its place.
@@ -225,8 +226,12 @@ pub(super) fn collector(mut collect: Collecting, asked: &Receiver<Asked>, to: &S
 /// itself does none of this — `Sender::send` allocates, which no signal
 /// handler may — so what runs in the handler is signal-hook's write to a pipe
 /// and the waiting happens here.
+///
+/// The deadline starts here as well as when the screen is put back, because a
+/// loop blocked drawing a frame never reads the event and never gets there.
 fn signalled(mut asked_to_stop: Signals, to: &Sender<Event>) {
     if asked_to_stop.forever().next().is_some() {
+        leaving::leave_by_the_deadline();
         let _ = to.send(Event::Signalled);
     }
 }

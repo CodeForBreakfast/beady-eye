@@ -53,12 +53,7 @@ fn a_terminate_ends_a_bdi_blocked_drawing() {
 
 #[test]
 fn a_quit_ends_a_bdi_whose_terminal_takes_nothing() {
-    let mut bdi = Driven::bdi(
-        ROWS,
-        COLS,
-        a_home_naming_one_project("quit-undrained"),
-        &[],
-    );
+    let mut bdi = Driven::bdi(ROWS, COLS, a_home_naming_one_project("quit-undrained"), &[]);
     bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
     let _stopped = bdi.stop_taking_output();
 

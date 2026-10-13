@@ -38,6 +38,7 @@ use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Ty
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::keys::{bead_key_rows, bindings, forest_key_rows};
+use super::leaving;
 use super::reload::Reloaded;
 use crate::app::due_after;
 
@@ -1134,8 +1135,10 @@ impl Drop for Screen {
         // Every way the run can end comes through here — the loop returning
         // on 'q', a panic unwinding, and a signal, which the loop answers by
         // returning.
+        leaving::leave_by_the_deadline();
         let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
         ratatui::restore();
+        leaving::hand_over_what_was_written();
     }
 }
 
