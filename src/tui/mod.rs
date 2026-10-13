@@ -47,6 +47,9 @@ pub struct Hearing {
     /// Where the inbound channel is opened, or nothing where it has nowhere
     /// to go.
     pub watching_at: Option<PathBuf>,
+    /// Where the watcher the view reads through is, or nothing where it has
+    /// nowhere to be.
+    pub watcher_at: Option<PathBuf>,
     /// Each project the watcher has answered for, or can no longer answer
     /// for.
     pub from_the_watcher: Receiver<Heard>,

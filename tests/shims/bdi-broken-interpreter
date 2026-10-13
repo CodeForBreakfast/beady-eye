@@ -1,0 +1,5 @@
+#!/bdi-no-such-interpreter
+# A program that is installed and whose interpreter is not. The unit tests in
+# src/collect/run.rs link to it rather than write it, for the reason
+# stand-in beside it gives.
+exit 0

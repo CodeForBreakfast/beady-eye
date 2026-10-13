@@ -206,13 +206,19 @@ const WORKSPACE: &str = ".beads";
 ///
 /// Neither holding leaves the directory they were started in, which is what
 /// they had before any of this.
+///
+/// bd may spell the tree through a symlink, while `cwd` is the directory the
+/// operating system says bdi is in, which is the real one. So the tree is
+/// resolved before `cwd` is tested against it, and comes back resolved, as
+/// git's own answer does. A tree that does not resolve is taken as spelled.
 fn the_tracked_tree_around(said: &str, cwd: &Path) -> Option<PathBuf> {
     let workspace: Workspace = serde_json::from_str(said).ok()?;
     if workspace.path.file_name() != Some(OsStr::new(WORKSPACE)) {
         return None;
     }
     let tree = workspace.path.parent()?;
-    cwd.starts_with(tree).then(|| tree.to_path_buf())
+    let tree = tree.canonicalize().unwrap_or_else(|_| tree.to_path_buf());
+    cwd.starts_with(&tree).then_some(tree)
 }
 
 /// One line of git's answer, or which kind of nothing git had to give.
@@ -1148,6 +1154,36 @@ path = "/tmp/seat-b/wt/crates/dish"
             .expect("the tree bd tracks is a project");
 
         assert_eq!(cfg.projects[0].path, PathBuf::from("/home/pilot"));
+    }
+
+    /// bd and bdi can spell one directory two ways: bd answers with the path
+    /// it was handed or walked, which may run through a symlink, while the
+    /// directory bdi was started in is the real one. macOS reaches every
+    /// temporary directory through `/var`, a link to `/private/var`, so
+    /// there the two never agree. They are the same tree, and it is the root.
+    #[test]
+    fn a_tracker_bd_names_through_a_symlink_roots_them_at_the_tree_it_belongs_to() {
+        let scratch = a_scratch_directory("tracker-through-a-symlink");
+        let tree = scratch.join("dunwich");
+        let standing_in = tree.join("crates/dish");
+        std::fs::create_dir_all(&standing_in).expect("the directory is ours to make");
+        let spelled = scratch.join("spelled");
+        std::os::unix::fs::symlink(&tree, &spelled).expect("the link is ours to make");
+        let runner = FakeRunner::default()
+            .with(
+                "bd where --json",
+                &format!(r#"{{"path":"{}"}}"#, spelled.join(".beads").display()),
+            )
+            .failing("git rev-parse --show-toplevel", no_git())
+            .failing("git remote get-url origin", no_git());
+
+        let cfg = from_the_current_directory(&runner, &standing_in, None)
+            .expect("the tree bd tracks is a project");
+
+        assert_eq!(cfg.projects[0].path, tree);
+        assert_eq!(cfg.projects[0].name, "dunwich");
+
+        std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");
     }
 
     /// git answering is the whole answer: where it says where the repository
