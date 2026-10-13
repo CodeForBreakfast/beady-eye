@@ -1312,6 +1312,24 @@ mod tests {
         }
     }
 
+    /// Wait until no process holds the socket at `at` open.
+    ///
+    /// Dropping a listener does not close the socket while a child holds a
+    /// copy, and a child forked by another test in this process while the
+    /// listener was open holds one until it execs. Until then the socket
+    /// still accepts, and a run reclaiming it is right to call it watched.
+    fn nothing_holds_open(at: &Path) {
+        let deadline = std::time::Instant::now() + A_MOMENT;
+        while UnixStream::connect(at).is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "something still holds {} open",
+                at.display()
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     /// A `UnixListener` leaves its file behind, so a run that crashed leaves
     /// one nothing is watching.
     #[test]
@@ -1321,6 +1339,7 @@ mod tests {
             .expect("a directory to put the socket in");
         drop(UnixListener::bind(&at).expect("a socket the crashed run left"));
         assert!(at.exists(), "the crashed run's socket is still there");
+        nothing_holds_open(&at);
 
         let reported = watching(["arkham", "ferry"]);
         let (_socket, changes) = open(&at, &reported);
