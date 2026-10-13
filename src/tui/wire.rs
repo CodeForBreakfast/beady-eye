@@ -16,6 +16,7 @@ use crate::app::Asked;
 use crate::collect::agents::Agents;
 use crate::collect::changes::{self, Heard, Reported, Socket};
 use crate::collect::panes::{Aside, Panes};
+use crate::collect::watched;
 use crate::view::{Notch, Notice};
 
 use super::drive::Event;
@@ -33,9 +34,18 @@ use super::{Collecting, Hearing, PassingOn};
 /// the half no phrase may carry. It is written before the alternate screen
 /// opens, so it is still on the primary screen when the view tears down, and
 /// it can be redirected to a file where a notice never can.
-fn inbound(opened: Result<Socket, changes::Refused>) -> (Option<Socket>, Option<Notice>) {
+///
+/// A view refused because something holds the socket says nothing where a
+/// watcher answers. The watcher takes the socket from whatever holds it, so
+/// it is the holder or about to be, and the view reads through it: every
+/// change pushed there reaches this view, and nothing is polled.
+fn inbound(
+    opened: Result<Socket, changes::Refused>,
+    a_watcher_answers: impl FnOnce() -> bool,
+) -> (Option<Socket>, Option<Notice>) {
     match opened {
         Ok(socket) => (Some(socket), None),
+        Err(changes::Refused::AlreadyWatching(_)) if a_watcher_answers() => (None, None),
         Err(refused) => {
             eprintln!("bdi: {refused}");
             (None, Some(said_at_the_foot(&refused)))
@@ -85,6 +95,7 @@ pub(super) fn wire(
 ) -> Wired {
     let Hearing {
         watching_at,
+        watcher_at,
         from_the_watcher,
         passing_on,
     } = hearing;
@@ -117,7 +128,10 @@ pub(super) fn wire(
     // being settled at startup: a channel arriving later has to retract it,
     // and its `Socket` has to reach the loop, or nothing takes the socket off
     // the filesystem when the run ends.
-    let (socket, refused) = inbound(changes::watch(watching_at, &reported, changed.clone()));
+    let (socket, refused) = inbound(
+        changes::watch(watching_at, &reported, changed.clone()),
+        || watched::answers(watcher_at.as_deref()),
+    );
 
     let watched_to = to_the_loop.clone();
     thread::spawn(move || report(&mut Watched(from_the_watcher), &watched_to));
@@ -573,7 +587,7 @@ mod tests {
     /// the notice and leaves the printing to the test harness to capture.
     #[test]
     fn a_channel_that_would_not_open_leaves_a_notice_behind_it() {
-        let (socket, notice) = inbound(Err(changes::Refused::NoRuntimeDirectory));
+        let (socket, notice) = inbound(Err(changes::Refused::NoRuntimeDirectory), || false);
 
         assert!(socket.is_none());
         assert_eq!(notice, Some(Notice::NoInboundChannel));
@@ -587,12 +601,32 @@ mod tests {
     /// finding the holder is the whole of the remedy.
     #[test]
     fn a_socket_another_bdi_holds_is_said_to_be_that_rather_than_just_lost() {
-        let (socket, notice) = inbound(Err(changes::Refused::AlreadyWatching(
-            std::path::PathBuf::from("/run/user/1000/beady-eye/changes.sock"),
-        )));
+        let (socket, notice) = inbound(
+            Err(changes::Refused::AlreadyWatching(std::path::PathBuf::from(
+                "/run/user/1000/beady-eye/changes.sock",
+            ))),
+            || false,
+        );
 
         assert!(socket.is_none());
         assert_eq!(notice, Some(Notice::AnotherBdiHadTheInboundChannel));
+    }
+
+    /// The watcher takes the socket from whatever holds it and the view reads
+    /// through the watcher, so a view refused beside one is polled no more
+    /// than one that holds the socket, and a notice saying it was would be
+    /// false.
+    #[test]
+    fn a_socket_held_beside_an_answering_watcher_says_nothing() {
+        let (socket, notice) = inbound(
+            Err(changes::Refused::AlreadyWatching(std::path::PathBuf::from(
+                "/run/user/1000/beady-eye/changes.sock",
+            ))),
+            || true,
+        );
+
+        assert!(socket.is_none());
+        assert_eq!(notice, None);
     }
 
     /// The refusals with nothing behind them a reader could close say what
@@ -608,7 +642,7 @@ mod tests {
                 std::io::Error::from(std::io::ErrorKind::PermissionDenied),
             ),
         ] {
-            let (_, notice) = inbound(Err(refused));
+            let (_, notice) = inbound(Err(refused), || false);
 
             assert_eq!(notice, Some(Notice::NoInboundChannel));
         }
@@ -621,11 +655,14 @@ mod tests {
         let (changed, _changes) = mpsc::channel();
         let at = a_socket_path("inbound");
 
-        let (socket, notice) = inbound(changes::watch(
-            Some(at),
-            &Reported::watching(["arkham".to_string()]),
-            changed,
-        ));
+        let (socket, notice) = inbound(
+            changes::watch(
+                Some(at),
+                &Reported::watching(["arkham".to_string()]),
+                changed,
+            ),
+            || false,
+        );
 
         assert!(socket.is_some());
         assert_eq!(notice, None);
