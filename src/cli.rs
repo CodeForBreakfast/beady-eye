@@ -538,12 +538,15 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    let watcher_at = at.unwrap_or_default();
     // Every view reads through the watcher, so a change pushed to the socket
     // a view would watch is one the watcher has to hear, whichever started
-    // first. Held, as the watcher's own socket is.
+    // first. Held, as the watcher's own socket is. Where the two are one
+    // path, the watcher's socket already hears producers.
+    let views_at = changes::where_writers_find_bdi(cfg.changes.socket.clone())
+        .filter(|views_at| Some(views_at) != at.as_ref());
+    let watcher_at = at.unwrap_or_default();
     let _changes = changes::keep(
-        changes::where_writers_find_bdi(cfg.changes.socket.clone()),
+        views_at,
         &reported,
         producing,
         CHANGES_TAKEN_BACK_EVERY,

@@ -2119,12 +2119,15 @@ socket, it binds the path a view would watch, putting aside whatever socket is
 there, live or not. A view holding that path can pass a producer's line on
 only once it has found the watcher, and a view from an older release passes
 nothing on and removes the name when it exits. So the watcher looks at the
-name every two seconds and takes it back whenever it no longer holds the
-watcher's socket. It stops once the name of its own socket no longer holds it,
-and only one watcher can hold that, so no two runs take the path back and
-forth. Where something that is not a socket is at the path, or the way down
-is one other users may write in, the watcher says so once on `stderr` and
-hears producers on its own socket only.
+name every two seconds, and takes it back once the name is gone or what holds
+it is dead. A live socket there is left alone, as a view started after the
+watcher leaves the watcher's, so two watchers with sockets of their own do
+not take the path back and forth: the later one keeps it. The watcher stops
+looking once the name of its own socket no longer holds it. Where the path is
+the watcher's own socket, that socket already hears producers and nothing
+more is taken. Where something that is not a socket is at the path, or the
+way down is one other users may write in, or another watcher holds it, the
+watcher says so once on `stderr` and hears producers on its own socket only.
 
 **A run of `bdi` believes only a socket that is the user's own.** Before it
 connects, it makes the same checks on the way down that the watcher makes,

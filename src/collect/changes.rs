@@ -489,17 +489,18 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
 }
 
 /// The inbound channel at `at`, taken from whatever socket holds it, live or
-/// not, and taken back every `every` that the name stops holding it, for as
-/// long as `holding` says. Each time it cannot be taken, `lost` is told why,
-/// once until it is taken again. Nothing where there is no path, as there is
-/// none for a view either.
+/// not. Every `every` after that, for as long as `holding` says, it is taken
+/// back where the name has gone or what holds it now is dead. Each time it
+/// cannot be taken, `lost` is told why, once until it is taken again. Nothing
+/// where there is no path, as there is none for a view either.
 ///
 /// For `bdi watch`, which every view reads through, so a change pushed to
 /// any view's socket is one it has to hear. A view holding the name can pass
 /// a line on only to a watcher it has found, and an older view passes none
-/// on and takes the name away with it when it exits. Only one watcher holds
-/// its own socket at a time, which is what `holding` asks, so no two runs
-/// take this one back and forth.
+/// on and takes the name away with it when it exits. A view started later
+/// leaves a live socket alone, so only the first take puts one aside. Taking
+/// it back leaves a live one alone too, so two watchers with sockets of their
+/// own do not take it back and forth.
 pub fn keep(
     at: Option<PathBuf>,
     reported: &Reported,
@@ -514,9 +515,9 @@ pub fn keep(
     };
     let reported = reported.clone();
     let each = Arc::new(move |writer| hear(writer, &reported, &changed));
-    let take = move || listening(at.clone(), take_over, Arc::clone(&each));
+    let take = move |in_use| listening(at.clone(), in_use, Arc::clone(&each));
 
-    let mut said = match take() {
+    let mut said = match take(take_over) {
         Ok(socket) => {
             *locked(&kept) = Some(socket);
             false
@@ -540,9 +541,9 @@ pub fn keep(
             continue;
         }
         // ponytail: the socket lost keeps its accepting thread and its
-        // descriptor until the run exits, once for each time it is taken
-        // back, which is each time something else takes the name.
-        match take() {
+        // descriptor until the run exits, once for each time the name is
+        // taken from it.
+        match take(reclaim) {
             Ok(taken) => {
                 *socket = Some(taken);
                 said = false;
@@ -1725,6 +1726,23 @@ mod tests {
 
         say(&at, &[("arkham\n", "ok arkham")]);
         assert!(changes.recv_timeout(A_MOMENT).is_ok());
+    }
+
+    /// Two watchers on sockets of their own share the views' path, and the
+    /// later one keeps it rather than the two taking it back and forth.
+    #[test]
+    fn a_keeper_leaves_a_socket_another_keeper_took() {
+        let at = a_socket_path("kept-by-another");
+        let reported = watching(["arkham"]);
+        let (_first, firsts_changes, firsts_refusals) = kept(&at, &reported, || true);
+        let (_second, seconds_changes, _) = kept(&at, &reported, || true);
+        thread::sleep(A_TICK * 10);
+
+        say(&at, &[("arkham\n", "ok arkham")]);
+        assert!(seconds_changes.recv_timeout(A_MOMENT).is_ok());
+        assert!(firsts_changes.try_recv().is_err(), "the first took it back");
+        let said: Vec<String> = firsts_refusals.try_iter().collect();
+        assert_eq!(said.len(), 1, "{said:?}");
     }
 
     /// A keeper that no longer holds what made it the keeper leaves the

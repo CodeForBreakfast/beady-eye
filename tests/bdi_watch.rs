@@ -795,6 +795,32 @@ fn a_change_pushed_after_a_board_started_first_reaches_the_watchers_boards() {
     assert_eq!(heard.len(), 1, "{heard:?}");
 }
 
+/// A config naming the watcher's own socket for the views' as well leaves
+/// the watcher one socket, which hears producers and serves views alike.
+#[test]
+fn a_views_socket_named_as_the_watchers_own_stays_the_watchers() {
+    let (home, tracker) = a_home_with_a_watcher_configured("watch-one-socket");
+    let config = home.join(".config/beady-eye/config.toml");
+    let mut text = std::fs::read_to_string(&config).expect("the config was just written");
+    text.push_str(&format!(
+        "\n[changes]\nsocket = \"{}\"\n",
+        watching_at(&home).display()
+    ));
+    std::fs::write(&config, text).expect("the config is ours to write");
+    let watcher = watching_in(&home, &tracker);
+
+    let answer = Producer::connected_to(&watching_at(&home)).says("arkham");
+    let watched = Consumer::connected_to(&watching_at(&home))
+        .sends("watch arkham")
+        .hears_an_answer();
+
+    let out = stopped(watcher);
+    assert_eq!(answer, "ok arkham");
+    assert!(!watched.is_empty());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(!said.contains("hears producers only"), "{said}");
+}
+
 /// A test that panics before it stops its watcher must not leave it behind.
 #[test]
 fn a_watcher_a_test_abandons_is_killed() {
