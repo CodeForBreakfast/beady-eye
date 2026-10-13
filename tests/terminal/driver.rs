@@ -27,6 +27,8 @@
 
 use std::io::Write;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -269,6 +271,31 @@ impl Driven {
         );
     }
 
+    /// Stop the terminal taking what `bdi` writes, as a terminal nobody drains
+    /// does once its queue is full: the next write blocks, and so does every
+    /// one after it. Taken back up when what this returns is dropped.
+    ///
+    /// Stopped rather than left undrained, because a full queue is a race
+    /// with the drain thread and a stop is not: with the slave's output
+    /// stopped, a write blocks however little it has to say. Raw mode does
+    /// not undo it, since it is a stop asked for by `tcflow` rather than by a
+    /// character the terminal read.
+    pub fn stop_taking_output(&self) -> OutputStopped {
+        let slave = unsafe { std::ffi::CStr::from_ptr(libc::ptsname(self.terminal.as_raw_fd())) };
+        let slave = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOCTTY)
+            .open(std::ffi::OsStr::from_bytes(slave.to_bytes()))
+            .expect("the far end of our own pty is ours to open");
+        assert_eq!(
+            unsafe { libc::tcflow(slave.as_raw_fd(), libc::TCOOFF) },
+            0,
+            "the terminal's output is ours to stop"
+        );
+        OutputStopped(slave)
+    }
+
     /// How `bdi` exited, where it has, with whatever it wrote on the way out
     /// read.
     ///
@@ -278,7 +305,7 @@ impl Driven {
     /// interval says only that the drain did not run in it, and a drain the
     /// scheduler held off for one would have this report a `bdi` that never
     /// said what it said on the way out.
-    fn exited(&mut self) -> Option<ExitStatus> {
+    pub fn exited(&mut self) -> Option<ExitStatus> {
         let exited = self.child.try_wait().expect("bdi is ours to ask after")?;
         self.hear_what_is_waiting();
         Some(exited)
@@ -486,6 +513,20 @@ impl Driven {
     /// close whatever the next open handed out.
     fn as_file(&self) -> std::fs::File {
         unsafe { std::fs::File::from_raw_fd(self.terminal.as_raw_fd()) }
+    }
+}
+
+/// A terminal whose output [`Driven::stop_taking_output`] stopped.
+///
+/// Dropped before the `Driven` it came from, so declare it after: a `bdi`
+/// still writing to a stopped terminal is killed mid-write by that drop, and
+/// on Darwin a process cannot finish dying while its terminal holds output
+/// nobody will take.
+pub struct OutputStopped(std::fs::File);
+
+impl Drop for OutputStopped {
+    fn drop(&mut self) {
+        unsafe { libc::tcflow(self.0.as_raw_fd(), libc::TCOON) };
     }
 }
 
