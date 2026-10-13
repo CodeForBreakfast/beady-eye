@@ -31,6 +31,10 @@ fn bdi_in(cwd: &Path, args: &[&str], environment: &[(String, String)]) -> Output
         .env("HOME", cwd)
         .env_remove("BEADS_DIR")
         .env_remove("BDI_PROJECT")
+        // A real bd's metrics flusher outlives it and writes under HOME, which
+        // each test here removes. beads' own test suite turns it off the same way.
+        .env("BD_DISABLE_METRICS", "1")
+        .env("BD_DISABLE_EVENT_FLUSH", "1")
         .envs(environment.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .output()
         .expect("bdi runs")
@@ -313,6 +317,14 @@ fn a_directory_with_no_tracker_and_no_config_says_so() {
     assert!(
         out.stdout.is_empty(),
         "an empty snapshot was emitted anyway"
+    );
+    let left: Vec<_> = std::fs::read_dir(&cwd)
+        .expect("the directory is ours to read")
+        .map(|entry| entry.expect("the entry is readable").file_name())
+        .collect();
+    assert!(
+        left.is_empty(),
+        "the run left {left:?} in a directory it may still be writing to as it is removed"
     );
 
     std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
