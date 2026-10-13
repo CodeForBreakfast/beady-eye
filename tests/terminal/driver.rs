@@ -98,6 +98,8 @@ pub struct Mark(usize);
 pub struct Driven {
     child: Child,
     terminal: Arc<OwnedFd>,
+    /// The far end of `terminal`, which is `bdi`'s.
+    their_end: PathBuf,
     home: PathBuf,
     started: Instant,
     said: Arc<Mutex<Vec<Said>>>,
@@ -156,6 +158,7 @@ impl Driven {
         let (ours, theirs) = a_pty(rows, cols);
         let started = Instant::now();
         let child = bdi_on(&theirs, &home, arguments, environment);
+        let their_end = the_path_of(&theirs);
         drop(theirs);
 
         let terminal = Arc::new(ours);
@@ -171,6 +174,7 @@ impl Driven {
         Self {
             child,
             terminal,
+            their_end,
             home,
             started,
             said,
@@ -281,12 +285,11 @@ impl Driven {
     /// not undo it, since it is a stop asked for by `tcflow` rather than by a
     /// character the terminal read.
     pub fn stop_taking_output(&self) -> OutputStopped {
-        let slave = unsafe { std::ffi::CStr::from_ptr(libc::ptsname(self.terminal.as_raw_fd())) };
         let slave = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(libc::O_NOCTTY)
-            .open(std::ffi::OsStr::from_bytes(slave.to_bytes()))
+            .open(&self.their_end)
             .expect("the far end of our own pty is ours to open");
         assert_eq!(
             unsafe { libc::tcflow(slave.as_raw_fd(), libc::TCOOFF) },
@@ -523,6 +526,19 @@ impl Driven {
 /// on Darwin a process cannot finish dying while its terminal holds output
 /// nobody will take.
 pub struct OutputStopped(std::fs::File);
+
+/// Where a terminal lives, asked with the reentrant call because the tests
+/// in a binary run on threads of their own.
+fn the_path_of(terminal: &std::fs::File) -> PathBuf {
+    let mut name = [0 as libc::c_char; 256];
+    assert_eq!(
+        unsafe { libc::ttyname_r(terminal.as_raw_fd(), name.as_mut_ptr(), name.len()) },
+        0,
+        "our own pty has a name"
+    );
+    let name = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) };
+    PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes()))
+}
 
 impl Drop for OutputStopped {
     fn drop(&mut self) {
