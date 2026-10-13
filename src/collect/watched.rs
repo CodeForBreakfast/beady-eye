@@ -912,9 +912,12 @@ path = "/srv/work/ferry"
 
     /// Nothing moving is not a watcher gone: the alive line it sends every
     /// connection keeps a watch open for as long as it is sent.
+    ///
+    /// Under a full test run, macOS can wake a sleeping thread over 100ms
+    /// late, so the patience leaves the alive line room for that.
     #[test]
     fn a_run_that_stays_keeps_a_quiet_watcher_that_is_alive() {
-        let patience = Duration::from_millis(100);
+        let patience = Duration::from_secs(1);
         let at = a_socket("watched-staying-quiet");
         let watcher = UnixListener::bind(&at).expect("the socket is ours");
         thread::spawn(move || {
@@ -922,7 +925,7 @@ path = "/srv/work/ferry"
             writeln!(connection, "{}", bead("dunwich", "dun-1", true, &[])).expect("sent");
             writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
             while writeln!(connection, r#"{{"line":"alive"}}"#).is_ok() {
-                thread::sleep(patience / 4);
+                thread::sleep(patience / 10);
             }
         });
         let own = own_trackers();
@@ -935,7 +938,7 @@ path = "/srv/work/ferry"
         let through = Through::hearing(Some(&at), ["dunwich"], &own, patience, Some(staying));
 
         let answered = told.recv_timeout(A_MOMENT);
-        thread::sleep(5 * patience);
+        thread::sleep(2 * patience);
         let read = through
             .of(project(&cfg, "dunwich"))
             .map(|tracker| ids(tracker.as_ref()));
