@@ -192,9 +192,23 @@ struct Consumer {
 }
 
 impl Consumer {
+    /// Connected once the watcher takes connections, which is a moment
+    /// after its socket appears: `bind` names it before `listen`.
     fn connected_to(at: &Path) -> Self {
-        let speaking = UnixStream::connect(at)
-            .unwrap_or_else(|why| panic!("bdi watch is on {} ({why})", at.display()));
+        let giving_up = Instant::now() + GIVING_UP;
+        let speaking = loop {
+            match UnixStream::connect(at) {
+                Err(why)
+                    if why.kind() == ErrorKind::ConnectionRefused && Instant::now() < giving_up =>
+                {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                connected => {
+                    break connected
+                        .unwrap_or_else(|why| panic!("bdi watch is on {} ({why})", at.display()))
+                }
+            }
+        };
         let watching = speaking
             .try_clone()
             .expect("the connection is ours to read");

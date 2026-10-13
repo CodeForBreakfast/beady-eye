@@ -10,7 +10,7 @@
 //! has the design.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -538,7 +538,12 @@ fn next(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Line> {
             .checked_duration_since(Instant::now())
             .filter(|left| !left.is_zero())?;
         from.get_ref().set_read_timeout(Some(left)).ok()?;
-        let arrived = from.fill_buf().ok()?;
+        // Linux never restarts a socket read with a timeout after a signal.
+        let arrived = match from.fill_buf() {
+            Ok(arrived) => arrived,
+            Err(failed) if failed.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        };
         if arrived.is_empty() {
             return None;
         }
@@ -1452,6 +1457,33 @@ path = "/srv/work/dunwich"
         });
 
         assert_eq!(finished.recv_timeout(A_MOMENT), Ok(true));
+    }
+
+    /// A signal that interrupts the run's wait on the watcher says nothing
+    /// of the watcher.
+    #[test]
+    fn a_wait_a_signal_interrupts_goes_on_waiting_for_the_line() {
+        use std::os::unix::thread::JoinHandleExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        use signal_hook::consts::SIGUSR1;
+
+        let handled = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(SIGUSR1, Arc::clone(&handled)).expect("SIGUSR1 is ours");
+        let (mut watcher, run) = UnixStream::pair().expect("a connected pair");
+        let reading =
+            thread::spawn(move || next(&mut BufReader::new(run), Instant::now() + A_MOMENT));
+        let signalling_until = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < signalling_until && !reading.is_finished() {
+            // The thread is not yet joined, so its id still names it.
+            unsafe { libc::pthread_kill(reading.as_pthread_t(), SIGUSR1) };
+            thread::sleep(Duration::from_millis(1));
+        }
+        let _ = writeln!(watcher, "{}", fresh("dunwich", json!("ok")));
+
+        let line = reading.join().expect("the read ends");
+        assert!(handled.load(Ordering::Relaxed), "a signal arrived");
+        assert!(matches!(line, Some(Line::Freshness { .. })));
     }
 
     #[test]
