@@ -405,6 +405,11 @@ impl Socket {
         let (at, bound) = (self.at.clone(), self.bound);
         move || file_at(&at) == bound
     }
+
+    /// Whether `at` names the file this run bound, however it is spelled.
+    pub fn is_at(&self, at: &Path) -> bool {
+        self.bound.is_some() && file_at(at) == self.bound
+    }
 }
 
 /// Where a writer finds `bdi`: the path this run was told to watch, or
@@ -1664,6 +1669,19 @@ mod tests {
         drop(socket);
 
         assert!(!at.exists(), "the next run has nothing to reclaim");
+    }
+
+    #[test]
+    fn a_socket_is_at_its_path_however_it_is_spelled() {
+        let at = a_socket_path("spelled-twice");
+        let (socket, _changes) = open(&at, &watching(["arkham"]));
+        let directory = at.parent().expect("the socket is in a directory");
+        let respelled = directory
+            .join(".")
+            .join(at.file_name().expect("the socket has a name"));
+
+        assert!(socket.is_at(&respelled));
+        assert!(!socket.is_at(&directory.join("elsewhere.sock")));
     }
 
     /// Short, so a test waits out several of them in a moment.

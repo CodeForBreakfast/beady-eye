@@ -543,7 +543,7 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     // first. Held, as the watcher's own socket is. Where the two are one
     // path, the watcher's socket already hears producers.
     let views_at = changes::where_writers_find_bdi(cfg.changes.socket.clone())
-        .filter(|views_at| Some(views_at) != at.as_ref());
+        .filter(|views_at| !_socket.is_at(views_at));
     let watcher_at = at.unwrap_or_default();
     let _changes = changes::keep(
         views_at,
