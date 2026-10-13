@@ -625,6 +625,12 @@ pub fn over_the_loose_roots(
     over(named, THE_LOOSE_ROOTS, SHOW_EVERY_ROOT, rows, cols, settled)
 }
 
+/// The mark a project wears once a collection has read it whole, drawn in the
+/// frame that draws the collection's rows. A walk typed before it lands on a
+/// forest with no tree in it yet, and a quiet spell does not say it has come:
+/// a `bdi` held off the processor goes quiet mid-collection.
+const COLLECTED: &[u8] = "✓".as_bytes();
+
 /// A `bdi` on a pty of this size over one capture, walked to where the tests
 /// using it start.
 fn over(
@@ -642,8 +648,7 @@ fn over(
     environment.push(a_socket_of_its_own(&home));
 
     let mut bdi = driver::Driven::bdi(rows, cols, home, &environment);
-    bdi.read_until(ENTER_ALTERNATE_SCREEN, driver::GIVING_UP);
-    bdi.settle(settled, driver::GIVING_UP);
+    bdi.read_until(COLLECTED, driver::GIVING_UP);
     bdi.send(walk);
     bdi.settle(settled, driver::GIVING_UP);
     (bdi, tracker)
