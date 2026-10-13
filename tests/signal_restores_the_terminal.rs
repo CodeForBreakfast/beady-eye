@@ -65,47 +65,46 @@ fn assert_restored_after(signal: i32, named: &str) {
     let mut bdi = Driven::bdi(ROWS, COLS, a_home_naming_one_project(named), &[]);
     bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
 
-    let restoring = signal_and_read(&mut bdi, signal);
+    let restoring = signal_and_read(&mut bdi, signal, LONG_ENOUGH_TO_DIE);
 
-    let said = String::from_utf8_lossy(&restoring);
-    assert!(
-        contains(&restoring, LEAVE_ALTERNATE_SCREEN),
-        "{named} left the terminal on the alternate screen; \
-         it wrote {} bytes on the way out: {said:?}",
-        restoring.len()
-    );
-    for (mode, off) in MOUSE_OFF {
-        assert!(
-            contains(&restoring, off),
-            "{named} left the terminal reporting the mouse ({mode}): {said:?}"
-        );
-    }
-    assert!(
-        contains(&restoring, BRACKETED_PASTE_OFF),
-        "{named} left the terminal taking pastes bracketed: {said:?}"
-    );
+    assert_put_back(&restoring, named);
 }
 
 /// A refresh interval no test here will ever reach, so the only collection is
 /// the one `bdi` asks for at startup.
 const NOTHING_ELSE_WILL_COLLECT: &str = "[tui]\nrefresh_seconds = 600\n";
 
-/// A `^C` while the trackers are still being read puts the terminal back.
+/// How long a `bdi` waiting on a tracker has to leave once signalled. Leaving
+/// takes tens of milliseconds, so this is a bound and not a race.
+const LEAVES_WITHIN: Duration = Duration::from_secs(1);
+
+/// A terminate while the trackers are still being read leaves at once and
+/// puts the terminal back.
 ///
 /// This is what `bdi` takes on for opening its screen before it has read
 /// anything, and the one place that trade can be looked at rather than
 /// argued about. During that wait there is now a screen to put back, so the
-/// interrupt has to be answered rather than obeyed — and everything that
-/// answers it is the same `Drop` the tests above drive, reached at the one
-/// moment nothing had ever reached it before.
+/// signal has to be answered rather than obeyed — and it has to be answered
+/// by the loop, without waiting for a collection that may not come back.
 ///
 /// `bd` is held for the life of the test, so the collection this interrupts
 /// cannot have come back: what is on the screen when the signal lands is the
 /// forest with its marks still turning.
 #[test]
-fn an_interrupt_while_the_first_collection_runs_puts_the_terminal_back() {
-    let home =
-        a_home_naming_one_project_settled("signal-mid-collection", NOTHING_ELSE_WILL_COLLECT);
+fn a_terminate_while_a_collection_is_held_leaves_within_a_second() {
+    assert_left_promptly_mid_collection(libc::SIGTERM, "SIGTERM");
+}
+
+#[test]
+fn an_interrupt_while_a_collection_is_held_leaves_within_a_second() {
+    assert_left_promptly_mid_collection(libc::SIGINT, "SIGINT");
+}
+
+fn assert_left_promptly_mid_collection(signal: i32, named: &str) {
+    let home = a_home_naming_one_project_settled(
+        &format!("{named}-mid-collection"),
+        NOTHING_ELSE_WILL_COLLECT,
+    );
     let tracker = ShimmedTracker::beside(&home);
     tracker.hang();
 
@@ -113,31 +112,44 @@ fn an_interrupt_while_the_first_collection_runs_puts_the_terminal_back() {
     bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
     tracker.wait_until_holding(GIVING_UP);
 
-    let restoring = signal_and_read(&mut bdi, libc::SIGINT);
+    let restoring = signal_and_read(&mut bdi, signal, LEAVES_WITHIN);
 
-    let said = String::from_utf8_lossy(&restoring);
     assert!(
-        contains(&restoring, LEAVE_ALTERNATE_SCREEN),
-        "a SIGINT during the first collection left the terminal on the \
-         alternate screen; it wrote {} bytes on the way out: {said:?}",
+        bdi.exited().is_some(),
+        "bdi was still running {LEAVES_WITHIN:?} after a {named} during a collection"
+    );
+    assert_put_back(&restoring, &format!("a {named} during a collection"));
+}
+
+/// Assert that what `bdi` wrote on the way out turned off everything it
+/// turned on.
+fn assert_put_back(restoring: &[u8], after: &str) {
+    let said = String::from_utf8_lossy(restoring);
+    assert!(
+        contains(restoring, LEAVE_ALTERNATE_SCREEN),
+        "{after} left the terminal on the alternate screen; \
+         it wrote {} bytes on the way out: {said:?}",
         restoring.len()
     );
     for (mode, off) in MOUSE_OFF {
         assert!(
-            contains(&restoring, off),
-            "a SIGINT during the first collection left the terminal \
-             reporting the mouse ({mode}): {said:?}"
+            contains(restoring, off),
+            "{after} left the terminal reporting the mouse ({mode}): {said:?}"
         );
     }
+    assert!(
+        contains(restoring, BRACKETED_PASTE_OFF),
+        "{after} left the terminal taking pastes bracketed: {said:?}"
+    );
 }
 
 /// Send a signal and collect everything written after it.
-fn signal_and_read(bdi: &mut Driven, signal: i32) -> Vec<u8> {
+fn signal_and_read(bdi: &mut Driven, signal: i32, patience: Duration) -> Vec<u8> {
     let before = bdi.mark();
     assert_eq!(
         unsafe { libc::kill(bdi.pid(), signal) },
         0,
         "the signal is ours to send"
     );
-    bdi.last_words(before, LONG_ENOUGH_TO_DIE)
+    bdi.last_words(before, patience)
 }
