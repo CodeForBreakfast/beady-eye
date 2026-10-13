@@ -504,9 +504,20 @@ fn connected_to(at: &Path, patience: Duration) -> Option<(UnixStream, BufReader<
     // watcher takes it or the run exits.
     thread::spawn(move || connected.send(UnixStream::connect(at)));
     let to = connection.recv_timeout(patience).ok()?.ok()?;
-    to.set_write_timeout(Some(patience)).ok()?;
+    bounded(to.set_write_timeout(Some(patience)))?;
     let from = BufReader::new(to.try_clone().ok()?);
     Some((to, from))
+}
+
+/// Nothing where a timeout could not be set on a connection. macOS refuses
+/// every option on a connection closed both ways, as one is once the
+/// watcher has gone, and such a connection never waits: a read takes what
+/// the watcher sent before it went, and a write fails at once.
+fn bounded(set: std::io::Result<()>) -> Option<()> {
+    match set {
+        Err(refused) if refused.kind() != ErrorKind::InvalidInput => None,
+        _ => Some(()),
+    }
 }
 
 /// Whether the watcher answered the line a producer last said on `from`.
@@ -514,7 +525,7 @@ fn connected_to(at: &Path, patience: Duration) -> Option<(UnixStream, BufReader<
 /// answer comes can lose every line after it. Alive lines on the way are
 /// passed over.
 fn answered(from: &mut BufReader<UnixStream>) -> bool {
-    if from.get_ref().set_read_timeout(Some(WEDGED_AFTER)).is_err() {
+    if bounded(from.get_ref().set_read_timeout(Some(WEDGED_AFTER))).is_none() {
         return false;
     }
     let mut line = String::new();
@@ -537,7 +548,7 @@ fn next(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Line> {
         let left = giving_up
             .checked_duration_since(Instant::now())
             .filter(|left| !left.is_zero())?;
-        from.get_ref().set_read_timeout(Some(left)).ok()?;
+        bounded(from.get_ref().set_read_timeout(Some(left)))?;
         // Linux never restarts a socket read with a timeout after a signal.
         let arrived = match from.fill_buf() {
             Ok(arrived) => arrived,
