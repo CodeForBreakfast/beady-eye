@@ -1781,10 +1781,15 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("the directory is ours to make");
         let program = dir.join("bdi-broken-interpreter");
-        std::fs::write(&program, "#!/bdi-no-such-interpreter\nexit 0\n")
-            .expect("the file is ours to write");
-        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
-            .expect("the mode is ours to set");
+        let _ = std::fs::remove_file(&program);
+        std::os::unix::fs::symlink(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/shims/bdi-broken-interpreter"
+            ),
+            &program,
+        )
+        .expect("the link is ours to make");
         (dir, program)
     }
 
