@@ -10,6 +10,7 @@
 mod terminal;
 
 use std::fs::File;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::process::CommandExt;
@@ -129,18 +130,20 @@ impl ShimmedGitHub {
         }
     }
 
-    /// The file the shim reads `asked` from: each word of a call is a
-    /// directory under the answers, so a call is not bound by the length of
-    /// one file name.
+    /// The file the shim answers `asked` from. The shim finds it by the call
+    /// written beside it, so no path grows with the call: macOS refuses a
+    /// path over 1024 bytes, and the query a look asks is longer than that.
     fn file_for(&self, asked: &str) -> PathBuf {
-        self.answers.join(asked.replace(' ', "/"))
+        let mut hasher = DefaultHasher::new();
+        asked.hash(&mut hasher);
+        self.answers.join(format!("{:016x}", hasher.finish()))
     }
 
     fn answers_with(&self, asked: &str, text: &str) {
         let answer = self.file_for(asked);
-        std::fs::create_dir_all(answer.parent().expect("an answer sits in a directory"))
-            .expect("the answers are ours to write");
-        std::fs::write(answer, text).expect("the answer is ours to write");
+        std::fs::create_dir_all(&self.answers).expect("the answers are ours to write");
+        std::fs::write(&answer, text).expect("the answer is ours to write");
+        std::fs::write(answer.with_extension("asked"), asked).expect("the call is ours to write");
     }
 
     fn refuses_with(&self, asked: &str, said: &str) {
@@ -148,8 +151,9 @@ impl ShimmedGitHub {
     }
 
     fn stops_refusing(&self, asked: &str) {
-        std::fs::remove_file(self.file_for(&format!("{asked}.refused")))
-            .expect("the refusal was ours to write");
+        let refusal = self.file_for(&format!("{asked}.refused"));
+        std::fs::remove_file(refusal.with_extension("asked")).expect("the call was ours to write");
+        std::fs::remove_file(refusal).expect("the refusal was ours to write");
     }
 
     fn calls(&self) -> Vec<String> {
