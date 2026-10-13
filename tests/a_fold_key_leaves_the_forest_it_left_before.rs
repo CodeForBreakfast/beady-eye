@@ -70,6 +70,10 @@ const TALL: Screen = Screen { rows: 40, band: 32 };
 /// rows it is asked about.
 const SHORT: Screen = Screen { rows: 13, band: 7 };
 
+/// A refresh interval no test here will ever reach, so every collection after
+/// the first is one a test asked for.
+const NOTHING_ELSE_WILL_COLLECT: &str = "[tui]\nrefresh_seconds = 600\n";
+
 /// A gap this long between bytes means the frame is drawn.
 const A_SILENCE: Duration = Duration::from_millis(300);
 
@@ -565,7 +569,7 @@ fn launched(named: &str, screen: &Screen) -> (Driven, Fixture) {
     std::fs::write(
         home.join(".config/beady-eye/config.toml"),
         format!(
-            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n",
+            "{NOTHING_ELSE_WILL_COLLECT}[[projects]]\nname = \"arkham\"\npath = \"{}\"\n",
             arkham.display()
         ),
     )

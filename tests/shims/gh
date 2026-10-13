@@ -5,15 +5,13 @@
 # first on PATH puts a pull request in whatever state a test needs without a
 # GitHub to ask.
 #
-#   BDI_SHIM_GH_ANSWERS  directory holding one file per call, named by the
-#                        call as bdi asks it with each space made a `/`:
-#                        `api/rate_limit`, so that a long call is a path of
-#                        short names and not one name too long for the
-#                        filesystem. A call with a file there is answered
-#                        with it. A file named for the
-#                        call with `.refused` after it refuses the call
-#                        instead: it goes to stderr and the shim exits 1, as
-#                        gh does.
+#   BDI_SHIM_GH_ANSWERS  directory holding one answer per call, each beside a
+#                        `<answer>.asked` holding the call as bdi asks it. The
+#                        call is not in the name, because a long call makes a
+#                        path longer than macOS allows. A call with an answer
+#                        there is answered with it. An answer for the call
+#                        with `.refused` after it refuses the call instead: it
+#                        goes to stderr and the shim exits 1, as gh does.
 #   BDI_SHIM_GH_CALLED   file this appends every call to, answered or not.
 #
 # Unset, it has no answer to give and refuses every call. Plain `sh`, for the
@@ -24,7 +22,23 @@
 set -u
 
 asked="$*"
-answer="${BDI_SHIM_GH_ANSWERS:-}/$(printf '%s' "$asked" | tr ' ' '/')"
+
+# The answer whose `.asked` holds exactly the call given, printed. Nothing
+# when none does, and the shim exits 1 when more than one does, since which
+# one a test meant cannot be known.
+answer_for() {
+  found=""
+  for call in "${BDI_SHIM_GH_ANSWERS:-}"/*.asked; do
+    if [ -f "$call" ] && [ "$(cat "$call")" = "$1" ]; then
+      if [ -n "$found" ]; then
+        printf 'gh: the shim holds more than one answer for "%s".\n' "$1" >&2
+        exit 1
+      fi
+      found="${call%.asked}"
+    fi
+  done
+  printf '%s' "$found"
+}
 
 if [ -n "${BDI_SHIM_GH_CALLED:-}" ]; then
   printf '%s\n' "$asked" >>"$BDI_SHIM_GH_CALLED"
@@ -35,13 +49,16 @@ if [ -n "${BDI_GATES_WEBHOOK_SECRET+set}" ]; then
   exit 1
 fi
 
-if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$answer.refused" ]; then
-  cat "$answer.refused" >&2
-  exit 1
-fi
-
-if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ] && [ -f "$answer" ]; then
-  exec cat "$answer"
+if [ -n "${BDI_SHIM_GH_ANSWERS:-}" ]; then
+  refusal=$(answer_for "$asked.refused") || exit 1
+  if [ -n "$refusal" ]; then
+    cat "$refusal" >&2
+    exit 1
+  fi
+  answer=$(answer_for "$asked") || exit 1
+  if [ -n "$answer" ]; then
+    exec cat "$answer"
+  fi
 fi
 
 # Refused rather than handed on: the gh this shadows is signed in to
