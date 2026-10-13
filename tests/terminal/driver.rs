@@ -92,7 +92,22 @@ struct Said {
 /// test proving the loop answered during a hang passing without proving it,
 /// and passing quietly.
 #[derive(Clone, Copy)]
-pub struct Mark(usize);
+pub struct Mark {
+    at: usize,
+    /// Whether the answer is the whole screen drawn again, as it is to a
+    /// resize, rather than a frame drawing only what changed.
+    whole_screen: bool,
+}
+
+/// What ratatui writes once a frame's cells are out. It hides the cursor, or,
+/// where the frame asked for one, as the search prompt does, shows it and
+/// then moves it there.
+const THE_CURSOR_HIDDEN: &[u8] = b"\x1b[?25l";
+const THE_CURSOR_SHOWN: &[u8] = b"\x1b[?25h";
+
+/// What ratatui writes first when the terminal has changed size, flushed on
+/// its own before it paints anything.
+const THE_SCREEN_CLEARS: &[u8] = b"\x1b[2J";
 
 /// A `bdi` drawing on a pty of our own, that we can type at.
 pub struct Driven {
@@ -336,7 +351,10 @@ impl Driven {
     pub fn mark(&self) -> Mark {
         let mut said = self.said.lock().expect("the drain is running");
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
-        Mark(said.len())
+        Mark {
+            at: said.len(),
+            whole_screen: false,
+        }
     }
 
     /// Read until `bdi` has died, and hand back everything it wrote after
@@ -393,7 +411,10 @@ impl Driven {
         );
         let mut said = self.said.lock().expect("the drain is running");
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
-        let at = Mark(said.len());
+        let at = Mark {
+            at: said.len(),
+            whole_screen: false,
+        };
         let mut terminal = self.as_file();
         terminal.write_all(keys).expect("the terminal takes keys");
         terminal.flush().expect("the terminal takes keys");
@@ -413,7 +434,10 @@ impl Driven {
     pub fn resize(&mut self, rows: u16, cols: u16) -> Mark {
         let mut said = self.said.lock().expect("the drain is running");
         hear_what_is_waiting(&self.terminal, self.started, &mut said);
-        let at = Mark(said.len());
+        let at = Mark {
+            at: said.len(),
+            whole_screen: true,
+        };
         let size = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -428,31 +452,39 @@ impl Driven {
         at
     }
 
-    /// Everything `bdi` wrote after `since`, waiting up to `patience` for the
-    /// first of it.
+    /// What `bdi` wrote after `since`, once it has finished a frame there.
+    /// After a resize that is the whole screen drawn again, from the clear
+    /// that opens it, so a frame `bdi` drew before it read the resize is not
+    /// taken for the screen.
+    ///
+    /// A frame is waited for by its last bytes rather than by a quiet glance.
+    /// `bdi` does not write a frame in one burst: the clear goes out alone
+    /// before anything is painted, and the cells follow through stdout's
+    /// buffer a kilobyte at a time. On a loaded machine `bdi` is held off
+    /// between any two of those writes for longer than a glance.
     #[track_caller]
     pub fn answer_to(&mut self, since: Mark, patience: Duration) -> Vec<u8> {
-        let giving_up = Instant::now() + patience;
-        self.wait_until(patience, "answered", |driven| driven.heard() > since.0);
-        // Then let it settle, so a frame arriving in several reads is answered
-        // whole rather than by its first chunk. A glance that hears nothing is
-        // the end of it: `bdi` writes a frame in one burst. Emptied at the end
-        // of the glance rather than watched across it, so nothing is left in
-        // the pty for the drain to append after the answer has been taken.
-        while Instant::now() < giving_up {
-            let before = self.heard();
-            std::thread::sleep(A_GLANCE);
-            self.hear_what_is_waiting();
-            if self.heard() == before {
-                break;
+        let wanted = if since.whole_screen {
+            "drew the whole screen again"
+        } else {
+            "finished a frame"
+        };
+        let mut answer = Vec::new();
+        self.wait_until(patience, wanted, |driven| {
+            match the_answer(&driven.said_since(since), since.whole_screen) {
+                Some(finished) => {
+                    answer = finished.to_vec();
+                    true
+                }
+                None => false,
             }
-        }
-        self.said_since(since)
+        });
+        answer
     }
 
     /// Everything `bdi` wrote after `since`, as it stands now.
     fn said_since(&self, since: Mark) -> Vec<u8> {
-        self.said.lock().expect("the drain is running")[since.0..]
+        self.said.lock().expect("the drain is running")[since.at..]
             .iter()
             .flat_map(|said| said.bytes.iter().copied())
             .collect()
@@ -633,4 +665,35 @@ fn read_now(terminal: &OwnedFd, started: Instant) -> Option<Said> {
         at: started.elapsed(),
         bytes: buffer[..read as usize].to_vec(),
     })
+}
+
+/// Everything said after a mark, or after a resize everything from the last
+/// clear, once a frame there has finished. `None` while a frame is still
+/// arriving.
+fn the_answer(said: &[u8], whole_screen: bool) -> Option<&[u8]> {
+    let answer = if whole_screen {
+        let cleared = said
+            .windows(THE_SCREEN_CLEARS.len())
+            .rposition(|bytes| bytes == THE_SCREEN_CLEARS)?;
+        &said[cleared..]
+    } else {
+        said
+    };
+    ends_a_frame(answer).then_some(answer)
+}
+
+/// Whether nothing but the cursor's move follows the cursor being hidden or
+/// shown, which is the last thing a frame writes.
+fn ends_a_frame(said: &[u8]) -> bool {
+    let Some(toggled) = said
+        .windows(THE_CURSOR_HIDDEN.len())
+        .rposition(|bytes| bytes == THE_CURSOR_HIDDEN || bytes == THE_CURSOR_SHOWN)
+    else {
+        return false;
+    };
+    match &said[toggled + THE_CURSOR_HIDDEN.len()..] {
+        [] => true,
+        [b'\x1b', b'[', at @ .., b'H'] => at.iter().all(|b| b.is_ascii_digit() || *b == b';'),
+        _ => false,
+    }
 }
