@@ -1081,17 +1081,10 @@ test('an unwatched bead takes its minute with it', async () => {
   watcher.stop()
   await Bun.sleep(quietFor * 0.6)
   await use('unwatch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const watched = performance.now()
   await use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
-  await Bun.sleep(quietFor * 0.6)
-  const back = await aWatcherAt(place.at as string)
-  const { connection } = await back.next()
-  connection.write(said(inHarbour, freshness('harbour')))
-  connection.write(said({ ...startedLine, project: 'harbour' }, freshness('harbour')))
+  const down = await use.nextMessage()
 
-  expect((await use.nextMessage()).meta).toEqual({
-    project: 'harbour',
-    id: 'smt-4kd3p.20',
-    status: 'in_progress',
-    ready: 'false',
-  })
+  expect(performance.now() - watched).toBeGreaterThanOrEqual(quietFor)
+  expect(down.meta).toEqual({ watcher: 'down' })
 })
