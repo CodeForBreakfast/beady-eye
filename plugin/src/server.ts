@@ -8,7 +8,7 @@ import {
 import { Data, Effect, Option, Schema, Stream } from 'effect'
 import { version } from '../package.json'
 import { BeadId, ProjectName } from './watcher'
-import type { Answer, Watches } from './watches'
+import type { Answer, Block, Watches } from './watches'
 
 const aBead: Tool['inputSchema'] = {
   type: 'object',
@@ -88,8 +88,8 @@ export const buildServer = (watches: Watches): Server => {
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }))
   server.oninitialized = () =>
     Effect.runFork(
-      Stream.runForEach(watches.news, ({ content, meta, told }) =>
-        tellSession(server, content, meta).pipe(Effect.andThen(told), Effect.ignore),
+      Stream.runForEach(watches.news, ({ content, block, told }) =>
+        tellSession(server, content, block).pipe(Effect.andThen(told), Effect.ignore),
       ),
     )
   server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
@@ -107,21 +107,40 @@ export class SessionNotTold extends Data.TaggedError('SessionNotTold')<{
   readonly cause: unknown
 }> {}
 
+/** The attributes of a `<channel source="beady-eye" …>` block. */
+const attributesOf = (block: Block): Record<string, string> => {
+  switch (block.is) {
+    case 'bead':
+      return {
+        project: block.project,
+        id: block.id,
+        status: block.status,
+        ready: String(block.ready),
+      }
+    case 'watcher':
+      return { watcher: block.watcher }
+    case 'tracker':
+      return { project: block.project, tracker: block.tracker }
+    case 'watches':
+      return { watches: block.watches }
+  }
+}
+
 /**
  * Puts a message into the session as a `<channel source="beady-eye" …>`
- * block, each `meta` entry becoming one of its attributes. Claude Code drops
- * it unless the session was started with this plugin's channel allowed.
+ * block. Claude Code drops it unless the session was started with this
+ * plugin's channel allowed.
  */
 export const tellSession = (
   server: Server,
   content: string,
-  meta: Record<string, string>,
+  block: Block,
 ): Effect.Effect<void, SessionNotTold> =>
   Effect.tryPromise({
     try: () =>
       server.notification({
         method: 'notifications/claude/channel',
-        params: { content, meta },
+        params: { content, meta: attributesOf(block) },
       }),
     catch: (cause) => new SessionNotTold({ cause }),
   })
