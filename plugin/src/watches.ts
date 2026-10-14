@@ -120,40 +120,33 @@ const KeptWatches = Schema.fromJsonString(
   ),
 )
 
-const CommentEvent = Schema.Struct({
-  event: Schema.Struct({
-    op: Schema.Literal('comment'),
-    issue_id: Schema.String,
-    comment: Schema.Struct({ author: Schema.String, text: Schema.String }),
-  }),
-})
+/** The bead a bead or gone line names. */
+const beadNamedIn = (said: Said): Bead | undefined => {
+  if (said.line === 'bead') return { project: said.project, id: said.row.id }
+  if (said.line === 'gone') return { project: said.project, id: said.id }
+  return undefined
+}
 
-const row = (said: Said): Record<string, unknown> =>
-  typeof said['row'] === 'object' && said['row'] !== null
-    ? (said['row'] as Record<string, unknown>)
-    : {}
-
-const isAbout = (said: Said, bead: Bead) =>
-  said['project'] === bead.project &&
-  (said.line === 'gone' ? said['id'] : row(said)['id']) === bead.id
+const isAbout = (said: Said, bead: Bead) => {
+  const named = beadNamedIn(said)
+  return named?.project === bead.project && named.id === bead.id
+}
 
 /** What a batch says of the bead, where it says anything. */
 const standingIn = (batch: readonly Said[], bead: Bead): Standing | undefined => {
   const [first] = batch
-  if (first?.line === 'refused') {
-    return { is: 'refused', reason: String(first['reason']) }
-  }
+  if (first?.line === 'refused') return { is: 'refused', reason: first.reason }
   const said = batch.filter((line) => isAbout(line, bead)).at(-1)
   if (said?.line === 'gone') return { is: 'gone' }
   if (said?.line !== 'bead') return undefined
-  const { title, status, comment_count, close_reason } = row(said)
+  const { title, status, comment_count, close_reason } = said.row
   return {
     is: 'bead',
-    title: String(title),
-    status: String(status),
-    ready: said['ready'] === true,
-    comments: typeof comment_count === 'number' ? comment_count : undefined,
-    closeReason: typeof close_reason === 'string' ? close_reason : undefined,
+    title,
+    status,
+    ready: said.ready,
+    comments: comment_count,
+    closeReason: close_reason,
   }
 }
 
@@ -165,13 +158,14 @@ const toldOf = (standing: Standing): Told | undefined =>
 
 /** Each comment on `bead` whose event line is in the batch. */
 const commentsIn = (batch: readonly Said[], bead: Bead) =>
-  batch.flatMap((said) => {
-    if (said.line !== 'event' || said['project'] !== bead.project) return []
-    return Option.match(Schema.decodeUnknownOption(CommentEvent)(said), {
-      onNone: () => [],
-      onSome: ({ event }) => (event.issue_id === bead.id ? [event.comment] : []),
-    })
-  })
+  batch.flatMap((said) =>
+    said.line === 'event' &&
+    said.project === bead.project &&
+    said.event.issue_id === bead.id &&
+    said.event.comment !== undefined
+      ? [said.event.comment]
+      : [],
+  )
 
 /** Text a tracker's writer chose, on one line in quotes, so it cannot pass
  * for a line of the message. */
@@ -292,20 +286,6 @@ const trackerBack = (project: string): Omit<News, 'told'> => ({
   content: `The watcher reaches the tracker of ${project} again.`,
   meta: { project, tracker: 'ok' },
 })
-
-const UnreachableTracker = Schema.Struct({
-  tracker: Schema.Struct({ unreachable: Schema.Struct({ reason: Schema.String }) }),
-})
-
-/** The kind of failure a freshness line gives for its project's tracker,
- * where the tracker could not be reached. */
-const unreachableIn = (freshness: Said): string | undefined =>
-  Option.getOrUndefined(
-    Option.map(
-      Schema.decodeUnknownOption(UnreachableTracker)(freshness),
-      ({ tracker }) => tracker.unreachable.reason,
-    ),
-  )
 
 const told = (text: string): Answer => ({ text, refused: false })
 const refusal = (text: string): Answer => ({ text, refused: true })
@@ -460,7 +440,7 @@ export const makeWatches = <R>(
       Effect.gen(function* () {
         const freshness = batch.at(-1)
         if (freshness?.line !== 'freshness') return
-        const why = unreachableIn(freshness)
+        const why = freshness.tracker === 'ok' ? undefined : freshness.tracker.unreachable.reason
         const known = unreachable.get(project)
         if (why === undefined) {
           unreachable.delete(project)
@@ -603,18 +583,17 @@ export const makeWatches = <R>(
             `The watcher is down, so the project holding ${id} cannot be found: ${whyDown[answer]}. Name its project to watch it from when the watcher answers.`,
           )
         }
-        const projectsOf = (lines: readonly Said[]) => [
-          ...new Set(lines.map((said) => String(said['project']))),
-        ]
-        const about = answer.lines.filter((said) =>
-          isAbout(said, { project: String(said['project']), id }),
-        )
-        const holders = projectsOf(about.filter((said) => said.line === 'bead'))
-        const answered = projectsOf(about)
+        const distinct = (projects: readonly string[]) => [...new Set(projects)]
+        const about = answer.lines.flatMap((said) => {
+          const named = beadNamedIn(said)
+          return named?.id === id ? [{ project: named.project, holds: said.line === 'bead' }] : []
+        })
+        const holders = distinct(about.filter(({ holds }) => holds).map(({ project }) => project))
+        const answered = distinct(about.map(({ project }) => project))
         const unread = [
-          ...projectsOf(
-            answer.lines.filter(
-              (said) => said.line === 'freshness' && !answered.includes(String(said['project'])),
+          ...distinct(
+            answer.lines.flatMap((said) =>
+              said.line === 'freshness' && !answered.includes(said.project) ? [said.project] : [],
             ),
           ),
           ...answer.unanswered,

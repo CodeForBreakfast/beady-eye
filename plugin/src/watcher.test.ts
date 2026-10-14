@@ -33,8 +33,15 @@ const beadLine = {
   ready: false,
   blocked_by: ['smt-4kd3p.13'],
   bd: { ready: false, blocked_by: ['smt-4kd3p.13'] },
-  row: { id: 'smt-4kd3p.20', status: 'blocked' },
+  row: { id: 'smt-4kd3p.20', title: 'the daily wallpaper timer calls dms', status: 'blocked' },
 }
+/** The bead line as the plugin reads it. */
+const beadHeard = {
+  line: 'bead',
+  project: 'summit-works',
+  ready: false,
+  row: { id: 'smt-4kd3p.20', title: 'the daily wallpaper timer calls dms', status: 'blocked' },
+} as const
 const freshness = {
   line: 'freshness',
   project: 'summit-works',
@@ -44,6 +51,13 @@ const freshness = {
   protocol: 1,
   reach: { path: '/home/mira/summit-works', environment_command: [] },
 }
+/** The freshness line as the plugin reads it. */
+const freshnessHeard = {
+  line: 'freshness',
+  project: 'summit-works',
+  protocol: 1,
+  tracker: 'ok',
+} as const
 
 const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)))
@@ -148,7 +162,19 @@ test("a bead's lines arrive as one batch at its project's freshness line", async
   connection.write(said({ line: 'alive' }, beadLine, freshness))
 
   expect(line).toBe(asked)
-  expect(await session.next()).toEqual({ batch: [beadLine, freshness] })
+  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
+})
+
+test('a line of a kind the plugin does not read is passed over', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path)
+  const session = watching(path)
+
+  ;(await watcher.next()).connection.write(
+    said(beadLine, { line: 'greeting', from: 'a newer watcher' }, freshness),
+  )
+
+  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
 })
 
 test('a refusal of the watch arrives on its own', async () => {
@@ -160,7 +186,7 @@ test('a refusal of the watch arrives on its own', async () => {
     line: 'refused',
     asked: asked.trim(),
     reason: 'unknown-project',
-  }
+  } as const
   ;(await watcher.next()).connection.write(said(refused))
 
   expect(await session.next()).toEqual({ batch: [refused] })
@@ -185,7 +211,7 @@ test('a watcher that is not there yet is tried again until it answers', async ()
   connection.write(said(beadLine, freshness))
 
   expect(line).toBe(asked)
-  expect(await session.next()).toEqual({ batch: [beadLine, freshness] })
+  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
 })
 
 test('a connection the watcher closes is down, and the bead is watched again', async () => {
@@ -306,7 +332,7 @@ test('a watcher that answered is tried again after the shortest pause', async ()
 
   const watcher = await aWatcherAt(path)
   ;(await watcher.next()).connection.end(said(beadLine, freshness))
-  expect(await session.next()).toEqual({ batch: [beadLine, freshness] })
+  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
   expect(await session.next()).toEqual({ down: 'closed' })
   const downAt = Date.now()
   await watcher.next()
@@ -353,7 +379,7 @@ test('a watch stopped as it hears a batch closes its connection', async () => {
   const closed = new Promise((resolve) => connection.on('close', resolve))
   connection.write(said(beadLine, freshness, beadLine, freshness))
 
-  expect(await told).toEqual([{ batch: [beadLine, freshness] }])
+  expect(await told).toEqual([{ batch: [beadHeard, freshnessHeard] }])
   await closed
 })
 
@@ -379,20 +405,20 @@ test('asking about a bead asks each project and hangs up once each has answered'
   const answer = asking(path, ['summit-works', 'harbour', 'dunmore'])
   const { connection, asked: lines } = await watcher.next()
   const hungUp = new Promise((resolve) => connection.on('end', resolve))
-  const gone = { line: 'gone', project: 'harbour', id: 'smt-4kd3p.20' }
+  const gone = { line: 'gone', project: 'harbour', id: 'smt-4kd3p.20' } as const
   const harbourFreshness = { ...freshness, project: 'harbour' }
   const refused = {
     line: 'refused',
     asked: 'watch dunmore smt-4kd3p.20',
     reason: 'unknown-project',
-  }
+  } as const
   connection.write(said({ line: 'alive' }, beadLine, freshness, gone, harbourFreshness, refused))
 
   expect(lines).toBe(
     'watch summit-works smt-4kd3p.20\nwatch harbour smt-4kd3p.20\nwatch dunmore smt-4kd3p.20\n',
   )
   expect(await answer).toEqual({
-    lines: [beadLine, freshness, gone, harbourFreshness, refused],
+    lines: [beadHeard, freshnessHeard, gone, { ...freshnessHeard, project: 'harbour' }, refused],
     unanswered: [],
   })
   await hungUp
@@ -408,6 +434,16 @@ test('asking a watcher that is down answers why', async () => {
   expect(await answer).toBe('closed')
 })
 
+test('asking a watcher whose refusal does not say what it refused answers that it speaks another protocol', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path)
+
+  const answer = asking(path, ['summit-works'])
+  ;(await watcher.next()).connection.write(said({ line: 'refused', reason: 'unknown-project' }))
+
+  expect(await answer).toBe('protocol')
+})
+
 test('asking about a bead in no project asks nothing', async () => {
   expect(await asking(undefined, [])).toEqual({ lines: [], unanswered: [] })
 })
@@ -417,14 +453,14 @@ test("asking about a bead takes each project's answer and nothing it says after"
   const watcher = await aWatcherAt(path)
 
   const answer = asking(path, ['summit-works', 'harbour'])
-  const gone = { line: 'gone', project: 'summit-works', id: 'smt-4kd3p.20' }
+  const gone = { line: 'gone', project: 'summit-works', id: 'smt-4kd3p.20' } as const
   const harbourFreshness = { ...freshness, project: 'harbour' }
   ;(await watcher.next()).connection.write(
     said(beadLine, freshness, gone, freshness, harbourFreshness),
   )
 
   expect(await answer).toEqual({
-    lines: [beadLine, freshness, harbourFreshness],
+    lines: [beadHeard, freshnessHeard, { ...freshnessHeard, project: 'harbour' }],
     unanswered: [],
   })
 })
@@ -444,7 +480,7 @@ test('asking about a bead stops waiting in time, and names the projects that did
   cleanUp.push(() => clearInterval(alive))
 
   expect(await answer).toEqual({
-    lines: [beadLine, freshness],
+    lines: [beadHeard, freshnessHeard],
     unanswered: ['harbour'],
   })
   await hungUp
