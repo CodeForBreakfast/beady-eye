@@ -6,14 +6,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Config, Effect, Layer } from 'effect'
 import { buildServer } from './server'
 import { WatchedProjects, WatcherLocation } from './watcher'
-import { makeWatches } from './watches'
+import { makeWatches, SessionId } from './watches'
 
 const config = join(homedir(), '.config', 'beady-eye', 'config.toml')
 
 /** Claude Code starts the server with its session's id, so a server started
  * again under a sleeping session watches its beads before any tool is
  * called. */
-const bootSession = Config.String('CLAUDE_CODE_SESSION_ID').pipe(
+const bootSession = Config.schema(SessionId, 'CLAUDE_CODE_SESSION_ID').pipe(
   Effect.orElseSucceed(() => undefined),
 )
 
