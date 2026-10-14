@@ -714,7 +714,8 @@ export const makeWatches = <R>(
           const bead = { project: found, id }
           const watch = watches.get(keyOf(bead)) ?? (yield* start(bead, false))
           yield* Deferred.await(watch.firstHeard)
-          const refused = watch.accepted ? undefined : refusalOf(watch)
+          const acceptedOrAccepting = watch.accepted || watch.accepting !== undefined
+          const refused = acceptedOrAccepting ? undefined : refusalOf(watch)
           if (refused !== undefined) {
             if (watches.get(keyOf(bead)) === watch) yield* stop(watch)
             yield* Effect.ignore(persist)
