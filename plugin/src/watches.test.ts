@@ -838,6 +838,23 @@ test('a watch the session file cannot keep is refused, and not watched', async (
   expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
 })
 
+test('watching a bead a server started again watches keeps it, though the session file cannot be written', async () => {
+  const place = aPlace()
+  const { use: before, watcher } = await aWatchedBead(place)
+  await before.exit()
+  const after = await aServer(place)
+  const listed = after('watching')
+  const { connection } = await watcher.next()
+  await listed
+  refuseWrites(place)
+  connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+
+  expect(await after('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).toEqual({
+    text: `Watching ${watched}: ${asWatched}.`,
+    refused: false,
+  })
+})
+
 test('watching a bead twice at once that the session file cannot keep refuses both', async () => {
   const place = aPlace()
   const { use, watcher } = await aWatchedBead(place)

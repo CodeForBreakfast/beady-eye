@@ -601,6 +601,7 @@ export const makeWatches = <R>(
         if (watches.get(keyOf(watch.bead)) !== watch) {
           return refusal(`${named(watch.bead)} was unwatched before the watcher answered.`)
         }
+        if (watch.accepted) return undefined
         if (watch.accepting !== undefined) return yield* Deferred.await(watch.accepting)
         const accepting = yield* Deferred.make<Answer | undefined>()
         watch.accepting = accepting
