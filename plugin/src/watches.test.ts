@@ -23,6 +23,7 @@ import {
   cleanUpAfterEach,
   said,
   someWatches,
+  watchesReading,
 } from './test-watcher'
 import type { Timing } from './watcher'
 import { SessionId } from './watches'
@@ -84,8 +85,15 @@ const aServer = async (
   { directory, at }: Place,
   projects: readonly string[] = ['summit-works', 'harbour'],
   timed: Timing = timing,
-) => {
-  const { watches, close } = await someWatches(directory, at, projects, timed)
+) => serving(await someWatches(directory, at, projects, timed))
+
+/** A server for a session whose watches read a bdi config that says `text`. */
+const aServerReading = async ({ directory }: Place, text: string) => {
+  const reading = await watchesReading(directory, text, timing)
+  return Object.assign(await serving(reading), { config: reading.config })
+}
+
+const serving = async ({ watches, close }: Awaited<ReturnType<typeof someWatches>>) => {
   const client = new Client({ name: 'session', version: '0' })
   const messages: Message[] = []
   const waiting: ((message: Message) => void)[] = []
@@ -380,6 +388,29 @@ test("watch refuses to find a bead's project while the watcher is down", async (
     text: 'The watcher is down, so the project holding smt-4kd3p.20 cannot be found: the bdi config names no watcher socket, and there is no runtime directory to look for one in. Name its project to watch it from when the watcher answers.',
     refused: true,
   })
+})
+
+const notToml = '[watcher]\nsocket = \n'
+const whyNotToml = 'Invalid TOML document: invalid value, at line 2, column 10'
+
+test("watch refuses to find a bead's project while the bdi config cannot be read, and says why", async () => {
+  const use = await aServerReading(aPlace(), notToml)
+
+  expect(await use('watch', { id: 'smt-4kd3p.20' })).toEqual({
+    text: `The watcher is down, so the project holding smt-4kd3p.20 cannot be found: the bdi config at ${use.config} cannot be read: ${whyNotToml}. Name its project to watch it from when the watcher answers.`,
+    refused: true,
+  })
+})
+
+test('watching while the bdi config cannot be read is accepted, and says the config is why the watcher is down', async () => {
+  const place = aPlace()
+  const use = await aServerReading(place, notToml)
+
+  expect(await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).toEqual({
+    text: `Watching ${watched} from when the watcher answers. The watcher is down: the bdi config at ${use.config} cannot be read: ${whyNotToml}.`,
+    refused: false,
+  })
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
 })
 
 test('watching a watched bead again keeps the watch, though the bead has gone', async () => {
