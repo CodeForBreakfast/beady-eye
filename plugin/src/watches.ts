@@ -10,6 +10,7 @@ import {
   Deferred,
   Effect,
   Fiber,
+  FiberSet,
   FileSystem,
   Option,
   Queue,
@@ -28,17 +29,10 @@ import {
   type Heard,
   type ProjectName,
   type Said,
-  type Timing,
-  WATCHER_TIMING,
+  type WatcherLocation,
+  WatcherTiming,
   watchBead,
 } from './watcher'
-
-export interface Settings<R> {
-  readonly findWatcher: Effect.Effect<Option.Option<string>, never, R>
-  /** The projects a bead named without one is looked for in. */
-  readonly projects: Effect.Effect<readonly ProjectName[], never, R>
-  readonly timing?: Timing
-}
 
 /** What a tool says back, and whether it refused what it was asked. */
 export interface Answer {
@@ -375,13 +369,13 @@ export interface Watches {
 }
 
 /** A session's watches, each held until `unwatch` or until the scope closes,
- * which keeps what is on disk. */
-export const makeWatches = <R>(
-  settings: Settings<R>,
-): Effect.Effect<Watches, never, R | FileSystem.FileSystem | Scope.Scope> =>
+ * which keeps what is on disk. A bead named without a project is looked for
+ * in each of `projects`. */
+export const makeWatches = (
+  projects: Effect.Effect<readonly ProjectName[], never, FileSystem.FileSystem>,
+): Effect.Effect<Watches, never, WatcherLocation | FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
-    const timing = settings.timing ?? WATCHER_TIMING
-    const context = yield* Effect.context<R | FileSystem.FileSystem>()
+    const timing = yield* WatcherTiming
     const scope = yield* Effect.scope
     const fs = yield* FileSystem.FileSystem
     const directory = yield* Effect.orDie(watchesDirectory)
@@ -392,6 +386,7 @@ export const makeWatches = <R>(
     const watches = new Map<string, Watch>()
     const news = yield* Queue.unbounded<News>()
     yield* Effect.addFinalizer(() => Queue.shutdown(news))
+    const withTheWatcher = yield* FiberSet.makeRuntime<WatcherLocation | FileSystem.FileSystem>()
 
     const keyOf = ({ project, id }: Bead) => `${project} ${id}`
 
@@ -554,11 +549,7 @@ export const makeWatches = <R>(
           ('down' in heard ? goDown(heard.down) : hearBatch(heard.batch)).pipe(
             Effect.andThen(Deferred.succeed(firstHeard, undefined)),
           )
-        const connection = yield* watchBead(bead, settings.findWatcher, timing).pipe(
-          Stream.runForEach(hear),
-          Effect.provide(context),
-          Effect.forkIn(scope),
-        )
+        const connection = withTheWatcher(watchBead(bead).pipe(Stream.runForEach(hear)))
         const watch: Watch = {
           bead,
           known,
@@ -684,9 +675,9 @@ export const makeWatches = <R>(
     /** The project of the one bead the watcher has with `id`. */
     const projectHolding = (id: BeadId) =>
       Effect.gen(function* () {
-        const asked = yield* Effect.flatMap(settings.projects, (projects) =>
-          askAbout(id, projects, settings.findWatcher, timing),
-        ).pipe(Effect.provide(context), Effect.result)
+        const asked = yield* Fiber.join(
+          withTheWatcher(Effect.flatMap(projects, (projects) => askAbout(id, projects))),
+        ).pipe(Effect.result)
         if (Result.isFailure(asked)) {
           return refusal(
             `The watcher is down, so the project holding ${id} cannot be found: ${whyDown[asked.failure.why]}. Name its project to watch it from when the watcher answers.`,
