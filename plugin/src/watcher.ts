@@ -33,11 +33,11 @@ export const WATCHER_TIMING: Timing = {
 
 /**
  * Why a bead's connection is not watching: there is no path to look for a
- * watcher at, nothing at the path would take the connection or could be
- * believed, the watcher closed it, it carried no line for too long, or it
- * spoke a protocol this plugin does not know.
+ * watcher at, nothing at the path would take the connection, what is at the
+ * path could not be believed, the watcher closed it, it carried no line for
+ * too long, or it spoke a protocol this plugin does not know.
  */
-export type Down = 'nowhere' | 'refused' | 'closed' | 'wedged' | 'protocol'
+export type Down = 'nowhere' | 'refused' | 'untrusted' | 'closed' | 'wedged' | 'protocol'
 
 class WatcherDown extends Data.TaggedError('WatcherDown')<{
   readonly why: Down
@@ -142,28 +142,40 @@ const directoriesOn = (way: string): string[] => {
 }
 
 /**
- * Whether the socket at `at` is one only this user could have put there: a
- * socket of the user's own, under a way down nobody else may take a name in,
- * judged both as spelled and as resolved. `bdi` makes the same checks before
- * it believes a watcher.
+ * Why the socket at `at` cannot be believed, if it cannot: there is no file
+ * there, or it is not one only this user could have put there, a socket of
+ * the user's own under a way down nobody else may take a name in, judged both
+ * as spelled and as resolved. `bdi` makes the same checks before it believes
+ * a watcher.
  */
-const onlyThisUserHolds = (at: string) =>
+const whyNotBelieved = (
+  at: string,
+): Effect.Effect<Option.Option<Down>, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
-    const user = process.geteuid?.()
-    if (user === undefined) return false
     const fs = yield* FileSystem.FileSystem
+    const untrusted = Option.some<Down>('untrusted')
+    if (yield* Effect.isSuccess(fs.readLink(at))) return untrusted
+    const socket = yield* fs.stat(at)
+    const user = process.geteuid?.()
+    if (user === undefined) return untrusted
     const under = dirname(resolve(at))
     const ways = [...directoriesOn(under), ...directoriesOn(yield* fs.realPath(under))]
     for (const directory of ways) {
       const { mode, uid } = yield* fs.stat(directory)
       if (Option.isNone(uid) || othersMayTakeANameIn(mode, uid.value, user)) {
-        return false
+        return untrusted
       }
     }
-    if (yield* Effect.isSuccess(fs.readLink(at))) return false
-    const socket = yield* fs.stat(at)
-    return socket.type === 'Socket' && Option.contains(socket.uid, user)
-  }).pipe(Effect.orElseSucceed(() => false))
+    const believed = socket.type === 'Socket' && Option.contains(socket.uid, user)
+    return believed ? Option.none() : untrusted
+  }).pipe(
+    Effect.catchReason(
+      'PlatformError',
+      'NotFound',
+      () => Effect.succeedSome<Down>('refused'),
+      () => Effect.succeedSome<Down>('untrusted'),
+    ),
+  )
 
 export const pauseAfter = (failures: number, timing: Timing): number =>
   Math.min(timing.firstPause * 2 ** (failures - 1), timing.longestPause)
@@ -221,7 +233,8 @@ const talkTo = <R>(
     Effect.gen(function* () {
       const at = yield* findWatcher
       if (Option.isNone(at)) return yield* down('nowhere')
-      if (!(yield* onlyThisUserHolds(at.value))) return yield* down('refused')
+      const notBelieved = yield* whyNotBelieved(at.value)
+      if (Option.isSome(notBelieved)) return yield* down(notBelieved.value)
       return linesFrom(at.value, asking).pipe(
         Stream.timeoutOrElse({
           duration: timing.wedgedAfter,
