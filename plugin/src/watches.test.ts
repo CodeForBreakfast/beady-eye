@@ -1,10 +1,18 @@
 import { afterEach, expect, test } from 'bun:test'
-import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { Duration, Effect, FileSystem, Layer, Scheduler } from 'effect'
+import { Duration, Effect, FileSystem, Layer, Scheduler, Schema } from 'effect'
 import { buildServer } from './server'
 import {
   anId,
@@ -17,6 +25,7 @@ import {
   someWatches,
 } from './test-watcher'
 import type { Timing } from './watcher'
+import { SessionId } from './watches'
 
 afterEach(cleanUpAfterEach)
 
@@ -27,7 +36,7 @@ const timing: Timing = {
   answeredWithin: Duration.millis(100),
   quietFor: Duration.millis(300),
 }
-const session = '6f1c2d3e-4a5b-4c6d-8e7f-901234567890'
+const session = Schema.decodeSync(SessionId)('6f1c2d3e-4a5b-4c6d-8e7f-901234567890')
 
 const beadLine = (project: string) => ({
   line: 'bead',
@@ -642,14 +651,25 @@ test('a server keeps the first session id it learns', async () => {
 
   await Effect.runPromise(
     Effect.all([
-      watches.learn('not a session id'),
+      watches.learn(undefined),
       watches.learn(session),
-      watches.learn('0e1d2c3b-4a59-4876-9543-210fedcba987'),
+      watches.learn(Schema.decodeSync(SessionId)('0e1d2c3b-4a59-4876-9543-210fedcba987')),
       watches.watch(anId('smt-4kd3p.20'), aProject('summit-works')),
     ]),
   )
 
   expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+})
+
+test('a call whose session id is not one is served, and keeps nothing for the session', async () => {
+  const place = { ...aPlace(), at: undefined }
+  const use = await aServer(place)
+
+  const answer = await use('watching', { session_id: 'not a session id' })
+
+  expect(answer.refused).toBeFalsy()
+  const keeping = join(place.directory, 'beady-eye', 'watches')
+  expect(existsSync(keeping) ? readdirSync(keeping) : []).toEqual([])
 })
 
 /** The bead as `beadLine` has it in summit-works, with `changes` made to it. */
