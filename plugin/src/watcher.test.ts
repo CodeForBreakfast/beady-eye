@@ -27,6 +27,7 @@ import {
   ConfigUnreadable,
   type Heard,
   othersMayTakeANameIn,
+  ProjectAnswer,
   pauseAfter,
   projectsNamedIn,
   type Timing,
@@ -535,6 +536,10 @@ test('a config project whose name is not one word is passed over', async () => {
   expect<readonly string[]>(await run(projectsNamedIn(config))).toEqual(['harbour'])
 })
 
+/** Each project's answer, keyed as `askAbout` keys it. */
+const answers = (each: Record<string, ProjectAnswer>) =>
+  new Map(Object.entries(each).map(([project, answer]) => [aProject(project), answer]))
+
 const asking = (path: string | undefined, projects: readonly string[]) =>
   run(
     askAbout(
@@ -565,16 +570,13 @@ test('asking about a bead asks each project and hangs up once each has answered'
   expect(lines).toBe(
     'watch summit-works smt-4kd3p.20\nwatch harbour smt-4kd3p.20\nwatch dunmore smt-4kd3p.20\n',
   )
-  expect(await answer).toEqual({
-    lines: [
-      beadHeard,
-      freshnessHeard,
-      { ...gone, project: aProject('harbour'), id: anId('smt-4kd3p.20') },
-      { ...freshnessHeard, project: aProject('harbour') },
-      refused,
-    ],
-    unanswered: [],
-  })
+  expect(await answer).toEqual(
+    answers({
+      'summit-works': ProjectAnswer.Holds(),
+      harbour: ProjectAnswer.Gone(),
+      dunmore: ProjectAnswer.Refused({ reason: 'unknown-project' }),
+    }),
+  )
   await hungUp
 })
 
@@ -599,7 +601,7 @@ test('asking a watcher whose refusal does not say what it refused answers that i
 })
 
 test('asking about a bead in no project asks nothing', async () => {
-  expect(await asking(undefined, [])).toEqual({ lines: [], unanswered: [] })
+  expect(await asking(undefined, [])).toEqual(new Map())
 })
 
 test("asking about a bead takes each project's answer and nothing it says after", async () => {
@@ -613,10 +615,9 @@ test("asking about a bead takes each project's answer and nothing it says after"
     said(beadLine, freshness, gone, freshness, harbourFreshness),
   )
 
-  expect(await answer).toEqual({
-    lines: [beadHeard, freshnessHeard, { ...freshnessHeard, project: aProject('harbour') }],
-    unanswered: [],
-  })
+  expect(await answer).toEqual(
+    answers({ 'summit-works': ProjectAnswer.Holds(), harbour: ProjectAnswer.NotReadYet() }),
+  )
 })
 
 test('asking about a bead stops waiting in time, and names the projects that did not answer', async () => {
@@ -633,9 +634,8 @@ test('asking about a bead stops waiting in time, and names the projects that did
   )
   cleanUp.push(() => clearInterval(alive))
 
-  expect(await answer).toEqual({
-    lines: [beadHeard, freshnessHeard],
-    unanswered: [aProject('harbour')],
-  })
+  expect(await answer).toEqual(
+    answers({ 'summit-works': ProjectAnswer.Holds(), harbour: ProjectAnswer.Unanswered() }),
+  )
   await hungUp
 })

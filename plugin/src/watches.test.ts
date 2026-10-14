@@ -361,6 +361,44 @@ test("watch refuses to find a bead's project where a project does not answer in 
   })
 })
 
+const refusedSummitWorks = {
+  line: 'refused',
+  asked: 'watch summit-works smt-4kd3p.20',
+  reason: 'unknown-project',
+}
+const whyRefusedSummitWorks =
+  'The watcher refused to look in summit-works (unknown-project), so it cannot say which project holds smt-4kd3p.20. Name its project.'
+
+test("watch refuses to find a bead's project where the watcher refused a project, and says why", async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+
+  const answer = use('watch', { id: 'smt-4kd3p.20' })
+  ;(await watcher.next()).connection.write(
+    said(refusedSummitWorks, gone('harbour'), freshness('harbour')),
+  )
+
+  expect(await answer).toEqual({ text: whyRefusedSummitWorks, refused: true })
+})
+
+test('watch does not take the one project that holds a bead as its holder while the watcher refused another', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+
+  const answer = use('watch', { id: 'smt-4kd3p.20' })
+  ;(await watcher.next()).connection.write(
+    said(refusedSummitWorks, beadLine('harbour'), freshness('harbour')),
+  )
+
+  expect(await answer).toEqual({ text: whyRefusedSummitWorks, refused: true })
+  expect(await use('watching')).toEqual({
+    text: 'This session watches no beads.',
+    refused: false,
+  })
+})
+
 test('a watch is kept only once it is accepted', async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
