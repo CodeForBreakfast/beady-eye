@@ -14,6 +14,7 @@ import {
   FileSystem,
   Option,
   Queue,
+  Ref,
   Result,
   Schema,
   type Scope,
@@ -430,7 +431,7 @@ export const makeWatches = (
     const inAMinute = (check: Effect.Effect<void>) =>
       Effect.sleep(timing.quietFor).pipe(Effect.andThen(check), Effect.forkIn(scope))
 
-    let outages = 0
+    const outages = yield* Ref.make(0)
 
     /** Tell the session of every watched bead the watcher cannot watch and
      * the session has not been told of, in one message. */
@@ -527,7 +528,7 @@ export const makeWatches = (
             if (was.is === 'down') {
               known.connection = { ...was, why }
             } else {
-              const outage = ++outages
+              const outage = yield* Ref.updateAndGet(outages, (count) => count + 1)
               known.connection = { is: 'down', why, outage, toldDown: was.toldDown }
               yield* inAMinute(Effect.suspend(() => (stillDownIn(outage) ? tellDown : Effect.void)))
             }
