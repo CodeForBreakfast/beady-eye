@@ -685,7 +685,8 @@ export const makeWatches = (
           .filter((bead) => !kept.some((one) => keyOf(one) === keyOf(bead)))
         if (unkept.length === 0) return
         const persisted = yield* Effect.result(persist)
-        if (Result.isFailure(persisted)) yield* tell(watchesUnkept(persisted.failure.message, unkept))
+        if (Result.isFailure(persisted))
+          yield* tell(watchesUnkept(persisted.failure.message, unkept))
       })
 
     /** The project of the one bead the watcher has with `id`. */
