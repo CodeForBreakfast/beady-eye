@@ -108,7 +108,23 @@ it reads all of them.
 as `PROJECT:ID` adds its tree to the run, and reads that project if the
 directory would have left it out. `bdi` starts focused on that bead, as
 `Shift+F` on it would. Under `--json`, a project with a bead named in it
-writes only the trees those beads are in.
+writes only the trees those beads are in, and every other project read writes
+all of its trees.
+
+A blocker in a project the directory left out is read where that project
+[states its prefix](#projects), and only what the blocker reaches is drawn
+from it. Under `--project`, a blocker in a project left out is reported as not
+read.
+
+Every project a run reads adds its tracker's reads and its trees, so read the
+fewest that answer the question:
+
+| Question | Scope |
+|---|---|
+| One project's work | start `bdi` in its directory |
+| One bead and everything it waits on, in any project | start in the bead's project and name it as `PROJECT:ID` |
+| A known set of projects | `--project NAME`, once for each |
+| Every project, such as what waits on a bead | `--all-projects` |
 
 Without a config, the one project is named after the repository's `origin`
 remote, or its directory if there is no remote or no git. `BDI_PROJECT` in the

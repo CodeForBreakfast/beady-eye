@@ -40,6 +40,34 @@ const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
 /// of the name its repository or directory would give it.
 const PROJECT_IN_THE_ENVIRONMENT: &str = "BDI_PROJECT";
 
+/// The part of `--help` that says which scope fits which question.
+const WHICH_PROJECTS_A_RUN_READS: &str = "\
+Which projects a run reads:
+  Every project a run reads adds its tracker's reads and its trees, so
+  read the fewest projects that answer the question.
+
+  bdi
+      Reads the project whose directory bdi is started in. Fits one
+      project's work. Started outside every configured project, it reads
+      them all. A blocker in another project is read too, where that
+      project's config states the blocker's prefix, and only what the
+      blocker reaches is drawn from it.
+  bdi <project>:<bead-id>
+      Adds that bead's project to the directory's, and reads blockers in
+      other projects as above. Started in the bead's own project, it is
+      the cheapest way to see one bead with everything it waits on.
+      Only a project holding a named bead is narrowed to that bead's
+      trees under --json. A run started elsewhere also writes every tree
+      of the directory's project.
+  --project <NAME>...
+      Reads exactly the projects named. Fits a known set of projects. A
+      blocker in a project left out is reported as not read, and a bead
+      named in one is refused.
+  --all-projects
+      Reads every project. Fits a question about all of them, such as
+      what waits on a bead or which beads anywhere are labelled human.
+      A bead named with it does not narrow the other projects.";
+
 /// The view is drawn on the alternate screen, so a `bdi` whose output is a
 /// pipe has nowhere to draw and `--json` is the only thing it can give.
 const NO_TERMINAL: u8 = 2;
@@ -50,7 +78,8 @@ const NO_TERMINAL: u8 = 2;
     version,
     about = "One eye over your beads trackers: shows trees of work and their agents, \
              wakes an agent when its bead changes, settles pull-request waits from GitHub.",
-    args_conflicts_with_subcommands = true
+    args_conflicts_with_subcommands = true,
+    after_help = WHICH_PROJECTS_A_RUN_READS
 )]
 struct Cli {
     #[command(subcommand)]
@@ -71,13 +100,12 @@ struct Cli {
 
     /// Read only the projects named, repeating the option for each, from
     /// wherever bdi is started. The ones left out are not read at all,
-    /// rather than read and hidden.
+    /// rather than read and hidden, even where one holds a blocker.
     #[arg(long = "project", value_name = "NAME")]
     projects: Vec<String>,
 
-    /// Read every configured project, wherever bdi is started. Without it,
-    /// bdi started under a configured project's directory reads that
-    /// project alone.
+    /// Read every configured project, wherever bdi is started. This is the
+    /// costliest read, so keep it for a question about every project.
     #[arg(long = "all-projects", conflicts_with = "projects")]
     all_projects: bool,
 
