@@ -558,7 +558,7 @@ export const makeWatches = (
             yield* tellBackOnceAllAre
           })
         const hear = (heard: Heard) =>
-          ('down' in heard ? goDown(heard.down) : hearBatch(heard.batch)).pipe(
+          Result.match(heard, { onSuccess: hearBatch, onFailure: goDown }).pipe(
             Effect.andThen(Deferred.succeed(firstHeard, undefined)),
           )
         const connection = withTheWatcher(watchBead(bead).pipe(Stream.runForEach(hear)))
