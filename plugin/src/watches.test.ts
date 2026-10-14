@@ -93,10 +93,10 @@ const aServer = async (
     await client.close()
   }
   cleanUp.push(exit)
-  const use = async (name: string, args: Record<string, string> = {}) => {
+  const use = async (name: string, args: Record<string, string | undefined> = {}) => {
     const result = await client.callTool({
       name,
-      arguments: { ...args, session_id: session },
+      arguments: { session_id: session, ...args },
     })
     const [content] = result.content as { text: string }[]
     return { text: content?.text, refused: result.isError }
@@ -993,6 +993,33 @@ test('watching a bead twice at once that the session file cannot keep refuses bo
   expect(answers.map(({ refused }) => refused)).toEqual([true, true])
   expect(answers[1]?.text).toBe(answers[0]?.text)
   expect((await use('watching')).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+})
+
+test('watches made before the session id that its file cannot keep are told of, and stay watched', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+  const answer = use('watch', {
+    id: 'smt-4kd3p.20',
+    project: 'summit-works',
+    session_id: undefined,
+  })
+  const { connection } = await watcher.next()
+  connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+  await answer
+  mkdirSync(join(place.directory, 'beady-eye', 'watches'), { recursive: true })
+  refuseWrites(place)
+
+  expect((await use('watching')).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+  const { content, meta } = await use.nextMessage()
+
+  expect(meta).toEqual({ watches: 'unkept' })
+  expect(content).toStartWith(
+    'The watches this session made before its id was known could not be kept: ',
+  )
+  expect(content).toEndWith(
+    `\nThese beads are watched until the plugin stops, and the next watch or unwatch that is kept keeps them:\n- ${watched}`,
+  )
 })
 
 test('an unwatch the session file cannot keep is refused, and the bead stays watched', async () => {

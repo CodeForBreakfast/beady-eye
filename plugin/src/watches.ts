@@ -60,7 +60,7 @@ export type Block =
       readonly project: ProjectName
       readonly tracker: 'unreachable' | 'ok'
     }
-  | { readonly is: 'watches'; readonly watches: 'unreadable' }
+  | { readonly is: 'watches'; readonly watches: 'unreadable' | 'unkept' }
 
 /** A message for the session, and the channel block it arrives in. */
 export interface News {
@@ -331,6 +331,15 @@ const keptUnreadable = (
       : `It could not be moved aside: ${aside.unmoved}. This session watches none of the beads it named, and its next watch or unwatch writes over the file.`,
   ].join('\n'),
   block: { is: 'watches', watches: 'unreadable' },
+})
+
+const watchesUnkept = (why: string, beads: readonly Bead[]): Omit<News, 'told'> => ({
+  content: [
+    `The watches this session made before its id was known could not be kept: ${why}.`,
+    'These beads are watched until the plugin stops, and the next watch or unwatch that is kept keeps them:',
+    ...listed(beads),
+  ].join('\n'),
+  block: { is: 'watches', watches: 'unkept' },
 })
 
 const told = (text: string): Answer => ({ text, refused: false })
@@ -671,10 +680,13 @@ export const makeWatches = (
           if (!watches.has(keyOf(bead))) yield* start(bead, true, lastTold)
         }
         yield* Deferred.succeed(file, path)
-        const unkept = [...watches.values()].some(
-          (watch) => watch.accepted && !kept.some((bead) => keyOf(bead) === keyOf(watch.bead)),
-        )
-        if (unkept) yield* Effect.orDie(persist)
+        const unkept = acceptedWatches()
+          .map(({ bead }) => bead)
+          .filter((bead) => !kept.some((one) => keyOf(one) === keyOf(bead)))
+        if (unkept.length === 0) return
+        const persisted = yield* Effect.result(persist)
+        if (Result.isFailure(persisted))
+          yield* tell(watchesUnkept(persisted.failure.message, unkept))
       })
 
     /** The project of the one bead the watcher has with `id`. */

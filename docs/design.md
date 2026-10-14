@@ -2529,6 +2529,10 @@ the time added, and the session is sent a block with `watches="unreadable"`
 saying why and where the file went. The session then watches none of the
 beads the file named. Where the rename fails too, the block says so, and the
 session's next `watch` or `unwatch` writes over the file.
+Watches accepted before the session's id was known are written once it is,
+and where that write fails the session is sent a block with
+`watches="unkept"` naming them. They stay watched, and the next `watch` or
+`unwatch` that is kept keeps them too.
 A watch ends when the session unwatches the bead, and not when the bead
 closes, because a closed bead can reopen. The server exits when the session
 closes its input, and every watch's connection closes with it.
