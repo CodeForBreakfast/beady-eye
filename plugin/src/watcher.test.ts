@@ -82,6 +82,12 @@ const freshnessHeard = {
   protocol: 1,
   tracker: 'ok',
 } as const
+/** The bead line's answer, closed by its freshness line, as a watch hears it. */
+const answerHeard = Result.succeed({
+  is: 'answer',
+  lines: [beadHeard],
+  freshness: freshnessHeard,
+} as const)
 
 const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)))
@@ -194,7 +200,7 @@ test("a bead's lines arrive as one batch at its project's freshness line", async
   connection.write(said({ line: 'alive' }, beadLine, freshness))
 
   expect(line).toBe(asked)
-  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
+  expect(await session.next()).toEqual(answerHeard)
 })
 
 test('a line of a kind the plugin does not read is passed over', async () => {
@@ -206,7 +212,7 @@ test('a line of a kind the plugin does not read is passed over', async () => {
     said(beadLine, { line: 'greeting', from: 'a newer watcher' }, freshness),
   )
 
-  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
+  expect(await session.next()).toEqual(answerHeard)
 })
 
 test('a refusal of the watch arrives on its own', async () => {
@@ -221,7 +227,7 @@ test('a refusal of the watch arrives on its own', async () => {
   } as const
   ;(await watcher.next()).connection.write(said(refused))
 
-  expect(await session.next()).toEqual(Result.succeed([refused]))
+  expect(await session.next()).toEqual(Result.succeed({ is: 'refused', refused }))
 })
 
 test('a refused connection is a watcher that is down', async () => {
@@ -243,7 +249,7 @@ test('a watcher that is not there yet is tried again until it answers', async ()
   connection.write(said(beadLine, freshness))
 
   expect(line).toBe(asked)
-  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
+  expect(await session.next()).toEqual(answerHeard)
 })
 
 test('a connection the watcher closes is down, and the bead is watched again', async () => {
@@ -406,7 +412,7 @@ test('a watcher that answered is tried again after the shortest pause', async ()
 
   const watcher = await aWatcherAt(path)
   ;(await watcher.next()).connection.end(said(beadLine, freshness))
-  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
+  expect(await session.next()).toEqual(answerHeard)
   expect(await session.next()).toEqual(Result.fail('closed'))
   const downAt = Date.now()
   await watcher.next()
@@ -453,7 +459,7 @@ test('a watch stopped as it hears a batch closes its connection', async () => {
   const closed = new Promise((resolve) => connection.on('close', resolve))
   connection.write(said(beadLine, freshness, beadLine, freshness))
 
-  expect(await told).toEqual([Result.succeed([beadHeard, freshnessHeard])])
+  expect(await told).toEqual([answerHeard])
   await closed
 })
 
