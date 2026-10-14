@@ -26,11 +26,14 @@ import {
   Stream,
 } from 'effect'
 import {
+  type AnswerLine,
   askAbout,
+  type Batch,
   Bead,
   type BeadId,
   type ConfigUnreadable,
   type Down,
+  type Freshness,
   type Heard,
   type ProjectAnswer,
   type ProjectName,
@@ -172,10 +175,9 @@ const isAbout = (said: Said, bead: Bead) => {
 }
 
 /** What a batch says of the bead, where it says anything. */
-const standingIn = (batch: readonly Said[], bead: Bead): Standing | undefined => {
-  const [first] = batch
-  if (first?.line === 'refused') return { is: 'refused', reason: first.reason }
-  const said = Arr.findLast(batch, (line) => isAbout(line, bead))
+const standingIn = (batch: Batch, bead: Bead): Standing | undefined => {
+  if (batch.is === 'refused') return { is: 'refused', reason: batch.refused.reason }
+  const said = Arr.findLast(batch.lines, (line) => isAbout(line, bead))
   if (Option.isNone(said)) return undefined
   if (said.value.line === 'gone') return { is: 'gone' }
   if (said.value.line !== 'bead') return undefined
@@ -197,9 +199,9 @@ const same = (one: Told | undefined, other: Told | undefined) =>
 const toldOf = (standing: Standing): Told | undefined =>
   standing.is === 'bead' || standing.is === 'gone' ? standing : undefined
 
-/** Each comment on `bead` whose event line is in the batch. */
-const commentsIn = (batch: readonly Said[], bead: Bead) =>
-  batch.flatMap((said) =>
+/** Each comment on `bead` whose event line is among `lines`. */
+const commentsIn = (lines: readonly AnswerLine[], bead: Bead) =>
+  lines.flatMap((said) =>
     said.line === 'event' &&
     said.project === bead.project &&
     said.event.issue_id === bead.id &&
@@ -216,7 +218,12 @@ const plural = (count: number, one: string, many: string) => (count === 1 ? one 
 
 /** What the session is told of the change from `before` to `now`, line by
  * line: a status, readiness, comments, and the bead going or coming back. */
-const changesFrom = (before: Told, now: Told, batch: readonly Said[], bead: Bead): string[] => {
+const changesFrom = (
+  before: Told,
+  now: Told,
+  lines: readonly AnswerLine[],
+  bead: Bead,
+): string[] => {
   if (before.is === 'gone' || now.is === 'gone') {
     if (before.is === now.is) return []
     return now.is === 'gone'
@@ -234,7 +241,7 @@ const changesFrom = (before: Told, now: Told, batch: readonly Said[], bead: Bead
   if (now.ready !== before.ready) {
     changes.push(now.ready ? 'It became ready.' : 'It is no longer ready.')
   }
-  const comments = commentsIn(batch, bead)
+  const comments = commentsIn(lines, bead)
   for (const { author, text } of comments) {
     changes.push(`${quoted(author)} commented: ${quoted(text)}`)
   }
@@ -257,9 +264,9 @@ const newsOf = (
   bead: Bead,
   before: Told,
   now: Told,
-  batch: readonly Said[],
+  lines: readonly AnswerLine[],
 ): Omit<News, 'told'> | undefined => {
-  const changes = changesFrom(before, now, batch, bead)
+  const changes = changesFrom(before, now, lines, bead)
   if (changes.length === 0) return undefined
   const title = now.is === 'bead' ? now.title : before.is === 'bead' ? before.title : ''
   return {
@@ -430,11 +437,7 @@ export const makeWatches: Effect.Effect<
    * where it watches the bead and something it acts on has changed since it
    * was last told. A journal that answers again late sends a comment's
    * event line in a batch after its bead line. */
-  const takeIn = (
-    batch: readonly Said[],
-    bead: Bead,
-    known: Known,
-  ): Effect.Effect<News | undefined> =>
+  const takeIn = (batch: Batch, bead: Bead, known: Known): Effect.Effect<News | undefined> =>
     Effect.gen(function* () {
       const before = known.heard
       known.standing = standingIn(batch, bead) ?? known.standing
@@ -447,7 +450,9 @@ export const makeWatches: Effect.Effect<
         return
       }
       const said =
-        before === undefined || after === undefined ? undefined : newsOf(bead, before, after, batch)
+        before === undefined || after === undefined
+          ? undefined
+          : newsOf(bead, before, after, batch.is === 'answer' ? batch.lines : [])
       if (said !== undefined) return { ...said, told: keep }
       if (same(known.told, before) && !same(before, after)) yield* keep
       return undefined
@@ -511,10 +516,8 @@ export const makeWatches: Effect.Effect<
    * session has been told. */
   const unreachable = new Map<string, { told: boolean }>()
 
-  const trackerIn = (batch: readonly Said[], project: ProjectName) =>
+  const trackerIn = (freshness: Freshness, project: ProjectName) =>
     Effect.gen(function* () {
-      const freshness = batch.at(-1)
-      if (freshness?.line !== 'freshness') return
       const why = freshness.tracker === 'ok' ? undefined : freshness.tracker.unreachable.reason
       const known = unreachable.get(project)
       if (why === undefined) {
@@ -564,10 +567,10 @@ export const makeWatches: Effect.Effect<
         }
         if (why === 'protocol') yield* tellDown
       })
-    const hearBatch = (batch: readonly Said[]) =>
+    const hearBatch = (batch: Batch) =>
       Effect.gen(function* () {
         known.connection = { is: 'answering', toldDown: toldDownOf(known.connection) }
-        yield* trackerIn(batch, bead.project)
+        if (batch.is === 'answer') yield* trackerIn(batch.freshness, bead.project)
         const said = yield* takeIn(batch, bead, known)
         if (!toldDownOf(known.connection)) {
           if (said !== undefined) yield* Queue.offer(news, said)
