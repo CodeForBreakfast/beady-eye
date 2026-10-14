@@ -10,6 +10,7 @@ import {
   Config,
   Deferred,
   Effect,
+  Equal,
   Fiber,
   FiberSet,
   FileSystem,
@@ -31,6 +32,7 @@ import {
   type Batch,
   Bead,
   type BeadId,
+  CommentCount,
   type ConfigUnreadable,
   type Down,
   type Freshness,
@@ -82,8 +84,8 @@ const Told = Schema.Union([
     title: Schema.String,
     status: Schema.String,
     ready: Schema.Boolean,
-    comments: Schema.optional(Schema.Finite),
-    closeReason: Schema.optional(Schema.String),
+    comments: Schema.optionalKey(CommentCount),
+    closeReason: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({ is: Schema.Literal('gone') }),
 ])
@@ -92,11 +94,12 @@ const Told = Schema.Union([
  * said of it but for a refusal. */
 type Told = typeof Told.Type
 
-/** What the watcher last said of a watched bead. */
+/** What the watcher last said of a watched bead. A refusal keeps what was
+ * heard of the bead before it, which the next batch is compared with. */
 type Standing =
   | { readonly is: 'unheard' }
   | Told
-  | { readonly is: 'refused'; readonly reason: string }
+  | { readonly is: 'refused'; readonly reason: string; readonly heard: Option.Option<Told> }
 
 /** Whether the watcher is watching a bead. `toldDown` says the session has
  * been told the watcher cannot watch it, and not yet that it is back: while
@@ -115,9 +118,6 @@ type Connection =
 /** What is known of a watched bead from its connection. */
 interface Known {
   standing: Standing
-  /** What the plugin last heard of the bead, kept through a refusal, which
-   * the next batch is compared with. */
-  heard: Told | undefined
   /** What the session was last told of the bead, which is what is kept on
    * disk, so a change a server never told is told by the next. */
   told: Told | undefined
@@ -174,13 +174,31 @@ const isAbout = (said: Said, bead: Bead) => {
   return named?.project === bead.project && named.id === bead.id
 }
 
-/** What a batch says of the bead, where it says anything. */
-const standingIn = (batch: Batch, bead: Bead): Standing | undefined => {
-  if (batch.is === 'refused') return { is: 'refused', reason: batch.refused.reason }
+/** What the plugin last heard of the bead, kept through a refusal. */
+const heardOf = (standing: Standing): Told | undefined =>
+  Match.value(standing).pipe(
+    Match.discriminatorsExhaustive('is')({
+      bead: (told) => told,
+      gone: (told) => told,
+      refused: ({ heard }) => Option.getOrUndefined(heard),
+      unheard: () => undefined,
+    }),
+  )
+
+/** What the watcher has said of the bead once `batch` is heard, where `was`
+ * is what it had said before. */
+const standingIn = (batch: Batch, bead: Bead, was: Standing): Standing => {
+  if (batch.is === 'refused') {
+    return {
+      is: 'refused',
+      reason: batch.refused.reason,
+      heard: Option.fromUndefinedOr(heardOf(was)),
+    }
+  }
   const said = Arr.findLast(batch.lines, (line) => isAbout(line, bead))
-  if (Option.isNone(said)) return undefined
+  if (Option.isNone(said)) return was
   if (said.value.line === 'gone') return { is: 'gone' }
-  if (said.value.line !== 'bead') return undefined
+  if (said.value.line !== 'bead') return was
   const { row, ready } = said.value
   const { title, status, comment_count, close_reason } = row
   return {
@@ -188,16 +206,10 @@ const standingIn = (batch: Batch, bead: Bead): Standing | undefined => {
     title,
     status,
     ready,
-    comments: comment_count,
-    closeReason: close_reason,
+    ...(comment_count === undefined ? {} : { comments: comment_count }),
+    ...(close_reason === undefined ? {} : { closeReason: close_reason }),
   }
 }
-
-const same = (one: Told | undefined, other: Told | undefined) =>
-  JSON.stringify(one) === JSON.stringify(other)
-
-const toldOf = (standing: Standing): Told | undefined =>
-  standing.is === 'bead' || standing.is === 'gone' ? standing : undefined
 
 /** Each comment on `bead` whose event line is among `lines`. */
 const commentsIn = (lines: readonly AnswerLine[], bead: Bead) =>
@@ -439,10 +451,9 @@ export const makeWatches: Effect.Effect<
    * event line in a batch after its bead line. */
   const takeIn = (batch: Batch, bead: Bead, known: Known): Effect.Effect<News | undefined> =>
     Effect.gen(function* () {
-      const before = known.heard
-      known.standing = standingIn(batch, bead) ?? known.standing
-      const after = toldOf(known.standing) ?? before
-      known.heard = after
+      const before = heardOf(known.standing)
+      known.standing = standingIn(batch, bead, known.standing)
+      const after = heardOf(known.standing)
       const keep = keepTold(known, after)
       const watch = watches.get(keyOf(bead))
       if (watch === undefined || !isAccepted(watch)) {
@@ -454,7 +465,7 @@ export const makeWatches: Effect.Effect<
           ? undefined
           : newsOf(bead, before, after, batch.is === 'answer' ? batch.lines : [])
       if (said !== undefined) return { ...said, told: keep }
-      if (same(known.told, before) && !same(before, after)) yield* keep
+      if (Equal.equals(known.told, before) && !Equal.equals(before, after)) yield* keep
       return undefined
     })
 
@@ -500,12 +511,13 @@ export const makeWatches: Effect.Effect<
     }
     const changed = back.flatMap(({ bead, known }) => {
       known.connection = { is: 'answering', toldDown: false }
-      const { told, heard } = known
+      const { told } = known
+      const heard = heardOf(known.standing)
       const said =
         told === undefined || heard === undefined ? undefined : newsOf(bead, told, heard, [])
       return said === undefined ? [] : [said]
     })
-    const heard = back.map(({ known }) => [known, known.heard] as const)
+    const heard = back.map(({ known }) => [known, heardOf(known.standing)] as const)
     return Queue.offer(news, {
       ...watcherBack(changed),
       told: Effect.forEach(heard, ([known, now]) => keepTold(known, now), { discard: true }),
@@ -545,7 +557,6 @@ export const makeWatches: Effect.Effect<
   const start = (bead: Bead, acceptance: Acceptance, told?: Told) => {
     const known: Known = {
       standing: told ?? { is: 'unheard' },
-      heard: told,
       told,
       connection: { is: 'connecting' },
     }

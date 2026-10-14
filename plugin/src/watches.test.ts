@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
@@ -671,6 +672,23 @@ test('a kept file that does not decode is moved aside and the session told, not 
   await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
   expect(readFileSync(aside as string, 'utf8')).toBe('[{"project": "summit-works"')
   expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+})
+
+test('a kept file whose comment count is not a whole number of comments is moved aside and the session told', async () => {
+  for (const comments of [-3, 2.5]) {
+    const place = { ...aPlace(), at: undefined }
+    const told = { is: 'bead', title: 'a title', status: 'open', ready: false, comments }
+    aKeptFile(place, JSON.stringify([{ project: 'summit-works', id: 'smt-4kd3p.20', told }]))
+    const use = await aServer(place)
+
+    expect(await use('watching')).toEqual({
+      text: 'This session watches no beads.',
+      refused: false,
+    })
+    expect((await use.nextMessage()).meta).toEqual({ watches: 'unreadable' })
+    expect(setAside(place)).toHaveLength(1)
+    await use.exit()
+  }
 })
 
 test('a kept file that cannot be read is moved aside and the session told, not written over', async () => {
@@ -1370,6 +1388,25 @@ test('a line without a field its kind carries is a watcher speaking another prot
   }
 })
 
+test('a comment count that is not a whole number of comments is a watcher speaking another protocol', async () => {
+  for (const comment_count of [-3, 2.5]) {
+    const place = aPlace()
+    const watcher = await aWatcherAt(place.at as string)
+    const use = await aServer(place, ['summit-works'], { ...timing, quietFor: Duration.minutes(1) })
+    const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+    const { connection } = await watcher.next()
+    connection.write(said(theBead(), freshness('summit-works')))
+    await answer
+
+    connection.write(said(theBead({ row: { comment_count } }), freshness('summit-works')))
+
+    expect((await use.nextMessage()).content).toStartWith(
+      'The watcher is down: it speaks a protocol this plugin does not know',
+    )
+    await use.exit()
+  }
+})
+
 test('a line of a kind the plugin does not read changes nothing', async () => {
   const { use, connection } = await aWatchedBead()
 
@@ -1408,6 +1445,32 @@ test('a tracker the watcher cannot reach for a minute wakes the session, and aga
     meta: { project: 'summit-works', tracker: 'ok' },
   })
   expect(await use.nextMessage()).toEqual(started)
+})
+
+test('a watch restored from disk is the same as the bead heard from the watcher, and is not kept again', async () => {
+  const place = aPlace()
+  const told = {
+    comments: 0,
+    ready: false,
+    status: 'blocked',
+    title: theBead().row.title,
+    is: 'bead',
+  }
+  const file = aKeptFile(
+    place,
+    JSON.stringify([{ project: 'summit-works', id: 'smt-4kd3p.20', told }]),
+  )
+  const { ino } = statSync(file)
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+  await use('watching')
+  const { connection } = await watcher.next()
+
+  connection.write(said(theBead(), freshness('summit-works')))
+  connection.write(said(unreachable))
+  await use.nextMessage()
+
+  expect(statSync(file).ino).toBe(ino)
 })
 
 test('a tracker unreachable for less than a minute sends nothing', async () => {

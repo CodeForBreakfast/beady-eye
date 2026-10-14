@@ -87,12 +87,15 @@ export type ProjectName = typeof ProjectName.Type
 export const BeadId = aWord.pipe(Schema.brand('BeadId'))
 export type BeadId = typeof BeadId.Type
 
+/** How many comments a bead has. */
+export const CommentCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+
 /** The fields of bd's row this plugin reads. */
 const Row = Schema.Struct({
   id: BeadId,
   title: Schema.String,
   status: Schema.String,
-  comment_count: Schema.optional(Schema.Finite),
+  comment_count: Schema.optional(CommentCount),
   close_reason: Schema.optional(Schema.String),
 })
 
