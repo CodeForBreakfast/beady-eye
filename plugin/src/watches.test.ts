@@ -233,6 +233,24 @@ test('watch refuses a bead named without its project that several projects hold'
   })
 })
 
+test('watch refuses a bead the watcher refuses for another reason, and says why', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const { connection } = await watcher.next()
+  connection.write(
+    said({ line: 'refused', asked: 'watch summit-works smt-4kd3p.20', reason: 'malformed' }),
+  )
+
+  expect(await answer).toEqual({
+    text: `The watcher refused to watch ${watched}: malformed.`,
+    refused: true,
+  })
+  expect(kept(place)).toEqual([])
+})
+
 test('watch refuses a project the watcher does not read', async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
