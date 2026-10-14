@@ -45,10 +45,28 @@ export interface Answer {
   readonly refused: boolean
 }
 
-/** A message for the session, and the attributes of its channel block. */
+/** The kind of channel block a message arrives in, each carrying the
+ * attributes the server's instructions publish for it. */
+export type Block =
+  | {
+      readonly is: 'bead'
+      readonly project: ProjectName
+      readonly id: BeadId
+      readonly status: string
+      readonly ready: boolean
+    }
+  | { readonly is: 'watcher'; readonly watcher: 'down' | 'answering' }
+  | {
+      readonly is: 'tracker'
+      readonly project: ProjectName
+      readonly tracker: 'unreachable' | 'ok'
+    }
+  | { readonly is: 'watches'; readonly watches: 'unreadable' }
+
+/** A message for the session, and the channel block it arrives in. */
 export interface News {
   readonly content: string
-  readonly meta: Record<string, string>
+  readonly block: Block
   /** Keep what the message told, once the session has been sent it. */
   readonly told: Effect.Effect<void>
 }
@@ -238,11 +256,12 @@ const newsOf = (
       `${named(bead)}, ${quoted(title)}, has changed.`,
       ...changes.map((change) => `- ${change}`),
     ].join('\n'),
-    meta: {
+    block: {
+      is: 'bead',
       project: bead.project,
       id: bead.id,
       status: now.is === 'bead' ? now.status : 'gone',
-      ready: String(now.is === 'bead' && now.ready),
+      ready: now.is === 'bead' && now.ready,
     },
   }
 }
@@ -270,7 +289,7 @@ const watcherDown = (why: Down, beads: readonly Bead[]): Omit<News, 'told'> => (
     ...listed(beads),
     'Their watches are kept, and this session will be told when the watcher is back.',
   ].join('\n'),
-  meta: { watcher: 'down' },
+  block: { is: 'watcher', watcher: 'down' },
 })
 
 const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'> => ({
@@ -279,11 +298,11 @@ const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'>
     ...changed.map(({ content }) => content),
     'A comment made while it was down arrives as a count, without its text.',
   ].join('\n'),
-  meta: { watcher: 'answering' },
+  block: { is: 'watcher', watcher: 'answering' },
 })
 
 const trackerUnreachable = (
-  project: string,
+  project: ProjectName,
   why: string,
   beads: readonly Bead[],
 ): Omit<News, 'told'> => ({
@@ -293,12 +312,12 @@ const trackerUnreachable = (
     ...listed(beads),
     'This session will be told when it can.',
   ].join('\n'),
-  meta: { project, tracker: 'unreachable' },
+  block: { is: 'tracker', project, tracker: 'unreachable' },
 })
 
-const trackerBack = (project: string): Omit<News, 'told'> => ({
+const trackerBack = (project: ProjectName): Omit<News, 'told'> => ({
   content: `The watcher reaches the tracker of ${project} again.`,
-  meta: { project, tracker: 'ok' },
+  block: { is: 'tracker', project, tracker: 'ok' },
 })
 
 const keptUnreadable = (
@@ -311,7 +330,7 @@ const keptUnreadable = (
       ? `The file was moved to ${aside}, and this session watches none of the beads it named. Watch again each bead the session still waits on.`
       : `It could not be moved aside: ${aside.unmoved}. This session watches none of the beads it named, and its next watch or unwatch writes over the file.`,
   ].join('\n'),
-  meta: { watches: 'unreadable' },
+  block: { is: 'watches', watches: 'unreadable' },
 })
 
 const told = (text: string): Answer => ({ text, refused: false })
@@ -468,7 +487,7 @@ export const makeWatches = <R>(
      * session has been told. */
     const unreachable = new Map<string, { told: boolean }>()
 
-    const trackerIn = (batch: readonly Said[], project: string) =>
+    const trackerIn = (batch: readonly Said[], project: ProjectName) =>
       Effect.gen(function* () {
         const freshness = batch.at(-1)
         if (freshness?.line !== 'freshness') return

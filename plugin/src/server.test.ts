@@ -15,6 +15,7 @@ import {
   said,
   someWatches,
 } from './test-watcher'
+import type { Block } from './watches'
 
 const pluginRoot = new URL('..', import.meta.url).pathname
 const bundle = `${pluginRoot}dist/server.js`
@@ -70,14 +71,25 @@ test('the server sends a channel message to the session', async () => {
   await server.connect(serverSide)
   await client.connect(clientSide)
 
-  await Effect.runPromise(tellSession(server, 'bdi-7 closed', { id: 'bdi-7' }))
+  await Effect.runPromise(
+    tellSession(server, 'The watcher is down.', { is: 'watcher', watcher: 'down' }),
+  )
 
   expect(await received).toEqual({
     jsonrpc: '2.0',
     method: 'notifications/claude/channel',
-    params: { content: 'bdi-7 closed', meta: { id: 'bdi-7' } },
+    params: { content: 'The watcher is down.', meta: { watcher: 'down' } },
   })
   await client.close()
+})
+
+test('a block carries only the attributes its kind publishes', () => {
+  // @ts-expect-error a watcher block names no project
+  const named: Block = { is: 'watcher', watcher: 'down', project: 'summit-works' }
+  // @ts-expect-error a watcher is down or answering
+  const unpublished: Block = { is: 'watcher', watcher: 'asleep' }
+
+  expect([named, unpublished]).toHaveLength(2)
 })
 
 test('the bundle runs under node and declares the channel', async () => {
