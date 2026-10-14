@@ -18,6 +18,7 @@ import {
   Option,
   Queue,
   Ref,
+  type Result,
   Schema,
   Stream,
 } from 'effect'
@@ -123,7 +124,7 @@ export type Said = typeof SaidLine.Type
 /** What a watched bead's connection hears: the lines of one answer for the
  * bead's project, ending with its freshness line, or a refused line on its
  * own; or that the watcher is down. */
-export type Heard = { readonly batch: readonly Said[] } | { readonly down: Down }
+export type Heard = Result.Result<readonly Said[], Down>
 
 export const Bead = Schema.Struct({ project: ProjectName, id: BeadId })
 export type Bead = typeof Bead.Type
@@ -373,8 +374,8 @@ export const watchBead = (
         Stream.tap((batch) =>
           batch.at(-1)?.line === 'freshness' ? Ref.set(failures, 0) : Effect.void,
         ),
-        Stream.map((batch): Heard => ({ batch })),
-        Stream.catch(({ why }) => Stream.make<Heard[]>({ down: why })),
+        Stream.mapError(({ why }) => why),
+        Stream.result,
       )
       const pause = Ref.updateAndGet(failures, Num.increment).pipe(
         Effect.flatMap((failed) => Effect.sleep(pauseAfter(failed, timing))),
