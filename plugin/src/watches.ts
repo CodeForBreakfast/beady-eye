@@ -98,6 +98,7 @@ type Standing =
  * been told the watcher cannot watch it, and not yet that it is back: while
  * it answers again, the bead waits for the others the session was told of. */
 type Connection =
+  | { readonly is: 'connecting' }
   | { readonly is: 'answering'; readonly toldDown: boolean }
   | {
       readonly is: 'down'
@@ -122,6 +123,8 @@ interface Known {
 /** Why the watcher cannot watch the bead, where it cannot. */
 const downBecause = (connection: Connection) =>
   connection.is === 'down' ? connection.why : undefined
+
+const toldDownOf = (connection: Connection) => connection.is !== 'connecting' && connection.toldDown
 
 /** Whether the session has been told it watches a bead. Only a watch it has
  * not been told of can still be refused. An accepting watch's `answer` is done
@@ -485,7 +488,7 @@ export const makeWatches: Effect.Effect<
    * so in one message, with what changed in each since it was last told. */
   const tellBackOnceAllAre = Effect.suspend(() => {
     const all = [...watches.values()]
-    const back = all.filter(({ known }) => known.connection.toldDown)
+    const back = all.filter(({ known }) => toldDownOf(known.connection))
     if (back.length === 0 || back.some(({ known }) => known.connection.is === 'down')) {
       return Effect.void
     }
@@ -540,7 +543,7 @@ export const makeWatches: Effect.Effect<
       standing: told ?? { is: 'unheard' },
       heard: told,
       told,
-      connection: { is: 'answering', toldDown: false },
+      connection: { is: 'connecting' },
     }
     const firstHeard = Deferred.makeUnsafe<void>()
     const stillDownIn = (outage: number) => {
@@ -555,17 +558,17 @@ export const makeWatches: Effect.Effect<
           known.connection = { ...was, why }
         } else {
           const outage = yield* Ref.updateAndGet(outages, Num.increment)
-          known.connection = { is: 'down', why, outage, toldDown: was.toldDown }
+          known.connection = { is: 'down', why, outage, toldDown: toldDownOf(was) }
           yield* inAMinute(Effect.suspend(() => (stillDownIn(outage) ? tellDown : Effect.void)))
         }
         if (why === 'protocol') yield* tellDown
       })
     const hearBatch = (batch: readonly Said[]) =>
       Effect.gen(function* () {
-        known.connection = { is: 'answering', toldDown: known.connection.toldDown }
+        known.connection = { is: 'answering', toldDown: toldDownOf(known.connection) }
         yield* trackerIn(batch, bead.project)
         const said = yield* takeIn(batch, bead, known)
-        if (!known.connection.toldDown) {
+        if (!toldDownOf(known.connection)) {
           if (said !== undefined) yield* Queue.offer(news, said)
           return
         }
@@ -833,11 +836,14 @@ export const makeWatches: Effect.Effect<
       const down = all
         .map(({ known }) => downBecause(known.connection))
         .find(Predicate.isNotUndefined)
+      const answered = all.some(({ known }) => known.connection.is === 'answering')
       return told(
         [
-          down === undefined
-            ? 'The watcher is answering.'
-            : `The watcher is down: ${whyDown(down)}. Each bead's status is the last one known.`,
+          down !== undefined
+            ? `The watcher is down: ${whyDown(down)}. Each bead's status is the last one known.`
+            : answered
+              ? 'The watcher is answering.'
+              : "The watcher has not answered yet. Each bead's status is the last one known.",
           ...all.map((watch) => `- ${named(watch.bead)}: ${describe(watch)}`),
         ].join('\n'),
       )
