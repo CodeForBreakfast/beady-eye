@@ -43,11 +43,48 @@ class WatcherDown extends Data.TaggedError('WatcherDown')<{
   readonly why: Down
 }> {}
 
+/** The fields of bd's row this plugin reads. */
+const Row = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  status: Schema.String,
+  comment_count: Schema.optional(Schema.Finite),
+  close_reason: Schema.optional(Schema.String),
+})
+
+/** One of bd's event records. Only a comment's record carries a comment. */
+const EventRecord = Schema.Struct({
+  op: Schema.String,
+  issue_id: Schema.String,
+  comment: Schema.optional(Schema.Struct({ author: Schema.String, text: Schema.String })),
+}).check(Schema.makeFilter(({ op, comment }) => (op === 'comment') === (comment !== undefined)))
+
+/** Each kind of line about a watch that the plugin reads, with the fields it
+ * reads. The watcher's alive lines are not among them: a connection that
+ * stops carrying any line has wedged, whatever the line. */
+const SaidLine = Schema.Union([
+  Schema.Struct({
+    line: Schema.Literal('bead'),
+    project: Schema.String,
+    ready: Schema.Boolean,
+    row: Row,
+  }),
+  Schema.Struct({ line: Schema.Literal('gone'), project: Schema.String, id: Schema.String }),
+  Schema.Struct({
+    line: Schema.Literal('freshness'),
+    project: Schema.String,
+    protocol: Schema.Literal(PROTOCOL),
+    tracker: Schema.Union([
+      Schema.Literal('ok'),
+      Schema.Struct({ unreachable: Schema.Struct({ reason: Schema.String }) }),
+    ]),
+  }),
+  Schema.Struct({ line: Schema.Literal('event'), project: Schema.String, event: EventRecord }),
+  Schema.Struct({ line: Schema.Literal('refused'), asked: Schema.String, reason: Schema.String }),
+])
+
 /** One line the watcher sent about a watch. */
-export interface Said {
-  readonly line: string
-  readonly [field: string]: unknown
-}
+export type Said = typeof SaidLine.Type
 
 /** What a watched bead's connection hears: the lines of one answer for the
  * bead's project, ending with its freshness line, or a refused line on its
@@ -182,15 +219,25 @@ export const pauseAfter = (failures: number, timing: Timing): number =>
 
 const down = (why: Down) => new WatcherDown({ why })
 
-const SaidLine = Schema.fromJsonString(
+const AnyLine = Schema.fromJsonString(
   Schema.StructWithRest(Schema.Struct({ line: Schema.String }), [
     Schema.Record(Schema.String, Schema.Unknown),
   ]),
 )
 
-const saidIn = (line: string) =>
-  Schema.decodeEffect(SaidLine)(line).pipe(
-    Effect.filterOrFail((said) => said.line !== 'freshness' || said['protocol'] === PROTOCOL),
+const KINDS_READ = new Set<string>(SaidLine.members.map(({ fields }) => fields.line.literal))
+
+/** What `text` says, where it is a kind of line the plugin reads. A newer
+ * watcher may send a kind this plugin does not know, which is passed over,
+ * but a kind it does know without the fields that kind carries is a watcher
+ * speaking another protocol. */
+const saidIn = (text: string) =>
+  Schema.decodeEffect(AnyLine)(text).pipe(
+    Effect.flatMap((line) =>
+      KINDS_READ.has(line.line)
+        ? Effect.asSome(Schema.decodeUnknownEffect(SaidLine)(line))
+        : Effect.succeedNone,
+    ),
     Effect.mapError(() => down('protocol')),
   )
 
@@ -221,8 +268,8 @@ const linesFrom = (at: string, asking: readonly string[]) =>
   )
 
 /**
- * Connect to the watcher, send it `asking`, and read every line it sends but
- * an alive line, until the connection is down.
+ * Connect to the watcher, send it `asking`, and read every line it sends of a
+ * kind the plugin reads, until the connection is down.
  */
 const talkTo = <R>(
   findWatcher: Effect.Effect<Option.Option<string>, never, R>,
@@ -241,7 +288,8 @@ const talkTo = <R>(
           orElse: () => Stream.fail(down('wedged')),
         }),
         Stream.mapEffect(saidIn),
-        Stream.filter((said) => said.line !== 'alive'),
+        Stream.filter(Option.isSome),
+        Stream.map(({ value }) => value),
       )
     }),
   )
@@ -312,8 +360,7 @@ export const askAbout = <R>(
   const unasked: Asked = { lines: [], unanswered: [...asking.values()] }
   if (asking.size === 0) return Effect.succeed(unasked)
   const take = (asked: Asked, said: Said): Asked => {
-    const project =
-      said.line === 'refused' ? asking.get(String(said['asked'])) : String(said['project'])
+    const project = said.line === 'refused' ? asking.get(said.asked) : said.project
     if (said.line !== 'refused' && !asked.unanswered.includes(project ?? '')) {
       return asked
     }

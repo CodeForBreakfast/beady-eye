@@ -2202,8 +2202,9 @@ tells the consumer it is current: everything sent before it is the project as
 of `as_of`. `as_of` is the instant the source last vouched for the project,
 which for the reading source is its last read that came back, a skipped one
 included, or the last covered line naming the project. `tracker` is `ok`, or
-`{ "unreachable": <reason> }` with the reason `--json` gives, where the last
-attempt to reach the project failed. The beads already sent then stand as the
+`{ "unreachable": { "reason": "auth" } }` where the last attempt to reach the
+project failed. The reason is the object `--json` gives, so a `parse` reason
+carries `read` and `cause` beside its kind. The beads already sent then stand as the
 last known, and `as_of` says how old that is. A project that has never been
 read is sent no beads, and its `as_of` is `null`. `events` is explained under
 *bd's events*. `reach` is the `path` and `environment_command` the watcher's
@@ -2218,7 +2219,10 @@ project's freshness line.
 watcher is long-lived, so after an upgrade it can be an older `bdi` than the
 consumers reading from it, and a line whose meaning changed while its shape
 did not would be believed. A consumer that finds `protocol` missing, or a
-version it does not know, treats the watcher as down. The version moves only
+version it does not know, treats the watcher as down. So does one sent a kind
+of line it reads without the fields that kind carries. A kind it does not read
+it passes over, so a watcher can add a kind without breaking an older
+consumer. The version moves only
 for a change a consumer cannot read as it read the version before. It rides
 on the freshness line rather than on a greeting, because producers share the
 socket and read their first line as their answer, and because a consumer

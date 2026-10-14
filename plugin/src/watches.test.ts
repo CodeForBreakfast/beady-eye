@@ -315,7 +315,7 @@ test("watch refuses to find a bead's project where the watcher has not read a pr
     said(beadLine('summit-works'), freshness('summit-works'), {
       ...freshness('harbour'),
       as_of: null,
-      tracker: { unreachable: 'timeout' },
+      tracker: { unreachable: { reason: 'unavailable' } },
     }),
   )
 
@@ -1034,6 +1034,43 @@ test('a watcher speaking a protocol the plugin does not know is said at once', a
     ].join('\n'),
     meta: { watcher: 'down' },
   })
+})
+
+test('a line without a field its kind carries is a watcher speaking another protocol', async () => {
+  const { row, ...noRow } = startedLine
+  const { status: _, ...noStatus } = row
+  const { comment: __, ...noComment } = commented('Mira Vance', 'Ship it.').event
+  for (const malformed of [
+    noRow,
+    { ...startedLine, row: noStatus },
+    { ...commented('Mira Vance', 'Ship it.'), event: noComment },
+    { line: 'gone', project: 'summit-works' },
+    { ...freshness('summit-works'), tracker: { unreachable: 'auth' } },
+  ]) {
+    const place = aPlace()
+    const watcher = await aWatcherAt(place.at as string)
+    const use = await aServer(place, ['summit-works'], { ...timing, quietFor: 60_000 })
+    const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+    const { connection } = await watcher.next()
+    connection.write(said(theBead(), freshness('summit-works')))
+    await answer
+
+    connection.write(said(malformed, freshness('summit-works')))
+
+    expect((await use.nextMessage()).content).toStartWith(
+      'The watcher is down: it speaks a protocol this plugin does not know',
+    )
+    await use.exit()
+  }
+})
+
+test('a line of a kind the plugin does not read changes nothing', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said({ line: 'greeting', from: 'a newer watcher' }, freshness('summit-works')))
+  connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await use.nextMessage()).toEqual(started)
 })
 
 const unreachable = {
