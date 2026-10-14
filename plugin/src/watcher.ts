@@ -12,13 +12,16 @@ import {
   Duration,
   Effect,
   FileSystem,
+  Filter,
   Layer,
+  Number as Num,
   Option,
   Queue,
   Ref,
   Schema,
   Stream,
 } from 'effect'
+import { identity } from 'effect/Function'
 import { parse } from 'smol-toml'
 
 /** The version of the watcher's lines this plugin reads. */
@@ -112,7 +115,7 @@ const SaidLine = Schema.Union([
   }),
   Schema.Struct({ line: Schema.Literal('event'), project: ProjectName, event: EventRecord }),
   Schema.Struct({ line: Schema.Literal('refused'), asked: Schema.String, reason: Schema.String }),
-])
+]).pipe(Schema.toTaggedUnion('line'))
 
 /** One line the watcher sent about a watch. */
 export type Said = typeof SaidLine.Type
@@ -160,9 +163,7 @@ export const projectsNamedIn = (
     ),
   )
 
-const runtimeDirectory = Config.option(Config.NonEmptyString('XDG_RUNTIME_DIR')).pipe(
-  Effect.orElseSucceed(() => Option.none<string>()),
-)
+const runtimeDirectory = Effect.option(Config.NonEmptyString('XDG_RUNTIME_DIR'))
 
 /**
  * Where `bdi watch` takes its socket: `[watcher]`'s `socket` in the bdi
@@ -274,7 +275,7 @@ const AnyLine = Schema.fromJsonString(
   ]),
 )
 
-const KINDS_READ = new Set<string>(SaidLine.members.map(({ fields }) => fields.line.literal))
+const KINDS_READ = new Set<string>(SaidLine.discriminants)
 
 /** What `text` says, where it is a kind of line the plugin reads. A newer
  * watcher may send a kind this plugin does not know, which is passed over,
@@ -334,8 +335,7 @@ const talkTo = (asking: readonly string[]) =>
           orElse: () => Stream.fail(down('wedged')),
         }),
         Stream.mapEffect(saidIn),
-        Stream.filter(Option.isSome),
-        Stream.map(({ value }) => value),
+        Stream.filterMap(Filter.fromPredicateOption(identity)),
       )
     }),
   )
@@ -376,7 +376,7 @@ export const watchBead = (
         Stream.map((batch): Heard => ({ batch })),
         Stream.catch(({ why }) => Stream.make<Heard[]>({ down: why })),
       )
-      const pause = Ref.updateAndGet(failures, (failed) => failed + 1).pipe(
+      const pause = Ref.updateAndGet(failures, Num.increment).pipe(
         Effect.flatMap((failed) => Effect.sleep(pauseAfter(failed, timing))),
       )
       return connection.pipe(Stream.concat(Stream.fromEffectDrain(pause)), Stream.forever)

@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
-import { Data, Effect, Option, Schema, Stream } from 'effect'
+import { Data, Effect, Option, Predicate, Schema, Stream } from 'effect'
 import { version } from '../package.json'
 import { BeadId, ProjectName } from './watcher'
 import type { Answer, Block, Watches } from './watches'
@@ -96,7 +96,7 @@ export const buildServer = (watches: Watches): Server => {
     const args = params.arguments ?? {}
     return Effect.runPromise(
       watches
-        .learn(typeof args['session_id'] === 'string' ? args['session_id'] : undefined)
+        .learn(Predicate.isString(args['session_id']) ? args['session_id'] : undefined)
         .pipe(Effect.andThen(call(watches, params.name, args)), Effect.map(answering)),
     )
   })

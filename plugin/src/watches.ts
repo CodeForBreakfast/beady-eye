@@ -5,6 +5,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  Array as Arr,
   Clock,
   Config,
   Deferred,
@@ -12,7 +13,9 @@ import {
   Fiber,
   FiberSet,
   FileSystem,
+  Number as Num,
   Option,
+  Predicate,
   Queue,
   Ref,
   Result,
@@ -160,15 +163,17 @@ const isAbout = (said: Said, bead: Bead) => {
 const standingIn = (batch: readonly Said[], bead: Bead): Standing | undefined => {
   const [first] = batch
   if (first?.line === 'refused') return { is: 'refused', reason: first.reason }
-  const said = batch.filter((line) => isAbout(line, bead)).at(-1)
-  if (said?.line === 'gone') return { is: 'gone' }
-  if (said?.line !== 'bead') return undefined
-  const { title, status, comment_count, close_reason } = said.row
+  const said = Arr.findLast(batch, (line) => isAbout(line, bead))
+  if (Option.isNone(said)) return undefined
+  if (said.value.line === 'gone') return { is: 'gone' }
+  if (said.value.line !== 'bead') return undefined
+  const { row, ready } = said.value
+  const { title, status, comment_count, close_reason } = row
   return {
     is: 'bead',
     title,
     status,
-    ready: said.ready,
+    ready,
     comments: comment_count,
     closeReason: close_reason,
   }
@@ -393,7 +398,7 @@ export const makeWatches = (
     const keepTold = (known: Known, told: Told | undefined) =>
       Effect.suspend(() => {
         known.told = told
-        return Effect.exit(persist)
+        return Effect.ignoreCause(persist)
       })
 
     /** Take what a batch says of `bead`, and the message for the session
@@ -429,7 +434,7 @@ export const makeWatches = (
     /** Run `check` once the watcher or a tracker has had a minute to come
      * back. */
     const inAMinute = (check: Effect.Effect<void>) =>
-      Effect.sleep(timing.quietFor).pipe(Effect.andThen(check), Effect.forkIn(scope))
+      check.pipe(Effect.delay(timing.quietFor), Effect.forkIn(scope))
 
     const outages = yield* Ref.make(0)
 
@@ -528,7 +533,7 @@ export const makeWatches = (
             if (was.is === 'down') {
               known.connection = { ...was, why }
             } else {
-              const outage = yield* Ref.updateAndGet(outages, (count) => count + 1)
+              const outage = yield* Ref.updateAndGet(outages, Num.increment)
               known.connection = { is: 'down', why, outage, toldDown: was.toldDown }
               yield* inAMinute(Effect.suspend(() => (stillDownIn(outage) ? tellDown : Effect.void)))
             }
@@ -596,18 +601,17 @@ export const makeWatches = (
                   told: known.told,
                 }))
                 const written = `${path}.new`
-                return fs
-                  .makeDirectory(directory, { recursive: true })
-                  .pipe(
-                    Effect.andThen(fs.writeFileString(written, JSON.stringify(beads))),
-                    Effect.andThen(fs.rename(written, path)),
-                  )
+                return fs.makeDirectory(directory, { recursive: true }).pipe(
+                  Effect.andThen(Schema.encodeEffect(KeptWatches)(beads)),
+                  Effect.flatMap((encoded) => fs.writeFileString(written, encoded)),
+                  Effect.andThen(fs.rename(written, path)),
+                )
               }),
           }),
         ),
       )
 
-    const persist = keeping.withPermits(1)(Effect.suspend(() => write(acceptedWatches())))
+    const persist = keeping.withPermit(Effect.suspend(() => write(acceptedWatches())))
 
     /** Accept `watch` once the session's file keeps it, or say why it is not
      * watched. Calls watching the same bead together share one answer. */
@@ -620,7 +624,7 @@ export const makeWatches = (
         if (watch.accepting !== undefined) return yield* Deferred.await(watch.accepting)
         const accepting = yield* Deferred.make<Answer | undefined>()
         watch.accepting = accepting
-        const refused = yield* keeping.withPermits(1)(
+        const refused = yield* keeping.withPermit(
           Effect.gen(function* () {
             if (watches.get(keyOf(watch.bead)) !== watch) {
               return refusal(`${named(watch.bead)} was unwatched before the watcher answered.`)
@@ -648,10 +652,13 @@ export const makeWatches = (
     const setAside = (path: string, why: string) =>
       Effect.gen(function* () {
         const aside = `${path}.unreadable-${yield* Clock.currentTimeMillis}`
-        const moved = yield* Effect.result(fs.rename(path, aside))
-        yield* tell(
-          keptUnreadable(why, Result.isSuccess(moved) ? aside : { unmoved: moved.failure.message }),
+        const moved = yield* fs.rename(path, aside).pipe(
+          Effect.match({
+            onSuccess: () => aside,
+            onFailure: (unmoved) => ({ unmoved: unmoved.message }),
+          }),
         )
+        yield* tell(keptUnreadable(why, moved))
       })
 
     const restore = (id: SessionId) =>
@@ -684,15 +691,14 @@ export const makeWatches = (
           )
         }
         const answer = asked.success
-        const distinct = (projects: readonly ProjectName[]) => [...new Set(projects)]
         const about = answer.lines.flatMap((said) => {
           const named = beadNamedIn(said)
           return named?.id === id ? [{ project: named.project, holds: said.line === 'bead' }] : []
         })
-        const holders = distinct(about.filter(({ holds }) => holds).map(({ project }) => project))
-        const answered = distinct(about.map(({ project }) => project))
+        const holders = Arr.dedupe(about.filter(({ holds }) => holds).map(({ project }) => project))
+        const answered = Arr.dedupe(about.map(({ project }) => project))
         const unread = [
-          ...distinct(
+          ...Arr.dedupe(
             answer.lines.flatMap((said) =>
               said.line === 'freshness' && !answered.includes(said.project) ? [said.project] : [],
             ),
@@ -778,7 +784,7 @@ export const makeWatches = (
               `This session watches ${id} in more than one project: ${matching.map(({ bead }) => bead.project).join(', ')}. Name its project.`,
             )
           }
-          const unkept = yield* keeping.withPermits(1)(
+          const unkept = yield* keeping.withPermit(
             Effect.gen(function* () {
               const kept = yield* Effect.result(
                 write(acceptedWatches().filter((watch) => watch !== only)),
@@ -797,7 +803,9 @@ export const makeWatches = (
       watching: Effect.sync(() => {
         const all = [...watches.values()]
         if (all.length === 0) return told('This session watches no beads.')
-        const down = all.map(({ known }) => downBecause(known.connection)).find(Boolean)
+        const down = all
+          .map(({ known }) => downBecause(known.connection))
+          .find(Predicate.isNotUndefined)
         return told(
           [
             down === undefined
