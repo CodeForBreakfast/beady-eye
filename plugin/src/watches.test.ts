@@ -795,11 +795,17 @@ test('a bead whose project the watcher refused for a while is compared with what
   expect(await use.nextMessage()).toEqual(started)
 })
 
+/** Make the session's file unwritable until the test ends. */
+const refuseWrites = ({ directory }: Place) => {
+  const watches = join(directory, 'beady-eye', 'watches')
+  chmodSync(watches, 0o500)
+  cleanUp.unshift(() => chmodSync(watches, 0o700))
+}
+
 test('a watch goes on being told of changes where the session file cannot be written', async () => {
   const place = aPlace()
   const { use, connection } = await aWatchedBead(place)
-  chmodSync(join(place.directory, 'beady-eye', 'watches'), 0o500)
-  cleanUp.unshift(() => chmodSync(join(place.directory, 'beady-eye', 'watches'), 0o700))
+  refuseWrites(place)
 
   connection.write(said(theBead({ ready: true }), freshness('summit-works')))
   await use.nextMessage()
@@ -810,6 +816,42 @@ test('a watch goes on being told of changes where the session file cannot be wri
   expect((await use.nextMessage()).content).toBe(
     `${heading}\n- Its status went from blocked to in_progress.`,
   )
+})
+
+test('a watch the session file cannot keep is refused, and not watched', async () => {
+  const place = aPlace()
+  const { use, watcher } = await aWatchedBead(place)
+  refuseWrites(place)
+
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
+  const { connection } = await watcher.next()
+  const closed = new Promise((resolve) => connection.on('close', resolve))
+  connection.write(said(beadLine('harbour'), freshness('harbour')))
+
+  const { text, refused } = await answer
+  expect(refused).toBe(true)
+  expect(text).toStartWith(
+    'smt-4kd3p.20 in harbour is not watched, because the watch could not be kept: ',
+  )
+  await closed
+  expect((await use('watching')).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+})
+
+test('an unwatch the session file cannot keep is refused, and the bead stays watched', async () => {
+  const place = aPlace()
+  const { use, connection } = await aWatchedBead(place)
+  refuseWrites(place)
+
+  const { text, refused } = await use('unwatch', { id: 'smt-4kd3p.20' })
+  expect(refused).toBe(true)
+  expect(text).toStartWith(
+    `${watched} is still watched, because stopping the watch could not be kept: `,
+  )
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+
+  connection.write(said(startedLine, freshness('summit-works')))
+  expect(await use.nextMessage()).toEqual(started)
 })
 
 test('a change a server saw and never told the session is told by the next server', async () => {

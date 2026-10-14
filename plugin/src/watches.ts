@@ -12,6 +12,7 @@ import {
   FileSystem,
   Option,
   Queue,
+  Result,
   Schema,
   type Scope,
   Semaphore,
@@ -573,7 +574,6 @@ export const makeWatches = <R>(
               }),
           }),
         ),
-        Effect.orDie,
       ),
     )
 
@@ -591,7 +591,7 @@ export const makeWatches = <R>(
         const unkept = [...watches.values()].some(
           (watch) => watch.accepted && !kept.some((bead) => keyOf(bead) === keyOf(watch.bead)),
         )
-        if (unkept) yield* persist
+        if (unkept) yield* Effect.orDie(persist)
       })
 
     /** The project of the one bead the watcher has with `id`. */
@@ -666,14 +666,23 @@ export const makeWatches = <R>(
           const refused = watch.accepted ? undefined : refusalOf(watch)
           if (refused !== undefined) {
             if (watches.get(keyOf(bead)) === watch) yield* stop(watch)
-            yield* persist
+            yield* Effect.ignore(persist)
             return refused
           }
           if (watches.get(keyOf(bead)) !== watch) {
             return refusal(`${named(bead)} was unwatched before the watcher answered.`)
           }
-          watch.accepted = true
-          yield* persist
+          if (!watch.accepted) {
+            watch.accepted = true
+            const kept = yield* Effect.result(persist)
+            if (Result.isFailure(kept)) {
+              watch.accepted = false
+              yield* stop(watch)
+              return refusal(
+                `${named(bead)} is not watched, because the watch could not be kept: ${kept.failure.message}.`,
+              )
+            }
+          }
           const { down, standing } = watch.known
           if (down === undefined) {
             return told(`Watching ${named(bead)}: ${describe(watch)}.`)
@@ -701,8 +710,16 @@ export const makeWatches = <R>(
               `This session watches ${id} in more than one project: ${matching.map(({ bead }) => bead.project).join(', ')}. Name its project.`,
             )
           }
+          const key = keyOf(only.bead)
+          watches.delete(key)
+          const kept = yield* Effect.result(persist)
+          if (Result.isFailure(kept)) {
+            watches.set(key, only)
+            return refusal(
+              `${named(only.bead)} is still watched, because stopping the watch could not be kept: ${kept.failure.message}.`,
+            )
+          }
           yield* stop(only)
-          yield* persist
           return told(`Stopped watching ${named(only.bead)}.`)
         }),
 
