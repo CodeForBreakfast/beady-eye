@@ -87,12 +87,15 @@ export type ProjectName = typeof ProjectName.Type
 export const BeadId = aWord.pipe(Schema.brand('BeadId'))
 export type BeadId = typeof BeadId.Type
 
+/** How many comments a bead has. */
+export const CommentCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+
 /** The fields of bd's row this plugin reads. */
 const Row = Schema.Struct({
   id: BeadId,
   title: Schema.String,
   status: Schema.String,
-  comment_count: Schema.optional(Schema.Finite),
+  comment_count: Schema.optional(CommentCount),
   close_reason: Schema.optional(Schema.String),
 })
 
@@ -130,10 +133,24 @@ const SaidLine = Schema.Union([
 /** One line the watcher sent about a watch. */
 export type Said = typeof SaidLine.Type
 
-/** What a watched bead's connection hears: the lines of one answer for the
- * bead's project, ending with its freshness line, or a refused line on its
- * own; or that the watcher is down. */
-export type Heard = Result.Result<readonly Said[], Down>
+/** The line that closes an answer for a project. */
+export type Freshness = Extract<Said, { line: 'freshness' }>
+
+type RefusedLine = Extract<Said, { line: 'refused' }>
+
+/** A line of an answer before its freshness line. */
+export type AnswerLine = Exclude<Said, Freshness | RefusedLine>
+
+/** What the watcher sends about one watch at a time: the lines of one answer
+ * for the bead's project, closed by its freshness line, or a refused line on
+ * its own. */
+export type Batch =
+  | { readonly is: 'answer'; readonly lines: readonly AnswerLine[]; readonly freshness: Freshness }
+  | { readonly is: 'refused'; readonly refused: RefusedLine }
+
+/** What a watched bead's connection hears: a batch, or that the watcher is
+ * down. */
+export type Heard = Result.Result<Batch, Down>
 
 export const Bead = Schema.Struct({ project: ProjectName, id: BeadId })
 export type Bead = typeof Bead.Type
@@ -398,16 +415,18 @@ const talkTo = (asking: readonly string[]) =>
     }),
   )
 
-/** The lines of each answer, ending with its freshness line, and each
- * refused line on its own. */
+/** Each answer, closed by its freshness line, and each refused line on its
+ * own. */
 const answersIn = <E, R>(lines: Stream.Stream<Said, E, R>) =>
   lines.pipe(
     Stream.mapAccum(
-      (): readonly Said[] => [],
-      (batch, said): [readonly Said[], readonly (readonly Said[])[]] => {
-        if (said.line === 'refused') return [batch, [[said]]]
-        if (said.line === 'freshness') return [[], [[...batch, said]]]
-        return [[...batch, said], []]
+      (): readonly AnswerLine[] => [],
+      (answer, said): [readonly AnswerLine[], readonly Batch[]] => {
+        if (said.line === 'refused') return [answer, [{ is: 'refused', refused: said }]]
+        if (said.line === 'freshness') {
+          return [[], [{ is: 'answer', lines: answer, freshness: said }]]
+        }
+        return [[...answer, said], []]
       },
     ),
   )
@@ -428,9 +447,7 @@ export const watchBead = (
       const timing = yield* WatcherTiming
       const failures = yield* Ref.make(0)
       const connection = answersIn(talkTo([watchLine(bead)])).pipe(
-        Stream.tap((batch) =>
-          batch.at(-1)?.line === 'freshness' ? Ref.set(failures, 0) : Effect.void,
-        ),
+        Stream.tap((batch) => (batch.is === 'answer' ? Ref.set(failures, 0) : Effect.void)),
         Stream.mapError(({ why }) => why),
         Stream.result,
       )
