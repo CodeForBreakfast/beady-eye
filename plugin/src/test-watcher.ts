@@ -6,7 +6,17 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
-import { ConfigProvider, Effect, Exit, identity, Option, Schema, Scope } from 'effect'
+import {
+  ConfigProvider,
+  Effect,
+  Exit,
+  type FileSystem,
+  identity,
+  type Layer,
+  Option,
+  Schema,
+  Scope,
+} from 'effect'
 import { BeadId, ProjectName, type Timing, WatcherLocation, WatcherTiming } from './watcher'
 import { makeWatches } from './watches'
 
@@ -71,13 +81,14 @@ export const aWatcherAt = async (at: string) => {
   }
 }
 
-/** A session's watches, kept under `state`, looking for the watcher at `at`
- * and for beads in `projects`, until the test is over. */
+/** A session's watches, kept under `state` through `fileSystem`, looking for
+ * the watcher at `at` and for beads in `projects`, until the test is over. */
 export const someWatches = async (
   state: string,
   at: string | undefined,
   projects: readonly string[],
   timing?: Timing,
+  fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer,
 ) => {
   const scope = Scope.makeUnsafe()
   const watches = await Effect.runPromise(
@@ -85,7 +96,7 @@ export const someWatches = async (
       Scope.provide(scope),
       Effect.provideService(WatcherLocation, { find: Effect.succeed(Option.fromNullishOr(at)) }),
       timing === undefined ? identity : Effect.provideService(WatcherTiming, timing),
-      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(fileSystem),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromEnv({ env: { XDG_STATE_HOME: state } }),
