@@ -68,6 +68,9 @@ it with `bd` when the watcher is back.
 
 A `watches="unreadable"` block means the watches this session kept could not be
 read, so it now watches none of them. Watch again each bead it still waits on.
+A `watches="unkept"` block names beads that are still watched but would not
+be watched again after the plugin restarts. The next `watch` or `unwatch` that
+is kept keeps them.
 
 ## Unwatching
 
