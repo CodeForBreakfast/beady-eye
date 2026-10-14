@@ -32,6 +32,7 @@ import {
   type ConfigUnreadable,
   type Down,
   type Heard,
+  type ProjectAnswer,
   type ProjectName,
   type Said,
   WatchedProjects,
@@ -721,21 +722,19 @@ export const makeWatches: Effect.Effect<
           `The watcher is down, so the project holding ${id} cannot be found: ${whyDown(why)}. Name its project to watch it from when the watcher answers.`,
         )
       }
-      const answer = asked.success
-      const about = answer.lines.flatMap((said) => {
-        const named = beadNamedIn(said)
-        return named?.id === id ? [{ project: named.project, holds: said.line === 'bead' }] : []
-      })
-      const holders = Arr.dedupe(about.filter(({ holds }) => holds).map(({ project }) => project))
-      const answered = Arr.dedupe(about.map(({ project }) => project))
-      const unread = [
-        ...Arr.dedupe(
-          answer.lines.flatMap((said) =>
-            said.line === 'freshness' && !answered.includes(said.project) ? [said.project] : [],
-          ),
-        ),
-        ...answer.unanswered,
-      ]
+      const answers = [...asked.success]
+      const answered = (...tags: ProjectAnswer['_tag'][]) =>
+        answers.filter(([, answer]) => tags.includes(answer._tag)).map(([project]) => project)
+      const holders = answered('Holds')
+      const unread = answered('NotReadYet', 'Unanswered')
+      const refused = answers.flatMap(([project, answer]) =>
+        answer._tag === 'Refused' ? [`${project} (${answer.reason})`] : [],
+      )
+      if (holders.length <= 1 && refused.length > 0) {
+        return refusal(
+          `The watcher refused to look in ${refused.join(', ')}, so it cannot say which project holds ${id}. Name its project.`,
+        )
+      }
       if (holders.length <= 1 && unread.length > 0) {
         const them = unread.join(', ')
         return refusal(

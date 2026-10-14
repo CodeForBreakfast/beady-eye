@@ -441,11 +441,23 @@ export const watchBead = (
     }),
   )
 
-export interface Asked {
-  /** Each project's answer, up to its freshness line, and each refusal. */
-  readonly lines: readonly Said[]
-  /** The projects that had not answered when the time to answer ran out. */
-  readonly unanswered: readonly ProjectName[]
+/** What one project answered when asked about a bead: it holds the bead, the
+ * bead has gone from it, the watcher has not read it yet, the watcher refused
+ * to look in it, or it had not answered when the time to answer ran out. */
+export type ProjectAnswer = Data.TaggedEnum<{
+  Holds: Record<never, never>
+  Gone: Record<never, never>
+  NotReadYet: Record<never, never>
+  Refused: { readonly reason: string }
+  Unanswered: Record<never, never>
+}>
+export const ProjectAnswer = Data.taggedEnum<ProjectAnswer>()
+
+/** Each project's answer so far, and what each project still answering has
+ * said of the bead before its freshness line. */
+interface Asking {
+  readonly answers: ReadonlyMap<ProjectName, ProjectAnswer>
+  readonly heard: ReadonlyMap<ProjectName, ProjectAnswer>
 }
 
 /**
@@ -457,30 +469,50 @@ export interface Asked {
 export const askAbout = (
   id: BeadId,
   projects: readonly ProjectName[],
-): Effect.Effect<Asked, WatcherDown, WatcherLocation | FileSystem.FileSystem> => {
+): Effect.Effect<
+  ReadonlyMap<ProjectName, ProjectAnswer>,
+  WatcherDown,
+  WatcherLocation | FileSystem.FileSystem
+> => {
   const asking = new Map(projects.map((project) => [watchLine({ project, id }), project]))
-  const unasked: Asked = { lines: [], unanswered: [...asking.values()] }
-  if (asking.size === 0) return Effect.succeed(unasked)
-  const take = (asked: Asked, said: Said): Asked => {
+  const unasked: Asking = {
+    answers: new Map(projects.map((project) => [project, ProjectAnswer.Unanswered()])),
+    heard: new Map(),
+  }
+  if (asking.size === 0) return Effect.succeed(unasked.answers)
+  const take = (state: Asking, said: Said): Asking => {
     const project = said.line === 'refused' ? asking.get(said.asked) : said.project
-    if (said.line !== 'refused' && !asked.unanswered.includes(said.project)) {
-      return asked
-    }
-    const answered = said.line === 'refused' || said.line === 'freshness'
-    return {
-      lines: [...asked.lines, said],
-      unanswered: answered
-        ? asked.unanswered.filter((waiting) => waiting !== project)
-        : asked.unanswered,
+    if (project === undefined || state.answers.get(project)?._tag !== 'Unanswered') return state
+    const settle = (answer: ProjectAnswer) => ({
+      ...state,
+      answers: new Map(state.answers).set(project, answer),
+    })
+    const hear = (heard: ProjectAnswer) => ({
+      ...state,
+      heard: new Map(state.heard).set(project, heard),
+    })
+    switch (said.line) {
+      case 'refused':
+        return settle(ProjectAnswer.Refused({ reason: said.reason }))
+      case 'freshness':
+        return settle(state.heard.get(project) ?? ProjectAnswer.NotReadYet())
+      case 'bead':
+        return hear(ProjectAnswer.Holds())
+      case 'gone':
+        return hear(ProjectAnswer.Gone())
+      case 'event':
+        return state
     }
   }
   return talkTo([...asking.keys()]).pipe(
     Stream.scan(() => unasked, take),
-    Stream.takeUntil((asked) => asked.unanswered.length === 0),
+    Stream.takeUntil(({ answers }) =>
+      [...answers.values()].every((answer) => answer._tag !== 'Unanswered'),
+    ),
     Stream.interruptWhen(
       Effect.flatMap(WatcherTiming, ({ answeredWithin }) => Effect.sleep(answeredWithin)),
     ),
     Stream.runLast,
-    Effect.map(Option.getOrElse(() => unasked)),
+    Effect.map(Option.match({ onNone: () => unasked.answers, onSome: ({ answers }) => answers })),
   )
 }
