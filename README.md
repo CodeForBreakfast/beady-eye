@@ -183,7 +183,9 @@ environment_command = "nix develop -c"
 That lives at `~/.config/beady-eye/config.toml`, or wherever `--config` says,
 and an edit takes effect while `bdi` runs. Start it under one of the projects
 and it reads that one alone. Start it anywhere else, or pass `--all-projects`,
-and it reads them all. `--project NAME` picks.
+and it reads them all. `--project NAME` picks. Each project read costs its own
+reads, so `--all-projects` is the costliest, and `bdi --help` says which scope
+fits which question.
 
 Each project is read with its own `bd`, entered the way you would enter it
 yourself. An `.envrc` and direnv need nothing said. Anything else, say it with

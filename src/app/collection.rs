@@ -3546,6 +3546,57 @@ prefix = "kad"
     }
 
     #[test]
+    fn blockers_in_two_unread_projects_are_each_read_on_demand() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+prefix = "dun"
+
+[[projects]]
+name = "ferry"
+path = "{FERRY}"
+
+[[projects]]
+name = "kadath"
+path = "/srv/work/kadath"
+prefix = "kad"
+"#
+        ))
+        .expect("the config parses")
+        .scoped_to_the_project_holding(Path::new(FERRY));
+        let trackers = Fakes::default()
+            .with("dunwich", dunwich_tracker())
+            .with(
+                "ferry",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"fer-2","title":"moor the barge","status":"open","priority":2,
+                   "issue_type":"task","dependencies":[
+                     {"depends_on_id":"dun-7","type":"blocks"},
+                     {"depends_on_id":"kad-1","type":"blocks"}]}
+                ]"#,
+                )),
+            )
+            .with(
+                "kadath",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"kad-1","title":"survey the plateau","status":"open",
+                   "priority":2,"issue_type":"task"}
+                ]"#,
+                )),
+            );
+
+        let snap = collected_under(&cfg, &trackers);
+
+        let ferry = tree_of(&snap, "ferry");
+        assert_eq!(node(ferry, "dun-7").project, "dunwich");
+        assert_eq!(node(ferry, "kad-1").project, "kadath");
+    }
+
+    #[test]
     fn a_project_nothing_drawn_needs_is_still_not_read() {
         let trackers = Fakes::default()
             .with("dunwich", dunwich_tracker())
