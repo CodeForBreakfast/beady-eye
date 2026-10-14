@@ -683,14 +683,15 @@ export const makeWatches = <R>(
     /** The project of the one bead the watcher has with `id`. */
     const projectHolding = (id: BeadId) =>
       Effect.gen(function* () {
-        const answer = yield* Effect.flatMap(settings.projects, (projects) =>
+        const asked = yield* Effect.flatMap(settings.projects, (projects) =>
           askAbout(id, projects, settings.findWatcher, timing),
-        ).pipe(Effect.provide(context))
-        if (typeof answer === 'string') {
+        ).pipe(Effect.provide(context), Effect.result)
+        if (Result.isFailure(asked)) {
           return refusal(
-            `The watcher is down, so the project holding ${id} cannot be found: ${whyDown[answer]}. Name its project to watch it from when the watcher answers.`,
+            `The watcher is down, so the project holding ${id} cannot be found: ${whyDown[asked.failure.why]}. Name its project to watch it from when the watcher answers.`,
           )
         }
+        const answer = asked.success
         const distinct = (projects: readonly ProjectName[]) => [...new Set(projects)]
         const about = answer.lines.flatMap((said) => {
           const named = beadNamedIn(said)
