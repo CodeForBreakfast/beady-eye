@@ -5,6 +5,7 @@
 import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import {
+  Array as Arr,
   Cause,
   Config,
   Context,
@@ -23,7 +24,7 @@ import {
   Stream,
 } from 'effect'
 import { identity } from 'effect/Function'
-import { parse } from 'smol-toml'
+import { parse, TomlError } from 'smol-toml'
 
 /** The version of the watcher's lines this plugin reads. */
 export const PROTOCOL = 1
@@ -55,12 +56,20 @@ export const WatcherTiming = Context.Reference<Timing>('beady-eye/WatcherTiming'
 })
 
 /**
- * Why a bead's connection is not watching: there is no path to look for a
- * watcher at, nothing at the path would take the connection, what is at the
- * path could not be believed, the watcher closed it, it carried no line for
- * too long, or it spoke a protocol this plugin does not know.
+ * Why a bead's connection is not watching: the bdi config that says where the
+ * watcher is cannot be read, there is no path to look for a watcher at,
+ * nothing at the path would take the connection, what is at the path could
+ * not be believed, the watcher closed it, it carried no line for too long, or
+ * it spoke a protocol this plugin does not know.
  */
-export type Down = 'nowhere' | 'refused' | 'untrusted' | 'closed' | 'wedged' | 'protocol'
+export type Down =
+  | ConfigUnreadable
+  | 'nowhere'
+  | 'refused'
+  | 'untrusted'
+  | 'closed'
+  | 'wedged'
+  | 'protocol'
 
 export class WatcherDown extends Data.TaggedError('WatcherDown')<{
   readonly why: Down
@@ -129,42 +138,71 @@ export type Heard = Result.Result<readonly Said[], Down>
 export const Bead = Schema.Struct({ project: ProjectName, id: BeadId })
 export type Bead = typeof Bead.Type
 
+/** The bdi config at `config` is there but cannot be read: the file will not
+ * open, is not TOML, or is not shaped as bdi reads it. */
+export class ConfigUnreadable extends Data.TaggedError('ConfigUnreadable')<{
+  readonly config: string
+  readonly reason: string
+}> {}
+
 const WatcherSection = Schema.Struct({
-  watcher: Schema.Struct({ socket: Schema.String }),
+  watcher: Schema.optionalKey(Schema.Struct({ socket: Schema.optionalKey(Schema.String) })),
 })
 
 const ProjectsSection = Schema.Struct({
-  projects: Schema.Array(Schema.Struct({ name: Schema.String })),
+  projects: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String }))),
 })
 
-/** What the bdi config at `config` says, as `section` reads it. */
-const readIn = <A>(config: string, section: Schema.Codec<A, unknown>) =>
-  Effect.gen(function* () {
+/** Why `parse` refused the text, on one line. */
+const whyNotToml = (error: unknown) =>
+  error instanceof TomlError
+    ? `${error.message.split('\n')[0]}, at line ${error.line}, column ${error.column}`
+    : String(error)
+
+/** What the bdi config at `config` says, as `section` reads it. A missing
+ * config file names nothing. */
+const readIn = <A>(config: string, section: Schema.Codec<A, unknown>) => {
+  const unreadable = (reason: string) => new ConfigUnreadable({ config, reason })
+  return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    const text = yield* fs.readFileString(config)
-    const read = yield* Effect.try(() => parse(text))
-    return yield* Schema.decodeEffect(section)(read)
-  }).pipe(Effect.option)
+    const text = yield* fs.readFileString(config).pipe(
+      Effect.catchReason(
+        'PlatformError',
+        'NotFound',
+        () => Effect.succeed(''),
+        (_, error) => Effect.fail(unreadable(error.message)),
+      ),
+    )
+    const read = yield* Effect.try({
+      try: () => parse(text),
+      catch: (error) => unreadable(whyNotToml(error)),
+    })
+    return yield* Schema.decodeEffect(section)(read).pipe(
+      Effect.mapError(({ message }) => unreadable(message.replace(/\s*\n\s*/g, ' '))),
+    )
+  })
+}
 
 const socketNamedIn = (config: string) =>
-  readIn(config, WatcherSection).pipe(Effect.map(Option.map(({ watcher }) => watcher.socket)))
+  readIn(config, WatcherSection).pipe(
+    Effect.map(({ watcher }) => Option.fromNullishOr(watcher?.socket)),
+  )
 
 /** The name of each of the bdi config's `[[projects]]` the watcher can be
  * asked about. */
 export const projectsNamedIn = (
   config: string,
-): Effect.Effect<readonly ProjectName[], never, FileSystem.FileSystem> =>
+): Effect.Effect<readonly ProjectName[], ConfigUnreadable, FileSystem.FileSystem> =>
   readIn(config, ProjectsSection).pipe(
-    Effect.map(
-      Option.match({
-        onNone: () => [],
-        onSome: ({ projects }) =>
-          projects.flatMap(({ name }) => (Schema.is(ProjectName)(name) ? [name] : [])),
-      }),
+    Effect.map(({ projects = [] }) =>
+      Arr.filter(
+        projects.map(({ name }) => name),
+        Schema.is(ProjectName),
+      ),
     ),
   )
 
-const runtimeDirectory = Effect.option(Config.NonEmptyString('XDG_RUNTIME_DIR'))
+const runtimeDirectory = Config.NonEmptyString('XDG_RUNTIME_DIR').pipe(Config.option)
 
 /**
  * Where `bdi watch` takes its socket: `[watcher]`'s `socket` in the bdi
@@ -172,19 +210,38 @@ const runtimeDirectory = Effect.option(Config.NonEmptyString('XDG_RUNTIME_DIR'))
  */
 export const whereTheWatcherIs = (
   config: string,
-): Effect.Effect<Option.Option<string>, never, FileSystem.FileSystem> =>
+): Effect.Effect<Option.Option<string>, ConfigUnreadable, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const named = yield* socketNamedIn(config)
     if (Option.isSome(named)) return named
-    return Option.map(yield* runtimeDirectory, (directory) =>
+    return Option.map(yield* Effect.orDie(runtimeDirectory), (directory) =>
       join(directory, 'beady-eye', 'watcher.sock'),
     )
   })
 
+/** The projects a bead named without its project is looked for in, read
+ * again for each bead. */
+export class WatchedProjects extends Context.Service<
+  WatchedProjects,
+  { readonly list: Effect.Effect<readonly ProjectName[], ConfigUnreadable> }
+>()('beady-eye/WatchedProjects') {
+  /** The projects the bdi config at `config` names. */
+  static readonly namedIn = (config: string) =>
+    Layer.effect(
+      WatchedProjects,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        return {
+          list: projectsNamedIn(config).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+        }
+      }),
+    )
+}
+
 /** Where to look for the watcher's socket, asked again for each connection. */
 export class WatcherLocation extends Context.Service<
   WatcherLocation,
-  { readonly find: Effect.Effect<Option.Option<string>> }
+  { readonly find: Effect.Effect<Option.Option<string>, ConfigUnreadable> }
 >()('beady-eye/WatcherLocation') {
   /** Where the bdi config at `config` says the watcher is. */
   static readonly namedIn = (config: string) =>
@@ -326,7 +383,7 @@ const talkTo = (asking: readonly string[]) =>
   Stream.unwrap(
     Effect.gen(function* () {
       const timing = yield* WatcherTiming
-      const at = yield* (yield* WatcherLocation).find
+      const at = yield* (yield* WatcherLocation).find.pipe(Effect.mapError(down))
       if (Option.isNone(at)) return yield* down('nowhere')
       const notBelieved = yield* whyNotBelieved(at.value)
       if (Option.isSome(notBelieved)) return yield* down(notBelieved.value)

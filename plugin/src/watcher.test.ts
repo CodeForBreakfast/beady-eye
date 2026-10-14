@@ -24,6 +24,7 @@ import {
 } from './test-watcher'
 import {
   askAbout,
+  ConfigUnreadable,
   type Heard,
   othersMayTakeANameIn,
   pauseAfter,
@@ -83,7 +84,7 @@ const freshnessHeard = {
   tracker: 'ok',
 } as const
 
-const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)))
 
 /** Look for the watcher at `path`, on the test's timings. */
@@ -146,6 +147,7 @@ const whereWith = (config: string, runtimeDirectory: string | undefined) =>
         }),
       ),
       Effect.map(Option.getOrUndefined),
+      Effect.catchTag('ConfigUnreadable', Effect.succeed),
     ),
   )
 
@@ -160,9 +162,57 @@ test('a config naming no socket leaves the watcher under the runtime directory',
   const directory = aPrivateDirectory()
   const config = join(directory, 'config.toml')
   writeFileSync(config, '[tui]\nrefresh_seconds = 30\n')
+  const emptyWatcher = join(directory, 'empty-watcher.toml')
+  writeFileSync(emptyWatcher, '[watcher]\n')
+
+  for (const named of [config, emptyWatcher, join(directory, 'missing.toml')]) {
+    expect(await whereWith(named, '/run/user/1000')).toBe('/run/user/1000/beady-eye/watcher.sock')
+  }
+})
+
+test('a config that is not TOML is unreadable, and says where it went wrong', async () => {
+  const config = join(aPrivateDirectory(), 'config.toml')
+  writeFileSync(config, '[watcher]\nsocket = \n')
+
+  expect(await whereWith(config, '/run/user/1000')).toEqual(
+    new ConfigUnreadable({
+      config,
+      reason: 'Invalid TOML document: invalid value, at line 2, column 10',
+    }),
+  )
+  expect(await run(projectsNamedIn(config).pipe(Effect.flip))).toEqual(
+    new ConfigUnreadable({
+      config,
+      reason: 'Invalid TOML document: invalid value, at line 2, column 10',
+    }),
+  )
+})
+
+test('a config whose watcher section is the wrong shape is unreadable, and does not fall back to the runtime directory', async () => {
+  const config = join(aPrivateDirectory(), 'config.toml')
+  writeFileSync(config, '[watcher]\nsocket = 3\n')
+
+  expect(await whereWith(config, '/run/user/1000')).toEqual(
+    new ConfigUnreadable({ config, reason: 'Expected string at ["watcher"]["socket"]' }),
+  )
+})
+
+test('a config whose projects are the wrong shape is unreadable', async () => {
+  const config = join(aPrivateDirectory(), 'config.toml')
+  writeFileSync(config, '[[projects]]\npath = "/srv/harbour"\n')
+
+  expect(await run(projectsNamedIn(config).pipe(Effect.flip))).toEqual(
+    new ConfigUnreadable({ config, reason: 'Missing key at ["projects"][0]["name"]' }),
+  )
+})
+
+test('a config with no projects, or no config at all, names no project', async () => {
+  const directory = aPrivateDirectory()
+  const config = join(directory, 'config.toml')
+  writeFileSync(config, '[watcher]\nsocket = "/var/folders/T/watcher.sock"\n')
 
   for (const named of [config, join(directory, 'missing.toml')]) {
-    expect(await whereWith(named, '/run/user/1000')).toBe('/run/user/1000/beady-eye/watcher.sock')
+    expect<readonly string[]>(await run(projectsNamedIn(named))).toEqual([])
   }
 })
 

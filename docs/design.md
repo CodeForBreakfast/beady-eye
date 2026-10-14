@@ -2479,8 +2479,11 @@ The plugin reads `[watcher]`'s `socket` from `~/.config/beady-eye/config.toml`,
 and where the config names none, takes `$XDG_RUNTIME_DIR/beady-eye/watcher.sock`
 as `bdi` does. Where neither gives a path, as on a Mac whose config names
 none, there is no watcher to reach, and the plugin says so as it says a
-watcher is down. It believes only a socket that is the user's own, by the same
-checks *A run of `bdi` believes only a socket that is the user's own* makes.
+watcher is down. A config that is there but is not TOML, or is not shaped as
+`bdi` reads it, is not taken for one naming nothing. The plugin says the
+watcher is down because of that config, and why the config cannot be read.
+It believes only a socket that is the user's own, by the same checks *A run
+of `bdi` believes only a socket that is the user's own* makes.
 
 ### Watching a bead
 

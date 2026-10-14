@@ -5,7 +5,7 @@ import { NodeFileSystem, NodeRuntime } from '@effect/platform-node'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Config, Effect, Layer } from 'effect'
 import { buildServer } from './server'
-import { projectsNamedIn, WatcherLocation } from './watcher'
+import { WatchedProjects, WatcherLocation } from './watcher'
 import { makeWatches } from './watches'
 
 const config = join(homedir(), '.config', 'beady-eye', 'config.toml')
@@ -32,12 +32,16 @@ const sessionCloses = (input: NodeJS.ReadableStream) =>
 
 NodeRuntime.runMain(
   Effect.gen(function* () {
-    const watches = yield* makeWatches(projectsNamedIn(config))
+    const watches = yield* makeWatches
     yield* watches.learn(yield* bootSession)
     yield* Effect.promise(() => buildServer(watches).connect(new StdioServerTransport()))
     yield* sessionCloses(process.stdin)
   }).pipe(
     Effect.scoped,
-    Effect.provide(WatcherLocation.namedIn(config).pipe(Layer.provideMerge(NodeFileSystem.layer))),
+    Effect.provide(
+      Layer.mergeAll(WatcherLocation.namedIn(config), WatchedProjects.namedIn(config)).pipe(
+        Layer.provideMerge(NodeFileSystem.layer),
+      ),
+    ),
   ),
 )

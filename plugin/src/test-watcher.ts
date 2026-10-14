@@ -1,13 +1,20 @@
 // What the tests stand in place of a running `bdi watch` with, and the
 // watches they point at it.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
-import { ConfigProvider, Effect, Exit, identity, Option, Schema, Scope } from 'effect'
-import { BeadId, ProjectName, type Timing, WatcherLocation, WatcherTiming } from './watcher'
+import { ConfigProvider, Effect, Exit, identity, Layer, Schema, Scope } from 'effect'
+import {
+  BeadId,
+  ProjectName,
+  type Timing,
+  WatchedProjects,
+  WatcherLocation,
+  WatcherTiming,
+} from './watcher'
 import { makeWatches } from './watches'
 
 export const aProject = Schema.decodeSync(ProjectName)
@@ -71,21 +78,22 @@ export const aWatcherAt = async (at: string) => {
   }
 }
 
-/** A session's watches, kept under `state`, looking for the watcher at `at`
- * and for beads in `projects`, until the test is over. */
-export const someWatches = async (
-  state: string,
-  at: string | undefined,
-  projects: readonly string[],
-  timing?: Timing,
-) => {
+/** A session's watches, kept under `state`, reading a bdi config that says
+ * `text`, until the test is over. There is no runtime directory, so a config
+ * naming no socket leaves the watcher nowhere. */
+export const watchesReading = async (state: string, text: string, timing?: Timing) => {
+  const config = join(aPrivateDirectory(), 'config.toml')
+  writeFileSync(config, text)
   const scope = Scope.makeUnsafe()
   const watches = await Effect.runPromise(
-    makeWatches(Effect.succeed(projects.map((project) => aProject(project)))).pipe(
+    makeWatches.pipe(
       Scope.provide(scope),
-      Effect.provideService(WatcherLocation, { find: Effect.succeed(Option.fromNullishOr(at)) }),
+      Effect.provide(
+        Layer.mergeAll(WatcherLocation.namedIn(config), WatchedProjects.namedIn(config)).pipe(
+          Layer.provideMerge(NodeFileSystem.layer),
+        ),
+      ),
       timing === undefined ? identity : Effect.provideService(WatcherTiming, timing),
-      Effect.provide(NodeFileSystem.layer),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromEnv({ env: { XDG_STATE_HOME: state } }),
@@ -94,5 +102,22 @@ export const someWatches = async (
   )
   const close = () => Effect.runPromise(Scope.close(scope, Exit.void))
   cleanUp.push(close)
-  return { watches, close }
+  return { watches, close, config }
 }
+
+/** A session's watches, kept under `state`, looking for the watcher at `at`
+ * and for beads in `projects`, until the test is over. */
+export const someWatches = (
+  state: string,
+  at: string | undefined,
+  projects: readonly string[],
+  timing?: Timing,
+) =>
+  watchesReading(
+    state,
+    [
+      ...(at === undefined ? [] : [`[watcher]\nsocket = ${JSON.stringify(at)}\n`]),
+      ...projects.map((project) => `[[projects]]\nname = ${JSON.stringify(project)}\n`),
+    ].join('\n'),
+    timing,
+  )
