@@ -512,12 +512,17 @@ test("a server started again watches what the session watched once it learns the
   const { connection, asked } = await watcher.next()
 
   expect(asked).toBe('watch summit-works smt-4kd3p.20\n')
-  expect((await listed).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+  expect((await listed).text).toBe(
+    `The watcher has not answered yet. Each bead's status is the last one known.\n- ${watched}: ${asWatched}`,
+  )
   connection.write(said(beadLine('summit-works'), freshness('summit-works')))
   expect(await after('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).toEqual({
     text: `Watching ${watched}: ${asWatched}.`,
     refused: false,
   })
+  expect((await after('watching')).text).toBe(
+    `The watcher is answering.\n- ${watched}: ${asWatched}`,
+  )
 })
 
 test("calls that arrive together all see the session's watches restored", async () => {
@@ -855,7 +860,9 @@ test('a server started again compares the bead with what the session was last to
   const listed = await after('watching')
   ;(await watcher.next()).connection.write(said(startedLine, freshness('summit-works')))
 
-  expect(listed.text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+  expect(listed.text).toBe(
+    `The watcher has not answered yet. Each bead's status is the last one known.\n- ${watched}: ${asWatched}`,
+  )
   expect(await after.nextMessage()).toEqual(started)
 })
 
@@ -1104,6 +1111,22 @@ test('a change a server saw and never told the session is told by the next serve
 
 /** The bead `theBead` describes, in harbour. */
 const inHarbour = { ...theBead(), project: 'harbour' }
+
+test('a bead not yet answered for leaves the watcher answering where another bead has been', async () => {
+  const { use, watcher } = await aWatchedBead()
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
+  const { connection } = await watcher.next()
+
+  expect((await use('watching')).text).toBe(
+    [
+      'The watcher is answering.',
+      `- ${watched}: ${asWatched}`,
+      '- smt-4kd3p.20 in harbour: not heard of yet',
+    ].join('\n'),
+  )
+  connection.write(said(inHarbour, freshness('harbour')))
+  await answer
+})
 
 /** A session watching smt-4kd3p.20 in summit-works and in harbour, with the
  * watcher answering each. */
