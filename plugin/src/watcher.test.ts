@@ -475,7 +475,7 @@ const asking = (path: string | undefined, projects: readonly string[]) =>
       projects.map((project) => aProject(project)),
       at(path),
       timing,
-    ),
+    ).pipe(Effect.catchTag('WatcherDown', ({ why }) => Effect.succeed(why))),
   )
 
 test('asking about a bead asks each project and hangs up once each has answered', async () => {

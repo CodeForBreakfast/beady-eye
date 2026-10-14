@@ -51,7 +51,7 @@ export const WATCHER_TIMING: Timing = {
  */
 export type Down = 'nowhere' | 'refused' | 'untrusted' | 'closed' | 'wedged' | 'protocol'
 
-class WatcherDown extends Data.TaggedError('WatcherDown')<{
+export class WatcherDown extends Data.TaggedError('WatcherDown')<{
   readonly why: Down
 }> {}
 
@@ -379,7 +379,7 @@ export const askAbout = <R>(
   projects: readonly ProjectName[],
   findWatcher: Effect.Effect<Option.Option<string>, never, R>,
   timing: Timing = WATCHER_TIMING,
-): Effect.Effect<Asked | Down, never, R | FileSystem.FileSystem> => {
+): Effect.Effect<Asked, WatcherDown, R | FileSystem.FileSystem> => {
   const asking = new Map(projects.map((project) => [watchLine({ project, id }), project]))
   const unasked: Asked = { lines: [], unanswered: [...asking.values()] }
   if (asking.size === 0) return Effect.succeed(unasked)
@@ -402,6 +402,5 @@ export const askAbout = <R>(
     Stream.interruptWhen(Effect.sleep(timing.answeredWithin)),
     Stream.runLast,
     Effect.map(Option.getOrElse(() => unasked)),
-    Effect.catch(({ why }) => Effect.succeed(why)),
   )
 }
