@@ -5,6 +5,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  Clock,
   Config,
   Deferred,
   Effect,
@@ -298,6 +299,19 @@ const trackerUnreachable = (
 const trackerBack = (project: string): Omit<News, 'told'> => ({
   content: `The watcher reaches the tracker of ${project} again.`,
   meta: { project, tracker: 'ok' },
+})
+
+const keptUnreadable = (
+  why: string,
+  aside: string | { readonly unmoved: string },
+): Omit<News, 'told'> => ({
+  content: [
+    `The watches this session kept could not be read: ${why}.`,
+    typeof aside === 'string'
+      ? `The file was moved to ${aside}, and this session watches none of the beads it named. Watch again each bead the session still waits on.`
+      : `It could not be moved aside: ${aside.unmoved}. This session watches none of the beads it named, and its next watch or unwatch writes over the file.`,
+  ].join('\n'),
+  meta: { watches: 'unreadable' },
 })
 
 const told = (text: string): Answer => ({ text, refused: false })
@@ -619,12 +633,24 @@ export const makeWatches = <R>(
         return refused
       })
 
+    /** Move a kept file that could not be read out of the way of the next
+     * write, and tell the session its watches are gone. */
+    const setAside = (path: string, why: string) =>
+      Effect.gen(function* () {
+        const aside = `${path}.unreadable-${yield* Clock.currentTimeMillis}`
+        const moved = yield* Effect.result(fs.rename(path, aside))
+        yield* tell(
+          keptUnreadable(why, Result.isSuccess(moved) ? aside : { unmoved: moved.failure.message }),
+        )
+      })
+
     const restore = (id: string) =>
       Effect.gen(function* () {
         const path = join(directory, `${id.replace(FILENAME_SAFE, '_')}.json`)
         const kept = yield* fs.readFileString(path).pipe(
           Effect.flatMap(Schema.decodeEffect(KeptWatches)),
-          Effect.orElseSucceed(() => []),
+          Effect.catchReason('PlatformError', 'NotFound', () => Effect.succeed([])),
+          Effect.catch((unread) => Effect.as(setAside(path, unread.message), [])),
         )
         for (const { told: lastTold, ...bead } of kept) {
           if (!watches.has(keyOf(bead))) yield* start(bead, true, lastTold)

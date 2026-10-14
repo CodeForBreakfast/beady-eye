@@ -2521,6 +2521,14 @@ back the watches of a session asleep on a bead. On each `watch` and `unwatch`
 a new file replaces the old one whole, so a server stopped while writing leaves
 the last list standing. The file is never removed, as commy keeps its
 subscriptions.
+
+**A session with no file watches nothing, and a file the plugin cannot read is
+moved aside rather than written over.** A file that cannot be read, or does not
+decode as a list of watches, is renamed beside itself with `.unreadable-` and
+the time added, and the session is sent a block with `watches="unreadable"`
+saying why and where the file went. The session then watches none of the
+beads the file named. Where the rename fails too, the block says so, and the
+session's next `watch` or `unwatch` writes over the file.
 A watch ends when the session unwatches the bead, and not when the bead
 closes, because a closed bead can reopen. The server exits when the session
 closes its input, and every watch's connection closes with it.
