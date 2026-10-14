@@ -2501,8 +2501,9 @@ plugin opens one short connection, sends `watch <project> <id>` for each
 project the config names, and reads as far as each freshness line. The project
 that answers with a bead line holds it. Where none does, or more than one
 does, `watch` refuses and asks for the project. It refuses too where a
-project the watcher has not read, or one that has not answered within 15
-seconds, leaves the answer open. The key is still
+project the watcher has not read, one it refused to look in, or one that has
+not answered within 15 seconds, leaves the answer open, and a refusal says
+why the watcher refused. The key is still
 `(project, id)`, and the plugin never guesses a project from an id's prefix.
 
 **`watch` refuses a project the watcher does not read, and a bead its project
