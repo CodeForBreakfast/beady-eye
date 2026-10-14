@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.1",
-    "@modelcontextprotocol/sdk": "1.32.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "bun-types": "1.4.2",
     "effect": "4.0.1",
     "smol-toml": "1.9.0"
