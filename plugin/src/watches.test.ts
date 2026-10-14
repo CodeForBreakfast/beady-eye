@@ -3,7 +3,7 @@ import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, writeFileSyn
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { Effect } from 'effect'
+import { Duration, Effect } from 'effect'
 import { buildServer } from './server'
 import {
   anId,
@@ -20,11 +20,11 @@ import type { Timing } from './watcher'
 afterEach(cleanUpAfterEach)
 
 const timing: Timing = {
-  wedgedAfter: 5_000,
-  firstPause: 10,
-  longestPause: 40,
-  answeredWithin: 100,
-  quietFor: 300,
+  wedgedAfter: Duration.millis(5_000),
+  firstPause: Duration.millis(10),
+  longestPause: Duration.millis(40),
+  answeredWithin: Duration.millis(100),
+  quietFor: Duration.millis(300),
 }
 const session = '6f1c2d3e-4a5b-4c6d-8e7f-901234567890'
 
@@ -487,7 +487,7 @@ test('a kept watch whose project or id is not one word is not watched', async ()
       text: 'This session watches no beads.',
       refused: false,
     })
-    await Bun.sleep(timing.firstPause * 5)
+    await Bun.sleep(Duration.toMillis(timing.firstPause) * 5)
     expect(connections).toBe(0)
   }
 })
@@ -1065,7 +1065,7 @@ test('a watcher restarting inside the minute sends nothing', async () => {
   connection.end()
   const again = await watcher.next()
   again.connection.write(said(theBead(), freshness('summit-works')))
-  await Bun.sleep(timing.quietFor * 2)
+  await Bun.sleep(Duration.toMillis(timing.quietFor) * 2)
   again.connection.write(said(startedLine, freshness('summit-works')))
 
   expect(await use.nextMessage()).toEqual(started)
@@ -1074,7 +1074,7 @@ test('a watcher restarting inside the minute sends nothing', async () => {
 test('a watcher down again soon after a restart is given a minute of its own', async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
-  const quietFor = 1_000
+  const quietFor = Duration.seconds(1)
   const use = await aServer(place, ['summit-works'], { ...timing, quietFor })
   const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
   const { connection } = await watcher.next()
@@ -1084,12 +1084,12 @@ test('a watcher down again soon after a restart is given a minute of its own', a
   connection.end()
   ;(await watcher.next()).connection.write(said(theBead(), freshness('summit-works')))
   while (!(await use('watching')).text?.includes('answering')) await Bun.sleep(5)
-  await Bun.sleep(quietFor * 0.6)
+  await Bun.sleep(Duration.toMillis(quietFor) * 0.6)
   const stopped = performance.now()
   watcher.stop()
   const down = await use.nextMessage()
 
-  expect(performance.now() - stopped).toBeGreaterThanOrEqual(quietFor)
+  expect(performance.now() - stopped).toBeGreaterThanOrEqual(Duration.toMillis(quietFor))
   expect(down.meta).toEqual({ watcher: 'down' })
 })
 
@@ -1099,7 +1099,7 @@ test('a watcher down for a minute wakes the session once, naming the beads it ca
 
   watcher.stop()
   const down = await use.nextMessage()
-  await Bun.sleep(timing.quietFor * 2)
+  await Bun.sleep(Duration.toMillis(timing.quietFor) * 2)
   const back = await aWatcherAt(place.at as string)
   for (const line of [theBead(), inHarbour]) {
     ;(await back.next()).connection.write(said(line, freshness(line.project)))
@@ -1141,7 +1141,7 @@ test('a watcher back after an outage wakes the session once, with what changed m
 test('a watcher speaking a protocol the plugin does not know is said at once', async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
-  const use = await aServer(place, ['summit-works'], { ...timing, quietFor: 60_000 })
+  const use = await aServer(place, ['summit-works'], { ...timing, quietFor: Duration.minutes(1) })
   const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
   const { connection } = await watcher.next()
   connection.write(said(theBead(), freshness('summit-works')))
@@ -1173,7 +1173,7 @@ test('a line without a field its kind carries is a watcher speaking another prot
   ]) {
     const place = aPlace()
     const watcher = await aWatcherAt(place.at as string)
-    const use = await aServer(place, ['summit-works'], { ...timing, quietFor: 60_000 })
+    const use = await aServer(place, ['summit-works'], { ...timing, quietFor: Duration.minutes(1) })
     const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
     const { connection } = await watcher.next()
     connection.write(said(theBead(), freshness('summit-works')))
@@ -1233,7 +1233,7 @@ test('a tracker unreachable for less than a minute sends nothing', async () => {
 
   connection.write(said(unreachable))
   connection.write(said(theBead(), freshness('summit-works')))
-  await Bun.sleep(timing.quietFor * 2)
+  await Bun.sleep(Duration.toMillis(timing.quietFor) * 2)
   connection.write(said(startedLine, freshness('summit-works')))
 
   expect(await use.nextMessage()).toEqual(started)
@@ -1270,7 +1270,7 @@ test('a tracker still unreachable when a bead in it is watched again wakes the s
   connection.write(said(unreachable))
   await Bun.sleep(50)
   await use('unwatch', { id: 'smt-4kd3p.20', project: 'summit-works' })
-  await Bun.sleep(timing.quietFor * 2)
+  await Bun.sleep(Duration.toMillis(timing.quietFor) * 2)
 
   const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
   const again = await watcher.next()
@@ -1329,19 +1329,19 @@ test('a tracker outage the session was told of goes with its last watch', async 
 test('an unwatched bead takes its minute with it', async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
-  const quietFor = 1_000
+  const quietFor = Duration.seconds(1)
   const use = await aServer(place, ['summit-works', 'harbour'], { ...timing, quietFor })
   const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
   ;(await watcher.next()).connection.write(said(theBead(), freshness('summit-works')))
   await answer
 
   watcher.stop()
-  await Bun.sleep(quietFor * 0.6)
+  await Bun.sleep(Duration.toMillis(quietFor) * 0.6)
   await use('unwatch', { id: 'smt-4kd3p.20', project: 'summit-works' })
   const watched = performance.now()
   await use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
   const down = await use.nextMessage()
 
-  expect(performance.now() - watched).toBeGreaterThanOrEqual(quietFor)
+  expect(performance.now() - watched).toBeGreaterThanOrEqual(Duration.toMillis(quietFor))
   expect(down.meta).toEqual({ watcher: 'down' })
 })

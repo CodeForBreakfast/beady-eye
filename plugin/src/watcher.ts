@@ -4,7 +4,19 @@
 
 import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
-import { Cause, Config, Data, Effect, FileSystem, Option, Queue, Ref, Schema, Stream } from 'effect'
+import {
+  Cause,
+  Config,
+  Data,
+  Duration,
+  Effect,
+  FileSystem,
+  Option,
+  Queue,
+  Ref,
+  Schema,
+  Stream,
+} from 'effect'
 import { parse } from 'smol-toml'
 
 /** The version of the watcher's lines this plugin reads. */
@@ -13,22 +25,22 @@ export const PROTOCOL = 1
 export interface Timing {
   /** How long a connection may carry no line before it has wedged. The
    * watcher sends an alive line every 20 seconds. */
-  readonly wedgedAfter: number
-  readonly firstPause: number
-  readonly longestPause: number
+  readonly wedgedAfter: Duration.Duration
+  readonly firstPause: Duration.Duration
+  readonly longestPause: Duration.Duration
   /** How long a question asked once may wait for every project's answer. */
-  readonly answeredWithin: number
+  readonly answeredWithin: Duration.Duration
   /** How long the watcher or a tracker may be down before a session is told.
    * The watcher restarts on each upgrade and each edit to its config. */
-  readonly quietFor: number
+  readonly quietFor: Duration.Duration
 }
 
 export const WATCHER_TIMING: Timing = {
-  wedgedAfter: 60_000,
-  firstPause: 1_000,
-  longestPause: 30_000,
-  answeredWithin: 15_000,
-  quietFor: 60_000,
+  wedgedAfter: Duration.minutes(1),
+  firstPause: Duration.seconds(1),
+  longestPause: Duration.seconds(30),
+  answeredWithin: Duration.seconds(15),
+  quietFor: Duration.minutes(1),
 }
 
 /**
@@ -226,8 +238,8 @@ const whyNotBelieved = (
     ),
   )
 
-export const pauseAfter = (failures: number, timing: Timing): number =>
-  Math.min(timing.firstPause * 2 ** (failures - 1), timing.longestPause)
+export const pauseAfter = (failures: number, timing: Timing): Duration.Duration =>
+  Duration.min(Duration.times(timing.firstPause, 2 ** (failures - 1)), timing.longestPause)
 
 const down = (why: Down) => new WatcherDown({ why })
 

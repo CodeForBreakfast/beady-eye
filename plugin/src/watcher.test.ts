@@ -2,7 +2,16 @@ import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, lstatSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
-import { ConfigProvider, Effect, Fiber, type FileSystem, Option, Queue, Stream } from 'effect'
+import {
+  ConfigProvider,
+  Duration,
+  Effect,
+  Fiber,
+  type FileSystem,
+  Option,
+  Queue,
+  Stream,
+} from 'effect'
 import {
   anId,
   aPrivateDirectory,
@@ -24,11 +33,11 @@ import {
 } from './watcher'
 
 const timing: Timing = {
-  wedgedAfter: 200,
-  firstPause: 10,
-  longestPause: 40,
-  answeredWithin: 100,
-  quietFor: 300,
+  wedgedAfter: Duration.millis(200),
+  firstPause: Duration.millis(10),
+  longestPause: Duration.millis(40),
+  answeredWithin: Duration.millis(100),
+  quietFor: Duration.millis(300),
 }
 
 afterEach(cleanUpAfterEach)
@@ -256,8 +265,11 @@ test('alive lines keep a quiet connection up', async () => {
   const session = watching(path)
 
   const { connection } = await watcher.next()
-  const alive = setInterval(() => connection.write(said({ line: 'alive' })), timing.wedgedAfter / 4)
-  await pause(timing.wedgedAfter * 3)
+  const alive = setInterval(
+    () => connection.write(said({ line: 'alive' })),
+    Duration.toMillis(timing.wedgedAfter) / 4,
+  )
+  await pause(Duration.toMillis(timing.wedgedAfter) * 3)
   clearInterval(alive)
 
   expect(session.heard()).toEqual([])
@@ -364,13 +376,17 @@ test('with nowhere to find a watcher the watcher is down', async () => {
 })
 
 test('the pause before connecting again grows to a limit', () => {
-  expect([1, 2, 3, 4, 9].map((failures) => pauseAfter(failures, timing))).toEqual([
-    10, 20, 40, 40, 40,
-  ])
+  expect(
+    [1, 2, 3, 4, 9].map((failures) => Duration.toMillis(pauseAfter(failures, timing))),
+  ).toEqual([10, 20, 40, 40, 40])
 })
 
 test('a watcher that answered is tried again after the shortest pause', async () => {
-  const slowly: Timing = { ...timing, firstPause: 20, longestPause: 5_000 }
+  const slowly: Timing = {
+    ...timing,
+    firstPause: Duration.millis(20),
+    longestPause: Duration.seconds(5),
+  }
   const path = join(aPrivateDirectory(), 'watcher.sock')
   const session = watching(path, slowly)
   for (let refused = 0; refused < 4; refused += 1) {
@@ -396,7 +412,7 @@ test('a watch that stops closes its connection and is not tried again', async ()
   const closed = new Promise((resolve) => connection.on('close', resolve))
   await session.stop()
   await closed
-  await pause(timing.longestPause * 3)
+  await pause(Duration.toMillis(timing.longestPause) * 3)
 
   expect(session.heard()).toEqual([])
 })
@@ -412,7 +428,7 @@ test('a watch stopped as it hears its watcher is down is not tried again', async
   const told = firstHeard(path, 1)
   ;(await watcher.next()).connection.end()
   expect(await told).toEqual([{ down: 'closed' }])
-  await pause(timing.longestPause * 3)
+  await pause(Duration.toMillis(timing.longestPause) * 3)
 
   expect(connections).toBe(1)
 })
@@ -545,7 +561,7 @@ test('asking about a bead stops waiting in time, and names the projects that did
   connection.write(said(beadLine, freshness))
   const alive = setInterval(
     () => connection.write(said({ line: 'alive' })),
-    timing.answeredWithin / 4,
+    Duration.toMillis(timing.answeredWithin) / 4,
   )
   cleanUp.push(() => clearInterval(alive))
 
