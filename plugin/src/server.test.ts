@@ -98,6 +98,7 @@ test('the bundle tells a session what its tools are for, how a change reads and 
   expect(instructions).toContain('<channel source="beady-eye"')
   expect(instructions).toMatch(/lasts until `unwatch`/)
   expect(instructions).toMatch(/restart/)
+  expect(instructions).toContain('watches="unreadable"')
 })
 
 test('a bundle started again under the session watches its beads before any tool is called', async () => {
