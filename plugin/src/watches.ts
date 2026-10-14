@@ -144,8 +144,8 @@ interface Watch {
 
 const isAccepted = ({ acceptance }: Watch) => acceptance.is === 'accepted'
 
-const SessionId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SessionId'))
-type SessionId = typeof SessionId.Type
+export const SessionId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SessionId'))
+export type SessionId = typeof SessionId.Type
 
 const watchesDirectory = Config.NonEmptyString('XDG_STATE_HOME').pipe(
   Config.withDefault(join(homedir(), '.local', 'state')),
@@ -381,7 +381,7 @@ export interface Watches {
   /** Take the session's id, and watch again what it watched, where this is
    * the first id the server has been given. A server serves one session, so
    * a later id changes nothing. */
-  learn(session: string | undefined): Effect.Effect<void>
+  learn(session: SessionId | undefined): Effect.Effect<void>
   watch(id: BeadId, project: ProjectName | undefined): Effect.Effect<Answer>
   unwatch(id: BeadId, project: ProjectName | undefined): Effect.Effect<Answer>
   readonly watching: Effect.Effect<Answer>
@@ -750,9 +750,8 @@ export const makeWatches = (
 
       learn: (given) =>
         Effect.gen(function* () {
-          const id = Schema.decodeUnknownOption(SessionId)(given)
-          if (Option.isSome(id) && (yield* Deferred.succeed(session, id.value))) {
-            return yield* restore(id.value)
+          if (given !== undefined && (yield* Deferred.succeed(session, given))) {
+            return yield* restore(given)
           }
           if (yield* Deferred.isDone(session)) {
             yield* Deferred.await(file)
