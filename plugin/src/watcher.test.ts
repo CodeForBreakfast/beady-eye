@@ -10,6 +10,7 @@ import {
   type FileSystem,
   Option,
   Queue,
+  Result,
   Stream,
 } from 'effect'
 import {
@@ -193,7 +194,7 @@ test("a bead's lines arrive as one batch at its project's freshness line", async
   connection.write(said({ line: 'alive' }, beadLine, freshness))
 
   expect(line).toBe(asked)
-  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
+  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
 })
 
 test('a line of a kind the plugin does not read is passed over', async () => {
@@ -205,7 +206,7 @@ test('a line of a kind the plugin does not read is passed over', async () => {
     said(beadLine, { line: 'greeting', from: 'a newer watcher' }, freshness),
   )
 
-  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
+  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
 })
 
 test('a refusal of the watch arrives on its own', async () => {
@@ -220,7 +221,7 @@ test('a refusal of the watch arrives on its own', async () => {
   } as const
   ;(await watcher.next()).connection.write(said(refused))
 
-  expect(await session.next()).toEqual({ batch: [refused] })
+  expect(await session.next()).toEqual(Result.succeed([refused]))
 })
 
 test('a refused connection is a watcher that is down', async () => {
@@ -229,20 +230,20 @@ test('a refused connection is a watcher that is down', async () => {
   expect(lstatSync(path).isSocket()).toBe(true)
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'refused' })
+  expect(await session.next()).toEqual(Result.fail('refused'))
 })
 
 test('a watcher that is not there yet is tried again until it answers', async () => {
   const path = join(aPrivateDirectory(), 'watcher.sock')
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'refused' })
+  expect(await session.next()).toEqual(Result.fail('refused'))
   const watcher = await aWatcherAt(path)
   const { connection, asked: line } = await watcher.next()
   connection.write(said(beadLine, freshness))
 
   expect(line).toBe(asked)
-  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
+  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
 })
 
 test('a connection the watcher closes is down, and the bead is watched again', async () => {
@@ -252,7 +253,7 @@ test('a connection the watcher closes is down, and the bead is watched again', a
 
   ;(await watcher.next()).connection.end()
 
-  expect(await session.next()).toEqual({ down: 'closed' })
+  expect(await session.next()).toEqual(Result.fail('closed'))
   expect((await watcher.next()).asked).toBe(asked)
 })
 
@@ -264,7 +265,7 @@ test('a connection with no line for a minute has wedged and is closed', async ()
   const { connection } = await watcher.next()
   const closed = new Promise((resolve) => connection.on('close', resolve))
 
-  expect(await session.next()).toEqual({ down: 'wedged' })
+  expect(await session.next()).toEqual(Result.fail('wedged'))
   await closed
   expect((await watcher.next()).asked).toBe(asked)
 })
@@ -299,7 +300,7 @@ test('a protocol the plugin does not know is a watcher that is down', async () =
 
     ;(await watcher.next()).connection.write(answer)
 
-    expect(await session.next()).toEqual({ down: 'protocol' })
+    expect(await session.next()).toEqual(Result.fail('protocol'))
     await session.stop()
   }
 })
@@ -325,7 +326,7 @@ test('a line naming a project or bead id that is not one word is a watcher speak
 
     ;(await watcher.next()).connection.write(answer)
 
-    expect(await session.next()).toEqual({ down: 'protocol' })
+    expect(await session.next()).toEqual(Result.fail('protocol'))
     await session.stop()
   }
 })
@@ -342,7 +343,7 @@ test("a socket that is not the user's own is not believed", async () => {
   })
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'untrusted' })
+  expect(await session.next()).toEqual(Result.fail('untrusted'))
   expect(connections).toBe(0)
 })
 
@@ -351,7 +352,7 @@ test('something other than a socket at the path is not believed', async () => {
   writeFileSync(path, '')
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'untrusted' })
+  expect(await session.next()).toEqual(Result.fail('untrusted'))
 })
 
 test("a link to the user's own socket is not believed", async () => {
@@ -366,7 +367,7 @@ test("a link to the user's own socket is not believed", async () => {
   symlinkSync(socket, path)
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'untrusted' })
+  expect(await session.next()).toEqual(Result.fail('untrusted'))
   expect(connections).toBe(0)
 })
 
@@ -376,13 +377,13 @@ test('a link to nothing is not believed', async () => {
   symlinkSync(join(directory, 'watcher.sock'), path)
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'untrusted' })
+  expect(await session.next()).toEqual(Result.fail('untrusted'))
 })
 
 test('with nowhere to find a watcher the watcher is down', async () => {
   const session = watching(undefined)
 
-  expect(await session.next()).toEqual({ down: 'nowhere' })
+  expect(await session.next()).toEqual(Result.fail('nowhere'))
 })
 
 test('the pause before connecting again grows to a limit', () => {
@@ -400,13 +401,13 @@ test('a watcher that answered is tried again after the shortest pause', async ()
   const path = join(aPrivateDirectory(), 'watcher.sock')
   const session = watching(path, slowly)
   for (let refused = 0; refused < 4; refused += 1) {
-    expect(await session.next()).toEqual({ down: 'refused' })
+    expect(await session.next()).toEqual(Result.fail('refused'))
   }
 
   const watcher = await aWatcherAt(path)
   ;(await watcher.next()).connection.end(said(beadLine, freshness))
-  expect(await session.next()).toEqual({ batch: [beadHeard, freshnessHeard] })
-  expect(await session.next()).toEqual({ down: 'closed' })
+  expect(await session.next()).toEqual(Result.succeed([beadHeard, freshnessHeard]))
+  expect(await session.next()).toEqual(Result.fail('closed'))
   const downAt = Date.now()
   await watcher.next()
 
@@ -437,7 +438,7 @@ test('a watch stopped as it hears its watcher is down is not tried again', async
 
   const told = firstHeard(path, 1)
   ;(await watcher.next()).connection.end()
-  expect(await told).toEqual([{ down: 'closed' }])
+  expect(await told).toEqual([Result.fail('closed')])
   await pause(Duration.toMillis(timing.longestPause) * 3)
 
   expect(connections).toBe(1)
@@ -452,7 +453,7 @@ test('a watch stopped as it hears a batch closes its connection', async () => {
   const closed = new Promise((resolve) => connection.on('close', resolve))
   connection.write(said(beadLine, freshness, beadLine, freshness))
 
-  expect(await told).toEqual([{ batch: [beadHeard, freshnessHeard] }])
+  expect(await told).toEqual([Result.succeed([beadHeard, freshnessHeard])])
   await closed
 })
 
