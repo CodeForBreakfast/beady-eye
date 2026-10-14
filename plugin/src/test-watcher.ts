@@ -6,7 +6,16 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
-import { ConfigProvider, Effect, Exit, identity, Layer, Schema, Scope } from 'effect'
+import {
+  ConfigProvider,
+  Effect,
+  Exit,
+  type FileSystem,
+  identity,
+  Layer,
+  Schema,
+  Scope,
+} from 'effect'
 import {
   BeadId,
   ProjectName,
@@ -78,10 +87,15 @@ export const aWatcherAt = async (at: string) => {
   }
 }
 
-/** A session's watches, kept under `state`, reading a bdi config that says
- * `text`, until the test is over. There is no runtime directory, so a config
- * naming no socket leaves the watcher nowhere. */
-export const watchesReading = async (state: string, text: string, timing?: Timing) => {
+/** A session's watches, kept under `state` through `fileSystem`, reading a
+ * bdi config that says `text`, until the test is over. There is no runtime
+ * directory, so a config naming no socket leaves the watcher nowhere. */
+export const watchesReading = async (
+  state: string,
+  text: string,
+  timing?: Timing,
+  fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer,
+) => {
   const config = join(aPrivateDirectory(), 'config.toml')
   writeFileSync(config, text)
   const scope = Scope.makeUnsafe()
@@ -90,7 +104,7 @@ export const watchesReading = async (state: string, text: string, timing?: Timin
       Scope.provide(scope),
       Effect.provide(
         Layer.mergeAll(WatcherLocation.namedIn(config), WatchedProjects.namedIn(config)).pipe(
-          Layer.provideMerge(NodeFileSystem.layer),
+          Layer.provideMerge(fileSystem),
         ),
       ),
       timing === undefined ? identity : Effect.provideService(WatcherTiming, timing),
@@ -105,13 +119,14 @@ export const watchesReading = async (state: string, text: string, timing?: Timin
   return { watches, close, config }
 }
 
-/** A session's watches, kept under `state`, looking for the watcher at `at`
- * and for beads in `projects`, until the test is over. */
+/** A session's watches, kept under `state` through `fileSystem`, looking for
+ * the watcher at `at` and for beads in `projects`, until the test is over. */
 export const someWatches = (
   state: string,
   at: string | undefined,
   projects: readonly string[],
   timing?: Timing,
+  fileSystem?: Layer.Layer<FileSystem.FileSystem>,
 ) =>
   watchesReading(
     state,
@@ -120,4 +135,5 @@ export const someWatches = (
       ...projects.map((project) => `[[projects]]\nname = ${JSON.stringify(project)}\n`),
     ].join('\n'),
     timing,
+    fileSystem,
   )

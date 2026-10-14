@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { NodeFileSystem } from '@effect/platform-node'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { Duration, Effect } from 'effect'
+import { Duration, Effect, FileSystem, Layer, Scheduler } from 'effect'
 import { buildServer } from './server'
 import {
   anId,
@@ -1024,6 +1025,48 @@ test('watching a bead twice at once that the session file cannot keep refuses bo
   expect(answers.map(({ refused }) => refused)).toEqual([true, true])
   expect(answers[1]?.text).toBe(answers[0]?.text)
   expect((await use('watching')).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+})
+
+test('watching a bead twice at once watches it once, and keeps it once', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const written: string[] = []
+  const counting = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (fs) => ({
+      ...fs,
+      writeFileString: (path: string, data: string) => {
+        written.push(path)
+        return fs.writeFileString(path, data)
+      },
+    })),
+  ).pipe(Layer.provide(NodeFileSystem.layer))
+  const { watches } = await someWatches(place.directory, place.at, [], timing, counting)
+  await Effect.runPromise(watches.learn(session))
+  const connections: unknown[] = []
+  const answering = async () => {
+    for (;;) {
+      const { connection } = await watcher.next()
+      connections.push(connection)
+      connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+    }
+  }
+  answering()
+
+  const watch = watches.watch(anId('smt-4kd3p.20'), aProject('summit-works'))
+  // Three is the fewest steps between yields with which a fiber still gets
+  // anywhere, so the two calls interleave wherever either could be overtaken.
+  const answers = await Effect.runPromise(
+    Effect.all([watch, watch], { concurrency: 'unbounded' }).pipe(
+      Effect.provideService(Scheduler.MaxOpsBeforeYield, 3),
+    ),
+  )
+
+  const answer = { text: `Watching ${watched}: ${asWatched}.`, refused: false }
+  expect(answers).toEqual([answer, answer])
+  expect(connections).toHaveLength(1)
+  expect(written).toEqual([join(place.directory, 'beady-eye', 'watches', `${session}.json.new`)])
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
 })
 
 test('watches made before the session id that its file cannot keep are told of, and stay watched', async () => {

@@ -123,20 +123,25 @@ interface Known {
 const downBecause = (connection: Connection) =>
   connection.is === 'down' ? connection.why : undefined
 
+/** Whether the session has been told it watches a bead. Only a watch it has
+ * not been told of can still be refused. An accepting watch's `answer` is done
+ * once the session's file keeps it, with why not where it does not. */
+type Acceptance =
+  | { readonly is: 'unaccepted' }
+  | { readonly is: 'accepting'; readonly answer: Deferred.Deferred<Answer | undefined> }
+  | { readonly is: 'accepted' }
+
 interface Watch {
   readonly bead: Bead
   readonly known: Known
-  /** Whether the session has been told it watches the bead. Only a watch
-   * it has not been told of can still be refused. */
-  accepted: boolean
+  acceptance: Acceptance
   /** Done once the watcher has answered, been found down, or the watch has
    * stopped. */
   readonly firstHeard: Deferred.Deferred<void>
   readonly connection: Fiber.Fiber<void>
-  /** Done once the session's file keeps the watch, with why not where it
-   * does not. */
-  accepting: Deferred.Deferred<Answer | undefined> | undefined
 }
+
+const isAccepted = ({ acceptance }: Watch) => acceptance.is === 'accepted'
 
 const SessionId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SessionId'))
 type SessionId = typeof SessionId.Type
@@ -353,17 +358,18 @@ const told = (text: string): Answer => ({ text, refused: false })
 const refusal = (text: string): Answer => ({ text, refused: true })
 
 /** Why the watcher will not watch `bead`, where it will not. */
-const refusalOf = ({ bead, known }: Watch): Answer | undefined => {
-  const { standing } = known
-  if (standing.is === 'gone') {
-    return refusal(`${bead.project} holds no bead ${bead.id}.`)
-  }
-  if (standing.is !== 'refused') return undefined
-  if (standing.reason === 'unknown-project') {
-    return refusal(`The watcher does not read a project ${bead.project}.`)
-  }
-  return refusal(`The watcher refused to watch ${named(bead)}: ${standing.reason}.`)
-}
+const refusalOf = ({ bead, known: { standing } }: Watch): Answer | undefined =>
+  Match.value(standing).pipe(
+    Match.discriminatorsExhaustive('is')({
+      bead: () => undefined,
+      gone: () => refusal(`${bead.project} holds no bead ${bead.id}.`),
+      refused: ({ reason }) =>
+        reason === 'unknown-project'
+          ? refusal(`The watcher does not read a project ${bead.project}.`)
+          : refusal(`The watcher refused to watch ${named(bead)}: ${reason}.`),
+      unheard: () => undefined,
+    }),
+  )
 
 const describe = ({ known: { standing } }: Watch): string =>
   Match.value(standing).pipe(
@@ -405,8 +411,7 @@ export const makeWatches: Effect.Effect<
   const file = yield* Deferred.make<string>()
   const keeping = yield* Semaphore.make(1)
   const watches = new Map<string, Watch>()
-  const news = yield* Queue.unbounded<News>()
-  yield* Effect.addFinalizer(() => Queue.shutdown(news))
+  const news = yield* Effect.acquireRelease(Queue.unbounded<News>(), Queue.shutdown)
   const withTheWatcher = yield* FiberSet.makeRuntime<WatcherLocation | FileSystem.FileSystem>()
 
   const keyOf = ({ project, id }: Bead) => `${project} ${id}`
@@ -432,7 +437,8 @@ export const makeWatches: Effect.Effect<
       const after = toldOf(known.standing) ?? before
       known.heard = after
       const keep = keepTold(known, after)
-      if (watches.get(keyOf(bead))?.accepted !== true) {
+      const watch = watches.get(keyOf(bead))
+      if (watch === undefined || !isAccepted(watch)) {
         known.told = after
         return
       }
@@ -455,9 +461,10 @@ export const makeWatches: Effect.Effect<
   /** Tell the session of every watched bead the watcher cannot watch and
    * the session has not been told of, in one message. */
   const tellDown = Effect.suspend(() => {
-    const untold = [...watches.values()].flatMap(({ accepted, bead, known }) => {
+    const untold = [...watches.values()].flatMap((watch) => {
+      const { bead, known } = watch
       const { connection } = known
-      return accepted && connection.is === 'down' && !connection.toldDown
+      return isAccepted(watch) && connection.is === 'down' && !connection.toldDown
         ? [{ bead, known, connection }]
         : []
     })
@@ -517,7 +524,7 @@ export const makeWatches: Effect.Effect<
       yield* inAMinute(
         Effect.suspend(() => {
           const beads = [...watches.values()]
-            .filter((watch) => watch.accepted && watch.bead.project === project)
+            .filter((watch) => isAccepted(watch) && watch.bead.project === project)
             .map(({ bead }) => bead)
           if (unreachable.get(project) !== outage || beads.length === 0) return Effect.void
           outage.told = true
@@ -526,59 +533,59 @@ export const makeWatches: Effect.Effect<
       )
     })
 
-  const start = (bead: Bead, accepted: boolean, told?: Told) =>
-    Effect.gen(function* () {
-      const known: Known = {
-        standing: told ?? { is: 'unheard' },
-        heard: told,
-        told,
-        connection: { is: 'answering', toldDown: false },
-      }
-      const firstHeard = yield* Deferred.make<void>()
-      const stillDownIn = (outage: number) => {
-        const { connection } = known
-        const held = watches.get(keyOf(bead))?.known === known
-        return held && connection.is === 'down' && connection.outage === outage
-      }
-      const goDown = (why: Down) =>
-        Effect.gen(function* () {
-          const was = known.connection
-          if (was.is === 'down') {
-            known.connection = { ...was, why }
-          } else {
-            const outage = yield* Ref.updateAndGet(outages, Num.increment)
-            known.connection = { is: 'down', why, outage, toldDown: was.toldDown }
-            yield* inAMinute(Effect.suspend(() => (stillDownIn(outage) ? tellDown : Effect.void)))
-          }
-          if (why === 'protocol') yield* tellDown
-        })
-      const hearBatch = (batch: readonly Said[]) =>
-        Effect.gen(function* () {
-          known.connection = { is: 'answering', toldDown: known.connection.toldDown }
-          yield* trackerIn(batch, bead.project)
-          const said = yield* takeIn(batch, bead, known)
-          if (!known.connection.toldDown) {
-            if (said !== undefined) yield* Queue.offer(news, said)
-            return
-          }
-          yield* tellBackOnceAllAre
-        })
-      const hear = (heard: Heard) =>
-        Result.match(heard, { onSuccess: hearBatch, onFailure: goDown }).pipe(
-          Effect.andThen(Deferred.succeed(firstHeard, undefined)),
-        )
-      const connection = withTheWatcher(watchBead(bead).pipe(Stream.runForEach(hear)))
-      const watch: Watch = {
-        bead,
-        known,
-        accepted,
-        firstHeard,
-        connection,
-        accepting: undefined,
-      }
-      watches.set(keyOf(bead), watch)
-      return watch
-    })
+  /** Watch `bead`. It is not an Effect, so a caller that finds the bead
+   * unwatched starts it before any other call can look. */
+  const start = (bead: Bead, acceptance: Acceptance, told?: Told) => {
+    const known: Known = {
+      standing: told ?? { is: 'unheard' },
+      heard: told,
+      told,
+      connection: { is: 'answering', toldDown: false },
+    }
+    const firstHeard = Deferred.makeUnsafe<void>()
+    const stillDownIn = (outage: number) => {
+      const { connection } = known
+      const held = watches.get(keyOf(bead))?.known === known
+      return held && connection.is === 'down' && connection.outage === outage
+    }
+    const goDown = (why: Down) =>
+      Effect.gen(function* () {
+        const was = known.connection
+        if (was.is === 'down') {
+          known.connection = { ...was, why }
+        } else {
+          const outage = yield* Ref.updateAndGet(outages, Num.increment)
+          known.connection = { is: 'down', why, outage, toldDown: was.toldDown }
+          yield* inAMinute(Effect.suspend(() => (stillDownIn(outage) ? tellDown : Effect.void)))
+        }
+        if (why === 'protocol') yield* tellDown
+      })
+    const hearBatch = (batch: readonly Said[]) =>
+      Effect.gen(function* () {
+        known.connection = { is: 'answering', toldDown: known.connection.toldDown }
+        yield* trackerIn(batch, bead.project)
+        const said = yield* takeIn(batch, bead, known)
+        if (!known.connection.toldDown) {
+          if (said !== undefined) yield* Queue.offer(news, said)
+          return
+        }
+        yield* tellBackOnceAllAre
+      })
+    const hear = (heard: Heard) =>
+      Result.match(heard, { onSuccess: hearBatch, onFailure: goDown }).pipe(
+        Effect.andThen(Deferred.succeed(firstHeard, undefined)),
+      )
+    const connection = withTheWatcher(watchBead(bead).pipe(Stream.runForEach(hear)))
+    const watch: Watch = {
+      bead,
+      known,
+      acceptance,
+      firstHeard,
+      connection,
+    }
+    watches.set(keyOf(bead), watch)
+    return watch
+  }
 
   const forget = (watch: Watch) => {
     if (watches.get(keyOf(watch.bead)) === watch) watches.delete(keyOf(watch.bead))
@@ -597,7 +604,7 @@ export const makeWatches: Effect.Effect<
       Effect.andThen(tellBackOnceAllAre),
     )
 
-  const acceptedWatches = () => [...watches.values()].filter((watch) => watch.accepted)
+  const acceptedWatches = () => [...watches.values()].filter(isAccepted)
 
   /** Make the session's file keep `kept`. A caller holds a `keeping`
    * permit. */
@@ -627,26 +634,28 @@ export const makeWatches: Effect.Effect<
   const persist = keeping.withPermit(Effect.suspend(() => write(acceptedWatches())))
 
   /** Accept `watch` once the session's file keeps it, or say why it is not
-   * watched. Calls watching the same bead together share one answer. */
+   * watched. Calls watching the same bead together share one answer, so
+   * nothing between reading `acceptance` and installing the answer yields. */
   const accept = (watch: Watch) =>
     Effect.gen(function* () {
       if (watches.get(keyOf(watch.bead)) !== watch) {
         return refusal(`${named(watch.bead)} was unwatched before the watcher answered.`)
       }
-      if (watch.accepted) return undefined
-      if (watch.accepting !== undefined) return yield* Deferred.await(watch.accepting)
-      const accepting = yield* Deferred.make<Answer | undefined>()
-      watch.accepting = accepting
+      const { acceptance } = watch
+      if (acceptance.is === 'accepted') return undefined
+      if (acceptance.is === 'accepting') return yield* Deferred.await(acceptance.answer)
+      const answer = Deferred.makeUnsafe<Answer | undefined>()
+      watch.acceptance = { is: 'accepting', answer }
       const refused = yield* keeping.withPermit(
         Effect.gen(function* () {
           if (watches.get(keyOf(watch.bead)) !== watch) {
             return refusal(`${named(watch.bead)} was unwatched before the watcher answered.`)
           }
           const kept = yield* Effect.result(
-            write([...watches.values()].filter((kept) => kept.accepted || kept === watch)),
+            write([...watches.values()].filter((kept) => isAccepted(kept) || kept === watch)),
           )
           if (Result.isSuccess(kept)) {
-            watch.accepted = true
+            watch.acceptance = { is: 'accepted' }
             return undefined
           }
           forget(watch)
@@ -656,7 +665,7 @@ export const makeWatches: Effect.Effect<
         }),
       )
       if (refused !== undefined) yield* stop(watch)
-      yield* Deferred.succeed(accepting, refused)
+      yield* Deferred.succeed(answer, refused)
       return refused
     })
 
@@ -683,15 +692,17 @@ export const makeWatches: Effect.Effect<
         Effect.catch((unread) => Effect.as(setAside(path, unread.message), [])),
       )
       for (const { told: lastTold, ...bead } of kept) {
-        if (!watches.has(keyOf(bead))) yield* start(bead, true, lastTold)
+        if (!watches.has(keyOf(bead))) start(bead, { is: 'accepted' }, lastTold)
       }
       yield* Deferred.succeed(file, path)
-      const unkept = acceptedWatches()
-        .map(({ bead }) => bead)
-        .filter((bead) => !kept.some((one) => keyOf(one) === keyOf(bead)))
+      const unkept = Arr.differenceWith((one: Bead, other: Bead) => keyOf(one) === keyOf(other))(
+        acceptedWatches().map(({ bead }) => bead),
+        kept,
+      )
       if (unkept.length === 0) return
-      const persisted = yield* Effect.result(persist)
-      if (Result.isFailure(persisted)) yield* tell(watchesUnkept(persisted.failure.message, unkept))
+      yield* persist.pipe(
+        Effect.catch((unkeptBecause) => tell(watchesUnkept(unkeptBecause.message, unkept))),
+      )
     })
 
   /** The project of the one bead the watcher has with `id`. */
@@ -762,10 +773,9 @@ export const makeWatches: Effect.Effect<
         const found = project ?? (yield* projectHolding(id))
         if (typeof found !== 'string') return found
         const bead = { project: found, id }
-        const watch = watches.get(keyOf(bead)) ?? (yield* start(bead, false))
+        const watch = watches.get(keyOf(bead)) ?? start(bead, { is: 'unaccepted' })
         yield* Deferred.await(watch.firstHeard)
-        const acceptedOrAccepting = watch.accepted || watch.accepting !== undefined
-        const refused = acceptedOrAccepting ? undefined : refusalOf(watch)
+        const refused = watch.acceptance.is === 'unaccepted' ? refusalOf(watch) : undefined
         if (refused !== undefined) {
           if (watches.get(keyOf(bead)) === watch) yield* stop(watch)
           yield* Effect.ignore(persist)
