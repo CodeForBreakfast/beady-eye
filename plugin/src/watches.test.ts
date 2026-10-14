@@ -6,7 +6,9 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { Effect } from 'effect'
 import { buildServer } from './server'
 import {
+  anId,
   aPrivateDirectory,
+  aProject,
   aWatcherAt,
   cleanUp,
   cleanUpAfterEach,
@@ -443,18 +445,50 @@ test('unwatch refuses a bead the session does not watch, or watches in several p
   })
 })
 
-test("a bead's id or project with a space in it is refused", async () => {
-  const use = await aServer({ ...aPlace(), at: undefined })
+test("a bead's id or project with a space in it is refused, and never reaches the watcher", async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  let connections = 0
+  watcher.server.on('connection', () => connections++)
+  const use = await aServer(place)
 
-  for (const args of <Record<string, string>[]>[
-    { id: 'smt-4kd3p.20\nwatch harbour' },
-    { id: 'smt-4kd3p.20', project: 'summit works' },
-    {},
+  for (const tool of ['watch', 'unwatch']) {
+    for (const args of <Record<string, string>[]>[
+      { id: 'smt-4kd3p.20\nwatch harbour' },
+      { id: 'smt-4kd3p.20', project: 'summit works' },
+      {},
+    ]) {
+      expect(await use(tool, args)).toEqual({
+        text: "A bead's id and project are each one word with no space in it.",
+        refused: true,
+      })
+    }
+  }
+  expect(connections).toBe(0)
+})
+
+test('a kept watch whose project or id is not one word is not watched', async () => {
+  for (const bead of [
+    { project: 'summit works', id: 'smt-4kd3p.20' },
+    { project: 'summit-works', id: 'smt-4kd3p.20\nwatch harbour smt-4kd3p.13' },
   ]) {
-    expect(await use('watch', args)).toEqual({
-      text: "A bead's id and project are each one word with no space in it.",
-      refused: true,
+    const place = aPlace()
+    mkdirSync(join(place.directory, 'beady-eye', 'watches'), { recursive: true })
+    writeFileSync(
+      join(place.directory, 'beady-eye', 'watches', `${session}.json`),
+      JSON.stringify([bead]),
+    )
+    const watcher = await aWatcherAt(place.at as string)
+    let connections = 0
+    watcher.server.on('connection', () => connections++)
+    const use = await aServer(place)
+
+    expect(await use('watching')).toEqual({
+      text: 'This session watches no beads.',
+      refused: false,
     })
+    await Bun.sleep(timing.firstPause * 5)
+    expect(connections).toBe(0)
   }
 })
 
@@ -515,7 +549,7 @@ test('a server keeps the first session id it learns', async () => {
       watches.learn('not a session id'),
       watches.learn(session),
       watches.learn('0e1d2c3b-4a59-4876-9543-210fedcba987'),
-      watches.watch('smt-4kd3p.20', 'summit-works'),
+      watches.watch(anId('smt-4kd3p.20'), aProject('summit-works')),
     ]),
   )
 
