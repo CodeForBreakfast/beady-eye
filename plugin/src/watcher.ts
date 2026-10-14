@@ -43,9 +43,21 @@ class WatcherDown extends Data.TaggedError('WatcherDown')<{
   readonly why: Down
 }> {}
 
+/** A word the watcher can read on one line: something, with no space in it.
+ * The plugin asks `watch <project> <id>` and keys a watch on the two. */
+const aWord = Schema.String.check(Schema.isPattern(/^\S+$/))
+
+/** The name the bdi config gives a project. */
+export const ProjectName = aWord.pipe(Schema.brand('ProjectName'))
+export type ProjectName = typeof ProjectName.Type
+
+/** A bead's id in its tracker. */
+export const BeadId = aWord.pipe(Schema.brand('BeadId'))
+export type BeadId = typeof BeadId.Type
+
 /** The fields of bd's row this plugin reads. */
 const Row = Schema.Struct({
-  id: Schema.String,
+  id: BeadId,
   title: Schema.String,
   status: Schema.String,
   comment_count: Schema.optional(Schema.Finite),
@@ -55,7 +67,7 @@ const Row = Schema.Struct({
 /** One of bd's event records. Only a comment's record carries a comment. */
 const EventRecord = Schema.Struct({
   op: Schema.String,
-  issue_id: Schema.String,
+  issue_id: BeadId,
   comment: Schema.optional(Schema.Struct({ author: Schema.String, text: Schema.String })),
 }).check(Schema.makeFilter(({ op, comment }) => (op === 'comment') === (comment !== undefined)))
 
@@ -65,21 +77,21 @@ const EventRecord = Schema.Struct({
 const SaidLine = Schema.Union([
   Schema.Struct({
     line: Schema.Literal('bead'),
-    project: Schema.String,
+    project: ProjectName,
     ready: Schema.Boolean,
     row: Row,
   }),
-  Schema.Struct({ line: Schema.Literal('gone'), project: Schema.String, id: Schema.String }),
+  Schema.Struct({ line: Schema.Literal('gone'), project: ProjectName, id: BeadId }),
   Schema.Struct({
     line: Schema.Literal('freshness'),
-    project: Schema.String,
+    project: ProjectName,
     protocol: Schema.Literal(PROTOCOL),
     tracker: Schema.Union([
       Schema.Literal('ok'),
       Schema.Struct({ unreachable: Schema.Struct({ reason: Schema.String }) }),
     ]),
   }),
-  Schema.Struct({ line: Schema.Literal('event'), project: Schema.String, event: EventRecord }),
+  Schema.Struct({ line: Schema.Literal('event'), project: ProjectName, event: EventRecord }),
   Schema.Struct({ line: Schema.Literal('refused'), asked: Schema.String, reason: Schema.String }),
 ])
 
@@ -91,10 +103,8 @@ export type Said = typeof SaidLine.Type
  * own; or that the watcher is down. */
 export type Heard = { readonly batch: readonly Said[] } | { readonly down: Down }
 
-export interface Bead {
-  readonly project: string
-  readonly id: string
-}
+export const Bead = Schema.Struct({ project: ProjectName, id: BeadId })
+export type Bead = typeof Bead.Type
 
 const WatcherSection = Schema.Struct({
   watcher: Schema.Struct({ socket: Schema.String }),
@@ -116,15 +126,17 @@ const readIn = <A>(config: string, section: Schema.Codec<A, unknown>) =>
 const socketNamedIn = (config: string) =>
   readIn(config, WatcherSection).pipe(Effect.map(Option.map(({ watcher }) => watcher.socket)))
 
-/** The name of each of the bdi config's `[[projects]]`. */
+/** The name of each of the bdi config's `[[projects]]` the watcher can be
+ * asked about. */
 export const projectsNamedIn = (
   config: string,
-): Effect.Effect<readonly string[], never, FileSystem.FileSystem> =>
+): Effect.Effect<readonly ProjectName[], never, FileSystem.FileSystem> =>
   readIn(config, ProjectsSection).pipe(
     Effect.map(
       Option.match({
         onNone: () => [],
-        onSome: ({ projects }) => projects.map(({ name }) => name),
+        onSome: ({ projects }) =>
+          projects.flatMap(({ name }) => (Schema.is(ProjectName)(name) ? [name] : [])),
       }),
     ),
   )
@@ -341,7 +353,7 @@ export interface Asked {
   /** Each project's answer, up to its freshness line, and each refusal. */
   readonly lines: readonly Said[]
   /** The projects that had not answered when the time to answer ran out. */
-  readonly unanswered: readonly string[]
+  readonly unanswered: readonly ProjectName[]
 }
 
 /**
@@ -351,8 +363,8 @@ export interface Asked {
  * `timing.answeredWithin` whatever has arrived.
  */
 export const askAbout = <R>(
-  id: string,
-  projects: readonly string[],
+  id: BeadId,
+  projects: readonly ProjectName[],
   findWatcher: Effect.Effect<Option.Option<string>, never, R>,
   timing: Timing = WATCHER_TIMING,
 ): Effect.Effect<Asked | Down, never, R | FileSystem.FileSystem> => {
@@ -361,7 +373,7 @@ export const askAbout = <R>(
   if (asking.size === 0) return Effect.succeed(unasked)
   const take = (asked: Asked, said: Said): Asked => {
     const project = said.line === 'refused' ? asking.get(said.asked) : said.project
-    if (said.line !== 'refused' && !asked.unanswered.includes(project ?? '')) {
+    if (said.line !== 'refused' && !asked.unanswered.includes(said.project)) {
       return asked
     }
     const answered = said.line === 'refused' || said.line === 'freshness'
