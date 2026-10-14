@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { chmodSync, linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -504,6 +504,96 @@ test("calls that arrive together all see the session's watches restored", async 
     text: `Stopped watching ${watched}.`,
     refused: false,
   })
+})
+
+/** Give the session a kept file holding `content`. */
+const aKeptFile = ({ directory }: Place, content: string) => {
+  const watches = join(directory, 'beady-eye', 'watches')
+  mkdirSync(watches, { recursive: true })
+  const file = join(watches, `${session}.json`)
+  writeFileSync(file, content)
+  return file
+}
+
+/** The files a kept file the plugin could not read was moved aside to. */
+const setAside = ({ directory }: Place) => {
+  const watches = join(directory, 'beady-eye', 'watches')
+  return readdirSync(watches)
+    .filter((name) => name.startsWith(`${session}.json.unreadable-`))
+    .map((name) => join(watches, name))
+}
+
+const unreadable = 'The watches this session kept could not be read: '
+
+test('a session with no kept file watches nothing and is told nothing of it', async () => {
+  const place = { ...aPlace(), at: undefined }
+  const use = await aServer(place)
+
+  expect(await use('watching')).toEqual({ text: 'This session watches no beads.', refused: false })
+  await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+
+  expect((await use.nextMessage()).meta).toEqual({ watcher: 'down' })
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+})
+
+test('a kept file that does not decode is moved aside and the session told, not written over', async () => {
+  const place = { ...aPlace(), at: undefined }
+  aKeptFile(place, '[{"project": "summit-works"')
+  const use = await aServer(place)
+
+  expect(await use('watching')).toEqual({ text: 'This session watches no beads.', refused: false })
+  const { content, meta } = await use.nextMessage()
+  const [aside] = setAside(place)
+
+  expect(meta).toEqual({ watches: 'unreadable' })
+  expect(content).toStartWith(unreadable)
+  expect(content).toEndWith(
+    `\nThe file was moved to ${aside}, and this session watches none of the beads it named. Watch again each bead the session still waits on.`,
+  )
+  await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  expect(readFileSync(aside as string, 'utf8')).toBe('[{"project": "summit-works"')
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+})
+
+test('a kept file that cannot be read is moved aside and the session told, not written over', async () => {
+  const place = { ...aPlace(), at: undefined }
+  const file = aKeptFile(place, JSON.stringify([{ project: 'harbour', id: 'hbr-2' }]))
+  chmodSync(file, 0o000)
+  const use = await aServer(place)
+
+  expect(await use('watching')).toEqual({ text: 'This session watches no beads.', refused: false })
+  const { content, meta } = await use.nextMessage()
+  const [aside] = setAside(place)
+
+  expect(meta).toEqual({ watches: 'unreadable' })
+  expect(content).toStartWith(`${unreadable}PermissionDenied`)
+  expect(content).toContain(`\nThe file was moved to ${aside}, `)
+  await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  chmodSync(aside as string, 0o600)
+  expect(JSON.parse(readFileSync(aside as string, 'utf8'))).toEqual([
+    { project: 'harbour', id: 'hbr-2' },
+  ])
+})
+
+test('a kept file that cannot be read or moved aside is told of before anything writes over it', async () => {
+  const place = { ...aPlace(), at: undefined }
+  aKeptFile(place, 'not json')
+  refuseWrites(place)
+  const use = await aServer(place)
+
+  expect(await use('watching')).toEqual({ text: 'This session watches no beads.', refused: false })
+  const { content, meta } = await use.nextMessage()
+
+  expect(meta).toEqual({ watches: 'unreadable' })
+  expect(content).toStartWith(unreadable)
+  expect(content).toContain('\nIt could not be moved aside: PermissionDenied')
+  expect(content).toEndWith(
+    '. This session watches none of the beads it named, and its next watch or unwatch writes over the file.',
+  )
+  expect(setAside(place)).toEqual([])
+  expect(
+    readFileSync(join(place.directory, 'beady-eye', 'watches', `${session}.json`), 'utf8'),
+  ).toBe('not json')
 })
 
 test('a server keeps the first session id it learns', async () => {

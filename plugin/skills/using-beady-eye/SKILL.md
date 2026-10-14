@@ -66,6 +66,9 @@ the gap. If the work cannot wait, read the bead once with `bd`.
 A comment made while the watcher was down arrives as a count, not text, so read
 it with `bd` when the watcher is back.
 
+A `watches="unreadable"` block means the watches this session kept could not be
+read, so it now watches none of them. Watch again each bead it still waits on.
+
 ## Unwatching
 
 A watch outlives the bead closing and the session restarting, so nothing ends it
