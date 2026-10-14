@@ -831,7 +831,7 @@ refuted true smell is invisible. Only refute when you can affirmatively show the
 
 // ===========================================================================
 const date = A.date || 'undated'
-const reportPath = A.reportPath || `docs/effect-native-audit-${date}.md`
+const reportPath = A.reportPath || `target/effect-native-audit-${date}.md`
 // All four axes run by default; A.axes (e.g. ['behaviour']) restricts the sweep — cheap to re-run
 // a single axis after editing its prompts, or to resume just the one that failed.
 const AXES = A.axes || ['substitution', 'structural', 'modelling', 'behaviour']

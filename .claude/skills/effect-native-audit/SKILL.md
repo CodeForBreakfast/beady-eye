@@ -151,8 +151,8 @@ died is returned as unverified, never as refuted.
    `/workflows`. To run one axis, pass `axes: ['behaviour']`. `reportPath`
    overrides where the report goes.
 
-4. The workflow writes the report to `docs/effect-native-audit-<date>.md` and
-   returns `{ confirmed[], lowConfidence[], unverified[], refutedCount, coverage }`.
+4. The workflow writes the report to `target/effect-native-audit-<date>.md`,
+   which git ignores, and returns `{ confirmed[], lowConfidence[], unverified[], refutedCount, coverage }`.
    `coverage` names any finder that failed, any group with unverified findings,
    and any that fell back to fetching. Re-run an incomplete group on resume.
 
