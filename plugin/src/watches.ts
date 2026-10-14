@@ -19,9 +19,11 @@ import {
 } from 'effect'
 import {
   askAbout,
-  type Bead,
+  Bead,
+  type BeadId,
   type Down,
   type Heard,
+  type ProjectName,
   type Said,
   type Timing,
   WATCHER_TIMING,
@@ -31,7 +33,7 @@ import {
 export interface Settings<R> {
   readonly findWatcher: Effect.Effect<Option.Option<string>, never, R>
   /** The projects a bead named without one is looked for in. */
-  readonly projects: Effect.Effect<readonly string[], never, R>
+  readonly projects: Effect.Effect<readonly ProjectName[], never, R>
   readonly timing?: Timing
 }
 
@@ -111,13 +113,7 @@ const watchesDirectory = Config.NonEmptyString('XDG_STATE_HOME').pipe(
 const FILENAME_SAFE = /[^a-zA-Z0-9._-]/g
 
 const KeptWatches = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      project: Schema.String,
-      id: Schema.String,
-      told: Schema.optional(Told),
-    }),
-  ),
+  Schema.Array(Schema.Struct({ ...Bead.fields, told: Schema.optional(Told) })),
 )
 
 /** The bead a bead or gone line names. */
@@ -323,8 +319,8 @@ export interface Watches {
    * the first id the server has been given. A server serves one session, so
    * a later id changes nothing. */
   learn(session: string | undefined): Effect.Effect<void>
-  watch(id: string, project: string | undefined): Effect.Effect<Answer>
-  unwatch(id: string, project: string | undefined): Effect.Effect<Answer>
+  watch(id: BeadId, project: ProjectName | undefined): Effect.Effect<Answer>
+  unwatch(id: BeadId, project: ProjectName | undefined): Effect.Effect<Answer>
   readonly watching: Effect.Effect<Answer>
   /** Each message for the session, until the watches are let go. */
   readonly news: Stream.Stream<News>
@@ -575,7 +571,7 @@ export const makeWatches = <R>(
       })
 
     /** The project of the one bead the watcher has with `id`. */
-    const projectHolding = (id: string) =>
+    const projectHolding = (id: BeadId) =>
       Effect.gen(function* () {
         const answer = yield* Effect.flatMap(settings.projects, (projects) =>
           askAbout(id, projects, settings.findWatcher, timing),
@@ -585,7 +581,7 @@ export const makeWatches = <R>(
             `The watcher is down, so the project holding ${id} cannot be found: ${whyDown[answer]}. Name its project to watch it from when the watcher answers.`,
           )
         }
-        const distinct = (projects: readonly string[]) => [...new Set(projects)]
+        const distinct = (projects: readonly ProjectName[]) => [...new Set(projects)]
         const about = answer.lines.flatMap((said) => {
           const named = beadNamedIn(said)
           return named?.id === id ? [{ project: named.project, holds: said.line === 'bead' }] : []

@@ -5,8 +5,9 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
-import { Data, Effect, Stream } from 'effect'
+import { Data, Effect, Option, Schema, Stream } from 'effect'
 import { version } from '../package.json'
+import { BeadId, ProjectName } from './watcher'
 import type { Answer, Watches } from './watches'
 
 const aBead: Tool['inputSchema'] = {
@@ -52,9 +53,8 @@ const instructions = `**Watching.** beady-eye wakes this session when a bead it 
 
 **When nothing is listening.** A block with \`watcher="down"\` says the watcher is down, and why, and names the beads it cannot watch. Their watches are kept, and a block with \`watcher="answering"\` says when it is back, with any watched bead that changed meanwhile. \`tracker="unreachable"\` and \`tracker="ok"\`, with a \`project\`, say the same of one tracker. A session started without this plugin's channel allowed receives no blocks at all, while its tools still answer.`
 
-/** A word the watcher can read on one line: something, with no space in it. */
-const word = (value: unknown): string | undefined =>
-  typeof value === 'string' && /^\S+$/.test(value) ? value : undefined
+/** The bead a `watch` or `unwatch` call names. */
+const NamedBead = Schema.Struct({ id: BeadId, project: Schema.optional(ProjectName) })
 
 const answering = ({ text, refused }: Answer): CallToolResult => ({
   content: [{ type: 'text', text }],
@@ -67,14 +67,14 @@ const call = (
   args: Record<string, unknown>,
 ): Effect.Effect<Answer> => {
   if (name === 'watching') return watches.watching
-  const id = word(args['id'])
-  const project = word(args['project'])
-  if (id === undefined || (args['project'] !== undefined && project === undefined)) {
+  const named = Schema.decodeUnknownOption(NamedBead)(args)
+  if (Option.isNone(named)) {
     return Effect.succeed({
       text: "A bead's id and project are each one word with no space in it.",
       refused: true,
     })
   }
+  const { id, project } = named.value
   if (name === 'watch') return watches.watch(id, project)
   if (name === 'unwatch') return watches.unwatch(id, project)
   return Effect.succeed({ text: `There is no tool ${name}.`, refused: true })

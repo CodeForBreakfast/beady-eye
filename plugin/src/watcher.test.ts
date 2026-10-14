@@ -3,7 +3,15 @@ import { chmodSync, lstatSync, mkdirSync, symlinkSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
 import { ConfigProvider, Effect, Fiber, type FileSystem, Option, Queue, Stream } from 'effect'
-import { aPrivateDirectory, aWatcherAt, cleanUp, cleanUpAfterEach, said } from './test-watcher'
+import {
+  anId,
+  aPrivateDirectory,
+  aProject,
+  aWatcherAt,
+  cleanUp,
+  cleanUpAfterEach,
+  said,
+} from './test-watcher'
 import {
   askAbout,
   type Heard,
@@ -24,7 +32,7 @@ const timing: Timing = {
 }
 
 afterEach(cleanUpAfterEach)
-const bead = { project: 'summit-works', id: 'smt-4kd3p.20' }
+const bead = { project: aProject('summit-works'), id: anId('smt-4kd3p.20') }
 const asked = 'watch summit-works smt-4kd3p.20\n'
 
 const beadLine = {
@@ -38,9 +46,13 @@ const beadLine = {
 /** The bead line as the plugin reads it. */
 const beadHeard = {
   line: 'bead',
-  project: 'summit-works',
+  project: aProject('summit-works'),
   ready: false,
-  row: { id: 'smt-4kd3p.20', title: 'the daily wallpaper timer calls dms', status: 'blocked' },
+  row: {
+    id: anId('smt-4kd3p.20'),
+    title: 'the daily wallpaper timer calls dms',
+    status: 'blocked',
+  },
 } as const
 const freshness = {
   line: 'freshness',
@@ -54,7 +66,7 @@ const freshness = {
 /** The freshness line as the plugin reads it. */
 const freshnessHeard = {
   line: 'freshness',
-  project: 'summit-works',
+  project: aProject('summit-works'),
   protocol: 1,
   tracker: 'ok',
 } as const
@@ -270,6 +282,32 @@ test('a protocol the plugin does not know is a watcher that is down', async () =
   }
 })
 
+test('a line naming a project or bead id that is not one word is a watcher speaking another protocol', async () => {
+  for (const answer of [
+    said({ ...beadLine, project: 'summit works' }, freshness),
+    said({ ...beadLine, row: { ...beadLine.row, id: 'smt-4kd3p.20\nwatch harbour' } }, freshness),
+    said({ line: 'gone', project: 'summit-works', id: 'smt 4kd3p.20' }, freshness),
+    said(
+      {
+        line: 'event',
+        project: 'summit-works',
+        event: { op: 'status_changed', issue_id: 'smt-4kd3p.20 smt-4kd3p.13' },
+      },
+      freshness,
+    ),
+    said(beadLine, { ...freshness, project: 'summit\nworks' }),
+  ]) {
+    const path = join(aPrivateDirectory(), 'watcher.sock')
+    const watcher = await aWatcherAt(path)
+    const session = watching(path)
+
+    ;(await watcher.next()).connection.write(answer)
+
+    expect(await session.next()).toEqual({ down: 'protocol' })
+    await session.stop()
+  }
+})
+
 test("a socket that is not the user's own is not believed", async () => {
   const open = join(aPrivateDirectory(), 'open')
   mkdirSync(open)
@@ -400,12 +438,29 @@ test("the config's projects are named by their names", async () => {
     '[[projects]]\nname = "summit-works"\npath = "/home/mira/summit-works"\n\n[[projects]]\nname = "harbour"\npath = "/srv/harbour"\n',
   )
 
-  expect(await run(projectsNamedIn(config))).toEqual(['summit-works', 'harbour'])
-  expect(await run(projectsNamedIn(join(directory, 'missing.toml')))).toEqual([])
+  expect<readonly string[]>(await run(projectsNamedIn(config))).toEqual(['summit-works', 'harbour'])
+  expect<readonly string[]>(await run(projectsNamedIn(join(directory, 'missing.toml')))).toEqual([])
+})
+
+test('a config project whose name is not one word is passed over', async () => {
+  const config = join(aPrivateDirectory(), 'config.toml')
+  writeFileSync(
+    config,
+    '[[projects]]\nname = "summit works"\npath = "/home/mira/summit-works"\n\n[[projects]]\nname = "harbour"\npath = "/srv/harbour"\n',
+  )
+
+  expect<readonly string[]>(await run(projectsNamedIn(config))).toEqual(['harbour'])
 })
 
 const asking = (path: string | undefined, projects: readonly string[]) =>
-  run(askAbout('smt-4kd3p.20', projects, at(path), timing))
+  run(
+    askAbout(
+      anId('smt-4kd3p.20'),
+      projects.map((project) => aProject(project)),
+      at(path),
+      timing,
+    ),
+  )
 
 test('asking about a bead asks each project and hangs up once each has answered', async () => {
   const path = join(aPrivateDirectory(), 'watcher.sock')
@@ -427,7 +482,13 @@ test('asking about a bead asks each project and hangs up once each has answered'
     'watch summit-works smt-4kd3p.20\nwatch harbour smt-4kd3p.20\nwatch dunmore smt-4kd3p.20\n',
   )
   expect(await answer).toEqual({
-    lines: [beadHeard, freshnessHeard, gone, { ...freshnessHeard, project: 'harbour' }, refused],
+    lines: [
+      beadHeard,
+      freshnessHeard,
+      { ...gone, project: aProject('harbour'), id: anId('smt-4kd3p.20') },
+      { ...freshnessHeard, project: aProject('harbour') },
+      refused,
+    ],
     unanswered: [],
   })
   await hungUp
@@ -469,7 +530,7 @@ test("asking about a bead takes each project's answer and nothing it says after"
   )
 
   expect(await answer).toEqual({
-    lines: [beadHeard, freshnessHeard, { ...freshnessHeard, project: 'harbour' }],
+    lines: [beadHeard, freshnessHeard, { ...freshnessHeard, project: aProject('harbour') }],
     unanswered: [],
   })
 })
@@ -490,7 +551,7 @@ test('asking about a bead stops waiting in time, and names the projects that did
 
   expect(await answer).toEqual({
     lines: [beadHeard, freshnessHeard],
-    unanswered: ['harbour'],
+    unanswered: [aProject('harbour')],
   })
   await hungUp
 })

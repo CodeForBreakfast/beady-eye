@@ -6,9 +6,12 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
-import { ConfigProvider, Effect, Exit, Option, Scope } from 'effect'
-import type { Timing } from './watcher'
+import { ConfigProvider, Effect, Exit, Option, Schema, Scope } from 'effect'
+import { BeadId, ProjectName, type Timing } from './watcher'
 import { makeWatches } from './watches'
+
+export const aProject = Schema.decodeSync(ProjectName)
+export const anId = Schema.decodeSync(BeadId)
 
 /** What each test leaves behind, for `cleanUpAfterEach` to undo. */
 export const cleanUp: (() => unknown)[] = []
@@ -80,7 +83,7 @@ export const someWatches = async (
   const watches = await Effect.runPromise(
     makeWatches({
       findWatcher: Effect.succeed(Option.fromNullishOr(at)),
-      projects: Effect.succeed(projects),
+      projects: Effect.succeed(projects.map((project) => aProject(project))),
       ...(timing === undefined ? {} : { timing }),
     }).pipe(
       Scope.provide(scope),
