@@ -319,7 +319,14 @@ own `bd`, and nothing else.
 to a bead that asked for one. It runs that project's `bd` the way the eye reads
 it, so whatever asks needs no map of trackers or credentials. No other `bd`
 command is passed, and no flag but `-r`/`--response`. A response that starts
-with a dash goes after `--`. Nothing after the project can pick another
+with a dash goes after `--`.
+
+`bdi bd <project> defer <bead> --until <date>` puts a bead off until a date a
+person chose, and takes no flag but `--until`. It reaches the tracker the
+same way, and `bdi --beads` gives each bead deferred to a date its
+`defer_until`.
+
+For both, nothing after the project can pick another
 tracker, and neither can a `BEADS_` or `BD_` variable the caller exports.
 What the project's own directory sets still applies. So a permission rule on
 `bdi bd <project>` holds a caller to that one project, provided the caller

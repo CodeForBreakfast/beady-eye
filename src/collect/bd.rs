@@ -1,8 +1,9 @@
 //! bd's command line as the way to a project's tracker.
 //!
-//! The one module that spells `bd -C <path> --readonly …`, and the two ways
-//! `bdi` writes: the `bd -C <path> human respond …` that `bdi bd` passes
-//! through, and the gate resolve and comment that settle a gate. Each question the
+//! The one module that spells `bd -C <path> --readonly …`, and the three ways
+//! `bdi` writes: the `bd -C <path> human respond …` and `bd -C <path> defer …`
+//! that `bdi bd` passes through, and the gate resolve and comment that settle
+//! a gate. Each question the
 //! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
 //! here and nowhere else. The roots to draw the rows under are read off the
 //! rows themselves, in `app::tracker`.
@@ -441,8 +442,8 @@ impl Cli<'_> {
 
 /// One project's tracker opened to settle its gates.
 ///
-/// Settling a gate is the second of the two ways `bdi` writes to a tracker,
-/// beside the `human respond` that `bdi bd` passes through. `resolve` and
+/// Settling a gate is the third of the three ways `bdi` writes to a tracker,
+/// beside the `human respond` and `defer` that `bdi bd` passes through. `resolve` and
 /// `comment` are those writes, and everything else here is a read.
 pub struct Settling<'r>(Reader<'r>);
 
@@ -849,13 +850,38 @@ fn rows(out: &str, read: &str) -> Result<Vec<Bead>, RunFailure> {
     parsed(out).map_err(|e| RunFailure::parse("bd", e.root_cause()).reading(read))
 }
 
-/// The one bd command `bdi bd` passes through, and the first of the two ways
-/// `bdi` writes. `Settling` is the second.
-const PASSED_THROUGH: [&str; 2] = ["human", "respond"];
+/// A bd command `bdi bd` passes through, and the flags it is passed with.
+struct Passed {
+    command: &'static [&'static str],
+    /// Each takes the word after it as its value, whatever the word looks
+    /// like.
+    flags: &'static [&'static str],
+}
 
-/// The flags `bd human respond` takes its response by. Each takes the word
-/// after it as that response, whatever the word looks like.
-const RESPONSE: [&str; 2] = ["-r", "--response"];
+/// The bd commands `bdi bd` passes through, which are two of the three ways
+/// `bdi` writes. `Settling` is the third.
+const PASSED_THROUGH: [Passed; 2] = [
+    Passed {
+        command: &["human", "respond"],
+        flags: &["-r", "--response"],
+    },
+    Passed {
+        command: &["defer"],
+        flags: &["--until"],
+    },
+];
+
+/// Whether `word` is `flag` with its value joined on, as `--until=x` or
+/// `-rx`.
+fn joined(word: &str, flag: &str) -> bool {
+    word.strip_prefix(flag).is_some_and(|value| {
+        if flag.starts_with("--") {
+            value.starts_with('=')
+        } else {
+            !value.is_empty()
+        }
+    })
+}
 
 /// bd's argv for `asked`, run against the tracker in `path` and no other.
 ///
@@ -863,26 +889,35 @@ const RESPONSE: [&str; 2] = ["-r", "--response"];
 /// only if nothing later on the line can pick another tracker. bd reads its
 /// flags wherever they stand before a `--`, so `-C`, `--db`, `--database` or
 /// `--global` anywhere there would outrank the `-C` this puts first. Every
-/// flag but the response is refused, so one bd adds later is refused too.
+/// flag but the command's own is refused, so one bd adds later is refused
+/// too.
 pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<String>> {
-    if asked.len() < PASSED_THROUGH.len() || asked[..PASSED_THROUGH.len()] != PASSED_THROUGH {
+    let Some(passed) = PASSED_THROUGH.iter().find(|passed| {
+        asked
+            .iter()
+            .map(String::as_str)
+            .take(passed.command.len())
+            .eq(passed.command.iter().copied())
+    }) else {
         anyhow::bail!(
-            "bdi bd passes only `human respond` through to a tracker, and was asked for `{}`",
+            "bdi bd passes only `human respond` and `defer` through to a tracker, and was \
+             asked for `{}`",
             asked.join(" ")
         );
-    }
-    let mut words = asked[PASSED_THROUGH.len()..].iter();
+    };
+    let mut words = asked[passed.command.len()..].iter();
     while let Some(word) = words.next() {
         match word.as_str() {
             "--" => break,
-            flag if RESPONSE.contains(&flag) => {
+            flag if passed.flags.contains(&flag) => {
                 words.next();
             }
-            response if response.starts_with("--response=") => {}
-            response if response.starts_with("-r") && !response.starts_with("--") => {}
+            given if passed.flags.iter().any(|flag| joined(given, flag)) => {}
             flag if flag.starts_with('-') && flag != "-" => anyhow::bail!(
-                "bdi bd passes `human respond` its bead and response and nothing else, so it \
-                 refuses {flag}; a response that starts with a dash goes after --"
+                "bdi bd passes `{}` no flag but {}, so it refuses {flag}; a word that starts \
+                 with a dash goes after --",
+                passed.command.join(" "),
+                passed.flags.join(" and ")
             ),
             _ => {}
         }
@@ -2512,11 +2547,13 @@ mod tests {
             "human dismiss dun-7",
             "human",
             "respond dun-7",
+            "undefer dun-7",
+            "deferred dun-7",
         ] {
             let refused = passed(line).expect_err(line);
 
             assert!(
-                refused.to_string().contains("human respond"),
+                refused.to_string().contains("`human respond` and `defer`"),
                 "{line:?} got: {refused}"
             );
         }
@@ -2558,5 +2595,46 @@ mod tests {
     fn a_response_that_looks_like_a_flag_is_still_a_response() {
         assert!(passed("human respond dun-7 -r --global").is_ok());
         assert!(passed("human respond dun-7 --response -C").is_ok());
+    }
+
+    #[test]
+    fn a_defer_until_a_date_is_passed_to_the_projects_tracker_as_written() {
+        assert_eq!(
+            passed("defer dun-7 --until 2026-03-20").expect("a defer is passed through"),
+            format!(
+                "-C {} defer dun-7 --until 2026-03-20",
+                project_dir().display()
+            )
+        );
+        assert!(passed("defer dun-7 --until=tomorrow").is_ok());
+    }
+
+    #[test]
+    fn a_defer_refuses_every_flag_but_the_date_and_names_it() {
+        for flag in ["--reason", "--json", "-q", "-u"] {
+            let line = format!("defer dun-7 --until tomorrow {flag} x");
+            let refused = passed(&line).expect_err(&line);
+
+            assert!(refused.to_string().contains(flag), "got: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_defer_refuses_a_flag_that_would_pick_another_tracker() {
+        for line in [
+            "defer dun-7 --until tomorrow -C /srv/work/ferry",
+            "defer dun-7 --until tomorrow --db=ferry",
+            "defer dun-7 --global --until tomorrow",
+            "defer -C /srv/work/ferry dun-7",
+        ] {
+            assert!(passed(line).is_err(), "{line:?} was passed through");
+        }
+    }
+
+    /// The flag a response is taken by is `human respond`'s alone.
+    #[test]
+    fn a_defer_refuses_the_response_flag() {
+        assert!(passed("defer dun-7 -r yes").is_err());
+        assert!(passed("human respond dun-7 --until tomorrow").is_err());
     }
 }
