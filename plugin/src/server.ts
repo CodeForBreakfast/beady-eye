@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
-import { Data, Effect, Option, Schema, Stream } from 'effect'
+import { Data, Effect, Match, Option, Schema, Stream } from 'effect'
 import { version } from '../package.json'
 import { BeadId, ProjectName } from './watcher'
 import { type Answer, type Block, SessionId, type Watches } from './watches'
@@ -108,23 +108,15 @@ export class SessionNotTold extends Data.TaggedError('SessionNotTold')<{
 }> {}
 
 /** The attributes of a `<channel source="beady-eye" …>` block. */
-const attributesOf = (block: Block): Record<string, string> => {
-  switch (block.is) {
-    case 'bead':
-      return {
-        project: block.project,
-        id: block.id,
-        status: block.status,
-        ready: String(block.ready),
-      }
-    case 'watcher':
-      return { watcher: block.watcher }
-    case 'tracker':
-      return { project: block.project, tracker: block.tracker }
-    case 'watches':
-      return { watches: block.watches }
-  }
-}
+const attributesOf = (block: Block): Record<string, string> =>
+  Match.value(block).pipe(
+    Match.discriminatorsExhaustive('is')({
+      bead: ({ project, id, status, ready }) => ({ project, id, status, ready: String(ready) }),
+      watcher: ({ watcher }) => ({ watcher }),
+      tracker: ({ project, tracker }) => ({ project, tracker }),
+      watches: ({ watches }) => ({ watches }),
+    }),
+  )
 
 /**
  * Puts a message into the session as a `<channel source="beady-eye" …>`
