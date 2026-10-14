@@ -100,6 +100,9 @@ interface Watch {
    * stopped. */
   readonly firstHeard: Deferred.Deferred<void>
   readonly connection: Fiber.Fiber<void>
+  /** Done once the session's file keeps the watch, with why not where it
+   * does not. */
+  accepting: Deferred.Deferred<Answer | undefined> | undefined
 }
 
 const SessionId = Schema.String.check(Schema.isUUID())
@@ -531,14 +534,25 @@ export const makeWatches = <R>(
           Effect.provide(context),
           Effect.forkIn(scope),
         )
-        const watch: Watch = { bead, known, accepted, firstHeard, connection }
+        const watch: Watch = {
+          bead,
+          known,
+          accepted,
+          firstHeard,
+          connection,
+          accepting: undefined,
+        }
         watches.set(keyOf(bead), watch)
         return watch
       })
 
+    const forget = (watch: Watch) => {
+      if (watches.get(keyOf(watch.bead)) === watch) watches.delete(keyOf(watch.bead))
+    }
+
     const stop = (watch: Watch) =>
       Effect.sync(() => {
-        watches.delete(keyOf(watch.bead))
+        forget(watch)
         watch.known.outage = undefined
         const { project } = watch.bead
         if (![...watches.values()].some(({ bead }) => bead.project === project)) {
@@ -550,20 +564,22 @@ export const makeWatches = <R>(
         Effect.andThen(tellBackOnceAllAre),
       )
 
-    const persist = keeping.withPermits(1)(
+    const acceptedWatches = () => [...watches.values()].filter((watch) => watch.accepted)
+
+    /** Make the session's file keep `kept`. A caller holds a `keeping`
+     * permit. */
+    const write = (kept: readonly Watch[]) =>
       Deferred.poll(file).pipe(
         Effect.flatMap(
           Option.match({
             onNone: () => Effect.void,
-            onSome: (kept) =>
-              Effect.flatMap(kept, (path) => {
-                const beads = [...watches.values()]
-                  .filter((watch) => watch.accepted)
-                  .map(({ bead: { project, id }, known }) => ({
-                    project,
-                    id,
-                    told: known.told,
-                  }))
+            onSome: (known) =>
+              Effect.flatMap(known, (path) => {
+                const beads = kept.map(({ bead: { project, id }, known }) => ({
+                  project,
+                  id,
+                  told: known.told,
+                }))
                 const written = `${path}.new`
                 return fs
                   .makeDirectory(directory, { recursive: true })
@@ -574,8 +590,42 @@ export const makeWatches = <R>(
               }),
           }),
         ),
-      ),
-    )
+      )
+
+    const persist = keeping.withPermits(1)(Effect.suspend(() => write(acceptedWatches())))
+
+    /** Accept `watch` once the session's file keeps it, or say why it is not
+     * watched. Calls watching the same bead together share one answer. */
+    const accept = (watch: Watch) =>
+      Effect.gen(function* () {
+        if (watches.get(keyOf(watch.bead)) !== watch) {
+          return refusal(`${named(watch.bead)} was unwatched before the watcher answered.`)
+        }
+        if (watch.accepting !== undefined) return yield* Deferred.await(watch.accepting)
+        const accepting = yield* Deferred.make<Answer | undefined>()
+        watch.accepting = accepting
+        const refused = yield* keeping.withPermits(1)(
+          Effect.gen(function* () {
+            if (watches.get(keyOf(watch.bead)) !== watch) {
+              return refusal(`${named(watch.bead)} was unwatched before the watcher answered.`)
+            }
+            const kept = yield* Effect.result(
+              write([...watches.values()].filter((kept) => kept.accepted || kept === watch)),
+            )
+            if (Result.isSuccess(kept)) {
+              watch.accepted = true
+              return undefined
+            }
+            forget(watch)
+            return refusal(
+              `${named(watch.bead)} is not watched, because the watch could not be kept: ${kept.failure.message}.`,
+            )
+          }),
+        )
+        if (refused !== undefined) yield* stop(watch)
+        yield* Deferred.succeed(accepting, refused)
+        return refused
+      })
 
     const restore = (id: string) =>
       Effect.gen(function* () {
@@ -669,20 +719,8 @@ export const makeWatches = <R>(
             yield* Effect.ignore(persist)
             return refused
           }
-          if (watches.get(keyOf(bead)) !== watch) {
-            return refusal(`${named(bead)} was unwatched before the watcher answered.`)
-          }
-          if (!watch.accepted) {
-            watch.accepted = true
-            const kept = yield* Effect.result(persist)
-            if (Result.isFailure(kept)) {
-              watch.accepted = false
-              yield* stop(watch)
-              return refusal(
-                `${named(bead)} is not watched, because the watch could not be kept: ${kept.failure.message}.`,
-              )
-            }
-          }
+          const unkept = yield* accept(watch)
+          if (unkept !== undefined) return unkept
           const { down, standing } = watch.known
           if (down === undefined) {
             return told(`Watching ${named(bead)}: ${describe(watch)}.`)
@@ -710,15 +748,18 @@ export const makeWatches = <R>(
               `This session watches ${id} in more than one project: ${matching.map(({ bead }) => bead.project).join(', ')}. Name its project.`,
             )
           }
-          const key = keyOf(only.bead)
-          watches.delete(key)
-          const kept = yield* Effect.result(persist)
-          if (Result.isFailure(kept)) {
-            watches.set(key, only)
-            return refusal(
-              `${named(only.bead)} is still watched, because stopping the watch could not be kept: ${kept.failure.message}.`,
-            )
-          }
+          const unkept = yield* keeping.withPermits(1)(
+            Effect.gen(function* () {
+              const kept = yield* Effect.result(
+                write(acceptedWatches().filter((watch) => watch !== only)),
+              )
+              if (Result.isSuccess(kept)) return forget(only)
+              return refusal(
+                `${named(only.bead)} is still watched, because stopping the watch could not be kept: ${kept.failure.message}.`,
+              )
+            }),
+          )
+          if (unkept !== undefined) return unkept
           yield* stop(only)
           return told(`Stopped watching ${named(only.bead)}.`)
         }),
