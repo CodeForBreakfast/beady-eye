@@ -256,7 +256,7 @@ test("a socket that is not the user's own is not believed", async () => {
   })
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'refused' })
+  expect(await session.next()).toEqual({ down: 'untrusted' })
   expect(connections).toBe(0)
 })
 
@@ -265,7 +265,7 @@ test('something other than a socket at the path is not believed', async () => {
   writeFileSync(path, '')
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'refused' })
+  expect(await session.next()).toEqual({ down: 'untrusted' })
 })
 
 test("a link to the user's own socket is not believed", async () => {
@@ -280,8 +280,17 @@ test("a link to the user's own socket is not believed", async () => {
   symlinkSync(socket, path)
   const session = watching(path)
 
-  expect(await session.next()).toEqual({ down: 'refused' })
+  expect(await session.next()).toEqual({ down: 'untrusted' })
   expect(connections).toBe(0)
+})
+
+test('a link to nothing is not believed', async () => {
+  const directory = aPrivateDirectory()
+  const path = join(directory, 'link.sock')
+  symlinkSync(join(directory, 'watcher.sock'), path)
+  const session = watching(path)
+
+  expect(await session.next()).toEqual({ down: 'untrusted' })
 })
 
 test('with nowhere to find a watcher the watcher is down', async () => {

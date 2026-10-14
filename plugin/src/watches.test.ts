@@ -266,6 +266,26 @@ test('watching while the watcher is down is accepted, and the answer says so', a
   )
 })
 
+test('a socket nobody listens at and one nobody could believe are told apart', async () => {
+  const nothing = aPlace()
+  const notASocket = aPlace()
+  writeFileSync(notASocket.at as string, '')
+
+  for (const [place, why] of [
+    [nothing, 'nothing at its socket took the connection'],
+    [
+      notASocket,
+      "the file at its socket is not believed, because it is a link, is not a socket, is not the user's own, or is under a directory somebody else may write to",
+    ],
+  ] as const) {
+    const use = await aServer(place)
+    expect(await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).toEqual({
+      text: `Watching ${watched} from when the watcher answers. The watcher is down: ${why}.`,
+      refused: false,
+    })
+  }
+})
+
 test("a session's watches are kept by replacing its file, never by writing into it", async () => {
   const place = { ...aPlace(), at: undefined }
   const use = await aServer(place)
@@ -831,7 +851,7 @@ const twoWatchedBeads = async (place: Place) => {
 
 const watcherDown = {
   content: [
-    "The watcher is down: nothing at its socket took the connection, or the socket is not the user's own.",
+    'The watcher is down: nothing at its socket took the connection.',
     'These beads are not watched until it is back:',
     '- smt-4kd3p.20 in summit-works',
     '- smt-4kd3p.20 in harbour',

@@ -246,7 +246,9 @@ const named = ({ project, id }: Bead) => `${id} in ${project}`
 const whyDown: Record<Down, string> = {
   nowhere:
     'the bdi config names no watcher socket, and there is no runtime directory to look for one in',
-  refused: "nothing at its socket took the connection, or the socket is not the user's own",
+  refused: 'nothing at its socket took the connection',
+  untrusted:
+    "the file at its socket is not believed, because it is a link, is not a socket, is not the user's own, or is under a directory somebody else may write to",
   closed: 'it closed the connection',
   wedged: 'it stopped sending lines',
   protocol:
