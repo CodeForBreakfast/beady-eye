@@ -45,6 +45,8 @@ struct Listed<'a> {
     labels: &'a [String],
     description: Option<String>,
     created_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    defer_until: Option<DateTime<Utc>>,
     metadata: &'a BTreeMap<String, String>,
 }
 
@@ -64,6 +66,7 @@ impl<'a> From<&'a Node> for Listed<'a> {
             labels: &node.labels,
             description: node.description().filter(|said| !said.is_empty()),
             created_at: node.created_at,
+            defer_until: node.defer_until,
             metadata: &node.metadata,
         }
     }

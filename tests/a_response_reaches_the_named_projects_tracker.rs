@@ -81,6 +81,22 @@ fn a_response_is_run_against_the_named_projects_tracker_and_bd_answers_the_calle
     assert_eq!(tracker.calls(), [RESPONDED]);
 }
 
+/// A defer goes the way a response does, to the named project's tracker.
+#[test]
+fn a_defer_until_a_date_is_run_against_the_named_projects_tracker() {
+    let home = a_home_naming_two_projects("defer-reaches-kadath", "");
+    let tracker = ShimmedTracker::beside(&home);
+    let deferred = "defer kad-1 --until 2026-03-20";
+    let said_by_bd = "* Deferred kad-1\n";
+    tracker.answers_for("kadath", deferred, said_by_bd);
+
+    let out = bdi(&home, &tracker, "bd kadath defer kad-1 --until 2026-03-20");
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(said(&out.stdout), said_by_bd);
+    assert_eq!(tracker.calls(), [deferred]);
+}
+
 /// A permission rule reads the command line, and an exported variable is not
 /// on it. So a database the caller exports never reaches bd, and the response
 /// lands where kadath's own config says. Only kadath has an answer, so a
@@ -195,6 +211,7 @@ fn any_command_line_but_a_response_is_refused_before_bd_is_reached() {
 
     for args in [
         "bd kadath close kad-1",
+        "bd kadath defer kad-1 --until tomorrow --db arkham",
         "bd kadath human respond kad-1 --db arkham yes",
         "bd kadath human respond kad-1 -C ../arkham yes",
         "bd kadath --global human respond kad-1 yes",

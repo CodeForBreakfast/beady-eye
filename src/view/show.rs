@@ -851,6 +851,7 @@ mod tests {
             labels: Vec::new(),
             created_at: None,
             updated_at: None,
+            defer_until: None,
             metadata: Default::default(),
             parent: Some(related(
                 "dun-7",
