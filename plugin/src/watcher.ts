@@ -7,10 +7,12 @@ import { dirname, join, resolve } from 'node:path'
 import {
   Cause,
   Config,
+  Context,
   Data,
   Duration,
   Effect,
   FileSystem,
+  Layer,
   Option,
   Queue,
   Ref,
@@ -42,6 +44,11 @@ export const WATCHER_TIMING: Timing = {
   answeredWithin: Duration.seconds(15),
   quietFor: Duration.minutes(1),
 }
+
+/** The watcher's timings, which a test shortens. */
+export const WatcherTiming = Context.Reference<Timing>('beady-eye/WatcherTiming', {
+  defaultValue: () => WATCHER_TIMING,
+})
 
 /**
  * Why a bead's connection is not watching: there is no path to look for a
@@ -172,6 +179,24 @@ export const whereTheWatcherIs = (
     )
   })
 
+/** Where to look for the watcher's socket, asked again for each connection. */
+export class WatcherLocation extends Context.Service<
+  WatcherLocation,
+  { readonly find: Effect.Effect<Option.Option<string>> }
+>()('beady-eye/WatcherLocation') {
+  /** Where the bdi config at `config` says the watcher is. */
+  static readonly namedIn = (config: string) =>
+    Layer.effect(
+      WatcherLocation,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        return {
+          find: whereTheWatcherIs(config).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+        }
+      }),
+    )
+}
+
 const A_GROUP_MAY_TAKE_NAMES = 0o030
 const ANYBODY_MAY_TAKE_NAMES = 0o003
 const NAMES_STAY_THEIR_OWNERS = 0o1000
@@ -295,14 +320,11 @@ const linesFrom = (at: string, asking: readonly string[]) =>
  * Connect to the watcher, send it `asking`, and read every line it sends of a
  * kind the plugin reads, until the connection is down.
  */
-const talkTo = <R>(
-  findWatcher: Effect.Effect<Option.Option<string>, never, R>,
-  asking: readonly string[],
-  timing: Timing,
-) =>
+const talkTo = (asking: readonly string[]) =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const at = yield* findWatcher
+      const timing = yield* WatcherTiming
+      const at = yield* (yield* WatcherLocation).find
       if (Option.isNone(at)) return yield* down('nowhere')
       const notBelieved = yield* whyNotBelieved(at.value)
       if (Option.isSome(notBelieved)) return yield* down(notBelieved.value)
@@ -340,14 +362,14 @@ const watchLine = (bead: Bead) => `watch ${bead.project} ${bead.id}`
  * stop a watch, so each bead has a connection of its own, and it closes when
  * the stream stops being read.
  */
-export const watchBead = <R>(
+export const watchBead = (
   bead: Bead,
-  findWatcher: Effect.Effect<Option.Option<string>, never, R>,
-  timing: Timing = WATCHER_TIMING,
-): Stream.Stream<Heard, never, R | FileSystem.FileSystem> =>
+): Stream.Stream<Heard, never, WatcherLocation | FileSystem.FileSystem> =>
   Stream.unwrap(
-    Effect.map(Ref.make(0), (failures) => {
-      const connection = answersIn(talkTo(findWatcher, [watchLine(bead)], timing)).pipe(
+    Effect.gen(function* () {
+      const timing = yield* WatcherTiming
+      const failures = yield* Ref.make(0)
+      const connection = answersIn(talkTo([watchLine(bead)])).pipe(
         Stream.tap((batch) =>
           batch.at(-1)?.line === 'freshness' ? Ref.set(failures, 0) : Effect.void,
         ),
@@ -372,14 +394,12 @@ export interface Asked {
  * Ask the watcher once about the bead `id` in each of `projects`, reading as
  * far as each project's freshness line or refusal, and hang up. A watcher
  * keeps a project waiting until its first read, so the asking stops at
- * `timing.answeredWithin` whatever has arrived.
+ * the timing's `answeredWithin` whatever has arrived.
  */
-export const askAbout = <R>(
+export const askAbout = (
   id: BeadId,
   projects: readonly ProjectName[],
-  findWatcher: Effect.Effect<Option.Option<string>, never, R>,
-  timing: Timing = WATCHER_TIMING,
-): Effect.Effect<Asked, WatcherDown, R | FileSystem.FileSystem> => {
+): Effect.Effect<Asked, WatcherDown, WatcherLocation | FileSystem.FileSystem> => {
   const asking = new Map(projects.map((project) => [watchLine({ project, id }), project]))
   const unasked: Asked = { lines: [], unanswered: [...asking.values()] }
   if (asking.size === 0) return Effect.succeed(unasked)
@@ -396,10 +416,12 @@ export const askAbout = <R>(
         : asked.unanswered,
     }
   }
-  return talkTo(findWatcher, [...asking.keys()], timing).pipe(
+  return talkTo([...asking.keys()]).pipe(
     Stream.scan(() => unasked, take),
     Stream.takeUntil((asked) => asked.unanswered.length === 0),
-    Stream.interruptWhen(Effect.sleep(timing.answeredWithin)),
+    Stream.interruptWhen(
+      Effect.flatMap(WatcherTiming, ({ answeredWithin }) => Effect.sleep(answeredWithin)),
+    ),
     Stream.runLast,
     Effect.map(Option.getOrElse(() => unasked)),
   )

@@ -28,6 +28,8 @@ import {
   pauseAfter,
   projectsNamedIn,
   type Timing,
+  WatcherLocation,
+  WatcherTiming,
   watchBead,
   whereTheWatcherIs,
 } from './watcher'
@@ -83,7 +85,14 @@ const freshnessHeard = {
 const run = <A>(effect: Effect.Effect<A, never, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)))
 
-const at = (path: string | undefined) => Effect.succeed(Option.fromNullishOr(path))
+/** Look for the watcher at `path`, on the test's timings. */
+const at =
+  (path: string | undefined, timed: Timing = timing) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(WatcherLocation, { find: Effect.succeed(Option.fromNullishOr(path)) }),
+      Effect.provideService(WatcherTiming, timed),
+    )
 
 /** A watcher killed where it stood, which leaves its socket at the path with
  * nothing listening. One that closes its server removes the socket. */
@@ -105,8 +114,9 @@ const aWatcherThatDied = async (at: string) => {
 const watching = (path: string | undefined, watchTiming = timing) => {
   const told = Effect.runSync(Queue.unbounded<Heard>())
   const watch = Effect.runFork(
-    watchBead(bead, at(path), watchTiming).pipe(
+    watchBead(bead).pipe(
       Stream.runForEach((heard) => Queue.offer(told, heard)),
+      at(path, watchTiming),
       Effect.provide(NodeFileSystem.layer),
     ),
   )
@@ -121,7 +131,7 @@ const watching = (path: string | undefined, watchTiming = timing) => {
 
 /** What a session that stops after hearing `count` things is told. */
 const firstHeard = (path: string, count: number) =>
-  run(watchBead(bead, at(path), timing).pipe(Stream.take(count), Stream.runCollect))
+  run(watchBead(bead).pipe(Stream.take(count), Stream.runCollect, at(path)))
 
 const pause = (millis: number) => new Promise((resolve) => setTimeout(resolve, millis))
 
@@ -473,9 +483,10 @@ const asking = (path: string | undefined, projects: readonly string[]) =>
     askAbout(
       anId('smt-4kd3p.20'),
       projects.map((project) => aProject(project)),
+    ).pipe(
+      Effect.catchTag('WatcherDown', ({ why }) => Effect.succeed(why)),
       at(path),
-      timing,
-    ).pipe(Effect.catchTag('WatcherDown', ({ why }) => Effect.succeed(why))),
+    ),
   )
 
 test('asking about a bead asks each project and hangs up once each has answered', async () => {

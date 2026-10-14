@@ -6,8 +6,8 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
-import { ConfigProvider, Effect, Exit, Option, Schema, Scope } from 'effect'
-import { BeadId, ProjectName, type Timing } from './watcher'
+import { ConfigProvider, Effect, Exit, identity, Option, Schema, Scope } from 'effect'
+import { BeadId, ProjectName, type Timing, WatcherLocation, WatcherTiming } from './watcher'
 import { makeWatches } from './watches'
 
 export const aProject = Schema.decodeSync(ProjectName)
@@ -81,12 +81,10 @@ export const someWatches = async (
 ) => {
   const scope = Scope.makeUnsafe()
   const watches = await Effect.runPromise(
-    makeWatches({
-      findWatcher: Effect.succeed(Option.fromNullishOr(at)),
-      projects: Effect.succeed(projects.map((project) => aProject(project))),
-      ...(timing === undefined ? {} : { timing }),
-    }).pipe(
+    makeWatches(Effect.succeed(projects.map((project) => aProject(project)))).pipe(
       Scope.provide(scope),
+      Effect.provideService(WatcherLocation, { find: Effect.succeed(Option.fromNullishOr(at)) }),
+      timing === undefined ? identity : Effect.provideService(WatcherTiming, timing),
       Effect.provide(NodeFileSystem.layer),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
