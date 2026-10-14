@@ -108,14 +108,13 @@ interface Watch {
   accepting: Deferred.Deferred<Answer | undefined> | undefined
 }
 
-const SessionId = Schema.String.check(Schema.isUUID())
+const SessionId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SessionId'))
+type SessionId = typeof SessionId.Type
 
 const watchesDirectory = Config.NonEmptyString('XDG_STATE_HOME').pipe(
   Config.withDefault(join(homedir(), '.local', 'state')),
   Config.map((state) => join(state, 'beady-eye', 'watches')),
 )
-
-const FILENAME_SAFE = /[^a-zA-Z0-9._-]/g
 
 const KeptWatches = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ ...Bead.fields, told: Schema.optional(Told) })),
@@ -355,7 +354,7 @@ export const makeWatches = <R>(
     const scope = yield* Effect.scope
     const fs = yield* FileSystem.FileSystem
     const directory = yield* Effect.orDie(watchesDirectory)
-    const session = yield* Deferred.make<string>()
+    const session = yield* Deferred.make<SessionId>()
     /** The session's file, once its watches are back. */
     const file = yield* Deferred.make<string>()
     const keeping = yield* Semaphore.make(1)
@@ -629,9 +628,9 @@ export const makeWatches = <R>(
         )
       })
 
-    const restore = (id: string) =>
+    const restore = (id: SessionId) =>
       Effect.gen(function* () {
-        const path = join(directory, `${id.replace(FILENAME_SAFE, '_')}.json`)
+        const path = join(directory, `${id}.json`)
         const kept = yield* fs.readFileString(path).pipe(
           Effect.flatMap(Schema.decodeEffect(KeptWatches)),
           Effect.catchReason('PlatformError', 'NotFound', () => Effect.succeed([])),
