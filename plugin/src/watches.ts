@@ -13,6 +13,7 @@ import {
   Fiber,
   FiberSet,
   FileSystem,
+  Match,
   Number as Num,
   Option,
   Predicate,
@@ -348,18 +349,15 @@ const refusalOf = ({ bead, known }: Watch): Answer | undefined => {
   return refusal(`The watcher refused to watch ${named(bead)}: ${standing.reason}.`)
 }
 
-const describe = ({ known: { standing } }: Watch): string => {
-  switch (standing.is) {
-    case 'bead':
-      return `"${standing.title}", ${standing.status}, ${standing.ready ? 'ready' : 'not ready'}`
-    case 'gone':
-      return 'gone from its tracker'
-    case 'refused':
-      return `refused by the watcher: ${standing.reason}`
-    case 'unheard':
-      return 'not heard of yet'
-  }
-}
+const describe = ({ known: { standing } }: Watch): string =>
+  Match.value(standing).pipe(
+    Match.discriminatorsExhaustive('is')({
+      bead: ({ title, status, ready }) => `"${title}", ${status}, ${ready ? 'ready' : 'not ready'}`,
+      gone: () => 'gone from its tracker',
+      refused: ({ reason }) => `refused by the watcher: ${reason}`,
+      unheard: () => 'not heard of yet',
+    }),
+  )
 
 export interface Watches {
   /** Take the session's id, and watch again what it watched, where this is
