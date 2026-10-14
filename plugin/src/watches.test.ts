@@ -795,11 +795,17 @@ test('a bead whose project the watcher refused for a while is compared with what
   expect(await use.nextMessage()).toEqual(started)
 })
 
+/** Make the session's file unwritable until the test ends. */
+const refuseWrites = ({ directory }: Place) => {
+  const watches = join(directory, 'beady-eye', 'watches')
+  chmodSync(watches, 0o500)
+  cleanUp.unshift(() => chmodSync(watches, 0o700))
+}
+
 test('a watch goes on being told of changes where the session file cannot be written', async () => {
   const place = aPlace()
   const { use, connection } = await aWatchedBead(place)
-  chmodSync(join(place.directory, 'beady-eye', 'watches'), 0o500)
-  cleanUp.unshift(() => chmodSync(join(place.directory, 'beady-eye', 'watches'), 0o700))
+  refuseWrites(place)
 
   connection.write(said(theBead({ ready: true }), freshness('summit-works')))
   await use.nextMessage()
@@ -810,6 +816,75 @@ test('a watch goes on being told of changes where the session file cannot be wri
   expect((await use.nextMessage()).content).toBe(
     `${heading}\n- Its status went from blocked to in_progress.`,
   )
+})
+
+test('a watch the session file cannot keep is refused, and not watched', async () => {
+  const place = aPlace()
+  const { use, watcher } = await aWatchedBead(place)
+  refuseWrites(place)
+
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
+  const { connection } = await watcher.next()
+  const closed = new Promise((resolve) => connection.on('close', resolve))
+  connection.write(said(beadLine('harbour'), freshness('harbour')))
+
+  const { text, refused } = await answer
+  expect(refused).toBe(true)
+  expect(text).toStartWith(
+    'smt-4kd3p.20 in harbour is not watched, because the watch could not be kept: ',
+  )
+  await closed
+  expect((await use('watching')).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+})
+
+test('watching a bead a server started again watches keeps it, though the session file cannot be written', async () => {
+  const place = aPlace()
+  const { use: before, watcher } = await aWatchedBead(place)
+  await before.exit()
+  const after = await aServer(place)
+  const listed = after('watching')
+  const { connection } = await watcher.next()
+  await listed
+  refuseWrites(place)
+  connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+
+  expect(await after('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).toEqual({
+    text: `Watching ${watched}: ${asWatched}.`,
+    refused: false,
+  })
+})
+
+test('watching a bead twice at once that the session file cannot keep refuses both', async () => {
+  const place = aPlace()
+  const { use, watcher } = await aWatchedBead(place)
+  refuseWrites(place)
+
+  const first = use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
+  const { connection } = await watcher.next()
+  const second = use('watch', { id: 'smt-4kd3p.20', project: 'harbour' })
+  connection.write(said(beadLine('harbour'), freshness('harbour')))
+
+  const answers = await Promise.all([first, second])
+  expect(answers.map(({ refused }) => refused)).toEqual([true, true])
+  expect(answers[1]?.text).toBe(answers[0]?.text)
+  expect((await use('watching')).text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+})
+
+test('an unwatch the session file cannot keep is refused, and the bead stays watched', async () => {
+  const place = aPlace()
+  const { use, connection } = await aWatchedBead(place)
+  refuseWrites(place)
+
+  const { text, refused } = await use('unwatch', { id: 'smt-4kd3p.20' })
+  expect(refused).toBe(true)
+  expect(text).toStartWith(
+    `${watched} is still watched, because stopping the watch could not be kept: `,
+  )
+  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+
+  connection.write(said(startedLine, freshness('summit-works')))
+  expect(await use.nextMessage()).toEqual(started)
 })
 
 test('a change a server saw and never told the session is told by the next server', async () => {
