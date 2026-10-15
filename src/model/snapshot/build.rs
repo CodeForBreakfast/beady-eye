@@ -132,6 +132,7 @@ pub fn build_tree(
                 created_at: bead.created_at,
                 updated_at: bead.updated_at,
                 defer_until: bead.defer_until,
+                due_at: bead.due_at,
                 metadata: bead.metadata.clone(),
                 parent: tied.parent,
                 depends_on: tied.depends_on,

@@ -47,6 +47,8 @@ struct Listed<'a> {
     created_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     defer_until: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    due_at: Option<DateTime<Utc>>,
     metadata: &'a BTreeMap<String, String>,
 }
 
@@ -67,6 +69,7 @@ impl<'a> From<&'a Node> for Listed<'a> {
             description: node.description().filter(|said| !said.is_empty()),
             created_at: node.created_at,
             defer_until: node.defer_until,
+            due_at: node.due_at,
             metadata: &node.metadata,
         }
     }
