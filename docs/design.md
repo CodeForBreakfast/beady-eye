@@ -489,16 +489,16 @@ of them. Its config names which keys to notice:
 dunwich = ["dun-7"]
 
 [[badges]]                              # rendered as a marker on the row
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 render = "⇢ {}"
 
 [[badges]]
-key    = "metadata.blocked_on"
-match  = "human"
-render = "⏸ waiting"
+key    = "metadata.stage"
+match  = "review"
+render = "⏸ in review"
 ```
 
-Nothing in the model knows what `delivery_pr` means. It knows a key was
+Nothing in the model knows what `pr_ref` means. It knows a key was
 configured, found on a bead, and should be drawn. A setup with different keys —
 or none — works the same way.
 
@@ -2170,7 +2170,7 @@ says which kind it is.
 **A bead line** is one bead as its tracker now has it:
 
 ```json
-{ "line": "bead", "project": "summit-works", "ready": false, "blocked_by": ["smt-4kd3p.13"], "bd": { "ready": false, "blocked_by": ["smt-4kd3p.13"] }, "row": { "id": "smt-4kd3p.20", "title": "the daily wallpaper timer calls dms", "status": "blocked", "parent": "smt-4kd3p", "dependencies": [ { "depends_on_id": "smt-4kd3p", "type": "parent-child" }, { "depends_on_id": "smt-4kd3p.13", "type": "blocks" } ], "labels": [], "metadata": { "blocked_on": "human" }, "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z" } }
+{ "line": "bead", "project": "summit-works", "ready": false, "blocked_by": ["smt-4kd3p.13"], "bd": { "ready": false, "blocked_by": ["smt-4kd3p.13"] }, "row": { "id": "smt-4kd3p.20", "title": "the daily wallpaper timer calls dms", "status": "blocked", "parent": "smt-4kd3p", "dependencies": [ { "depends_on_id": "smt-4kd3p", "type": "parent-child" }, { "depends_on_id": "smt-4kd3p.13", "type": "blocks" } ], "labels": [], "metadata": { "stage": "review" }, "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z" } }
 ```
 
 `row` is bd's row whole, cut here to the fields this section names. `ready`
@@ -2651,7 +2651,7 @@ freshness line's `protocol` is what keeps them honest.
           "started_at": "2026-08-29T10:00:00Z",
           "closed_at": null,
           "badges": [
-            { "key": "blocked_on", "text": "⏸ waiting", "short": null, "link": null, "colour": null, "drawn_on": "own" }
+            { "key": "stage", "text": "⏸ in review", "short": null, "link": null, "colour": null, "drawn_on": "own" }
           ],
           "agent": {
             "pane": { "session": "default", "id": "wCM:p9" },
