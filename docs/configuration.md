@@ -35,7 +35,7 @@ path = "/home/you/dev/kadath"
 credential_command = "secret-tool lookup tracker kadath"
 
 [[projects.badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 render = "⇢ kadath/{}"
 
 [[projects]]
@@ -53,13 +53,13 @@ user = "reader"
 arkham = ["ark-1", "ark-10"]
 
 [[badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 render = "⇢ {}"
 
 [[badges]]
-key    = "metadata.blocked_on"
-match  = "human"
-render = "⏸ waiting"
+key    = "metadata.stage"
+match  = "review"
+render = "⏸ in review"
 
 [join]
 pane_key = "agent_pane"
@@ -299,7 +299,7 @@ A capture the pattern names is `render`'s to place by that name:
 
 ```toml
 [[badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 match  = "[^/]+/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 ```
@@ -332,14 +332,14 @@ modifier held: [Opening a badge](#opening-a-badge) has that.
 
 ```toml
 [[badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ #{number}"
 link   = "https://forge.invalid/{owner}/{repo}/pull/{number}"
 ```
 
 **A `link` naming something this value did not supply is no link at all.** A
-`delivery_pr` written as a bare `12` gives an optional `owner` and `repo`
+`pr_ref` written as a bare `12` gives an optional `owner` and `repo`
 nothing, and a URL built round the parts that were never there points at
 somewhere else. The badge still draws its `render`; it just has nowhere to go.
 
@@ -349,7 +349,7 @@ first thing a narrow pane drops; one with two survives, saying less:
 
 ```toml
 [[badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 short  = "⇢ #{number}"
@@ -449,7 +449,7 @@ drawn_on = "blocked"
 
 What one project draws ahead of this list, for the keys it names and no others.
 A shared list can only say what the value itself carries, so a project whose
-`delivery_pr` leaves out its owner and repository needs an entry of its own to
+`pr_ref` leaves out its owner and repository needs an entry of its own to
 supply them. Every key a project stays silent about keeps drawing what
 `[[badges]]` says.
 
@@ -609,11 +609,11 @@ which is what lets the badge sit beside a title.
 
 ### A pull request written as an owner, a repository and a number
 
-A bead carrying `delivery_pr = "dunwich/arkham#12"`:
+A bead carrying `pr_ref = "dunwich/arkham#12"`:
 
 ```toml
 [[badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 match  = "(?<owner>[^/]+)/(?<repo>[^#]+)#(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 short  = "⇢ #{number}"
@@ -627,7 +627,7 @@ and the badge drops the repository rather than the row dropping the badge, and
 
 ### A bare number, in a project with only one repository
 
-A bead carrying `delivery_pr = "12"` has nothing in the value to build an
+A bead carrying `pr_ref = "12"` has nothing in the value to build an
 address out of, and a shared list can only say what the value itself carries.
 The project's own entry supplies the rest, and is tried before the shared one:
 
@@ -637,7 +637,7 @@ name = "kadath"
 path = "/home/you/dev/kadath"
 
 [[projects.badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 match  = "(?<number>[0-9]+)"
 render = "⇢ #{number}"
 link   = "https://forge.invalid/dunwich/kadath/pull/{number}"
@@ -656,7 +656,7 @@ row, and it declines a value that is not an address of yours.
 
 ```toml
 [[badges]]
-key    = "metadata.delivery_pr"
+key    = "metadata.pr_ref"
 match  = "https://forge.invalid/[^/]+/(?<repo>[^/]+)/pull/(?<number>[0-9]+)"
 render = "⇢ {repo} #{number}"
 link   = "{}"
@@ -679,10 +679,10 @@ says its anomalies:
 
 | what the badge met | what the row says |
 |---|---|
-| a value that left part of the `link` unfilled | `no link for delivery_pr: its value does not fit the link template` |
-| a link holding a control character | `no link for delivery_pr: it holds a control character` |
-| a value that left part of the `short` unfilled | `no short form for delivery_pr: its value does not fit the template` |
-| a `short` holding a control character, on a badge with a `link` | `no short form for delivery_pr: it holds a control character` |
+| a value that left part of the `link` unfilled | `no link for pr_ref: its value does not fit the link template` |
+| a link holding a control character | `no link for pr_ref: it holds a control character` |
+| a value that left part of the `short` unfilled | `no short form for pr_ref: its value does not fit the template` |
+| a `short` holding a control character, on a badge with a `link` | `no short form for pr_ref: it holds a control character` |
 
 The first `short` row holds whether or not the badge has a `link`. The second is
 about the link: a badge is drawn as one at every width or at none, so a short
