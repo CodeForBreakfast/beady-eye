@@ -1743,6 +1743,29 @@ fn a_listed_bead_carries_the_date_it_is_deferred_until_and_only_where_it_has_one
     assert!(undated.get("defer_until").is_none(), "{undated}");
 }
 
+/// A bead with a due date carries it, so a reader can order beads by how near
+/// their date is.
+#[test]
+fn a_listed_bead_carries_its_due_date_and_only_where_it_has_one() {
+    let rows = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"open","issue_type":"epic"},
+      {"id":"dun-7.1","title":"re-point the dish","status":"open","parent":"dun-7",
+       "due_at":"2026-03-25T17:00:00Z",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
+      {"id":"dun-7.2","title":"order the cable","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}
+    ]"#;
+
+    let listed = listing(&dunwich_with(Fake::holding(beads(rows))));
+
+    assert_eq!(
+        listed_once(&listed, "dunwich", "dun-7.1")["due_at"],
+        json!("2026-03-25T17:00:00Z")
+    );
+    let undated = listed_once(&listed, "dunwich", "dun-7.2");
+    assert!(undated.get("due_at").is_none(), "{undated}");
+}
+
 /// `dun-7.1` is drawn under its parent in one tree and under the bead it
 /// blocks in another, and is one bead to pick up.
 #[test]

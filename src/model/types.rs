@@ -121,6 +121,7 @@ pub struct Bead {
     /// when it passes — so it is the one thing a tracker says that turns over
     /// on the clock rather than on a write.
     pub defer_until: Option<DateTime<Utc>>,
+    pub due_at: Option<DateTime<Utc>>,
     /// The row as the tracker printed it, every field it wrote whether `bdi`
     /// reads it or not. The description and notes are read from it rather
     /// than held beside it.
