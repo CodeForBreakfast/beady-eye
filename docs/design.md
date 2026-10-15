@@ -2828,7 +2828,8 @@ object, empty where it has none, each value as the text it prints as. bdi reads
 no key's meaning, so a reader wanting one key picks it out of the object.
 `defer_until` is the date a deferred bead is put off until, and is absent
 where the bead has none, so a snooze reads apart from a bead deferred until
-someone undefers it.
+someone undefers it. `due_at` is the date the bead is due, in the same form,
+and is absent where the bead has none.
 
 A list that is short says so. `failed_projects` is the forest's, and
 `unread_trees` names each root whose tracker gave no rows, with the `tracker`

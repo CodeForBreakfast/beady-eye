@@ -331,6 +331,8 @@ pub struct Node {
     #[serde(skip)]
     pub defer_until: Option<DateTime<Utc>>,
     #[serde(skip)]
+    pub due_at: Option<DateTime<Utc>>,
+    #[serde(skip)]
     pub metadata: BTreeMap<String, String>,
     #[serde(skip)]
     pub parent: Option<Related>,

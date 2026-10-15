@@ -852,6 +852,7 @@ mod tests {
             created_at: None,
             updated_at: None,
             defer_until: None,
+            due_at: None,
             metadata: Default::default(),
             parent: Some(related(
                 "dun-7",
