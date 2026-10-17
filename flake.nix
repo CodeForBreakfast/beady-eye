@@ -3437,15 +3437,22 @@ and a second line"
             pkgs.bash
             pkgs.coreutils
             pkgs.cacert
+            pkgs.tini
           ];
         };
+
+        # bd starts children it never waits for, such as its metrics flusher
+        # and its database proxy, and each outlives the bd that started it. An
+        # orphan goes to PID 1, and bdi reaps only its own children, so bdi as
+        # PID 1 would keep every one as a zombie. tini reaps them instead.
+        imageInit = [ "/bin/tini" "--" ];
 
         image = pkgs.dockerTools.buildLayeredImage {
           name = "ghcr.io/codeforbreakfast/beady-eye";
           tag = common.version;
           contents = [ imageRoot ];
           config = {
-            Entrypoint = [ "/bin/bdi" ];
+            Entrypoint = imageInit ++ [ "/bin/bdi" ];
             Env = [ "PATH=/bin" ];
             # What links the package on ghcr.io to this repository, and so
             # lets this repository's workflow token push to it.
@@ -3457,6 +3464,11 @@ and a second line"
         # Building the image proves only that it has layers. What a pod needs
         # is every command bdi spawns on the PATH the image sets, so each is
         # run from the root the image is made of, with nothing else on PATH.
+        #
+        # The build is PID 1 in the sandbox, as bdi is in a pod, so it last
+        # execs the image's init over a stand-in for bdi: a process that orphans
+        # a child and reaps nothing. The output is written only if no zombie is
+        # left with PID 1 for its parent.
         imageTest = pkgs.runCommand "image-test" { } ''
           set -eu
           export HOME="$TMPDIR"
@@ -3467,7 +3479,29 @@ and a second line"
           git --version
           sh -c 'cat /dev/null'
           test -e ${image}
-          touch $out
+          if [ "$$" != 1 ]; then
+            echo "image-test needs the build sandbox, where the build is PID 1" >&2
+            exit 1
+          fi
+          export out
+          exec ${imageRoot}${builtins.head imageInit} ${pkgs.lib.escapeShellArgs (builtins.tail imageInit)} bash -c '
+            (bash -c "exit 0" &)
+            (
+              sleep 1
+              for s in /proc/[0-9]*/status; do
+                state= ppid=
+                while read -r k v _; do
+                  case $k in State:) state=$v ;; PPid:) ppid=$v ;; esac
+                done < "$s" 2>/dev/null || continue
+                if [ "$state" = Z ] && [ "$ppid" = 1 ]; then
+                  echo "PID 1 left an orphan as a zombie: $s" >&2
+                  exit 1
+                fi
+              done
+              touch "$out"
+            ) &
+            exec sleep 2
+          '
         '';
 
         # Nothing in this repository installs from the tap, and the formula is
