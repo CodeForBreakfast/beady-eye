@@ -51,10 +51,9 @@ Nobody polls GitHub by hand, and no agent sleeps through the answer.
 
 The eye only looks. Waking an agent is still looking, only louder. When there
 is something it must do, it grows a pseudopod for the job, the way a shoggoth
-grows a limb from its own body, and so far it has grown two. `bdi gates` is
-one. The other carries a person's answer to the bead that asked for it.
-Changing the work itself is still `bd`'s job, and the eye finds this
-arrangement acceptable.
+grows a limb from its own body. `bdi gates` is one, and Pseudopods, below,
+has the rest. Changing the work itself is still `bd`'s job, and the eye finds
+this arrangement acceptable.
 
 ## Summoning
 
@@ -101,7 +100,7 @@ $ nix run github:CodeForBreakfast/beady-eye
 From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.30.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.31.0";
 
 beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
