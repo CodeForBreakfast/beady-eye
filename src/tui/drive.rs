@@ -1223,9 +1223,7 @@ mod tests {
     fn polling_every_interval() -> Arming {
         Box::new(|cfg: &Config| {
             cfg.read()
-                .map(|project| {
-                    Armed::as_poll_says(project.name.clone(), project.poll, AN_INTERVAL)
-                })
+                .map(|project| Armed::as_poll_says(project.name.clone(), project.poll, AN_INTERVAL))
                 .collect()
         })
     }
