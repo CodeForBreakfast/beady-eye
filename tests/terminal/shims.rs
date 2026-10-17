@@ -37,6 +37,7 @@ pub fn shim(named: &str) -> PathBuf {
 pub struct ShimmedTracker {
     answers: PathBuf,
     called: PathBuf,
+    called_for: PathBuf,
     unanswered: PathBuf,
     hangs_while: PathBuf,
     holding: PathBuf,
@@ -55,6 +56,7 @@ impl ShimmedTracker {
         Self {
             answers: beside.join("bd-answers"),
             called: beside.join("bd-called"),
+            called_for: beside.join("bd-called-for"),
             unanswered: beside.join("bd-unanswered"),
             hangs_while: beside.join("bd-hangs"),
             holding: beside.join("bd-holding"),
@@ -74,6 +76,10 @@ impl ShimmedTracker {
         environment.push((
             "BDI_SHIM_BD_CALLED".to_string(),
             self.called.display().to_string(),
+        ));
+        environment.push((
+            "BDI_SHIM_BD_CALLED_FOR".to_string(),
+            self.called_for.display().to_string(),
         ));
         environment.push((
             "BDI_SHIM_BD_UNANSWERED".to_string(),
@@ -235,6 +241,16 @@ impl ShimmedTracker {
     /// touched has to name the calls, and these are them.
     pub fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(&self.called)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Every call made to the tracker at a directory whose last component is
+    /// `tracker`, for a test that has to tell two projects' reads apart.
+    pub fn calls_for(&self, tracker: &str) -> Vec<String> {
+        std::fs::read_to_string(self.called_for.join(tracker))
             .unwrap_or_default()
             .lines()
             .map(str::to_string)
