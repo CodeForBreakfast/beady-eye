@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
+use crate::app::cover::Cover;
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
 use crate::collect::changes::Heard;
@@ -22,7 +23,7 @@ use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::collect::upstream::{Answer, Upstream};
 use crate::collect::webhook::Commit;
-use crate::config::{Gates, Project};
+use crate::config::{Gates, Poll, Project};
 use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
 
@@ -123,12 +124,12 @@ pub struct Settling {
 /// Each configured project's open gates as `bdi gates` last read them, and
 /// what says when its tracker is read again.
 ///
-/// A project no producer has named is read on every look, as one nothing
-/// watches has to be. Once a producer names it, its tracker is read only
-/// when the producer says it changed, when its last read failed, or when
-/// settling wrote to it. The producer replaces the read on the clock rather
-/// than backing it up, so a producer that falls silent is said and the clock
-/// does not take over.
+/// A project's tracker is read on every look while its `poll` keeps it on
+/// the clock, as the view polls it. Off the clock, it is read only when a
+/// producer says it changed, when its last read failed, or when settling
+/// wrote to it. A producer covering a project replaces the read on the clock
+/// rather than backing it up, so a producer that falls silent is said and
+/// the clock does not take over.
 pub struct Kept {
     projects: Vec<Project>,
     kept: Vec<KeptGates>,
@@ -138,6 +139,9 @@ struct KeptGates {
     read: Result<OpenGates, OpenFailure>,
     /// Whether `read` may no longer be what the tracker holds.
     stale: bool,
+    /// Whether the project's `poll` reads it on every look at all.
+    polls: bool,
+    cover: Cover,
     /// When a producer last said anything of the project, or nothing where
     /// none ever has.
     vouched: Option<Instant>,
@@ -146,7 +150,11 @@ struct KeptGates {
 
 impl KeptGates {
     fn due(&self) -> bool {
-        self.stale || self.vouched.is_none()
+        self.stale || self.on_the_clock()
+    }
+
+    fn on_the_clock(&self) -> bool {
+        self.polls && self.cover.keeps_the_poll()
     }
 
     fn read(&mut self, cli: &Cli, project: &Project, settles: &Gates) {
@@ -182,6 +190,9 @@ impl KeptGates {
     /// What there is to say about the producer covering `project` falling
     /// silent for longer than `covered_for`, or speaking again after it did.
     fn lapse(&mut self, project: &str, now: Instant, covered_for: Duration) -> Option<Found> {
+        if self.on_the_clock() {
+            return None;
+        }
         let lapsed = now.duration_since(self.vouched?) > covered_for;
         if lapsed == std::mem::replace(&mut self.lapsed, lapsed) {
             return None;
@@ -203,9 +214,11 @@ impl Kept {
     pub fn new(projects: Vec<Project>) -> Self {
         let kept = projects
             .iter()
-            .map(|_| KeptGates {
+            .map(|project| KeptGates {
                 read: Ok(OpenGates::default()),
                 stale: true,
+                polls: project.poll != Poll::Never,
+                cover: Cover::of(project.poll),
                 vouched: None,
                 lapsed: false,
             })
@@ -225,7 +238,12 @@ impl Kept {
         };
         let kept = &mut self.kept[at];
         kept.vouched = Some(now);
-        kept.stale |= matches!(heard, Heard::Changed(_));
+        match heard {
+            Heard::Changed(_) => kept.stale = true,
+            Heard::Covered(_) => {
+                kept.cover.covered();
+            }
+        }
     }
 
     /// Mark every project `settling` wrote to, to be read again on the next
@@ -1798,6 +1816,95 @@ mod tests {
         assert!(look_at(&mut kept, &runner, silent).contains(&vouched));
         assert!(!look_at(&mut kept, &runner, silent).contains(&vouched));
         assert_eq!(gate_lists_read(&runner), 1);
+    }
+
+    fn arkham_polling(poll: Poll) -> Kept {
+        Kept::new(vec![Project {
+            poll,
+            ..project("arkham")
+        }])
+    }
+
+    /// A bd wrapper or a git hook sends bare names without promising to
+    /// report every change, so they never stand the clock down.
+    #[test]
+    fn a_tracker_only_bare_names_are_heard_for_is_read_on_every_look() {
+        let runner = quiet();
+        let mut kept = arkham();
+        let start = Instant::now();
+        kept.heard(&Heard::Changed("arkham".to_string()), start);
+
+        look_at(&mut kept, &runner, start);
+        look_at(&mut kept, &runner, start);
+        let silent = start + COVERED_FOR + Duration::from_secs(1);
+        let found = look_at(&mut kept, &runner, silent);
+
+        assert_eq!(gate_lists_read(&runner), 3);
+        assert!(
+            !found
+                .iter()
+                .any(|found| matches!(found, Found::Lapsed { .. })),
+            "a tracker on the clock does not lapse: {found:?}"
+        );
+    }
+
+    /// `poll = true` is the reader's choice of the clock, and a producer
+    /// covering the tracker does not take it away.
+    #[test]
+    fn a_covered_tracker_whose_poll_is_true_is_read_on_every_look() {
+        let runner = quiet();
+        let mut kept = arkham_polling(Poll::Always);
+        let start = Instant::now();
+        kept.heard(&covered(), start);
+
+        look_at(&mut kept, &runner, start);
+        look_at(&mut kept, &runner, start);
+        let silent = start + COVERED_FOR + Duration::from_secs(1);
+        let found = look_at(&mut kept, &runner, silent);
+
+        assert_eq!(gate_lists_read(&runner), 3);
+        assert!(
+            !found
+                .iter()
+                .any(|found| matches!(found, Found::Lapsed { .. })),
+            "a tracker on the clock does not lapse: {found:?}"
+        );
+    }
+
+    /// `poll = false` reads the tracker once to begin with and then only when
+    /// something says it changed.
+    #[test]
+    fn a_tracker_whose_poll_is_false_is_never_read_on_the_clock() {
+        let runner = quiet();
+        let mut kept = arkham_polling(Poll::Never);
+        let now = Instant::now();
+
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+        assert_eq!(gate_lists_read(&runner), 1);
+
+        kept.heard(&Heard::Changed("arkham".to_string()), now);
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    /// With nothing on the clock, a producer falling silent is all there is
+    /// to say about the tracker going stale.
+    #[test]
+    fn a_tracker_whose_poll_is_false_lapses_when_its_producer_falls_silent() {
+        let runner = quiet();
+        let mut kept = arkham_polling(Poll::Never);
+        let start = Instant::now();
+        kept.heard(&Heard::Changed("arkham".to_string()), start);
+        let silent = start + COVERED_FOR + Duration::from_secs(1);
+
+        assert!(
+            look_at(&mut kept, &runner, silent).contains(&Found::Lapsed {
+                project: "arkham".to_string(),
+                silent_for: COVERED_FOR,
+            })
+        );
     }
 
     /// ark-06g, a timer gate of two hours made on 2026-10-12 at 07:32:28.
