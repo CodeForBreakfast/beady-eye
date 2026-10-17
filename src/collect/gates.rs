@@ -186,7 +186,8 @@ fn told(project: &str, bead: &str, text: &str) -> (String, String, String) {
 /// Re-read `pr` from GitHub, then settle it as [`settled`] does, acting on
 /// everything `events` say it has done, since no look said which gates wait
 /// on it.
-pub fn settle(
+#[cfg(test)]
+fn settle(
     cli: &Cli,
     gh: &dyn Runner,
     projects: &[Project],
