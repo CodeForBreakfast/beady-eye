@@ -228,22 +228,16 @@ impl Armed {
     }
 
     /// Something outside says it covers this project and nothing in it has
-    /// moved, which says of its rows what a read that found nothing would
-    /// have said. So the poll is pushed out from here as a read's return
-    /// would push it — though not past the instant the last read stops
-    /// speaking, which passes with nothing written.
-    ///
-    /// Only where an ask is armed. A read still on its way arms the next ask
-    /// when it comes back, which is later than this word.
+    /// moved, which vouches for its rows as a read that found nothing would.
     ///
     /// A project that polls only until it is covered has its poll stood down
-    /// here, for the rest of the run.
+    /// here, for the rest of the run, and keeps only the instant its last
+    /// read stops speaking, which passes with nothing written. Any other
+    /// poll is the reader's and is left as it was.
     pub(super) fn covered(&mut self, at: DateTime<Utc>) {
         if self.cover == Cover::StandsThePollDown {
             self.cover = Cover::HasStoodThePollDown;
-        }
-        if self.at.is_some() {
-            self.at = self.due_from(at);
+            self.at = self.at.and(self.speaks_until);
         }
         self.vouched_at = Some(at);
     }
@@ -446,8 +440,8 @@ mod tests {
 
         armed.covered(at(120));
 
-        assert_eq!(armed.asks(at(149)), None);
-        assert_eq!(armed.asks(at(150)), Some(arkham()));
+        assert_eq!(armed.asks(at(144)), None);
+        assert_eq!(armed.asks(at(145)), Some(arkham()));
     }
 
     /// The case the second candidate is for. A project that does not poll
@@ -579,10 +573,9 @@ mod tests {
         assert_eq!(armed.asks(at(1_000_000)), None);
     }
 
-    /// What replaces the coverage suppression the poll used to consult. A
-    /// project something keeps reporting for is read on each report, and each
-    /// read pushes the poll out past the interval before it arrives — so it
-    /// is never polled, without anything having to ask whether it is covered.
+    /// A project something keeps reporting for is read on each report, and
+    /// each read pushes the poll out past the interval before it arrives, so
+    /// the reports cost no polls on top of their reads.
     #[test]
     fn a_project_something_keeps_reporting_for_is_not_also_polled() {
         let mut armed = polling();
@@ -605,9 +598,8 @@ mod tests {
         );
     }
 
-    /// The saving a mixed setup gets, which used to be the poll consulting
-    /// what had been reported for: the project with a producer is left out of
-    /// the poll its neighbour still needs, rather than swept up with it.
+    /// The saving a mixed setup gets: the project with a producer is left out
+    /// of the poll its neighbour still needs, rather than swept up with it.
     #[test]
     fn a_project_with_a_producer_is_left_out_of_the_poll_its_neighbour_needs() {
         let mut has_one = Armed::polling("arkham".to_string(), None);
@@ -620,12 +612,10 @@ mod tests {
         assert_eq!(has_none.asks(at(130)), Some(ferry()));
     }
 
-    /// The signal that a live producer has gone quiet is the poll resuming,
-    /// so the view degrades to slow rather than to wrong. Nothing detects the
-    /// producer's going: the project's last read armed it, and no report has
-    /// arrived to push that out.
+    /// A poll the reader chose goes on when the reports stop, because it was
+    /// never standing in for them.
     #[test]
-    fn a_project_the_channel_stops_covering_is_polled_again() {
+    fn a_project_whose_poll_the_reader_chose_polls_when_the_reports_stop() {
         let mut armed = polling();
 
         armed.came_back(&arkham(), at(100), None);
@@ -633,27 +623,20 @@ mod tests {
         assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
-    /// A producer with nothing to report keeps a polled project's poll stood
-    /// down by saying it covers the project, with no read at all.
+    /// A poll the reader chose is how they check a producer, so a producer
+    /// saying it covers the project does not put that poll off. A heartbeat
+    /// shorter than the interval would otherwise keep it from ever asking.
     #[test]
-    fn a_project_something_says_it_covers_is_not_polled_while_it_says_so() {
+    fn a_word_does_not_put_off_a_poll_the_reader_chose() {
         let mut armed = polling();
         armed.came_back(&arkham(), at(100), None);
 
-        for covered_at in [120, 140, 160] {
+        for covered_at in [110, 120] {
             armed.covered(at(covered_at));
-            assert_eq!(
-                armed.asks(at(covered_at + 20)),
-                None,
-                "covered again at {covered_at}, so the poll is still out"
-            );
         }
 
-        assert_eq!(
-            armed.asks(at(190)),
-            Some(arkham()),
-            "the word stopped at 160, so the poll comes due one interval after"
-        );
+        assert_eq!(armed.asks(at(129)), None);
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
     /// A read on its way arms the poll when it comes back, and that is later

@@ -89,7 +89,7 @@ coin one — and say so.**
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
 | **reach** | *coined* | the `path` and `environment_command` a project's config entry gives, and the server and database where the entry names a database in place of a checkout. Together they decide the tracker bd reaches. Neither project names them together. |
-| **covered** | *coined* | a project something outside `bdi` has said it is watching, with nothing changed: a `covered <project>` line on the inbound channel. A covered line, and a read of the project coming back, each vouch for its rows for `[changes] covered_for_seconds`. A project that does not poll and that nothing has vouched for in that time has **lapsed**, and its mark says so. Neither project names this: the channel is `bdi`'s own. |
+| **covered** | *coined* | a project something outside `bdi` has said it is watching, with nothing changed: a `covered <project>` line on the inbound channel. A covered line, and a read of the project coming back, each vouch for its rows for `[changes] covered_for_seconds`. The first covered line stands down the poll of a project that says nothing about `poll`, for the rest of the run. A project that does not poll and that nothing has vouched for in that time has **lapsed**, and its mark says so. Neither project names this: the channel is `bdi`'s own. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
 | **spine** | *coined* | the ways down a fold default opens, and the rule that chooses them. Every copy opens every way down to work a reader needs; a one-copy rule, deepest by default, opens one of them per bead and rests the rest shut over the same work. Neither project has the concept, because neither draws a tree that reaches a bead twice. |
@@ -1972,17 +1972,24 @@ to take the view down.
 **No config key says which projects have a producer, and that absence is the
 design.** `bdi` cannot know in advance which projects something reports for,
 and a key saying so would be exactly the coupling to a setup's organisation
-this bead exists to avoid. Instead every project starts polled; one something
-reports for has its poll stood down while messages keep arriving inside the
-refresh interval, because each message's read pushes the next poll out past
-the interval before it arrives, and each covered line pushes it out with no
-read at all; and a producer going quiet lets the next interval find the
-project uncovered, so the poll resumes — the view degrades to slow, never to
-stale. Selection and fallback are one mechanism with nothing to tune. A
-project whose producer you trust can turn its poll off with `poll = false`,
-which is a claim rather than a saving: nothing then covers for a producer that
-dies, and an automatic fallback would hide the failure you need to see.
-`--poll` and `--no-poll` override every project for one run.
+this bead exists to avoid. Instead the producer says so itself. Every project
+that says nothing about `poll` starts polled, and the first `covered` line
+naming it stands its poll down for the rest of the run. A bare name does not,
+because a `bd` wrapper or a git hook reports changes without watching
+anything in between.
+
+**The producer replaces the poll rather than backing it up.** A poll that came
+back when a producer went quiet would hide the failure you need to see, so a
+project whose producer has gone lapses instead, and its mark says so. `^R`
+still reads it by hand. Each read of a covered project is one a report or
+`^R` asked for, and the window turns a burst of reports into one read.
+
+The `poll` key is how a reader overrules that. `poll = true` keeps the poll
+whatever covers the project, and a `covered` line does not put it off, so a
+poll chosen to check a producer goes on checking it. `poll = false` stops the
+poll from the run's first read, which is a claim that something reports the
+project's changes. `--poll` and `--no-poll` say the same for every project for
+one run.
 
 **What shows that failure is the lapse.** A project that does not poll is
 vouched for by each read of it that comes back and each covered line naming
