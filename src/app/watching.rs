@@ -173,9 +173,9 @@ impl Interest {
     }
 }
 
-/// The fields a claim's heartbeat writes, which nothing a consumer acts on
-/// reads.
-const HEARTBEAT: [&str; 2] = ["lease_expires_at", "heartbeat_at"];
+/// The field a claim's heartbeat writes that nothing a consumer acts on
+/// reads. The lease it renews beside it says whether the claim is live.
+const HEARTBEAT: &str = "heartbeat_at";
 
 fn differs(was: &Held, is: &Held) -> bool {
     was.ready != is.ready
@@ -186,7 +186,7 @@ fn differs(was: &Held, is: &Held) -> bool {
 
 fn acted_on(held: &Held) -> serde_json::Map<String, serde_json::Value> {
     let mut fields = held.bead.row.fields();
-    fields.retain(|field, _| !HEARTBEAT.contains(&field.as_str()));
+    fields.remove(HEARTBEAT);
     fields
 }
 
@@ -507,17 +507,33 @@ mod tests {
     }
 
     #[test]
-    fn a_heartbeat_alone_is_not_a_change() {
+    fn when_a_heartbeat_was_is_not_a_change() {
         let mut interest = watching(&[project(false)]);
         interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
         let mut beating = beads(&[("dun-1", "open")]);
         let held = beating.get_mut("dun-1").expect("held");
         writing(held, "heartbeat_at", json!("2026-08-30T10:21:02Z"));
-        writing(held, "lease_expires_at", json!("2026-08-30T10:31:02Z"));
 
         assert_eq!(
             said(&interest.catch_up("dunwich", &beating)),
             Vec::<String>::new()
+        );
+    }
+
+    /// A view reading through the watcher learns a claim is still live only
+    /// from the lease it is sent.
+    #[test]
+    fn a_renewed_lease_is_a_change() {
+        let mut interest = watching(&[project(false)]);
+        interest.catch_up("dunwich", &beads(&[("dun-1", "open")]));
+        let mut renewed = beads(&[("dun-1", "open")]);
+        let held = renewed.get_mut("dun-1").expect("held");
+        writing(held, "heartbeat_at", json!("2026-08-30T10:21:02Z"));
+        writing(held, "lease_expires_at", json!("2026-08-30T10:31:02Z"));
+
+        assert_eq!(
+            said(&interest.catch_up("dunwich", &renewed)),
+            ["bead dun-1"]
         );
     }
 

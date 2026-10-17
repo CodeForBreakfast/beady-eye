@@ -2194,8 +2194,9 @@ taken for bd's or collide with a field a later bd adds.
 A bead line is sent the first time a watch reaches a bead, which is how a
 consumer learns of one created after it connected, and again whenever the row,
 `ready`, `blocked_by` or `bd` differs from what that connection was last sent. A row
-differing only in `lease_expires_at` or `heartbeat_at` is not sent: a claim's
-heartbeat writes those and nothing a consumer acts on.
+differing only in `heartbeat_at` is not sent: a claim's heartbeat writes it and
+nothing a consumer acts on. A renewed `lease_expires_at` is sent, because a view
+reading through the watcher learns from it that the claim is still live.
 
 **A gone line** names a bead its tracker no longer holds, and answers a watch
 for a bead it never held:
