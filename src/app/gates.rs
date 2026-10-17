@@ -2349,7 +2349,7 @@ mod tests {
     fn awaited_in(project: &str, ids: &str) -> String {
         read(
             project,
-            &format!("list --id {ids} --all --include-gates --limit 0 --json"),
+            &format!("list --id {ids} --all --include-gates --include-infra --include-templates --limit 0 --json"),
         )
     }
 

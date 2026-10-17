@@ -451,8 +451,10 @@ impl Cli<'_> {
         })
     }
 
-    /// Each of `ids` that `project`'s tracker holds, closed or not and gate
-    /// or not, from one listing. An id it does not hold is left out.
+    /// Each of `ids` that `project`'s tracker holds, from one listing, of any
+    /// status and any kind bd hides from a listing by default: gates,
+    /// infrastructure beads, wisps and templates. An id it does not hold is
+    /// left out.
     pub fn awaited(&self, project: &Project, ids: &[String]) -> Result<Vec<Bead>, OpenFailure> {
         let reader = self.reader(project)?;
         let listed = reader.asked(&[
@@ -461,6 +463,8 @@ impl Cli<'_> {
             &ids.join(","),
             "--all",
             "--include-gates",
+            "--include-infra",
+            "--include-templates",
             "--limit",
             "0",
             "--json",
