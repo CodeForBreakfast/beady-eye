@@ -1,6 +1,7 @@
 //! What a beads gate `bdi gates` settles waits on: a pull request for a
 //! `gh:pr` gate, an issue for a `gh:issue` gate, a repository's next release
-//! for a `gh:release` gate, and its deadline for a `timer` gate.
+//! for a `gh:release` gate, a workflow run for a `gh:run` gate, and its
+//! deadline for a `timer` gate.
 
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -15,6 +16,9 @@ pub const ISSUE: &str = "gh:issue";
 /// The `await_type` of a gate that waits on a repository publishing a
 /// release after the gate was made.
 pub const RELEASE: &str = "gh:release";
+
+/// The `await_type` of a gate that waits on a workflow run finishing.
+pub const RUN: &str = "gh:run";
 
 /// The `await_type` of a gate that waits for its timeout to run out after
 /// the gate was made.
@@ -47,8 +51,13 @@ pub enum Fault {
     NoRepo,
     /// The gate holds no await id.
     NoAwaitId,
-    /// The gate's await id is not a pull request's number.
+    /// The gate's await id is not the number of the pull request or issue
+    /// it waits on.
     AwaitIdNotANumber(String),
+    /// A gh:run gate's await id is not a run's id. bd takes it for the name
+    /// of a workflow whose newest run the gate waits on, and `bdi gates`
+    /// does not look that run up.
+    WorkflowName(String),
     /// The gate's [`AWAITS`] metadata names nothing `bdi gates` waits for.
     UnknownAwaits(String),
     /// The gate does not say when it was made, so no release can be told to
@@ -128,7 +137,8 @@ pub fn host(repo: &str) -> Option<&str> {
     repository(repo).and_then(|repository| repository.host)
 }
 
-/// The number of the pull request or issue `gate` waits on.
+/// The number of the pull request or issue `gate` waits on, or the id of its
+/// workflow run.
 pub fn number(gate: &Bead) -> Result<u64, Fault> {
     let id = gate.value("await_id").ok_or(Fault::NoAwaitId)?;
     id.parse()
