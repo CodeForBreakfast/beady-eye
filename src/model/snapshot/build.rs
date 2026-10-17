@@ -282,6 +282,7 @@ pub fn build(
         unconfigured,
         conflicts: joined.conflicts.clone(),
         projects_named_without_git: cfg.projects_named_without_git(),
+        unanswered_by_the_watcher: Vec::new(),
         collected: trees,
         out_of_focus: BTreeSet::new(),
         read_at,

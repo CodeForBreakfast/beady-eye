@@ -550,6 +550,7 @@ mod tests {
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
             projects_named_without_git: Vec::new(),
+            unanswered_by_the_watcher: Vec::new(),
             read_at: BTreeMap::from([("summit-works".to_string(), read_at())]),
             speaks_until: BTreeMap::new(),
         }

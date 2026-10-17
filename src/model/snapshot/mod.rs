@@ -570,6 +570,11 @@ pub struct Snapshot {
     /// the status bar says, read by both from here — which is what keeps a
     /// screen and a `--json` of the same moment from qualifying differently.
     pub projects_named_without_git: Vec<String>,
+    /// The projects here that a running watcher answered for from a tracker
+    /// it reaches another way, or would not answer for at all, so this run
+    /// read them itself. Empty where the watcher answered every project, and
+    /// where no watcher was answering.
+    pub unanswered_by_the_watcher: Vec<String>,
     /// Every tree that was read, in the order it was read, shown or hidden.
     /// `trees` and `hidden_trees` are how the current filter divides this, and
     /// keeping it is what lets `refilter` change the filter without asking the
@@ -662,6 +667,7 @@ impl Snapshot {
             unconfigured: Vec::new(),
             conflicts: Vec::new(),
             projects_named_without_git,
+            unanswered_by_the_watcher: Vec::new(),
             collected: Vec::new(),
             out_of_focus: BTreeSet::new(),
             read_at: BTreeMap::new(),

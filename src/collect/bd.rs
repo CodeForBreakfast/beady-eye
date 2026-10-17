@@ -45,9 +45,13 @@ pub fn parse_shared_beads(s: &str) -> anyhow::Result<Vec<std::sync::Arc<Bead>>> 
 }
 
 /// The rows in `s` as beads, each holding the row it was read from.
+///
+/// A `null` is no rows, because bd writes one for an empty answer: bd 1.3.0's
+/// `bd gate list` does on a tracker with no open gates.
 fn parsed(s: &str) -> anyhow::Result<Vec<Bead>> {
     const SHAPE: &str = "bd --json returned a shape we do not understand";
-    let written: Vec<Fields> = serde_json::from_str(s).context(SHAPE)?;
+    let written: Option<Vec<Fields>> = serde_json::from_str(s).context(SHAPE)?;
+    let written = written.unwrap_or_default();
     match written.into_iter().map(bead_of).collect() {
         Ok(beads) => Ok(beads),
         // A row read out of its map has lost where in the answer it was, so
@@ -2324,6 +2328,19 @@ mod tests {
         let got = opened(&runner).ready().unwrap();
 
         assert_eq!(got, BTreeSet::from(["p-1.1".into(), "p-wg1".into()]));
+    }
+
+    /// bd answers `null` rather than `[]` for a tracker with no open gates.
+    #[test]
+    fn a_tracker_with_no_open_gates_lists_none() {
+        let runner = FakeRunner::default().with(
+            &spelled("gate list --limit 0 --json"),
+            include_str!("../../tests/fixtures/bd_1.3.0_gate_list_none.json"),
+        );
+
+        let got = opened(&runner).listed_gates().unwrap();
+
+        assert!(got.is_empty());
     }
 
     /// The shape a real tracker produces: a bead blocked by two beads, whose
