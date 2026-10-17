@@ -382,8 +382,9 @@ impl Watcher {
         }
         self.arriving.clear();
         self.refused.clear();
-        self.around.clear();
-        std::mem::take(&mut self.current).into_keys().collect()
+        let mut changed = std::mem::take(&mut self.around);
+        changed.extend(std::mem::take(&mut self.current).into_keys());
+        changed.into_iter().collect()
     }
 
     /// Take one line into what has been said, and say which project's
@@ -937,6 +938,34 @@ path = "/srv/work/ferry"
 
         assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
         assert_eq!(through.unanswered_by_the_watcher(), BTreeSet::new());
+    }
+
+    /// The project the watcher refused is no longer one it answers around,
+    /// so the view is told at once rather than at its next poll.
+    #[test]
+    fn a_run_that_stays_is_told_of_a_refused_project_once_its_watcher_goes() {
+        let at = a_socket("refused-goes");
+        let watcher = UnixListener::bind(&at).expect("the socket is ours");
+        let (hang_up, hanging_up) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let (mut connection, _) = watcher.accept().expect("the run connects");
+            let refused = json!({ "line": "refused", "asked": "watch-all ferry", "reason": "unknown-project" });
+            writeln!(connection, "{refused}").expect("sent");
+            writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+            let _ = hanging_up.recv();
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, 2 * A_MOMENT);
+        assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        let _ = through.of(project(&cfg, "ferry"));
+
+        drop(hang_up);
+
+        let heard: Vec<Heard> = (0..2)
+            .filter_map(|_| told.recv_timeout(A_MOMENT).ok())
+            .collect();
+        assert!(heard.contains(&changed("ferry")), "{heard:?}");
     }
 
     /// Its answers would go stale with nothing to say so, so it reads every
