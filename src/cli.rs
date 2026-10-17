@@ -193,6 +193,11 @@ enum Passing {
         /// Read the secret GitHub signs each delivery with from this file.
         #[arg(long, value_name = "PATH", requires = "listen")]
         webhook_secret_file: Option<PathBuf>,
+        /// Take producers' reports on this socket, and read a project's
+        /// tracker only when its producer says it changed. A project no
+        /// producer names is read on every look.
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
     },
 }
 
@@ -308,9 +313,15 @@ pub fn run() -> anyhow::Result<ExitCode> {
             config,
             listen,
             webhook_secret_file,
+            socket,
         }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return gates::settle(&config, listen.as_deref(), webhook_secret_file.as_deref());
+            return gates::settle(
+                &config,
+                listen.as_deref(),
+                webhook_secret_file.as_deref(),
+                socket.clone(),
+            );
         }
         None => {}
     }
@@ -562,7 +573,7 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         Err(refused) => {
             eprintln!(
                 "bdi watch cannot start: {}",
-                watcher_refused(&refused, CHOOSING_THE_WATCHERS_SOCKET)
+                socket_refused(&refused, "bdi watch", CHOOSING_THE_WATCHERS_SOCKET)
             );
             return Ok(ExitCode::FAILURE);
         }
@@ -584,7 +595,7 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
             eprintln!(
                 "bdi watch hears producers only on {}: {}",
                 watcher_at.display(),
-                watcher_refused(refused, CHOOSING_THE_VIEWS_SOCKET)
+                socket_refused(refused, "bdi watch", CHOOSING_THE_VIEWS_SOCKET)
             );
         },
     );
@@ -604,14 +615,14 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Why one of the watcher's sockets could not be opened, and what to do
-/// about it, where `choose` says how its path is chosen.
-fn watcher_refused(refused: &changes::Refused, choose: &str) -> String {
+/// Why a socket `holder` takes reports on could not be opened, and what to
+/// do about it, where `choose` says how its path is chosen.
+fn socket_refused(refused: &changes::Refused, holder: &str, choose: &str) -> String {
     use changes::Refused;
     match refused {
         Refused::NoRuntimeDirectory => format!("this session has no XDG_RUNTIME_DIR to put the socket in; choose a path {choose}"),
         Refused::AlreadyWatching(at) => format!(
-            "another bdi watch is running on {}",
+            "another {holder} is running on {}",
             at.display()
         ),
         Refused::NotASocket(at) => format!(
