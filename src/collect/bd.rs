@@ -188,6 +188,8 @@ struct Row {
     defer_until: Option<DateTime<Utc>>,
     #[serde(default)]
     due_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    lease_expires_at: Option<DateTime<Utc>>,
 }
 
 /// One dependency as a row carries it.
@@ -230,6 +232,7 @@ impl Row {
             closed_at: row.closed_at,
             defer_until: row.defer_until,
             due_at: row.due_at,
+            lease_expires_at: row.lease_expires_at,
         }
     }
 }

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::config::{Config, Project};
@@ -168,9 +169,9 @@ pub struct Joined {
     /// nothing it holds says whether the seat behind the claim is alive. A
     /// rule reading that pane's absence has no absence to read.
     pub out_of_reach: BTreeSet<BeadKey>,
-    /// Beads sitting beneath one that holds an agent, or one whose pane is out
-    /// of reach, in any tree the run drew. Filled by `cover`, once for every
-    /// tree, before any tree is built from this.
+    /// Beads sitting beneath one that holds an agent, one whose pane is out
+    /// of reach, or one whose claim is live, in any tree the run drew. Filled
+    /// by `cover`, once for every tree, before any tree is built from this.
     pub under_a_seat: BTreeSet<BeadKey>,
     pub conflicts: Vec<Conflict>,
 }
@@ -181,7 +182,7 @@ impl Joined {
     /// A tree holds everything beneath its root, so every bead above another
     /// is in a tree that holds both. A bead drawn in several trees is covered
     /// in all of them by a seat in any one.
-    pub fn cover(&mut self, project: &str, assembled: &Assembled) {
+    pub fn cover(&mut self, project: &str, assembled: &Assembled, now: DateTime<Utc>) {
         let key_of = |at: usize| BeadKey {
             project: assembled
                 .external
@@ -192,7 +193,10 @@ impl Joined {
         };
         for seat in 0..assembled.beads.len() {
             let key = key_of(seat);
-            if self.agents.contains_key(&key) || self.out_of_reach.contains(&key) {
+            if self.agents.contains_key(&key)
+                || self.out_of_reach.contains(&key)
+                || assembled.beads[seat].claim_is_live(now)
+            {
                 self.under_a_seat.extend(
                     tree::beneath(&assembled.children, seat, &[])
                         .into_iter()

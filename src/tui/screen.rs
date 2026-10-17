@@ -1656,6 +1656,7 @@ mod tests {
             updated_at: None,
             defer_until: None,
             due_at: None,
+            lease_expires_at: None,
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
