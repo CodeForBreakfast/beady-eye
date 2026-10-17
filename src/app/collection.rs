@@ -423,7 +423,17 @@ impl Collection {
         loop {
             self.reach_across(cfg);
             match self.draw(cfg, panes, out_of_reach, provider, filter, now) {
-                Ok(snapshot) => return snapshot,
+                Ok(mut snapshot) => {
+                    let unanswered = trackers.unanswered_by_the_watcher();
+                    snapshot.unanswered_by_the_watcher = self
+                        .widened(cfg)
+                        .read()
+                        .map(|project| &project.name)
+                        .filter(|name| unanswered.contains(*name))
+                        .cloned()
+                        .collect();
+                    return snapshot;
+                }
                 Err(needed) => {
                     self.read_on_demand.extend(needed.iter().cloned());
                     let reading = self.widened(cfg);
@@ -1448,6 +1458,39 @@ mod tests {
                 snap.agents.state
             );
         }
+    }
+
+    /// Trackers whose watcher answers around `projects`.
+    struct AnsweredAround {
+        inner: Fakes,
+        projects: BTreeSet<String>,
+    }
+
+    impl Trackers for AnsweredAround {
+        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
+            self.inner.of(project)
+        }
+
+        fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
+            self.projects.clone()
+        }
+    }
+
+    /// In the config's order, and only the projects this run reads: a
+    /// project a reloaded config dropped is still one the watcher was asked
+    /// about.
+    #[test]
+    fn a_snapshot_names_the_projects_the_watcher_left_to_this_run() {
+        let trackers = AnsweredAround {
+            inner: colliding_trackers(),
+            projects: ["ferry", "dunwich", "lighthouse"]
+                .map(str::to_string)
+                .into(),
+        };
+
+        let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
+
+        assert_eq!(snap.unanswered_by_the_watcher, ["dunwich", "ferry"]);
     }
 
     #[test]
@@ -3462,6 +3505,25 @@ path = "{FERRY}"
             trees_assembled(&standing),
             BTreeMap::from([("dunwich", 0), ("ferry", 1)])
         );
+    }
+
+    #[test]
+    fn a_project_read_on_demand_is_named_when_the_watcher_leaves_it_to_this_run() {
+        let trackers = AnsweredAround {
+            inner: ferry_waiting_on_dunwich(),
+            projects: ["dunwich".to_string()].into(),
+        };
+
+        let snap = Collection::default().collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.unanswered_by_the_watcher, ["dunwich"]);
     }
 
     /// A project the run comes to read for itself has its trees assembled,

@@ -2418,6 +2418,13 @@ leaves every project still unanswered to bd as well. The projects already
 answered stand, so the run gives a whole answer either way, each project read
 once by one of the two.
 
+**A view says which projects it reads itself while a watcher reads the rest.**
+The same rule leaves a project to a view's own reads with `bd`, for as long as
+it runs. So the foot names every project a watcher that is still answering has
+left to it: one whose `reach` differs, one whose watch line was refused, and
+one whose freshness line says no `reach`. A watcher that has gone leaves every
+project to the view, which is not this notice.
+
 **What the run takes from a bead line is what bd would have told it:** the row
 and `bd`. The run's own trees work out `bdi`'s readiness again, so the screen
 and `--json` say what a read of their own would say, whichever projects it
@@ -2697,7 +2704,8 @@ freshness line's `protocol` is what keeps them honest.
   "unattributed": [ { "pane": { "session": "default", "id": "wCM:pD" }, "project": "summit-works", "cwd": "/tmp/bdi-ground/summit-works", "pane_status": "blocked", "display_agent": "smt-4kd3p.5", "title": "asleep: waiting on switch + reboot verification", "claim_refused": false } ],
   "unconfigured": [ { "pane": { "session": "default", "id": "wCM:pF" }, "cwd": "/srv/spike", "pane_status": "idle" } ],
   "conflicts": [],
-  "projects_named_without_git": []
+  "projects_named_without_git": [],
+  "unanswered_by_the_watcher": []
 }
 ```
 
@@ -2764,6 +2772,10 @@ config file or `BDI_PROJECT` named the project outright, because neither of
 those is a guess. A name is half of every key in this document, so a consumer
 holding one tests it against this list rather than being told once about the
 run.
+`unanswered_by_the_watcher` names each project here that a running watcher
+answered from a tracker it reaches another way, or would not answer for at
+all, so the run read it with bd itself. It is `[]` where the watcher answered
+every project and where no watcher was running.
 
 `unattributed` and `unconfigured` are the two ways a live pane resolves to no
 bead, and a consumer tells them apart by the `project` key: an `unattributed`
@@ -2847,9 +2859,11 @@ state its tree would carry, since the beads beneath it are missing.
 There is no `notices` array here. A notice is the sentence the status bar makes
 of a fact, and every fact it makes one of is already a field: the provider that
 would not answer is `agents.state`, the session that would not is
-`agents.sessions`, and a project name git did not give is
-`projects_named_without_git`. Both mouths read those fields — the foot draws its
-notices from the same snapshot `--json` prints — so a screen and a document of
+`agents.sessions`, a project name git did not give is
+`projects_named_without_git`, and a project the view reads itself while a
+watcher reads the rest is `unanswered_by_the_watcher`. Both mouths read those
+fields — the foot draws its notices from the same snapshot `--json` prints — so
+a screen and a document of
 the same moment cannot qualify a run differently. Publishing the sentences
 beside the fields would put a derived value next to its input and give a
 consumer two answers that can drift apart. So the document carries the facts

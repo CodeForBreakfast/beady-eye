@@ -108,11 +108,22 @@ pub trait Trackers: Sync {
     /// produce, a credential command that does not run — and that failure is
     /// the project's, before anything was asked of the tracker.
     fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure>;
+
+    /// The projects a running watcher answers for some other way, or not at
+    /// all, so that this run reads them itself while the watcher reads the
+    /// rest. Empty where no watcher is answering.
+    fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
+        BTreeSet::new()
+    }
 }
 
 impl<T: Trackers + ?Sized> Trackers for &T {
     fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
         (**self).of(project)
+    }
+
+    fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
+        (**self).unanswered_by_the_watcher()
     }
 }
 

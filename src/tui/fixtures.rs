@@ -60,6 +60,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         unconfigured: Vec::new(),
         conflicts: Vec::new(),
         projects_named_without_git: Vec::new(),
+        unanswered_by_the_watcher: Vec::new(),
         read_at: BTreeMap::new(),
         speaks_until: BTreeMap::new(),
         collected: vec![tree],
