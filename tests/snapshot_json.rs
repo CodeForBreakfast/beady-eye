@@ -1767,6 +1767,30 @@ fn a_listed_bead_carries_its_due_date_and_only_where_it_has_one() {
     assert!(undated.get("due_at").is_none(), "{undated}");
 }
 
+/// A claimed bead carries who holds it and when the claim's lease runs out,
+/// which the tracker says the same on every machine, so a reader can tell a
+/// claim still held from one that lapsed without asking for its pane.
+#[test]
+fn a_listed_bead_carries_its_claim_and_only_where_it_has_one() {
+    let rows = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"open","issue_type":"epic"},
+      {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+       "assignee":"Rowan Ash","lease_expires_at":"2026-03-25T17:05:00Z",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]},
+      {"id":"dun-7.2","title":"order the cable","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}]}
+    ]"#;
+
+    let listed = listing(&dunwich_with(Fake::holding(beads(rows))));
+
+    let claimed = listed_once(&listed, "dunwich", "dun-7.1");
+    assert_eq!(claimed["assignee"], json!("Rowan Ash"));
+    assert_eq!(claimed["lease_expires_at"], json!("2026-03-25T17:05:00Z"));
+    let unclaimed = listed_once(&listed, "dunwich", "dun-7.2");
+    assert!(unclaimed.get("assignee").is_none(), "{unclaimed}");
+    assert!(unclaimed.get("lease_expires_at").is_none(), "{unclaimed}");
+}
+
 /// `dun-7.1` is drawn under its parent in one tree and under the bead it
 /// blocks in another, and is one bead to pick up.
 #[test]

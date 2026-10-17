@@ -47,6 +47,9 @@ pub enum Anomaly {
 /// one whose pane the run could not ask about. A seat names its pane on the
 /// lowest bead covering its work and sets the beads beneath to `in_progress`
 /// without naming it on them, so a claim under a seat has its agent.
+///
+/// A claim whose lease is live has a holder renewing it, perhaps from another
+/// machine whose panes this run never reads, so it is not an orphan either.
 #[allow(clippy::too_many_arguments)]
 pub fn detect(
     bead: &Bead,
@@ -69,7 +72,12 @@ pub fn detect(
 
     let mut fired = Vec::new();
 
-    if agents.answered() && agent.is_none() && !pane_out_of_reach && !seat_above {
+    if agents.answered()
+        && agent.is_none()
+        && !pane_out_of_reach
+        && !seat_above
+        && !bead.claim_is_live(now)
+    {
         fired.push(Anomaly::OrphanClaim {
             refused: refused.cloned(),
         });
@@ -227,6 +235,51 @@ mod tests {
     fn a_fresh_claim_with_no_pane_is_an_orphan_claim() {
         let got = detect(
             &bead("in_progress", YESTERDAY),
+            None,
+            None,
+            ProviderState::Answering,
+            false,
+            false,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(got, vec![orphan()]);
+    }
+
+    /// A claimed bead whose lease runs out at `expires`.
+    fn leased_until(expires: &str) -> Bead {
+        parse_beads(&format!(
+            r#"[{{"id":"p-1","title":"work","status":"in_progress",
+                  "updated_at":"{YESTERDAY}","assignee":"Rowan Ash",
+                  "lease_expires_at":"{expires}"}}]"#
+        ))
+        .expect("the row parses")
+        .remove(0)
+    }
+
+    /// A lease is renewed only while its holder runs, wherever it runs, so a
+    /// live one says a seat is working the bead even where no pane here does.
+    #[test]
+    fn a_claim_whose_lease_is_live_is_not_an_orphan() {
+        let got = detect(
+            &leased_until("2026-08-30T12:05:00Z"),
+            None,
+            None,
+            ProviderState::Answering,
+            false,
+            false,
+            &Anomalies::default(),
+            now(),
+        );
+        assert_eq!(got, Vec::new());
+    }
+
+    /// A lease that ran out is a holder that stopped renewing it, and the
+    /// instant itself is the first one past the lease.
+    #[test]
+    fn a_claim_whose_lease_has_run_out_is_an_orphan() {
+        let got = detect(
+            &leased_until(NOW),
             None,
             None,
             ProviderState::Answering,
