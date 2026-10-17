@@ -1198,9 +1198,9 @@ $ bd gate create --type=timer --blocks dun-13 --timeout=2h
 `bdi gates` closes a timer gate at its deadline, its timeout after the gate was
 made, as `bd gate check` counts it. It learns of the gate on a look, as it
 learns of every other gate, and then wakes at the deadline to close it, without
-asking GitHub or reading the tracker on the clock. A tracker its producer said
-changed is read again first, so a gate someone closed meanwhile is not closed
-twice. A gate whose deadline passed while `bdi gates` was down closes on the
+asking GitHub or reading the tracker on the clock. Where a producer said the
+tracker changed, `bdi gates` reads it again first, so it does not close a gate
+that someone closed meanwhile. A gate whose deadline passed while `bdi gates` was down closes on the
 first look. A timer gate names no repository, so only a `bdi gates` whose
 [`[gates] owners`](#gates) is empty closes it. Where two instances split the
 work by owner, the one naming `excluded_owners` closes the timer gates.

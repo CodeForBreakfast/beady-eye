@@ -480,6 +480,34 @@ fn a_look_github_refuses_for_a_rate_limit_waits_until_the_limit_resets_and_says_
     );
 }
 
+/// No limit `gh api rate_limit` shows is spent, as with GitHub's secondary
+/// limit, so `bdi gates` waits a minute of its own rather than a reset.
+#[test]
+fn a_rate_limit_github_says_no_reset_for_is_waited_out_all_the_same() {
+    let home = a_home_naming("rate-limited-unsaid", &["arkham"]);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.refuses_with(&queried(), RATE_LIMITED);
+    github.answers_with(
+        "api rate_limit",
+        include_str!("fixtures/gh_2.102.0_api_rate_limit_unspent.json"),
+    );
+
+    let settling = Settling::started(&home, &tracker, &github);
+
+    settling.says(
+        "example/ark#7: GitHub refused it for a rate limit without saying when it resets, so \
+         GitHub is asked nothing more for at least 60s",
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(
+        github.calls(),
+        [queried(), "api rate_limit".to_string()],
+        "no look follows the first"
+    );
+}
+
 #[test]
 fn a_delivery_while_a_rate_limit_is_waited_out_asks_github_nothing() {
     let (home, tracker, github) = rate_limited("rate-limited-delivery");

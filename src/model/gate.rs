@@ -54,7 +54,7 @@ pub enum Fault {
     /// The gate does not say when it was made, so no release can be told to
     /// have come after it and no timeout can be counted from it.
     Undated,
-    /// A timer gate holds no timeout, which bd also refuses to settle.
+    /// A timer gate holds no timeout.
     NoTimeout,
 }
 
@@ -70,7 +70,6 @@ pub fn deadline(gate: &Bead) -> Result<DateTime<Utc>, Vec<Fault>> {
     let timeout = gate
         .value("timeout")
         .and_then(|nanoseconds| nanoseconds.parse().ok())
-        .filter(|nanoseconds| *nanoseconds > 0)
         .map(TimeDelta::nanoseconds);
     match (gate.created_at, timeout) {
         (Some(made), Some(timeout)) => Ok(made + timeout),
