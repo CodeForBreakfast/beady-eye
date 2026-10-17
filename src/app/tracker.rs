@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
 
 use crate::collect::run::{together, FailureKind, RunFailure};
@@ -18,7 +18,7 @@ use crate::model::edges::{self, Relations};
 use crate::model::join;
 use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{Assembled, Nesting};
-use crate::model::types::{Bead, Pane, Unreadable};
+use crate::model::types::{Bead, Pane, Status, Unreadable};
 
 /// One project's roots in id order, each either read or unreadable, what
 /// every bead in the answer is tied to, and when the answer stops speaking
@@ -116,12 +116,23 @@ impl ReadAt {
     }
 }
 
+/// How long a read that saw a claim without a live lease speaks for its
+/// tracker. A heartbeat can lease that claim without a write, so nothing
+/// else would say it had.
+const UNLEASED_CLAIM_RECHECK: TimeDelta = TimeDelta::minutes(5);
+
 /// The soonest instant after `read_at` at which this tracker would answer
 /// differently with nothing written, or `None` where it holds nothing back.
 fn speaks_until(beads: &[Arc<Bead>], read_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
     beads
         .iter()
-        .flat_map(|bead| [bead.defer_until, bead.lease_expires_at])
+        .flat_map(|bead| {
+            let unleased_claim = (bead.status == Status::InProgress
+                && bead.assignee.is_some()
+                && !bead.claim_is_live(read_at))
+            .then(|| read_at + UNLEASED_CLAIM_RECHECK);
+            [bead.defer_until, bead.lease_expires_at, unleased_claim]
+        })
         .flatten()
         .filter(|until| *until > read_at)
         .min()
