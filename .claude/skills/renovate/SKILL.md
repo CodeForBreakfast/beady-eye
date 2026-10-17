@@ -103,11 +103,13 @@ read-ci-verdict "$(git rev-parse HEAD)"    # until it answers
 
 ## 6. Merge
 
-There is no branch of our own to push.
+There is no branch of our own to push. Check the branch is up to date, then
+squash-merge the pull request with the merge command your setup provides,
+deleting its branch, and confirm the result.
 
 ```bash
 gh api repos/CodeForBreakfast/beady-eye/compare/main...<head sha> --jq .behind_by
-gh pr merge <number> --squash --delete-branch
+# squash-merge <number> here, deleting the branch
 gh pr view <number> --json state,mergeCommit   # the exit code is not the check
 ```
 
