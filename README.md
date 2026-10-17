@@ -381,8 +381,9 @@ has a unit to run it under, the webhook, and every line it prints.
 A bead can wait on someone else's repository the same way. A `gh:issue` gate,
 with the issue's number as its await id, closes once that issue closes. A
 `gh:release` gate, with no await id, closes once the repository publishes a
-release after the gate was made. Both name their repository in `repo`, and
-`bdi gates` settles them on each look. A `timer` gate closes at its deadline,
+release after the gate was made. A `gh:run` gate, with a workflow run's id as
+its await id, closes once that run succeeds or is skipped. All three name their repository
+in `repo`, and `bdi gates` settles them on each look. A `timer` gate closes at its deadline,
 its timeout after it was made, without a read of its tracker on the clock.
 
 ## Being seen
