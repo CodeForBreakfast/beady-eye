@@ -3,12 +3,12 @@
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
 root, annotated with the live agent on each node. The eye only looks, and
 each thing it does in the world is a pseudopod, a limb grown for one job. It
-has three. `bdi bd` passes `bd human respond` through to carry a person's
-answer to a bead, and `bd defer --until` to put a bead off until a date a
-person chose. `bdi gates` settles a gate once GitHub says its pull request
+has four. `bdi bd` passes `bd human respond` through to carry a person's
+answer to a bead, `bd defer --until` to put a bead off until a date a
+person chose, and `bd comments add` to put a person's words on a bead. `bdi gates` settles a gate once GitHub says its pull request
 has merged, closed, or left draft, its issue has closed, its workflow run has
-succeeded or been skipped, or its repository has published a release, and closes a timer gate
-at its deadline. Every other bd
+succeeded or been skipped, or its repository has published a release, and
+closes a timer gate at its deadline. Every other bd
 command line `bdi`
 spells is a read, and `collect/` spells all of them.
 `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
@@ -19,8 +19,9 @@ measurements.
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
 - The reading side: which `bd`, `herdr` and `gh` command lines it spells, and
   how it parses what they print.
-- The three pseudopods. One carries a person's answer to the bead that asked.
-  One defers a bead until the date a person chose. The third settles a gate:
+- The four pseudopods. One carries a person's answer to the bead that asked.
+  One defers a bead until the date a person chose. One adds a person's comment
+  to a bead. The fourth settles a gate:
   it re-reads the pull request from GitHub, closes the gate on a merge, and
   on a close without one tells the beads the gate holds back. A gate on an
   issue, a release or a workflow run closes once the issue closes, a release
@@ -41,8 +42,9 @@ measurements.
   project. `bdi` draws what herdr reports.
 - **Every other write to a tracker.** `bdi` never creates a bead, and it
   writes only through its pseudopods. `bdi bd`'s `human respond` records a
-  person's answer and closes the bead that asked, and its `defer` puts a bead
-  off until a date. Settling a gate closes it or
+  person's answer and closes the bead that asked, its `defer` puts a bead
+  off until a date, and its `comments add` puts a person's comment on a bead.
+  Settling a gate closes it or
   comments on the beads it holds back. Whoever runs `bdi` does
   everything else with `bd`, creating the gate included.
 - **How agents are organised.** `bdi` knows no roles, orchestration model or
