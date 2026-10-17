@@ -1,8 +1,8 @@
 //! bd's command line as the way to a project's tracker.
 //!
-//! The one module that spells `bd -C <path> --readonly …`, and the three ways
-//! `bdi` writes: the `bd -C <path> human respond …` and `bd -C <path> defer …`
-//! that `bdi bd` passes through, and the gate resolve and comment that settle
+//! The one module that spells `bd -C <path> --readonly …`, and the four ways
+//! `bdi` writes: the `bd -C <path> human respond …`, `bd -C <path> defer …` and
+//! `bd -C <path> comments add …` that `bdi bd` passes through, and the gate resolve and comment that settle
 //! a gate. Each question the
 //! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
 //! here and nowhere else. The roots to draw the rows under are read off the
@@ -455,8 +455,8 @@ impl Cli<'_> {
 
 /// One project's tracker opened to settle its gates.
 ///
-/// Settling a gate is the third of the three ways `bdi` writes to a tracker,
-/// beside the `human respond` and `defer` that `bdi bd` passes through. `resolve` and
+/// Settling a gate is the fourth of the four ways `bdi` writes to a tracker,
+/// beside the `human respond`, `defer` and `comments add` that `bdi bd` passes through. `resolve` and
 /// `comment` are those writes, and everything else here is a read.
 pub struct Settling<'r>(Reader<'r>);
 
@@ -871,9 +871,9 @@ struct Passed {
     flags: &'static [&'static str],
 }
 
-/// The bd commands `bdi bd` passes through, which are two of the three ways
-/// `bdi` writes. `Settling` is the third.
-const PASSED_THROUGH: [Passed; 2] = [
+/// The bd commands `bdi bd` passes through, which are three of the four ways
+/// `bdi` writes. `Settling` is the fourth.
+const PASSED_THROUGH: [Passed; 3] = [
     Passed {
         command: &["human", "respond"],
         flags: &["-r", "--response"],
@@ -881,6 +881,10 @@ const PASSED_THROUGH: [Passed; 2] = [
     Passed {
         command: &["defer"],
         flags: &["--until"],
+    },
+    Passed {
+        command: &["comments", "add"],
+        flags: &[],
     },
 ];
 
@@ -913,8 +917,8 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
             .eq(passed.command.iter().copied())
     }) else {
         anyhow::bail!(
-            "bdi bd passes only `human respond` and `defer` through to a tracker, and was \
-             asked for `{}`",
+            "bdi bd passes only `human respond`, `defer` and `comments add` through to a \
+             tracker, and was asked for `{}`",
             asked.join(" ")
         );
     };
@@ -927,10 +931,13 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
             }
             given if passed.flags.iter().any(|flag| joined(given, flag)) => {}
             flag if flag.starts_with('-') && flag != "-" => anyhow::bail!(
-                "bdi bd passes `{}` no flag but {}, so it refuses {flag}; a word that starts \
-                 with a dash goes after --",
+                "bdi bd passes `{}` {}, so it refuses {flag}; a word that starts with a dash \
+                 goes after --",
                 passed.command.join(" "),
-                passed.flags.join(" and ")
+                match passed.flags {
+                    [] => "no flag".to_string(),
+                    flags => format!("no flag but {}", flags.join(" and ")),
+                }
             ),
             _ => {}
         }
@@ -2575,11 +2582,16 @@ mod tests {
             "respond dun-7",
             "undefer dun-7",
             "deferred dun-7",
+            "comments dun-7",
+            "comments list dun-7",
+            "comments",
         ] {
             let refused = passed(line).expect_err(line);
 
             assert!(
-                refused.to_string().contains("`human respond` and `defer`"),
+                refused
+                    .to_string()
+                    .contains("`human respond`, `defer` and `comments add`"),
                 "{line:?} got: {refused}"
             );
         }
@@ -2662,5 +2674,42 @@ mod tests {
     fn a_defer_refuses_the_response_flag() {
         assert!(passed("defer dun-7 -r yes").is_err());
         assert!(passed("human respond dun-7 --until tomorrow").is_err());
+    }
+
+    #[test]
+    fn a_comment_is_passed_to_the_projects_tracker_as_written() {
+        assert_eq!(
+            passed("comments add dun-7 -- thanks, one more thing")
+                .expect("a comment is passed through"),
+            format!(
+                "-C {} comments add dun-7 -- thanks, one more thing",
+                project_dir().display()
+            )
+        );
+        assert!(passed("comments add dun-7 thanks").is_ok());
+        assert!(passed("comments add dun-7 -- -C is not a flag here").is_ok());
+    }
+
+    #[test]
+    fn a_comment_takes_no_flag_and_the_refusal_names_it() {
+        for flag in ["--file", "-f", "--author", "--json", "-q", "--actor"] {
+            let line = format!("comments add dun-7 {flag} x");
+            let refused = passed(&line).expect_err(&line);
+
+            assert!(refused.to_string().contains(flag), "got: {refused}");
+            assert!(refused.to_string().contains("no flag"), "got: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_comment_refuses_a_flag_that_would_pick_another_tracker() {
+        for line in [
+            "comments add dun-7 yes -C /srv/work/ferry",
+            "comments add dun-7 --db=ferry yes",
+            "comments add dun-7 --global yes",
+            "comments add -C /srv/work/ferry dun-7 yes",
+        ] {
+            assert!(passed(line).is_err(), "{line:?} was passed through");
+        }
     }
 }
