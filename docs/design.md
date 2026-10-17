@@ -1729,10 +1729,10 @@ where that is sooner than the interval. `bd ready` starts naming the bead then
 with nothing written, so no fingerprint moves and no producer reports it. This
 applies to a project that does not poll as well. A read that saw a claim's
 lease asks again when the lease runs out, for the same reason: a heartbeat
-renews the lease without moving the fingerprint. A read that saw an assigned
-bead in progress with no live lease asks again five minutes later, because a
-heartbeat can grant that claim a lease, or renew one that had run out, just as
-quietly.
+renews the lease without moving the fingerprint. A claim with no live lease
+names no such instant, so its read stands until the tracker next reports a
+change. A heartbeat that grants that claim a lease, or renews one that had run
+out, shows only then.
 
 ### Reading a tracker only when it has changed
 
