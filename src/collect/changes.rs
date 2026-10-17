@@ -166,11 +166,8 @@ impl fmt::Display for Answer {
 /// to know: a message either names one of them or it does not, and that is
 /// the answer the writer gets back.
 ///
-/// Nothing here decides whether a project is polled. What a poll would have
-/// found is already said by the read a report causes: each read arms the
-/// project's next ask one interval further out, so a project something keeps
-/// reporting for never comes due, and one whose producer stops comes due an
-/// interval after its last read. See `tui::armed`.
+/// Nothing here decides whether a project is polled. A `covered` line is
+/// passed on, and `app::armed` is where it stands the poll down.
 ///
 /// **The answer is a claim about the config in force, so this is written
 /// whenever that config is.** A set settled at startup goes stale in both

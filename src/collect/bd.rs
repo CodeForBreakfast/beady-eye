@@ -1545,7 +1545,7 @@ mod tests {
             environment_command: None,
             credential_command: None,
             prefix: None,
-            poll: true,
+            poll: Default::default(),
             events_journal: false,
             badges: Vec::new(),
             worktrees: Vec::new(),

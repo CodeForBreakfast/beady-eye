@@ -173,14 +173,8 @@ pub struct Project {
     /// one project's database covers that project and no other, and a setup
     /// that has deployed one for some of its trackers should not have to poll
     /// all of them or none.
-    ///
-    /// Off is a claim, not a saving. It says something else reports this
-    /// project's changes, so a producer that dies takes the project's
-    /// freshness with it and nothing here quietly covers for that — an
-    /// automatic fallback would hide the very failure the operator needs to
-    /// see. `bdi` polls until told otherwise, which is why this defaults on.
-    #[serde(default = "polls")]
-    pub poll: bool,
+    #[serde(default)]
+    pub poll: Poll,
     /// Whether every writer to this tracker keeps bd's events journal, so
     /// that `bdi watch` passes its records on.
     ///
@@ -204,9 +198,35 @@ pub struct Project {
     pub worktrees: Vec<PathBuf>,
 }
 
-/// A project says nothing about polling until it says it does not.
-fn polls() -> bool {
-    true
+/// How a project is kept current: by its own poll, by a producer on the
+/// inbound channel, or by its poll until a producer takes over.
+///
+/// A producer replaces the poll rather than backing it up. A poll that came
+/// back when a producer went quiet would hide the very failure the reader
+/// needs to see, so a project a producer has covered lapses instead, and the
+/// screen says so.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(from = "bool")]
+pub enum Poll {
+    /// Polls until a producer says it covers the project, and not after.
+    /// What a project saying nothing about `poll` does.
+    #[default]
+    UntilCovered,
+    /// `poll = true`: the reader chose the poll, and keeps it under cover.
+    Always,
+    /// `poll = false`: a claim that something else reports this project's
+    /// changes, from the run's first read.
+    Never,
+}
+
+impl From<bool> for Poll {
+    fn from(polls: bool) -> Self {
+        if polls {
+            Poll::Always
+        } else {
+            Poll::Never
+        }
+    }
 }
 
 /// A program and its arguments, written either way round.
@@ -1494,7 +1514,7 @@ path = "/home/user/dev/cinder"
                     environment_command: None,
                     credential_command: Some("secret-tool lookup tracker arkham".to_string()),
                     prefix: None,
-                    poll: true,
+                    poll: Default::default(),
                     events_journal: false,
                     badges: Vec::new(),
                     worktrees: Vec::new(),
@@ -1510,7 +1530,7 @@ path = "/home/user/dev/cinder"
                         "cat /home/user/dev/kadath/.beads-password".to_string()
                     ),
                     prefix: Some("kad".to_string()),
-                    poll: true,
+                    poll: Default::default(),
                     events_journal: true,
                     badges: vec![Badge {
                         when: Default::default(),
@@ -1835,7 +1855,7 @@ title = ["title", "badge.metadata.jira", "badges"]
             environment_command: None,
             credential_command: None,
             prefix: None,
-            poll: true,
+            poll: Default::default(),
             events_journal: false,
             badges,
             worktrees: Vec::new(),
@@ -2347,6 +2367,21 @@ path = "/home/user/kadath"
         let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
 
         assert_eq!(cfg.projects[0].prefix, None);
+    }
+
+    /// A project that says nothing polls until a producer covers it, and one
+    /// that names `poll` has said which it wants whatever covers it.
+    #[test]
+    fn a_project_polls_until_covered_unless_it_says_which_it_wants() {
+        for (key, poll) in [
+            ("", Poll::UntilCovered),
+            ("poll = true\n", Poll::Always),
+            ("poll = false\n", Poll::Never),
+        ] {
+            let cfg = Config::from_toml(&format!("{ONE_PROJECT}{key}")).expect("parses");
+
+            assert_eq!(cfg.projects[0].poll, poll, "with {key:?}");
+        }
     }
 
     const ONE_ENTERED_WITH_DIRENV: &str = r#"

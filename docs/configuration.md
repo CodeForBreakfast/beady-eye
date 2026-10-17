@@ -181,9 +181,12 @@ prefix is never put down to this project. A project
 stating none may hold any blocker whose prefix no answer carries, so the line
 lists it among the projects not read.
 
-**`poll = false`** stops polling this project and relies on something
-[telling `bdi` when it changed](#telling-bdi-a-project-changed). Nothing then
-covers for a producer that dies, so the project's mark turns to `?` once
+**`poll`** says how this project is kept current. Left out, the project polls
+until a producer [says it covers the project](#telling-bdi-a-project-changed),
+and then polls no more for the rest of the run. `poll = true` polls whatever
+covers the project. `poll = false` never polls, and relies on something
+telling `bdi` when the project changed from the start. Nothing covers for a
+producer that dies, so a project that does not poll turns its mark to `?` once
 nothing has vouched for it for `covered_for_seconds`.
 
 **`events_journal = true`** says that every writer to this project's tracker
@@ -865,15 +868,15 @@ same connection:
 
 A producer watching a project that nothing has changed in writes
 `covered <project>` instead. It is answered `ok <project>` too, and nothing is
-read. It is how a producer that speaks only on change says it is still there,
-which matters most for a project with `poll = false`: that project's mark turns
-to `?` once nothing has vouched for it for `covered_for_seconds`. A `bdi`
-older than the word answers `unknown covered <project>`.
+read. It is how a producer that speaks only on change says it is still there.
+The first one stands down the poll of a project that says nothing about
+`poll`, and from then on the project is read only when it is reported. Its
+mark turns to `?` once nothing has vouched for it for `covered_for_seconds`,
+and the poll does not come back. A `bdi` older than the word answers
+`unknown covered <project>`.
 
 A connection can carry as many lines as you like and stay open for as long as
-the writer does. A project that is reported for is never polled, since each
-report pushes the next poll past its interval, and so does each `covered`
-line. One whose producer goes quiet is polled again from one interval later.
+the writer does. Reports about one project that arrive together cost one read.
 
 The cheapest producer is a wrapper round `bd` itself. It reads the default
 path; a `bdi` told a different one has to be told to the producer too. It

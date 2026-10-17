@@ -25,7 +25,7 @@ use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
-use crate::config::Config;
+use crate::config::{Config, Poll};
 use crate::model::snapshot::{Filter, Listing, Snapshot};
 use crate::tui::{Hearing, Reload, CHECKED_EVERY};
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -238,15 +238,13 @@ impl Polling {
         }
     }
 
-    /// How long after a read this project waits before asking for the next,
-    /// or nothing where it does not ask at all.
-    fn after_a_read(self, project: &crate::config::Project, every: Duration) -> Option<Duration> {
-        let polls = match self {
+    /// How this project is kept current, as the run has it.
+    fn poll(self, project: &crate::config::Project) -> Poll {
+        match self {
             Polling::AsConfigured => project.poll,
-            Polling::Everything => true,
-            Polling::Nothing => false,
-        };
-        polls.then_some(every)
+            Polling::Everything => Poll::Always,
+            Polling::Nothing => Poll::Never,
+        }
     }
 }
 
@@ -515,9 +513,10 @@ fn arming(polling: Polling) -> Arming {
     Box::new(move |cfg: &Config| {
         cfg.read()
             .map(|project| {
-                Armed::polling(
+                Armed::as_poll_says(
                     project.name.clone(),
-                    polling.after_a_read(project, cfg.tui.refresh()),
+                    polling.poll(project),
+                    cfg.tui.refresh(),
                 )
                 .lapsing_after(cfg.changes.covered_for())
             })
@@ -1504,24 +1503,17 @@ detached
         assert!(Cli::try_parse_from(["bdi", "--poll", "--no-poll"]).is_err());
     }
 
-    /// The interval each project's next ask is armed from, or nothing where
-    /// it does not ask: what the run said, over what its config says.
+    /// How each project is kept current: what the run said, over what its
+    /// config says.
     #[test]
     fn what_the_run_said_outranks_what_each_project_says() {
-        let every = Duration::from_secs(30);
-        let polled = a_project(true);
-        let pushed = a_project(false);
+        for poll in [Poll::UntilCovered, Poll::Always, Poll::Never] {
+            let project = a_project(poll);
 
-        assert_eq!(
-            Polling::AsConfigured.after_a_read(&polled, every),
-            Some(every)
-        );
-        assert_eq!(Polling::AsConfigured.after_a_read(&pushed, every), None);
-        assert_eq!(
-            Polling::Everything.after_a_read(&pushed, every),
-            Some(every)
-        );
-        assert_eq!(Polling::Nothing.after_a_read(&polled, every), None);
+            assert_eq!(Polling::AsConfigured.poll(&project), poll);
+            assert_eq!(Polling::Everything.poll(&project), Poll::Always);
+            assert_eq!(Polling::Nothing.poll(&project), Poll::Never);
+        }
     }
 
     /// A config file is per user, so both `bdi`s in the case this exists for
@@ -1569,7 +1561,7 @@ detached
         cfg
     }
 
-    fn a_project(poll: bool) -> crate::config::Project {
+    fn a_project(poll: Poll) -> crate::config::Project {
         crate::config::Project {
             name: "dunwich".to_string(),
             path: PathBuf::from("/srv/work/dunwich"),
