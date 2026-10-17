@@ -162,9 +162,10 @@ struct KeptGates {
     /// none ever has.
     vouched: Option<Instant>,
     lapsed: bool,
-    /// The bead gates in `read` whose bead has been read since the gate
-    /// appeared. Each is read again only when its bead's tracker is.
-    asked: BTreeSet<String>,
+    /// Each bead gate in `read`, with the bead it awaits, whose bead has been
+    /// read since the gate came to await it. Each is read again only when its
+    /// bead's tracker is.
+    asked: BTreeSet<(String, String)>,
 }
 
 impl KeptGates {
@@ -283,7 +284,7 @@ impl Kept {
                     gate, done: Err(_), ..
                 } = found
                 {
-                    kept.asked.remove(gate);
+                    kept.asked.retain(|(asked, _)| asked != gate);
                 }
             }
         }
@@ -419,13 +420,14 @@ impl Kept {
                 let Ok((holder, bead)) = self.holder(at, gate) else {
                     continue;
                 };
-                if read_again[holder] || !self.kept[at].asked.contains(&gate.id) {
+                let awaiting = (gate.id.clone(), bead.to_string());
+                if read_again[holder] || !self.kept[at].asked.contains(&awaiting) {
                     asking
                         .entry(holder)
                         .or_default()
                         .push((at, gate.id.clone(), bead.to_string()));
                 }
-                kept_gates.insert(gate.id.clone());
+                kept_gates.insert(awaiting);
             }
             self.kept[at].asked = kept_gates;
         }
@@ -2401,6 +2403,40 @@ mod tests {
                 },
                 dun_ski_closed()
             ]
+        );
+    }
+
+    #[test]
+    fn a_bead_gate_set_to_await_another_bead_has_that_bead_read() {
+        let mut kept = arkham_and_dunwich();
+        cover_both(&mut kept);
+        bead_look(&mut kept, &bead_gated(DUN_SKI_OPEN));
+
+        let reason = "Bead dun-zzz in dunwich closed";
+        let runner = FakeRunner::default()
+            .with(
+                &gate_list("arkham"),
+                &GATE_LIST_BEAD.replace("dun-ski", "dun-zzz"),
+            )
+            .with(
+                &awaited_in("dunwich", "dun-zzz"),
+                &DUN_SKI_CLOSED.replace("dun-ski", "dun-zzz"),
+            )
+            .with(
+                &format!("bd -C /nowhere/arkham gate resolve ark-689 --reason {reason}."),
+                "",
+            );
+        kept.heard(&Heard::Changed("arkham".to_string()), Instant::now());
+        let settling = kept.changed(&Cli::new(&runner), &Gates::default());
+
+        assert_eq!(
+            settling.found,
+            [Found::Ended {
+                project: "arkham".to_string(),
+                gate: "ark-689".to_string(),
+                happened: reason.to_string(),
+                done: Ok(()),
+            }]
         );
     }
 
