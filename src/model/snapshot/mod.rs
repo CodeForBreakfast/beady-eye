@@ -333,6 +333,8 @@ pub struct Node {
     #[serde(skip)]
     pub due_at: Option<DateTime<Utc>>,
     #[serde(skip)]
+    pub lease_expires_at: Option<DateTime<Utc>>,
+    #[serde(skip)]
     pub metadata: BTreeMap<String, String>,
     #[serde(skip)]
     pub parent: Option<Related>,
@@ -900,7 +902,7 @@ render = "⏸ waiting"
         let assembled = assembled(BEADS);
         let panes = panes(PANES);
         let mut joined = joined(&assembled.beads, &panes);
-        joined.cover("dunwich", &assembled);
+        joined.cover("dunwich", &assembled, now());
         let relations = edges::relations(&assembled.beads);
         build_tree(
             "dunwich",

@@ -791,7 +791,7 @@ All computed in the pure model. The first needs bd alone; the rest need herdr.
 | rule | condition | reading |
 |---|---|---|
 | `stale-claim` | `in_progress`, not updated in N days | beads' own `bd stale`, narrowed to claims |
-| `orphan-claim` | `in_progress`, no pane resolves for it or for any bead above it in the tree | the agent died mid-claim — or the bead named a live pane the join refused it, in which case the refusal travels with the rule and the row says which |
+| `orphan-claim` | `in_progress`, no pane resolves for it or for any bead above it in the tree, and no live lease is held on it or on any bead above it | the agent died mid-claim — or the bead named a live pane the join refused it, in which case the refusal travels with the rule and the row says which |
 | `stale-pane` | bead is closed, its pane is alive | agent finished and did not exit |
 | `unattributed` | pane alive in a configured project, no bead resolves | a pane nobody can account for |
 | `unconfigured` | pane alive in a directory no `[[projects]]` entry covers | a project `bdi` was never told about; the fix is a config entry |
@@ -1726,7 +1726,9 @@ read ends.
 A read that held a bead back asks again at the bead's `defer_until` instead,
 where that is sooner than the interval. `bd ready` starts naming the bead then
 with nothing written, so no fingerprint moves and no producer reports it. This
-applies to a project that does not poll as well.
+applies to a project that does not poll as well. A read that saw a claim's
+lease asks again when the lease runs out, for the same reason: a heartbeat
+renews the lease without moving the fingerprint.
 
 ### Reading a tracker only when it has changed
 
@@ -2848,7 +2850,11 @@ no key's meaning, so a reader wanting one key picks it out of the object.
 `defer_until` is the date a deferred bead is put off until, and is absent
 where the bead has none, so a snooze reads apart from a bead deferred until
 someone undefers it. `due_at` is the date the bead is due, in the same form,
-and is absent where the bead has none.
+and is absent where the bead has none. `assignee` is who holds the bead's
+claim, and `lease_expires_at` is when that claim lapses unless its holder
+renews it. Each is absent where the bead has none. The tracker holds both, so
+every machine's `bdi` prints the same claim, while `agent` names a pane only on
+the machine where it runs.
 
 A list that is short says so. `failed_projects` is the forest's, and
 `unread_trees` names each root whose tracker gave no rows, with the `tracker`
@@ -2886,7 +2892,9 @@ consumer reads how complete that listing was. Every session `answering` means
 the panes are every pane there is and each orphan claim stands on all of them.
 A session `not-answering` means its panes are missing from this run, so a
 claim naming a seat in it reads as unstaffed here whether or not the seat is
-alive, and a consumer discounts the orphan claims accordingly.
+alive, and a consumer discounts the orphan claims accordingly. A claim whose
+lease is live is not an orphan whatever the listing says, because its holder
+is still renewing it, perhaps from a machine this run never reads.
 
 A running screen can do better than that and `--json` cannot, and the
 difference is memory rather than effort. `Collection` keeps which pane ids

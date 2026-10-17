@@ -81,8 +81,10 @@ impl From<RootUnread> for TrackerState {
 /// `defer_until` and does after, and nothing is written when that instant
 /// passes — measured 2026-09-01 against this project's own tracker, a bead
 /// left `open` with `defer_until` two minutes out went from absent to present
-/// across it with its row untouched. So a read carries the soonest instant at
-/// which it stops being able to speak for the tracker.
+/// across it with its row untouched. A claim's lease is the same: a heartbeat
+/// renews it without moving the fingerprint, and a lease that ran out is a
+/// claim no longer live. So a read carries the soonest instant at which it
+/// stops being able to speak for the tracker.
 #[derive(Clone)]
 pub(super) struct ReadAt {
     project: Project,
@@ -119,7 +121,8 @@ impl ReadAt {
 fn speaks_until(beads: &[Arc<Bead>], read_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
     beads
         .iter()
-        .filter_map(|bead| bead.defer_until)
+        .flat_map(|bead| [bead.defer_until, bead.lease_expires_at])
+        .flatten()
         .filter(|until| *until > read_at)
         .min()
 }

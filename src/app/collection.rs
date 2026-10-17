@@ -764,7 +764,7 @@ impl Collection {
         );
         for (project, _, read) in &drawn {
             if let Ok(assembled) = read {
-                joined.cover(project, assembled);
+                joined.cover(project, assembled, now);
             }
         }
         let joined = &joined;
@@ -2321,6 +2321,33 @@ mod tests {
         assert_eq!(
             snap.speaks_until,
             BTreeMap::from([("dunwich".to_string(), when_it_is_due())])
+        );
+    }
+
+    /// A heartbeat renews a lease without moving the fingerprint, so a read
+    /// that saw a lease can say whether the claim is live only until that
+    /// lease runs out. After that the tracker is asked again.
+    #[test]
+    fn a_read_stops_speaking_for_its_tracker_when_a_lease_it_saw_runs_out() {
+        let leased = r#"[
+          {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+           "priority":1,"issue_type":"epic","assignee":"Rowan Ash",
+           "lease_expires_at":"2026-08-30T12:05:00Z"}
+        ]"#;
+        let trackers = dunwich_with(dunwich_holding(leased));
+
+        let snap = Collection::default().collect(
+            &one_project(),
+            &panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            snap.speaks_until.get("dunwich"),
+            Some(&"2026-08-30T12:05:00Z".parse().expect("the instant parses"))
         );
     }
 
