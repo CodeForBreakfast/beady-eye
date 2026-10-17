@@ -370,6 +370,10 @@ comment. Then it looks again a minute later, until it is stopped. Run it under w
 Given `--listen` and the webhook's secret, it also takes GitHub's deliveries
 about pull requests, their reviews and comments, check suites and statuses, and
 settles a pull request when GitHub says it moved rather than at the next look.
+Each look reads every tracker's gates again. Given `--socket`, it takes the
+producer lines a view takes, and stops reading a tracker on each look once a
+producer has named it. From then on that tracker is read only when its
+producer says it changed, and a producer that falls silent is reported.
 "Settling pull-request gates" in [docs/configuration.md](docs/configuration.md)
 has a unit to run it under, the webhook, and every line it prints.
 
