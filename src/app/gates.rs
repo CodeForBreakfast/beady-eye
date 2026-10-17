@@ -336,11 +336,27 @@ impl Kept {
     /// gate whose bead has closed, asking GitHub nothing. A tracker the clock
     /// reads waits for the next look, unless a producer named it too.
     pub fn changed(&mut self, cli: &Cli, settles: &Gates) -> Settling {
+        let (mut found, read_again) = self.read_where(cli, settles, |kept| kept.stale);
+        found.extend(self.close_awaited_closed(cli, &read_again));
+        Settling {
+            found,
+            github: Read::Unasked,
+        }
+    }
+
+    /// Read again each tracker `wanted` picks, saying each that does not
+    /// answer, along with which trackers were read.
+    fn read_where(
+        &mut self,
+        cli: &Cli,
+        settles: &Gates,
+        wanted: impl Fn(&KeptGates) -> bool,
+    ) -> (Vec<Found>, Vec<bool>) {
         let mut found = Vec::new();
         let mut read_again = Vec::new();
         for (project, kept) in self.projects.iter().zip(&mut self.kept) {
-            let stale = kept.stale;
-            if stale {
+            let wanted = wanted(kept);
+            if wanted {
                 kept.read(cli, project, settles);
                 if let Err(failure) = &kept.read {
                     found.push(Found::TrackerUnread {
@@ -349,13 +365,9 @@ impl Kept {
                     });
                 }
             }
-            read_again.push(stale);
+            read_again.push(wanted);
         }
-        found.extend(self.close_awaited_closed(cli, &read_again));
-        Settling {
-            found,
-            github: Read::Unasked,
-        }
+        (found, read_again)
     }
 
     /// Which project holds the bead that bead gate `gate`, kept for the
@@ -474,21 +486,14 @@ impl Kept {
     /// nothing. A tracker holding one is read again first where it may have
     /// changed since, so a gate someone closed meanwhile is not closed again.
     /// A gate that would not close is left to the next look, which reads its
-    /// tracker again for the write.
+    /// tracker again for the write. A bead gate whose bead is in a tracker
+    /// read again is settled too.
     pub fn timers_run_out(&mut self, cli: &Cli, settles: &Gates, at: DateTime<Utc>) -> Settling {
-        let mut found = Vec::new();
-        for (project, kept) in self.projects.iter().zip(&mut self.kept) {
-            if kept.due() && kept.deadlines().any(|deadline| deadline <= at) {
-                kept.read(cli, project, settles);
-                if let Err(failure) = &kept.read {
-                    found.push(Found::TrackerUnread {
-                        project: project.name.clone(),
-                        failure: open_failure(failure),
-                    });
-                }
-            }
-        }
+        let (mut found, read_again) = self.read_where(cli, settles, |kept| {
+            kept.due() && kept.deadlines().any(|deadline| deadline <= at)
+        });
         found.extend(self.close_run_out(cli, at));
+        found.extend(self.close_awaited_closed(cli, &read_again));
         Settling {
             found,
             github: Read::Unasked,
@@ -2363,6 +2368,38 @@ mod tests {
                 gate_list("dunwich"),
                 awaited_in("dunwich", "dun-ski"),
                 closing_689()
+            ]
+        );
+    }
+
+    /// A timer running out reads the tracker a producer said changed, so that
+    /// read is news of the beads it holds too.
+    #[test]
+    fn a_timer_running_out_in_the_tracker_holding_a_gates_bead_settles_that_gate_too() {
+        let timer_in_dunwich = GATE_LIST_TIMER.replace("ark-", "dun-");
+        let closing_dun_06g =
+            format!("bd -C /nowhere/dunwich gate resolve dun-06g --reason {RAN_OUT}.");
+        let open = bead_gated(DUN_SKI_OPEN).with(&gate_list("dunwich"), &timer_in_dunwich);
+        let mut kept = arkham_and_dunwich();
+        cover_both(&mut kept);
+        timer_look(&mut kept, &open, "2026-10-12T08:00:00Z");
+
+        let closed = bead_gated(DUN_SKI_CLOSED)
+            .with(&gate_list("dunwich"), &timer_in_dunwich)
+            .with(&closing_dun_06g, "");
+        kept.heard(&Heard::Changed("dunwich".to_string()), Instant::now());
+        let settling = deadline_passed(&mut kept, &closed, "2026-10-12T09:32:28Z");
+
+        assert_eq!(
+            settling.found,
+            [
+                Found::Ended {
+                    project: "dunwich".to_string(),
+                    gate: "dun-06g".to_string(),
+                    happened: RAN_OUT.to_string(),
+                    done: Ok(()),
+                },
+                dun_ski_closed()
             ]
         );
     }
