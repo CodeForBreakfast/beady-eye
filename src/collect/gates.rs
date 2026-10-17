@@ -766,7 +766,7 @@ mod tests {
         let runner = FakeRunner::default().with(
             &spelled(
                 "dunwich",
-                "list --id dun-ski,dun-zzz --all --include-gates --json",
+                "list --id dun-ski,dun-zzz --all --include-gates --limit 0 --json",
             ),
             closed,
         );

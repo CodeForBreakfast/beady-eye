@@ -461,6 +461,8 @@ impl Cli<'_> {
             &ids.join(","),
             "--all",
             "--include-gates",
+            "--limit",
+            "0",
             "--json",
         ])?;
         Ok(rows(&listed, "list")?)

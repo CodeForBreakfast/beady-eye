@@ -749,7 +749,7 @@ fn a_covered_tracker_s_timer_gate_closes_at_its_deadline_with_no_read_of_bd_mean
 /// ark-689, a bead gate in arkham awaiting dun-ski in dunwich.
 const BEAD_GATE: &str = include_str!("fixtures/bd_1.3.0_gate_list_bead.json");
 const NO_GATES: &str = include_str!("fixtures/bd_1.3.0_gate_list_none.json");
-const AWAITING_DUN_SKI: &str = "list --id dun-ski --all --include-gates --json";
+const AWAITING_DUN_SKI: &str = "list --id dun-ski --all --include-gates --limit 0 --json";
 
 /// Nothing but the producer wakes `bdi gates` here: it looks once an hour,
 /// and the producer covering both trackers says dunwich changed only once
