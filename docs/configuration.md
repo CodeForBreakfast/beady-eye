@@ -1196,9 +1196,8 @@ releases, however many gates wait on them:
 | gh:release, with no await id | the first release the repository publishes after the gate was made. A prerelease counts and a draft does not. It reads the ten releases the repository made last |
 | gh:run, with the run's id as its await id | the run completing with success, or being skipped |
 
-A run that completes any other way, failing, cancelled or timed out, leaves
-its gate open, as `bd gate check` does, and `bdi gates` says so on every look
-until someone resolves the gate. `bd` also takes a workflow's name as a gh:run
+A run that fails, is cancelled or ends any other way leaves its gate open,
+and `bdi gates` says so on every look until someone resolves the gate. `bd` also takes a workflow's name as a gh:run
 gate's await id, meaning that workflow's newest run. `bdi gates` does not look
 that run up, and reports the gate as one it cannot settle.
 

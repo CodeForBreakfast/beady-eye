@@ -7,8 +7,7 @@
 //! gate's `repo` metadata. A gh:issue gate settles once its issue closes,
 //! whatever the reason. A gh:release gate settles once its repository
 //! publishes a release after the gate was made. A gh:run gate settles once
-//! its run succeeds or is skipped, and fails once it ends any other way, as
-//! `bd gate check` has it.
+//! its run succeeds or is skipped, and fails once it ends any other way.
 
 use std::fmt;
 

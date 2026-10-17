@@ -440,8 +440,8 @@ fn look<'a>(
 
 /// Ask GitHub once about each thing the gates `waiting` wait on, and close
 /// each gate whose wait has ended, until GitHub refuses one for its rate
-/// limit. A gate whose wait failed is reported on every look it stays open,
-/// as `bd gate check` reports it on every check.
+/// limit. A gate whose wait failed is reported on every look while it stays
+/// open.
 // ponytail: a rate limit stops this look but sets no wait of its own, so the
 // next look asks once more. Say it as `Found::RateLimited` if upstream gates
 // ever outnumber the pull requests that already set that wait.
