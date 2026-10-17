@@ -158,8 +158,15 @@ pub enum Unreachable {
 }
 
 /// The prefix a tracker gives the ids of its beads, read as bd reads it.
-fn prefix_of(id: &str) -> &str {
+pub(crate) fn prefix_of(id: &str) -> &str {
     id.find('-').map_or("", |dash| &id[..=dash])
+}
+
+/// Whether a config stating `stated` as its project's prefix states the
+/// prefix of `id`. bd trims the dashes off a prefix it is given, so a config
+/// may state one either way.
+pub(crate) fn states_the_prefix_of(stated: &str, id: &str) -> bool {
+    prefix_of(id).strip_suffix('-') == Some(stated.trim_end_matches('-'))
 }
 
 /// What one answer's edges do, read once for every tree drawn from it: the
@@ -721,9 +728,9 @@ impl<'a> Across<'a> {
                 .map(|(project, _)| project.to_string())
                 .collect()
         };
-        let is_the_ids =
-            |stated: &str| prefix_of(id).strip_suffix('-') == Some(stated.trim_end_matches('-'));
-        let stating = not_read_stating(&|stated| stated.is_some_and(is_the_ids));
+        let stating = not_read_stating(&|stated| {
+            stated.is_some_and(|stated| states_the_prefix_of(stated, id))
+        });
         let may_hold = match stating.as_slice() {
             [project] => {
                 return Unreachable::HeldByUnread {

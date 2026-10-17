@@ -20,7 +20,7 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
-use crate::collect::gates::{OpenGates, PrGate, TimerGate, Wait};
+use crate::collect::gates::{BeadGate, OpenGates, PrGate, TimerGate, Wait};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::collect::upstream::UpstreamGate;
@@ -422,8 +422,8 @@ impl Cli<'_> {
     }
 
     /// Every open gate `project`'s tracker holds that `bdi gates` settles and
-    /// whose repo is `wanted`, from one listing of them. A timer gate names no
-    /// repo.
+    /// whose repo is `wanted`, from one listing of them. A timer gate and a
+    /// bead gate name no repo.
     pub fn gates(
         &self,
         project: &Project,
@@ -443,7 +443,27 @@ impl Cli<'_> {
             } else {
                 Vec::new()
             },
+            beads: if wanted(None) {
+                listed.iter().filter_map(BeadGate::of).collect()
+            } else {
+                Vec::new()
+            },
         })
+    }
+
+    /// Each of `ids` that `project`'s tracker holds, closed or not and gate
+    /// or not, from one listing. An id it does not hold is left out.
+    pub fn awaited(&self, project: &Project, ids: &[String]) -> Result<Vec<Bead>, OpenFailure> {
+        let reader = self.reader(project)?;
+        let listed = reader.asked(&[
+            "list",
+            "--id",
+            &ids.join(","),
+            "--all",
+            "--include-gates",
+            "--json",
+        ])?;
+        Ok(rows(&listed, "list")?)
     }
 
     /// `project`'s tracker, opened once to settle the gates waiting on one

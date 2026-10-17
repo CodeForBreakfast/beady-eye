@@ -2,7 +2,9 @@
 //! gates, settled on a poll and, where it listens, a pull request's gates on
 //! each of GitHub's deliveries, and its timer gates at their deadlines, with
 //! what each settling found said on stdout. Given a socket, it reads a
-//! tracker the clock does not read only once a producer says it changed.
+//! tracker the clock does not read only once a producer says it changed, and
+//! closes a bead gate as soon as a producer says the tracker holding its bead
+//! changed.
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -83,7 +85,9 @@ pub(super) fn settle(
             ..project.clone()
         })
         .collect();
-    let (heard_by, heard) = mpsc::channel();
+    let (heard_by, from_producers) = mpsc::channel();
+    let (to_settle, woken) = mpsc::sync_channel(webhook::MOST_WAITING);
+    let heard = wakes_on_change(from_producers, to_settle.clone());
     let covering = changes::Reported::watching(projects.iter().map(|each| each.name.clone()));
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
@@ -99,7 +103,6 @@ pub(super) fn settle(
         None => None,
     };
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
-    let (to_settle, delivered_for) = mpsc::sync_channel(webhook::MOST_WAITING);
     let reading_github = Arc::new(AtomicBool::new(true));
     let listening = match (listen, secret) {
         (Some(address), Some(secret)) => Some(webhook::listen(
@@ -151,8 +154,14 @@ pub(super) fn settle(
             kept.timers_run_out(&trackers, &cfg.gates, Utc::now())
         } else {
             let wake = deadline.map_or(next_look, |deadline| instant_of(deadline).min(next_look));
-            match delivered_for.recv_timeout(wake - now) {
-                Ok(named) if Instant::now() < rate_limited_until => {
+            match woken.recv_timeout(wake - now) {
+                Ok(Woken::Changed) => {
+                    for heard in heard.try_iter() {
+                        kept.heard(&heard, Instant::now());
+                    }
+                    kept.changed(&trackers, &cfg.gates)
+                }
+                Ok(Woken::Delivered(named)) if Instant::now() < rate_limited_until => {
                     println!(
                         "{}",
                         spelled_out(&format!(
@@ -162,7 +171,7 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(Named::PullRequest(pull_request)) => delivered(
+                Ok(Woken::Delivered(Named::PullRequest(pull_request))) => delivered(
                     &trackers,
                     &RealRunner,
                     kept.projects(),
@@ -170,7 +179,7 @@ pub(super) fn settle(
                     pull_request,
                     &told,
                 ),
-                Ok(Named::Commit(commit)) => delivered_commit(
+                Ok(Woken::Delivered(Named::Commit(commit))) => delivered_commit(
                     &trackers,
                     &RealRunner,
                     kept.projects(),
@@ -200,6 +209,42 @@ pub(super) fn settle(
             }
         }
     }
+}
+
+/// What wakes the loop between looks.
+enum Woken {
+    /// A delivery from GitHub named something to settle.
+    Delivered(Named),
+    /// A producer said a tracker changed.
+    Changed,
+}
+
+impl From<Named> for Woken {
+    fn from(named: Named) -> Self {
+        Woken::Delivered(named)
+    }
+}
+
+/// What producers report, passed on to the loop as it was, with the loop
+/// woken for each change among it. A wake there is no room for is dropped:
+/// the change is kept all the same, and the next wake reads it.
+fn wakes_on_change(
+    reported: mpsc::Receiver<changes::Heard>,
+    wake: mpsc::SyncSender<Woken>,
+) -> mpsc::Receiver<changes::Heard> {
+    let (passed_on, heard) = mpsc::channel();
+    std::thread::spawn(move || {
+        for each in reported {
+            let changed = matches!(each, changes::Heard::Changed(_));
+            if passed_on.send(each).is_err() {
+                return;
+            }
+            if changed {
+                let _ = wake.try_send(Woken::Changed);
+            }
+        }
+    });
+    heard
 }
 
 /// The events already said to be unseen, by repository. A token GitHub
@@ -285,9 +330,9 @@ fn started(
         ),
         None => String::new(),
     };
-    // A timer gate names no repository.
+    // A timer gate and a bead gate name no repository.
     let kinds = if gates.settles(None) {
-        "gh:pr, gh:issue, gh:release and timer"
+        "gh:pr, gh:issue, gh:release, timer and bead"
     } else {
         "gh:pr, gh:issue and gh:release"
     };
@@ -385,6 +430,16 @@ fn reported(found: &Found) -> Option<String> {
             "{upstream}: GitHub did not answer for it, so {project} left gate {gate} open: \
              {failure}"
         ),
+        Found::AwaitedUnread {
+            project,
+            gate,
+            holder,
+            bead,
+            failure,
+        } => format!(
+            "{holder}: {bead} could not be read, so {project} left gate {gate} open: {}",
+            phrase::tracker_failure(failure)
+        ),
         Found::Ended {
             project,
             gate,
@@ -452,6 +507,13 @@ fn fault(fault: &Fault) -> String {
         }
         Fault::Undated => "it does not say when it was made".to_string(),
         Fault::NoTimeout => "it has no timeout".to_string(),
+        Fault::NoProjectHolds(bead) => format!(
+            "it awaits {bead}, whose prefix is not its own and is stated by no one project \
+             this config names"
+        ),
+        Fault::NoSuchBead { project, bead } => {
+            format!("it awaits {bead}, which {project} does not hold")
+        }
     }
 }
 
@@ -693,7 +755,7 @@ mod tests {
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
             started(&Gates::default(), 1, None, None),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release and timer gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, timer and bead gates of 1 project, for every owner's repositories, \
              every 60s"
         );
         assert_eq!(
@@ -720,7 +782,7 @@ mod tests {
                 None,
                 None
             ),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release and timer gates of 1 project, for every owner's repositories \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, timer and bead gates of 1 project, for every owner's repositories \
              except those owned by miskatonic, every 60s"
         );
     }
@@ -734,7 +796,7 @@ mod tests {
                 None,
                 Some(Path::new("/run/bdi/changes.sock"))
             ),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release and timer gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, timer and bead gates of 1 project, for every owner's repositories, \
              every 60s, reading a tracker a producer covers once it reports a change to /run/bdi/changes.sock"
         );
     }

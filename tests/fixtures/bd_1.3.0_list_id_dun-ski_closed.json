@@ -1,0 +1,18 @@
+[
+  {
+    "id": "dun-ski",
+    "title": "the stars come right",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-17T13:05:04Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-17T13:05:06Z",
+    "closed_at": "2026-10-17T13:05:06Z",
+    "close_reason": "the stars came right",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  }
+]

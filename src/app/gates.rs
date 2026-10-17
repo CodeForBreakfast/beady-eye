@@ -1,11 +1,15 @@
-//! One look at every configured project's gh:pr, gh:issue, gh:release and
-//! timer gates, which `bdi gates` takes on its poll: each pull request, issue
-//! or repository's releases they wait on is asked of GitHub once, where its
-//! repository's owner is one this `bdi gates` settles for. A tracker is read
-//! for them only where it may have changed since it was last read. A
+//! One look at every configured project's gh:pr, gh:issue, gh:release, timer
+//! and bead gates, which `bdi gates` takes on its poll: each pull request,
+//! issue or repository's releases they wait on is asked of GitHub once, where
+//! its repository's owner is one this `bdi gates` settles for. A tracker is
+//! read for them only where it may have changed since it was last read. A
 //! delivery from GitHub settles the one pull request it names, by the same
-//! rule, and a timer gate kept from the last read closes at its deadline.
+//! rule, and a timer gate kept from the last read closes at its deadline. A
+//! bead gate's bead is read as the gate first appears and again only when
+//! the tracker holding it is read again, so a producer saying that tracker
+//! changed is what closes the gate.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -15,7 +19,7 @@ use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
 use crate::collect::changes::Heard;
 use crate::collect::gates::{
-    self, Awaited, Done, OpenGates, PullRequest, Settled, Told, Unseen, Waiting,
+    self, Awaited, BeadGate, Done, OpenGates, PullRequest, Settled, Told, Unseen, Waiting,
 };
 use crate::collect::github;
 use crate::collect::pr_events::EVENTS;
@@ -26,6 +30,8 @@ use crate::collect::webhook::Commit;
 use crate::config::{Gates, Poll, Project};
 use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
+use crate::model::tree::{prefix_of, states_the_prefix_of};
+use crate::model::types::Status;
 
 /// Something a look at the gates found to report.
 #[derive(Debug, PartialEq, Eq)]
@@ -73,8 +79,18 @@ pub enum Found {
         upstream: Upstream,
         failure: RunFailure,
     },
-    /// What a gh:issue or gh:release gate waits on `happened`, or a timer
-    /// gate's deadline passed, and what came of closing the gate.
+    /// The tracker `holder` did not say whether `bead`, which bead gate
+    /// `gate` in `project` awaits, has closed, so the gate was left open.
+    AwaitedUnread {
+        project: String,
+        gate: String,
+        holder: String,
+        bead: String,
+        failure: TrackerFailure,
+    },
+    /// What a gh:issue or gh:release gate waits on `happened`, a timer
+    /// gate's deadline passed, or a bead gate's bead closed, and what came of
+    /// closing the gate.
     Ended {
         project: String,
         gate: String,
@@ -146,6 +162,9 @@ struct KeptGates {
     /// none ever has.
     vouched: Option<Instant>,
     lapsed: bool,
+    /// The bead gates in `read` whose bead has been read since the gate
+    /// appeared. Each is read again only when its bead's tracker is.
+    asked: BTreeSet<String>,
 }
 
 impl KeptGates {
@@ -221,6 +240,7 @@ impl Kept {
                 cover: Cover::of(project.poll),
                 vouched: None,
                 lapsed: false,
+                asked: BTreeSet::new(),
             })
             .collect();
         Self { projects, kept }
@@ -247,22 +267,33 @@ impl Kept {
     }
 
     /// Mark every project `settling` wrote to, to be read again on the next
-    /// look.
+    /// look. A bead gate that would not close has its bead asked after again
+    /// then too.
     pub fn settled(&mut self, settling: &Settling) {
         for found in &settling.found {
             let (Found::Ended { project, .. } | Found::Settling { project, .. }) = found else {
                 continue;
             };
             for (each, kept) in self.projects.iter().zip(&mut self.kept) {
-                kept.stale |= each.name == *project;
+                if each.name != *project {
+                    continue;
+                }
+                kept.stale = true;
+                if let Found::Ended {
+                    gate, done: Err(_), ..
+                } = found
+                {
+                    kept.asked.remove(gate);
+                }
             }
         }
     }
 
     /// Read again each tracker that is due, then settle every gate kept, as
-    /// [`look`] does, and close each timer gate that has run out by `at`. A
-    /// gate whose repository `settles` leaves to another `bdi gates` is
-    /// passed over without a word, and a timer gate names none. `now` and
+    /// [`look`] does, close each timer gate that has run out by `at`, and
+    /// close each bead gate whose bead has closed. A gate whose repository
+    /// `settles` leaves to another `bdi gates` is passed over without a word,
+    /// and a timer gate and a bead gate name none. `now` and
     /// `covered_for` decide whether a producer has fallen silent. What the
     /// look wrote is for [`Kept::settled`] to hear, as what a delivery wrote
     /// is.
@@ -278,18 +309,160 @@ impl Kept {
         covered_for: Duration,
     ) -> Settling {
         let mut lapses = Vec::new();
+        let mut read_again = Vec::new();
         for (project, kept) in self.projects.iter().zip(&mut self.kept) {
-            if kept.due() {
+            let due = kept.due();
+            if due {
                 kept.read(cli, project, settles);
             }
+            read_again.push(due);
             lapses.extend(kept.lapse(&project.name, now, covered_for));
         }
         let ran_out = self.close_run_out(cli, at);
+        let beads = self.close_awaited_closed(cli, &read_again);
         let mut settling = look(cli, gh, &self.projects, self.reads(), told);
+        settling.found.splice(
+            0..0,
+            lapses
+                .into_iter()
+                .chain(ran_out)
+                .chain(self.unsettleable_bead_gates())
+                .chain(beads),
+        );
         settling
-            .found
-            .splice(0..0, lapses.into_iter().chain(ran_out));
-        settling
+    }
+
+    /// Read again each tracker a producer said changed, and close each bead
+    /// gate whose bead has closed, asking GitHub nothing. A tracker the clock
+    /// reads waits for the next look, unless a producer named it too.
+    pub fn changed(&mut self, cli: &Cli, settles: &Gates) -> Settling {
+        let mut found = Vec::new();
+        let mut read_again = Vec::new();
+        for (project, kept) in self.projects.iter().zip(&mut self.kept) {
+            let stale = kept.stale;
+            if stale {
+                kept.read(cli, project, settles);
+                if let Err(failure) = &kept.read {
+                    found.push(Found::TrackerUnread {
+                        project: project.name.clone(),
+                        failure: open_failure(failure),
+                    });
+                }
+            }
+            read_again.push(stale);
+        }
+        found.extend(self.close_awaited_closed(cli, &read_again));
+        Settling {
+            found,
+            github: Read::Unasked,
+        }
+    }
+
+    /// Which project holds the bead that bead gate `gate`, kept for the
+    /// project at `at`, awaits: its own where the two ids share a prefix, and
+    /// otherwise the one project whose config states the bead's prefix.
+    fn holder<'g>(&self, at: usize, gate: &'g BeadGate) -> Result<(usize, &'g str), Vec<Fault>> {
+        let bead = gate.awaits.as_ref().map_err(Clone::clone)?;
+        if prefix_of(&gate.id) == prefix_of(bead) {
+            return Ok((at, bead));
+        }
+        let mut stating = self.projects.iter().enumerate().filter(|(_, project)| {
+            project
+                .prefix
+                .as_deref()
+                .is_some_and(|stated| states_the_prefix_of(stated, bead))
+        });
+        match (stating.next(), stating.next()) {
+            (Some((holder, _)), None) => Ok((holder, bead)),
+            _ => Err(vec![Fault::NoProjectHolds(bead.clone())]),
+        }
+    }
+
+    /// Each bead gate kept that cannot name a project holding its bead.
+    fn unsettleable_bead_gates(&self) -> Vec<Found> {
+        let mut found = Vec::new();
+        for (at, kept) in self.kept.iter().enumerate() {
+            for gate in kept.read.iter().flat_map(|open| &open.beads) {
+                if let Err(faults) = self.holder(at, gate) {
+                    found.push(Found::Unsettleable {
+                        project: self.projects[at].name.clone(),
+                        gate: gate.id.clone(),
+                        faults,
+                    });
+                }
+            }
+        }
+        found
+    }
+
+    /// Close each bead gate kept whose bead has closed, reading the beads of
+    /// those that appeared since their tracker was last read and of those
+    /// whose bead's tracker `read_again` says was just read, one listing per
+    /// tracker. A tracker that does not answer is read again on the next look.
+    fn close_awaited_closed(&mut self, cli: &Cli, read_again: &[bool]) -> Vec<Found> {
+        let mut asking: BTreeMap<usize, Vec<(usize, String, String)>> = BTreeMap::new();
+        for at in 0..self.kept.len() {
+            let mut kept_gates = BTreeSet::new();
+            for gate in self.kept[at].read.iter().flat_map(|open| &open.beads) {
+                let Ok((holder, bead)) = self.holder(at, gate) else {
+                    continue;
+                };
+                if read_again[holder] || !self.kept[at].asked.contains(&gate.id) {
+                    asking
+                        .entry(holder)
+                        .or_default()
+                        .push((at, gate.id.clone(), bead.to_string()));
+                }
+                kept_gates.insert(gate.id.clone());
+            }
+            self.kept[at].asked = kept_gates;
+        }
+        let mut found = Vec::new();
+        for (holder, waiting) in asking {
+            let mut beads: Vec<String> = Vec::new();
+            for (_, _, bead) in &waiting {
+                if !beads.contains(bead) {
+                    beads.push(bead.clone());
+                }
+            }
+            let holder_name = self.projects[holder].name.clone();
+            let listed = match cli.awaited(&self.projects[holder], &beads) {
+                Ok(listed) => listed,
+                Err(failure) => {
+                    self.kept[holder].stale = true;
+                    let failure = open_failure(&failure);
+                    found.extend(waiting.into_iter().map(|(at, gate, bead)| {
+                        Found::AwaitedUnread {
+                            project: self.projects[at].name.clone(),
+                            gate,
+                            holder: holder_name.clone(),
+                            bead,
+                            failure: failure.clone(),
+                        }
+                    }));
+                    continue;
+                }
+            };
+            for (at, gate, bead) in waiting {
+                let project = &self.projects[at];
+                match listed.iter().find(|listed| listed.id == bead) {
+                    None => found.push(Found::Unsettleable {
+                        project: project.name.clone(),
+                        gate,
+                        faults: vec![Fault::NoSuchBead {
+                            project: holder_name.clone(),
+                            bead,
+                        }],
+                    }),
+                    Some(listed) if listed.status == Status::Closed => {
+                        let happened = format!("Bead {bead} in {holder_name} closed");
+                        found.push(closed(cli, project, gate, happened));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        found
     }
 
     /// When the first timer gate kept runs out.
@@ -2045,5 +2218,277 @@ mod tests {
             [unsettleable("arkham", "ark-06g", Fault::NoTimeout)]
         );
         assert_eq!(kept.next_deadline(), None);
+    }
+
+    /// ark-689, a bead gate in arkham awaiting dun-ski in dunwich.
+    const GATE_LIST_BEAD: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list_bead.json");
+    const GATE_LIST_NONE: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list_none.json");
+    const DUN_SKI_OPEN: &str =
+        include_str!("../../tests/fixtures/bd_1.3.0_list_id_dun-ski_open.json");
+    const DUN_SKI_CLOSED: &str =
+        include_str!("../../tests/fixtures/bd_1.3.0_list_id_dun-ski_closed.json");
+    const DUN_SKI_CLOSED_REASON: &str = "Bead dun-ski in dunwich closed";
+
+    /// dunwich, whose config states its prefix, as the one that holds dun-ski.
+    fn dunwich() -> Project {
+        Project {
+            prefix: Some("dun".to_string()),
+            ..project("dunwich")
+        }
+    }
+
+    fn arkham_and_dunwich() -> Kept {
+        Kept::new(vec![project("arkham"), dunwich()])
+    }
+
+    fn awaited_in(project: &str, ids: &str) -> String {
+        read(
+            project,
+            &format!("list --id {ids} --all --include-gates --json"),
+        )
+    }
+
+    /// arkham holding ark-689, and dunwich no gate, with dun-ski as `dun_ski`.
+    fn bead_gated(dun_ski: &str) -> FakeRunner {
+        FakeRunner::default()
+            .with(&gate_list("arkham"), GATE_LIST_BEAD)
+            .with(&gate_list("dunwich"), GATE_LIST_NONE)
+            .with(&awaited_in("dunwich", "dun-ski"), dun_ski)
+            .with(&closing_689(), "")
+    }
+
+    fn closing_689() -> String {
+        format!("bd -C /nowhere/arkham gate resolve ark-689 --reason {DUN_SKI_CLOSED_REASON}.")
+    }
+
+    fn dun_ski_closed() -> Found {
+        Found::Ended {
+            project: "arkham".to_string(),
+            gate: "ark-689".to_string(),
+            happened: DUN_SKI_CLOSED_REASON.to_string(),
+            done: Ok(()),
+        }
+    }
+
+    fn bead_look(kept: &mut Kept, runner: &FakeRunner) -> Settling {
+        timer_look(kept, runner, "2026-10-17T14:00:00Z")
+    }
+
+    fn every_gate_list_read(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .iter()
+            .filter(|call| call.argv.ends_with(" gate list --limit 0 --json"))
+            .count()
+    }
+
+    fn awaited_reads(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .iter()
+            .filter(|call| call.argv.contains(" list --id "))
+            .count()
+    }
+
+    fn cover_both(kept: &mut Kept) {
+        for project in ["arkham", "dunwich"] {
+            kept.heard(&Heard::Covered(project.to_string()), Instant::now());
+        }
+    }
+
+    #[test]
+    fn a_bead_gate_whose_bead_in_another_tracker_has_closed_is_closed_on_the_first_look() {
+        let runner = bead_gated(DUN_SKI_CLOSED);
+
+        let settling = bead_look(&mut arkham_and_dunwich(), &runner);
+
+        assert_eq!(
+            settling,
+            Settling {
+                found: vec![dun_ski_closed()],
+                github: Read::Unasked,
+            }
+        );
+    }
+
+    #[test]
+    fn a_bead_gate_whose_bead_is_in_its_own_tracker_is_settled_from_that_tracker() {
+        let own = GATE_LIST_BEAD.replace("dun-ski", "ark-8hm");
+        let runner = FakeRunner::default()
+            .with(&gate_list("arkham"), &own)
+            .with(
+                &awaited_in("arkham", "ark-8hm"),
+                &DUN_SKI_CLOSED.replace("dun-ski", "ark-8hm"),
+            )
+            .with(
+                "bd -C /nowhere/arkham gate resolve ark-689 --reason Bead ark-8hm in arkham closed.",
+                "",
+            );
+
+        let settling = bead_look(&mut arkham(), &runner);
+
+        assert!(
+            matches!(&settling.found[..], [Found::Ended { done: Ok(()), .. }]),
+            "{settling:?}"
+        );
+    }
+
+    /// The bead is read once as the gate first appears, and again only once
+    /// a producer says the tracker holding it changed.
+    #[test]
+    fn a_covered_bead_gate_is_closed_once_the_tracker_holding_its_bead_changes() {
+        let open = bead_gated(DUN_SKI_OPEN);
+        let mut kept = arkham_and_dunwich();
+        cover_both(&mut kept);
+
+        assert_eq!(bead_look(&mut kept, &open).found, []);
+        assert_eq!(bead_look(&mut kept, &open).found, []);
+        assert_eq!(kept.changed(&Cli::new(&open), &Gates::default()).found, []);
+        assert_eq!(awaited_reads(&open), 1);
+        assert_eq!(
+            every_gate_list_read(&open),
+            2,
+            "one listing of each tracker"
+        );
+
+        let closed = bead_gated(DUN_SKI_CLOSED);
+        kept.heard(&Heard::Changed("dunwich".to_string()), Instant::now());
+        let settling = kept.changed(&Cli::new(&closed), &Gates::default());
+
+        assert_eq!(settling.found, [dun_ski_closed()]);
+        let calls: Vec<String> = closed.calls().into_iter().map(|call| call.argv).collect();
+        assert_eq!(
+            calls,
+            [
+                gate_list("dunwich"),
+                awaited_in("dunwich", "dun-ski"),
+                closing_689()
+            ]
+        );
+    }
+
+    /// A change to the tracker holding the gate, rather than its bead, is not
+    /// news of the bead.
+    #[test]
+    fn a_change_to_the_gates_own_tracker_alone_does_not_read_its_bead_again() {
+        let runner = bead_gated(DUN_SKI_OPEN);
+        let mut kept = arkham_and_dunwich();
+        cover_both(&mut kept);
+        bead_look(&mut kept, &runner);
+
+        kept.heard(&Heard::Changed("arkham".to_string()), Instant::now());
+        kept.changed(&Cli::new(&runner), &Gates::default());
+
+        assert_eq!(awaited_reads(&runner), 1);
+        assert_eq!(every_gate_list_read(&runner), 3);
+    }
+
+    #[test]
+    fn a_bead_gate_whose_bead_no_one_project_states_the_prefix_of_cannot_be_settled() {
+        let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST_BEAD);
+
+        let settling = bead_look(&mut arkham(), &runner);
+
+        assert_eq!(
+            settling.found,
+            [unsettleable(
+                "arkham",
+                "ark-689",
+                Fault::NoProjectHolds("dun-ski".to_string())
+            )]
+        );
+        assert_eq!(awaited_reads(&runner), 0);
+    }
+
+    #[test]
+    fn a_bead_gate_whose_bead_its_tracker_does_not_hold_cannot_be_settled() {
+        let runner = bead_gated("[]");
+
+        let settling = bead_look(&mut arkham_and_dunwich(), &runner);
+
+        assert_eq!(
+            settling.found,
+            [unsettleable(
+                "arkham",
+                "ark-689",
+                Fault::NoSuchBead {
+                    project: "dunwich".to_string(),
+                    bead: "dun-ski".to_string(),
+                }
+            )]
+        );
+    }
+
+    /// As a tracker whose gates could not be read is read again on the next
+    /// look.
+    #[test]
+    fn a_bead_gate_whose_bead_could_not_be_read_is_said_and_read_again_on_the_next_look() {
+        let runner =
+            bead_gated(DUN_SKI_OPEN).failing(&awaited_in("dunwich", "dun-ski"), unavailable("bd"));
+        let mut kept = arkham_and_dunwich();
+        cover_both(&mut kept);
+
+        let found = bead_look(&mut kept, &runner).found;
+        bead_look(&mut kept, &runner);
+
+        assert!(
+            matches!(
+                &found[..],
+                [Found::AwaitedUnread { project, gate, holder, bead, .. }]
+                    if project == "arkham" && gate == "ark-689" && holder == "dunwich" && bead == "dun-ski"
+            ),
+            "{found:?}"
+        );
+        assert_eq!(awaited_reads(&runner), 2);
+    }
+
+    /// The next look reads arkham again for the write, and asks once more.
+    #[test]
+    fn a_bead_gate_that_would_not_close_is_asked_after_again_on_the_next_look() {
+        let runner = bead_gated(DUN_SKI_CLOSED).failing(&closing_689(), unavailable("bd"));
+        let mut kept = arkham_and_dunwich();
+        cover_both(&mut kept);
+
+        let first = bead_look(&mut kept, &runner);
+        kept.settled(&first);
+        bead_look(&mut kept, &runner);
+
+        assert_eq!(awaited_reads(&runner), 2);
+    }
+
+    #[test]
+    fn the_beads_two_gates_await_in_one_tracker_are_read_in_one_listing() {
+        let two = GATE_LIST_BEAD.replace(
+            "\n]",
+            &format!(
+                ",\n{}\n]",
+                GATE_LIST_BEAD
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .trim()
+                    .replace("ark-689", "ark-68a")
+                    .replace("dun-ski", "dun-0tp")
+            ),
+        );
+        let runner = FakeRunner::default()
+            .with(&gate_list("arkham"), &two)
+            .with(&gate_list("dunwich"), GATE_LIST_NONE)
+            .with(&awaited_in("dunwich", "dun-ski,dun-0tp"), DUN_SKI_OPEN);
+
+        let settling = bead_look(&mut arkham_and_dunwich(), &runner);
+
+        assert_eq!(
+            settling.found,
+            [unsettleable(
+                "arkham",
+                "ark-68a",
+                Fault::NoSuchBead {
+                    project: "dunwich".to_string(),
+                    bead: "dun-0tp".to_string(),
+                }
+            )]
+        );
+        assert_eq!(awaited_reads(&runner), 1);
     }
 }

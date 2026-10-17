@@ -3,7 +3,8 @@
 //! through a GitHub that refuses it and a tracker that does not answer,
 //! reporting each. Listening, it settles the pull request a delivery signed
 //! with its secret names, and refuses every other. Given a socket, it reads a
-//! tracker a producer covers only once the producer says it changed.
+//! tracker a producer covers only once the producer says it changed, and
+//! closes a bead gate as soon as the tracker holding its bead changes.
 //!
 //! The cases run the binary against the `bd` and `gh` shims, because what is
 //! under test is the process a supervisor starts and leaves running.
@@ -743,6 +744,71 @@ fn a_covered_tracker_s_timer_gate_closes_at_its_deadline_with_no_read_of_bd_mean
         "closed {late} after its deadline"
     );
     assert_eq!(tracker.calls(), [LISTING_GATES.to_string(), closing]);
+}
+
+/// ark-689, a bead gate in arkham awaiting dun-ski in dunwich.
+const BEAD_GATE: &str = include_str!("fixtures/bd_1.3.0_gate_list_bead.json");
+const NO_GATES: &str = include_str!("fixtures/bd_1.3.0_gate_list_none.json");
+const AWAITING_DUN_SKI: &str = "list --id dun-ski --all --include-gates --json";
+
+/// Nothing but the producer wakes `bdi gates` here: it looks once an hour,
+/// and the producer covering both trackers says dunwich changed only once
+/// dun-ski has closed.
+#[test]
+fn a_bead_gate_closes_moments_after_its_bead_in_another_tracker_closes_with_no_read_of_bd_meanwhile(
+) {
+    let home = a_home_looking_every("bead", &["arkham", "dunwich"], 3600);
+    let config = home.join("config.toml");
+    let stated = std::fs::read_to_string(&config).expect("the config was ours to write")
+        + "prefix = \"dun\"\n";
+    std::fs::write(&config, stated).expect("the config is ours to write");
+    let socket = home.join("changes.sock");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("arkham", LISTING_GATES, BEAD_GATE);
+    tracker.answers_for("dunwich", LISTING_GATES, NO_GATES);
+    tracker.answers_for(
+        "dunwich",
+        AWAITING_DUN_SKI,
+        include_str!("fixtures/bd_1.3.0_list_id_dun-ski_open.json"),
+    );
+    let closing = "gate resolve ark-689 --reason Bead dun-ski in dunwich closed.";
+    tracker.answers_for("arkham", closing, "✓ Gate resolved: ark-689\n");
+    let github = ShimmedGitHub::beside(&home);
+    let mut command = gates(&home, &tracker, &github);
+    command.arg("--socket").arg(&socket);
+    let settling = Settling::spawned(&home, command);
+    until(
+        || tracker.calls_for("dunwich").len() == 2,
+        "the first look's reads of dunwich",
+    );
+    let mut producer = Producer::connected(&socket);
+    assert_eq!(producer.says("covered arkham"), "ok arkham");
+    assert_eq!(producer.says("covered dunwich"), "ok dunwich");
+    std::thread::sleep(Duration::from_secs(1));
+    let read_before = tracker.calls();
+
+    tracker.answers_for(
+        "dunwich",
+        AWAITING_DUN_SKI,
+        include_str!("fixtures/bd_1.3.0_list_id_dun-ski_closed.json"),
+    );
+    let told = Instant::now();
+    assert_eq!(producer.says("dunwich"), "ok dunwich");
+    settling.says("Bead dun-ski in dunwich closed: arkham closed gate ark-689");
+
+    assert!(
+        told.elapsed() < Duration::from_secs(3),
+        "closed {:?} after the change",
+        told.elapsed()
+    );
+    assert_eq!(
+        tracker.calls()[read_before.len()..],
+        [LISTING_GATES, AWAITING_DUN_SKI, closing]
+    );
+    assert_eq!(
+        tracker.calls()[..read_before.len()],
+        [LISTING_GATES, LISTING_GATES, AWAITING_DUN_SKI]
+    );
 }
 
 #[test]
