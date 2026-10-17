@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 
-use crate::app::gates::{delivered, delivered_commit, Found, Kept, Read};
+use crate::app::gates::{Found, Kept, Read};
 use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::environment::EnvironmentCache;
@@ -162,22 +162,12 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(Named::PullRequest(pull_request)) => delivered(
-                    &trackers,
-                    &RealRunner,
-                    kept.projects(),
-                    &cfg.gates,
-                    pull_request,
-                    &told,
-                ),
-                Ok(Named::Commit(commit)) => delivered_commit(
-                    &trackers,
-                    &RealRunner,
-                    kept.projects(),
-                    &cfg.gates,
-                    commit,
-                    &told,
-                ),
+                Ok(Named::PullRequest(pull_request)) => {
+                    kept.delivered(&trackers, &RealRunner, &cfg.gates, pull_request, &told)
+                }
+                Ok(Named::Commit(commit)) => {
+                    kept.delivered_commit(&trackers, &RealRunner, &cfg.gates, commit, &told)
+                }
                 Err(_) => continue,
             }
         };

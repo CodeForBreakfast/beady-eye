@@ -221,7 +221,7 @@ impl Settling {
         let said = self.said();
         let after = &said[said.find(TAKING).expect("it said") + TAKING.len()..];
         after
-            .lines()
+            .split([',', '\n'])
             .next()
             .and_then(|address| address.parse().ok())
             .unwrap_or_else(|| panic!("an address in {said:?}"))
@@ -773,6 +773,68 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
     );
     settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
     assert_eq!(github.calls(), [queried(), viewed(42)]);
+}
+
+/// The look reads arkham, which a producer covers, and nothing changes it
+/// after. Deliveries about #42 while it stays open then read no bd at all,
+/// and the one that follows its merge closes the gate waiting on it.
+#[test]
+fn deliveries_read_no_tracker_unchanged_since_the_look_and_a_merge_still_closes_its_gate() {
+    let home = a_home_looking_every("delivered-covered", &["arkham"], 3600);
+    let socket = home.join("changes.sock");
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED_OPEN);
+    github.answers_with(&viewed(42), &answer(42, OPEN));
+    let mut command = gates(&home, &tracker, &github);
+    command
+        .args(["--listen", "127.0.0.1:0"])
+        .env("BDI_GATES_WEBHOOK_SECRET", SECRET)
+        .arg("--socket")
+        .arg(&socket);
+    let settling = Settling::spawned(&home, command);
+    let address = settling.address();
+    let mut producer = Producer::connected(&socket);
+    assert_eq!(producer.says("covered arkham"), "ok arkham");
+    until(|| looks(&github) == 1, "the first look");
+    let looked = tracker.calls();
+
+    let synchronized = r#"{"action":"synchronize","number":42,"pull_request":{"merged":false},"repository":{"full_name":"example/ark"}}"#;
+    for _ in 0..5 {
+        assert_eq!(
+            delivered(
+                address,
+                "pull_request",
+                Some(&signed(SECRET, synchronized)),
+                synchronized
+            ),
+            202
+        );
+    }
+    let asked_about_42 = || {
+        github
+            .calls()
+            .iter()
+            .filter(|call| **call == viewed(42))
+            .count()
+    };
+    until(|| asked_about_42() == 5, "each delivery settled");
+    assert_eq!(tracker.calls(), looked);
+
+    github.answers_with(&viewed(42), &answer(42, MERGED));
+    assert_eq!(
+        delivered(
+            address,
+            "pull_request",
+            Some(&signed(SECRET, DELIVERED_42)),
+            DELIVERED_42
+        ),
+        202
+    );
+    settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
+    assert_eq!(looks(&github), 1);
 }
 
 const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
