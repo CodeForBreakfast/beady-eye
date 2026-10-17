@@ -1,8 +1,8 @@
 //! `bdi gates`: every configured project's gh:pr, gh:issue and gh:release
 //! gates, settled on a poll and, where it listens, a pull request's gates on
-//! each of GitHub's deliveries, with what each settling found said on stdout.
-//! Given a socket, it reads a tracker a producer covers only once the
-//! producer says it changed.
+//! each of GitHub's deliveries, and its timer gates at their deadlines, with
+//! what each settling found said on stdout. Given a socket, it reads a
+//! tracker a producer covers only once the producer says it changed.
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -39,9 +39,10 @@ const UNSAID_WAIT: Duration = Duration::from_secs(60);
 
 /// Look at the gates, report, and look again `[gates] poll_seconds` later,
 /// until a signal ends the process. Listening on `listen`, settle the pull
-/// request each delivery names in between. Given a `socket`, take producers'
-/// reports on it, and read a tracker a producer covers only once the
-/// producer says it changed. Nothing a settling finds stops the
+/// request each delivery names in between. Close a timer gate the last look
+/// found at its deadline, in between as well. Given a `socket`, take
+/// producers' reports on it, and read a tracker a producer covers only once
+/// the producer says it changed. Nothing a settling finds stops the
 /// next one, though a rate limit puts it off: GitHub is asked nothing until
 /// the limit resets, and a delivery in the meantime is left to the look after.
 ///
@@ -124,6 +125,7 @@ pub(super) fn settle(
         for heard in heard.try_iter() {
             kept.heard(&heard, now);
         }
+        let deadline = kept.next_deadline();
         let settling = if now >= next_look {
             let settling = kept.look(
                 &trackers,
@@ -131,12 +133,16 @@ pub(super) fn settle(
                 &cfg.gates,
                 &told,
                 now,
+                Utc::now(),
                 cfg.changes.covered_for(),
             );
             next_look = Instant::now() + cfg.gates.poll();
             settling
+        } else if deadline.is_some_and(|deadline| deadline <= Utc::now()) {
+            kept.timers_run_out(&trackers, &cfg.gates, Utc::now())
         } else {
-            match delivered_for.recv_timeout(next_look - now) {
+            let wake = deadline.map_or(next_look, |deadline| instant_of(deadline).min(next_look));
+            match delivered_for.recv_timeout(wake - now) {
                 Ok(named) if Instant::now() < rate_limited_until => {
                     println!(
                         "{}",
@@ -214,11 +220,12 @@ impl SaidUnseen {
 /// When GitHub may be asked again after a rate limit that `resets` then, or
 /// that GitHub did not say the end of.
 fn waited_out(resets: Option<DateTime<Utc>>) -> Instant {
-    let wait = match resets {
-        Some(resets) => (resets - Utc::now()).to_std().unwrap_or(Duration::ZERO),
-        None => UNSAID_WAIT,
-    };
-    Instant::now() + wait
+    resets.map_or(Instant::now() + UNSAID_WAIT, instant_of)
+}
+
+/// The instant the clock reads `at`, or now where that has passed.
+fn instant_of(at: DateTime<Utc>) -> Instant {
+    Instant::now() + (at - Utc::now()).to_std().unwrap_or(Duration::ZERO)
 }
 
 /// The secret, from `file` where one is named and from what
@@ -269,8 +276,14 @@ fn started(
         ),
         None => String::new(),
     };
+    // A timer gate names no repository.
+    let kinds = if gates.settles(None) {
+        "gh:pr, gh:issue, gh:release and timer"
+    } else {
+        "gh:pr, gh:issue and gh:release"
+    };
     format!(
-        "bdi gates: settling the gh:pr, gh:issue and gh:release gates of {projects} project{plural}, for {owners}, every \
+        "bdi gates: settling the {kinds} gates of {projects} project{plural}, for {owners}, every \
          {}s{deliveries}{reports}",
         gates.poll_seconds
     )
@@ -429,6 +442,7 @@ fn fault(fault: &Fault) -> String {
             format!("it awaits “{awaits}”, which is neither ready_for_review nor approved")
         }
         Fault::Undated => "it does not say when it was made".to_string(),
+        Fault::NoTimeout => "it has no timeout".to_string(),
     }
 }
 
@@ -670,7 +684,7 @@ mod tests {
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
             started(&Gates::default(), 1, None, None),
-            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release and timer gates of 1 project, for every owner's repositories, \
              every 60s"
         );
         assert_eq!(
@@ -697,7 +711,7 @@ mod tests {
                 None,
                 None
             ),
-            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release and timer gates of 1 project, for every owner's repositories \
              except those owned by miskatonic, every 60s"
         );
     }
@@ -711,7 +725,7 @@ mod tests {
                 None,
                 Some(Path::new("/run/bdi/changes.sock"))
             ),
-            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release and timer gates of 1 project, for every owner's repositories, \
              every 60s, reading a tracker a producer covers once it reports a change to /run/bdi/changes.sock"
         );
     }

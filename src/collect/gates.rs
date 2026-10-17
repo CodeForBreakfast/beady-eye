@@ -53,11 +53,30 @@ pub struct PullRequest {
     pub number: u64,
 }
 
+/// One open timer gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimerGate {
+    pub id: String,
+    /// When the gate runs out, or every reason it cannot say.
+    pub deadline: Result<DateTime<Utc>, Vec<Fault>>,
+}
+
+impl TimerGate {
+    /// `gate` with its deadline, where it is a timer gate.
+    pub(crate) fn of(gate: &Bead) -> Option<Self> {
+        (gate.value("await_type").as_deref() == Some(gate::TIMER)).then(|| TimerGate {
+            id: gate.id.clone(),
+            deadline: gate::deadline(gate),
+        })
+    }
+}
+
 /// The open gates one tracker holds that `bdi gates` settles.
 #[derive(Debug, Default)]
 pub struct OpenGates {
     pub pull_requests: Vec<PrGate>,
     pub upstream: Vec<UpstreamGate>,
+    pub timers: Vec<TimerGate>,
 }
 
 /// What settling the gates waiting on one pull request came to.
@@ -490,6 +509,9 @@ mod tests {
     use std::path::PathBuf;
 
     const GATE_LIST: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list.json");
+    /// ark-06g, a timer gate of two hours made on 2026-10-12 at 07:32:28.
+    const GATE_LIST_TIMER: &str =
+        include_str!("../../tests/fixtures/bd_1.3.0_gate_list_timer.json");
 
     /// Each gh:pr gate in `GATE_LIST`, beside what `bd dep list` answers for
     /// the beads it holds back.
@@ -642,6 +664,33 @@ mod tests {
             the_gate(gates, "ark-tg0").awaits,
             Err(vec![Fault::AwaitIdNotANumber("the-ninth".to_string())])
         );
+    }
+
+    #[test]
+    fn a_timer_gate_is_read_with_its_deadline_from_the_one_listing() {
+        let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST_TIMER);
+
+        let read = read(&runner, &project("arkham"));
+
+        assert_eq!(
+            read.expect("the tracker answered").timers,
+            [TimerGate {
+                id: "ark-06g".to_string(),
+                deadline: Ok("2026-10-12T09:32:28Z".parse().expect("a time")),
+            }]
+        );
+        assert_eq!(runner.calls().len(), 1, "{:?}", runner.calls());
+    }
+
+    /// A timer gate names no repository, so it is read only by a `bdi gates`
+    /// that settles a repository whose owner it cannot read.
+    #[test]
+    fn a_timer_gate_is_read_only_where_a_gate_naming_no_repo_is_wanted() {
+        let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST_TIMER);
+
+        let read = Cli::new(&runner).gates(&project("arkham"), |repo| repo.is_some());
+
+        assert_eq!(read.expect("the tracker answered").timers, []);
     }
 
     /// A gh:pr gate as bd writes its row, holding `await_id` and `repo` where

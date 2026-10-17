@@ -1,10 +1,10 @@
-//! One look at every configured project's gh:pr, gh:issue and gh:release
-//! gates, which `bdi gates` takes on its poll: each pull request, issue or
-//! repository's releases they wait on is asked of GitHub once, where its
+//! One look at every configured project's gh:pr, gh:issue, gh:release and
+//! timer gates, which `bdi gates` takes on its poll: each pull request, issue
+//! or repository's releases they wait on is asked of GitHub once, where its
 //! repository's owner is one this `bdi gates` settles for. A tracker is read
 //! for them only where it may have changed since it was last read. A
 //! delivery from GitHub settles the one pull request it names, by the same
-//! rule.
+//! rule, and a timer gate kept from the last read closes at its deadline.
 
 use std::time::{Duration, Instant};
 
@@ -72,8 +72,8 @@ pub enum Found {
         upstream: Upstream,
         failure: RunFailure,
     },
-    /// What a gh:issue or gh:release gate waits on `happened`, and what came
-    /// of closing the gate.
+    /// What a gh:issue or gh:release gate waits on `happened`, or a timer
+    /// gate's deadline passed, and what came of closing the gate.
     Ended {
         project: String,
         gate: String,
@@ -149,6 +149,36 @@ impl KeptGates {
         self.stale || self.vouched.is_none()
     }
 
+    fn read(&mut self, cli: &Cli, project: &Project, settles: &Gates) {
+        self.read = cli.gates(project, |repo| settles.settles(repo.and_then(gate::owner)));
+        self.stale = self.read.is_err();
+    }
+
+    /// The deadline of each timer gate kept that has one.
+    fn deadlines(&self) -> impl Iterator<Item = DateTime<Utc>> + '_ {
+        self.read
+            .iter()
+            .flat_map(|open| &open.timers)
+            .filter_map(|timer| timer.deadline.as_ref().ok().copied())
+    }
+
+    /// Take out of what is kept each timer gate whose deadline is `at` or
+    /// before, to be closed.
+    fn run_out(&mut self, at: DateTime<Utc>) -> Vec<(String, DateTime<Utc>)> {
+        let Ok(open) = &mut self.read else {
+            return Vec::new();
+        };
+        let mut run_out = Vec::new();
+        open.timers.retain(|timer| match timer.deadline {
+            Ok(deadline) if deadline <= at => {
+                run_out.push((timer.id.clone(), deadline));
+                false
+            }
+            _ => true,
+        });
+        run_out
+    }
+
     /// What there is to say about the producer covering `project` falling
     /// silent for longer than `covered_for`, or speaking again after it did.
     fn lapse(&mut self, project: &str, now: Instant, covered_for: Duration) -> Option<Found> {
@@ -212,10 +242,13 @@ impl Kept {
     }
 
     /// Read again each tracker that is due, then settle every gate kept, as
-    /// [`look`] does. A gate whose repository `settles` leaves to another
-    /// `bdi gates` is passed over without a word. `now` and `covered_for`
-    /// decide whether a producer has fallen silent. What the look wrote is
-    /// for [`Kept::settled`] to hear, as what a delivery wrote is.
+    /// [`look`] does, and close each timer gate that has run out by `at`. A
+    /// gate whose repository `settles` leaves to another `bdi gates` is
+    /// passed over without a word, and a timer gate names none. `now` and
+    /// `covered_for` decide whether a producer has fallen silent. What the
+    /// look wrote is for [`Kept::settled`] to hear, as what a delivery wrote
+    /// is.
+    #[allow(clippy::too_many_arguments)]
     pub fn look(
         &mut self,
         cli: &Cli,
@@ -223,19 +256,66 @@ impl Kept {
         settles: &Gates,
         told: &Told,
         now: Instant,
+        at: DateTime<Utc>,
         covered_for: Duration,
     ) -> Settling {
         let mut lapses = Vec::new();
         for (project, kept) in self.projects.iter().zip(&mut self.kept) {
             if kept.due() {
-                kept.read = cli.gates(project, |repo| settles.settles(repo.and_then(gate::owner)));
-                kept.stale = kept.read.is_err();
+                kept.read(cli, project, settles);
             }
             lapses.extend(kept.lapse(&project.name, now, covered_for));
         }
+        let ran_out = self.close_run_out(cli, at);
         let mut settling = look(cli, gh, &self.projects, self.reads(), told);
-        settling.found.splice(0..0, lapses);
         settling
+            .found
+            .splice(0..0, lapses.into_iter().chain(ran_out));
+        settling
+    }
+
+    /// When the first timer gate kept runs out.
+    pub fn next_deadline(&self) -> Option<DateTime<Utc>> {
+        self.kept.iter().flat_map(KeptGates::deadlines).min()
+    }
+
+    /// Close each timer gate kept that has run out by `at`, asking GitHub
+    /// nothing. A tracker holding one is read again first where it may have
+    /// changed since, so a gate someone closed meanwhile is not closed again.
+    /// A gate that would not close is left to the next look, which reads its
+    /// tracker again for the write.
+    pub fn timers_run_out(&mut self, cli: &Cli, settles: &Gates, at: DateTime<Utc>) -> Settling {
+        let mut found = Vec::new();
+        for (project, kept) in self.projects.iter().zip(&mut self.kept) {
+            if kept.due() && kept.deadlines().any(|deadline| deadline <= at) {
+                kept.read(cli, project, settles);
+                if let Err(failure) = &kept.read {
+                    found.push(Found::TrackerUnread {
+                        project: project.name.clone(),
+                        failure: open_failure(failure),
+                    });
+                }
+            }
+        }
+        found.extend(self.close_run_out(cli, at));
+        Settling {
+            found,
+            github: Read::Unasked,
+        }
+    }
+
+    fn close_run_out(&mut self, cli: &Cli, at: DateTime<Utc>) -> Vec<Found> {
+        let mut found = Vec::new();
+        for (project, kept) in self.projects.iter().zip(&mut self.kept) {
+            for (gate, deadline) in kept.run_out(at) {
+                let happened = format!(
+                    "Its timer ran out at {}",
+                    deadline.format("%Y-%m-%d %H:%M:%S UTC")
+                );
+                found.push(closed(cli, project, gate, happened));
+            }
+        }
+        found
     }
 
     fn reads(&self) -> impl Iterator<Item = (&Project, &Result<OpenGates, OpenFailure>)> {
@@ -302,6 +382,15 @@ fn look<'a>(
                 Ok(waits) => upstream.push((project, gate.id.clone(), waits.clone())),
             }
         }
+        for gate in &open.timers {
+            if let Err(faults) = &gate.deadline {
+                found.push(Found::Unsettleable {
+                    project: name.clone(),
+                    gate: gate.id.clone(),
+                    faults: faults.clone(),
+                });
+            }
+        }
     }
     let mut github = Read::Unasked;
     for repository in &awaited {
@@ -362,22 +451,29 @@ fn ended(cli: &Cli, gh: &dyn Runner, waiting: &[(&Project, String, Upstream)]) -
         let Some(happened) = upstream.ended(&answer) else {
             continue;
         };
-        let done = cli
-            .settling(project)
-            .map_err(|failure| open_failure(&failure))
-            .and_then(|tracker| {
-                tracker
-                    .resolve(gate, &format!("{happened}."))
-                    .map_err(|failure| tracker_failure(&failure))
-            });
-        settling.found.push(Found::Ended {
-            project: project.name.clone(),
-            gate: gate.clone(),
-            happened,
-            done,
-        });
+        settling
+            .found
+            .push(closed(cli, project, gate.clone(), happened));
     }
     settling
+}
+
+/// Close `gate` in `project`'s tracker for what `happened`.
+fn closed(cli: &Cli, project: &Project, gate: String, happened: String) -> Found {
+    let done = cli
+        .settling(project)
+        .map_err(|failure| open_failure(&failure))
+        .and_then(|tracker| {
+            tracker
+                .resolve(&gate, &format!("{happened}."))
+                .map_err(|failure| tracker_failure(&failure))
+        });
+    Found::Ended {
+        project: project.name.clone(),
+        gate,
+        happened,
+        done,
+    }
 }
 
 /// Add `gate` to those waiting on `pull_request`, grouped by repository.
@@ -706,6 +802,7 @@ mod tests {
             settles,
             told,
             Instant::now(),
+            Utc::now(),
             COVERED_FOR,
         )
     }
@@ -1605,6 +1702,7 @@ mod tests {
             &owners(&["example"]),
             &Told::default(),
             now,
+            Utc::now(),
             COVERED_FOR,
         )
         .found
@@ -1700,5 +1798,145 @@ mod tests {
         assert!(look_at(&mut kept, &runner, silent).contains(&vouched));
         assert!(!look_at(&mut kept, &runner, silent).contains(&vouched));
         assert_eq!(gate_lists_read(&runner), 1);
+    }
+
+    /// ark-06g, a timer gate of two hours made on 2026-10-12 at 07:32:28.
+    const GATE_LIST_TIMER: &str =
+        include_str!("../../tests/fixtures/bd_1.3.0_gate_list_timer.json");
+
+    const RAN_OUT: &str = "Its timer ran out at 2026-10-12 09:32:28 UTC";
+
+    fn at(when: &str) -> DateTime<Utc> {
+        when.parse().expect("a time")
+    }
+
+    fn timed(runner: FakeRunner) -> FakeRunner {
+        runner.with(&gate_list("arkham"), GATE_LIST_TIMER)
+    }
+
+    fn closing_06g() -> String {
+        format!("bd -C /nowhere/arkham gate resolve ark-06g --reason {RAN_OUT}.")
+    }
+
+    fn ran_out(done: Result<(), TrackerFailure>) -> Found {
+        Found::Ended {
+            project: "arkham".to_string(),
+            gate: "ark-06g".to_string(),
+            happened: RAN_OUT.to_string(),
+            done,
+        }
+    }
+
+    fn timer_look(kept: &mut Kept, runner: &FakeRunner, when: &str) -> Settling {
+        kept.look(
+            &Cli::new(runner),
+            runner,
+            &Gates::default(),
+            &Told::default(),
+            Instant::now(),
+            at(when),
+            COVERED_FOR,
+        )
+    }
+
+    fn deadline_passed(kept: &mut Kept, runner: &FakeRunner, when: &str) -> Settling {
+        kept.timers_run_out(&Cli::new(runner), &Gates::default(), at(when))
+    }
+
+    /// Such as one that ran out while `bdi gates` was down.
+    #[test]
+    fn a_timer_gate_that_ran_out_before_a_look_is_closed_on_it() {
+        let runner = timed(FakeRunner::default()).with(&closing_06g(), "");
+
+        let settling = timer_look(&mut arkham(), &runner, "2026-10-13T00:00:00Z");
+
+        assert_eq!(
+            settling,
+            Settling {
+                found: vec![ran_out(Ok(()))],
+                github: Read::Unasked,
+            }
+        );
+    }
+
+    /// The runner panics on any call it was not given, a close included.
+    #[test]
+    fn a_timer_gate_yet_to_run_out_is_kept_until_its_deadline() {
+        let runner = timed(FakeRunner::default());
+        let mut kept = arkham();
+
+        let settling = timer_look(&mut kept, &runner, "2026-10-12T08:00:00Z");
+
+        assert_eq!(settling.found, []);
+        assert_eq!(kept.next_deadline(), Some(at("2026-10-12T09:32:28Z")));
+    }
+
+    #[test]
+    fn a_covered_tracker_s_timer_gate_closes_at_its_deadline_from_the_gates_kept() {
+        let runner = timed(FakeRunner::default()).with(&closing_06g(), "");
+        let mut kept = arkham();
+        kept.heard(&covered(), Instant::now());
+        timer_look(&mut kept, &runner, "2026-10-12T08:00:00Z");
+
+        let early = deadline_passed(&mut kept, &runner, "2026-10-12T09:32:27Z");
+        let settling = deadline_passed(&mut kept, &runner, "2026-10-12T09:32:28Z");
+
+        assert_eq!(early, Settling::default());
+        assert_eq!(
+            settling,
+            Settling {
+                found: vec![ran_out(Ok(()))],
+                github: Read::Unasked,
+            }
+        );
+        assert_eq!(gate_lists_read(&runner), 1);
+        assert_eq!(kept.next_deadline(), None, "a gate is closed once");
+    }
+
+    #[test]
+    fn a_timer_gate_whose_producer_said_its_tracker_changed_is_read_again_before_it_closes() {
+        let runner = timed(FakeRunner::default()).with(&closing_06g(), "");
+        let mut kept = arkham();
+        kept.heard(&covered(), Instant::now());
+        timer_look(&mut kept, &runner, "2026-10-12T08:00:00Z");
+        kept.heard(&Heard::Changed("arkham".to_string()), Instant::now());
+
+        deadline_passed(&mut kept, &runner, "2026-10-12T09:32:28Z");
+
+        let calls: Vec<String> = runner.calls().into_iter().map(|call| call.argv).collect();
+        assert_eq!(calls[1..], [gate_list("arkham"), closing_06g()]);
+    }
+
+    /// The next look reads the tracker again, as after any write, and tries
+    /// once more if the gate is still open.
+    #[test]
+    fn a_timer_gate_that_would_not_close_is_said_and_left_to_the_next_look() {
+        let runner = timed(FakeRunner::default()).failing(&closing_06g(), unavailable("bd"));
+        let mut kept = arkham();
+        timer_look(&mut kept, &runner, "2026-10-12T08:00:00Z");
+
+        let settling = deadline_passed(&mut kept, &runner, "2026-10-12T09:32:28Z");
+
+        assert!(
+            matches!(settling.found[..], [Found::Ended { done: Err(_), .. }]),
+            "{settling:?}"
+        );
+        assert_eq!(kept.next_deadline(), None);
+    }
+
+    #[test]
+    fn a_timer_gate_without_a_timeout_cannot_be_settled() {
+        let untimed = GATE_LIST_TIMER.replace(",\n    \"timeout\": 7200000000000", "");
+        assert_ne!(untimed, GATE_LIST_TIMER);
+        let runner = FakeRunner::default().with(&gate_list("arkham"), &untimed);
+        let mut kept = arkham();
+
+        let settling = timer_look(&mut kept, &runner, "2026-10-13T00:00:00Z");
+
+        assert_eq!(
+            settling.found,
+            [unsettleable("arkham", "ark-06g", Fault::NoTimeout)]
+        );
+        assert_eq!(kept.next_deadline(), None);
     }
 }

@@ -381,7 +381,8 @@ A bead can wait on someone else's repository the same way. A `gh:issue` gate,
 with the issue's number as its await id, closes once that issue closes. A
 `gh:release` gate, with no await id, closes once the repository publishes a
 release after the gate was made. Both name their repository in `repo`, and
-`bdi gates` settles them on each look.
+`bdi gates` settles them on each look. A `timer` gate closes at its deadline,
+its timeout after it was made, without a read of its tracker on the clock.
 
 ## Being seen
 

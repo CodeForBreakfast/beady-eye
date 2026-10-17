@@ -742,8 +742,9 @@ the next. The default is 60.
 `owners` names the repository owners whose gates this `bdi gates` settles,
 matched in any case. A gate on a repository of any other owner is left
 alone and not reported. Where `owners` is empty, which is the default, every
-gate is settled. A gate whose `repo` names no owner is settled only then. A
-delivery from GitHub is held to the same rule.
+gate is settled. A gate whose `repo` names no owner is settled only then, and
+so is a timer gate, which names no repository. A delivery from GitHub is held
+to the same rule.
 
 `excluded_owners` names the repository owners this `bdi gates` leaves alone,
 matched in any case, whatever `owners` says. Where two instances split the work
@@ -1188,13 +1189,31 @@ the same rule as gh:pr gates. A rate limit stops the look's asking here too,
 and the next look asks again. Deliveries from GitHub settle only pull requests,
 so these gates close on a look.
 
+A bead can also wait for a time to pass, with a timer gate:
+
+```console
+$ bd gate create --type=timer --blocks dun-13 --timeout=2h
+```
+
+`bdi gates` closes a timer gate at its deadline, its timeout after the gate was
+made, as `bd gate check` counts it. It learns of the gate on a look, as it
+learns of every other gate, and then wakes at the deadline to close it, without
+asking GitHub or reading the tracker on the clock. Where a producer said the
+tracker changed, `bdi gates` reads it again first, so it does not close a gate
+that someone closed meanwhile. A gate whose deadline passed while `bdi gates` was down closes on the
+first look. A timer gate names no repository, so only a `bdi gates` whose
+[`[gates] owners`](#gates) is empty closes it. Where two instances split the
+work by owner, the one naming `excluded_owners` closes the timer gates.
+
 Each look reports one line for each gate closed and each failure:
 
 ```
 dunwich/arkham#31 closed: kadath closed gate kad-4p1
 dunwich/arkham published v2.1.0: kadath closed gate kad-9sw
+Its timer ran out at 2026-10-12 09:32:28 UTC: kadath closed gate kad-6tm
 dunwich/arkham#33: GitHub did not answer for it, so kadath left gate kad-2ze open: gh found no such repository, pull request or issue on GitHub
 kadath: gate kad-7tc cannot be settled: it names no repo
+kadath: gate kad-8tm cannot be settled: it has no timeout
 ```
 
 ### Taking GitHub's deliveries
