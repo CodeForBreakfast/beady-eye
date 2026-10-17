@@ -111,6 +111,13 @@ pub fn notice(notice: &Notice) -> String {
             "git could not be run · project name guessed from its directory · set BDI_PROJECT"
                 .to_string()
         }
+        Notice::UnansweredByTheWatcher(projects) => {
+            let them = if projects.len() == 1 { "it" } else { "them" };
+            format!(
+                "the watcher does not answer for {} · bdi is polling {them} itself",
+                projects.join(", ")
+            )
+        }
     }
 }
 
@@ -140,6 +147,9 @@ pub fn brief_notice(notice: &Notice) -> String {
         // what it is for. What the reader loses — a name that is a guess —
         // is not something they can act on; the variable that settles it is.
         Notice::ProjectNamedWithoutGit => "name guessed · set BDI_PROJECT".to_string(),
+        // The names survive the cut, because which projects are polled is
+        // what points the reader at the config that differs.
+        Notice::UnansweredByTheWatcher(projects) => format!("polling {}", projects.join(", ")),
     }
 }
 
@@ -1843,6 +1853,25 @@ mod tests {
                 <= columns(&[Span::raw(brief_notice(&Notice::NoInboundChannel))]),
             "the brief words are what fit a forty-column foot: {said}"
         );
+    }
+
+    /// The reader is told which projects cost them a poll, because the remedy
+    /// is in how those projects are configured, and the rest are not polled.
+    #[test]
+    fn a_project_the_watcher_does_not_answer_for_is_named_as_polled_here() {
+        let one = Notice::UnansweredByTheWatcher(vec!["dunwich".to_string()]);
+        let two = Notice::UnansweredByTheWatcher(vec!["dunwich".to_string(), "ferry".to_string()]);
+
+        assert_eq!(
+            notice(&one),
+            "the watcher does not answer for dunwich · bdi is polling it itself"
+        );
+        assert_eq!(
+            notice(&two),
+            "the watcher does not answer for dunwich, ferry · bdi is polling them itself"
+        );
+        assert_eq!(brief_notice(&one), "polling dunwich");
+        assert_eq!(brief_notice(&two), "polling dunwich, ferry");
     }
 
     /// Two ways of losing the channel that want different things of the

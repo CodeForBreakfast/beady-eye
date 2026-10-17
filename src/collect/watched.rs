@@ -173,13 +173,21 @@ impl<O> Drop for Through<O> {
 impl<O: Trackers> Trackers for Through<O> {
     fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
         let told = self.watcher.answer_for(&project.name);
-        match told.filter(|told| told.reach.as_ref() == Some(&project.reach())) {
+        let answered = told.filter(|told| told.reach.as_ref() == Some(&project.reach()));
+        self.watcher
+            .said()
+            .answered_around(&project.name, answered.is_none());
+        match answered {
             Some(told) => match &told.unreachable {
                 Some(failure) => Err(reached_as(failure)),
                 None => Ok(Box::new(Answered(told))),
             },
             None => self.otherwise.of(project),
         }
+    }
+
+    fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
+        self.watcher.said().around.clone()
     }
 }
 
@@ -201,6 +209,10 @@ struct Watcher {
     asked: BTreeSet<String>,
     /// The projects the watcher said it does not read.
     refused: BTreeSet<String>,
+    /// The projects the watcher is answering around: refused, or answered
+    /// from a tracker it reaches another way, so read by this run's own
+    /// polls.
+    around: BTreeSet<String>,
     /// Each project as of the last freshness line closing an answer for it.
     current: BTreeMap<String, Arc<Told>>,
     /// The answers that have begun and not yet closed.
@@ -304,6 +316,19 @@ impl Shared {
 }
 
 impl Watcher {
+    /// Count `project` among the ones the watcher answers around where it
+    /// is still answering this run and left the project unanswered. A
+    /// watcher that has gone answers around nothing: every project is this
+    /// run's to read then.
+    fn answered_around(&mut self, project: &str, unanswered: bool) {
+        let answering = self.current.contains_key(project) || self.refused.contains(project);
+        if unanswered && answering {
+            self.around.insert(project.to_string());
+        } else {
+            self.around.remove(project);
+        }
+    }
+
     /// Watch `project` from now on, sending its watch line once.
     fn ask(&mut self, project: &str) {
         if self.asked.insert(project.to_string()) {
@@ -357,6 +382,7 @@ impl Watcher {
         }
         self.arriving.clear();
         self.refused.clear();
+        self.around.clear();
         std::mem::take(&mut self.current).into_keys().collect()
     }
 
@@ -881,6 +907,36 @@ path = "/srv/work/ferry"
             .map(|tracker| ids(tracker.as_ref()));
         assert_eq!(read, Ok(vec!["dun-1".to_string()]));
         assert!(own.tracker("dunwich").asked().is_empty());
+    }
+
+    /// A watcher that has gone answers around nothing, at once rather than at
+    /// the next poll of the project it refused.
+    #[test]
+    fn a_run_that_stays_names_nothing_once_its_watcher_goes() {
+        let at = a_socket("unanswered-goes");
+        let watcher = UnixListener::bind(&at).expect("the socket is ours");
+        let (hang_up, hanging_up) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let (mut connection, _) = watcher.accept().expect("the run connects");
+            let refused = json!({ "line": "refused", "asked": "watch-all ferry", "reason": "unknown-project" });
+            writeln!(connection, "{refused}").expect("sent");
+            writeln!(connection, "{}", fresh("dunwich", json!("ok"))).expect("sent");
+            let _ = hanging_up.recv();
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, 2 * A_MOMENT);
+        assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        let _ = through.of(project(&cfg, "ferry"));
+        assert_eq!(
+            through.unanswered_by_the_watcher(),
+            BTreeSet::from(["ferry".to_string()])
+        );
+
+        drop(hang_up);
+
+        assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        assert_eq!(through.unanswered_by_the_watcher(), BTreeSet::new());
     }
 
     /// Its answers would go stale with nothing to say so, so it reads every
@@ -1593,13 +1649,122 @@ path = "/srv/work/dunwich"
     fn with_no_watcher_every_project_is_read_for_itself() {
         let own = own_trackers();
         let cfg = projects();
+        let through = Through::watcher_at(None, ["dunwich"], &own);
 
-        Through::watcher_at(None, ["dunwich"], &own)
+        through
             .of(project(&cfg, "dunwich"))
             .map(|tracker| ids(tracker.as_ref()))
             .expect("read for itself");
 
         assert!(!own.tracker("dunwich").asked().is_empty());
+        assert_eq!(
+            through.unanswered_by_the_watcher(),
+            BTreeSet::new(),
+            "no watcher answers, so none leaves a project to this run"
+        );
+    }
+
+    /// A watcher reading the project another way, one refusing it, and one
+    /// not saying how it reads it each leave it to this run's own polls.
+    #[test]
+    fn a_project_a_watcher_answers_around_is_named() {
+        for (named, lines, around) in [
+            (
+                "unanswered-elsewhere",
+                vec![
+                    fresh("dunwich", json!("ok")),
+                    fresh_reaching(
+                        "ferry",
+                        json!("ok"),
+                        json!({ "path": "/srv/old/ferry", "environment_command": null }),
+                    ),
+                ],
+                "ferry",
+            ),
+            (
+                "unanswered-refused",
+                vec![
+                    json!({ "line": "refused", "asked": "watch-all ferry", "reason": "unknown-project" })
+                        .to_string(),
+                    fresh("dunwich", json!("ok")),
+                ],
+                "ferry",
+            ),
+            (
+                "unanswered-unsaid",
+                vec![
+                    json!({
+                        "line": "freshness", "project": "dunwich", "as_of": null,
+                        "tracker": "ok", "events": "off", "protocol": 1,
+                    })
+                    .to_string(),
+                    fresh("ferry", json!("ok")),
+                ],
+                "dunwich",
+            ),
+        ] {
+            let at = a_watcher_saying(named, lines);
+            let own = own_trackers();
+            let cfg = projects();
+            let through = through(&at, &own, A_MOMENT);
+
+            for project_named in ["dunwich", "ferry"] {
+                let _ = through.of(project(&cfg, project_named));
+            }
+
+            assert_eq!(
+                through.unanswered_by_the_watcher(),
+                BTreeSet::from([around.to_string()]),
+                "{named}"
+            );
+        }
+    }
+
+    /// The same project answered once the watcher reaches it as this run
+    /// does is no longer named.
+    #[test]
+    fn a_project_the_watcher_comes_to_answer_is_no_longer_named() {
+        let at = a_socket("unanswered-then-answered");
+        let watcher = UnixListener::bind(&at).expect("the socket is ours");
+        let (told, telling) = mpsc::channel::<String>();
+        thread::spawn(move || {
+            let (mut connection, _) = watcher.accept().expect("the run connects");
+            for line in telling {
+                writeln!(connection, "{line}").expect("the run reads");
+            }
+            let _ = connection.read_to_end(&mut Vec::new());
+        });
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        told.send(fresh_reaching(
+            "dunwich",
+            json!("ok"),
+            json!({ "path": "/srv/old/dunwich", "environment_command": null }),
+        ))
+        .expect("the watcher is listening");
+        let _ = through.of(project(&cfg, "dunwich"));
+        assert_eq!(
+            through.unanswered_by_the_watcher(),
+            BTreeSet::from(["dunwich".to_string()])
+        );
+
+        told.send(fresh("dunwich", json!("ok")))
+            .expect("the watcher is listening");
+        let deadline = Instant::now() + A_MOMENT;
+        while through.watcher.said().current["dunwich"].reach.as_ref()
+            != Some(&project(&cfg, "dunwich").reach())
+        {
+            assert!(
+                Instant::now() < deadline,
+                "the watcher's second line arrives"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let _ = through.of(project(&cfg, "dunwich"));
+
+        assert_eq!(through.unanswered_by_the_watcher(), BTreeSet::new());
     }
 
     /// What `watcher` holds of dunwich once it has taken each of `lines`, as

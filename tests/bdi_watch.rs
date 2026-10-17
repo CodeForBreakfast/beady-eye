@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{
-    a_home_naming_one_project_settled, a_socket_of_its_own, die_with, the_socket_under, Producer,
-    ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
+    a_home_naming_one_project_settled, a_socket_of_its_own, contains, die_with, the_socket_under,
+    Producer, ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
 };
 
 /// `a`, which shows every tree rather than only those with a live agent. No
@@ -759,6 +759,66 @@ fn a_view_beside_a_watcher_reads_no_tracker_until_the_watcher_goes() {
         "the view asked bd nothing"
     );
     until(|| reads_in_full(&tracker) > 1, "the view's own read");
+}
+
+/// The word the foot's notice for a project the watcher does not answer for
+/// says in its full form and its brief one alike. One word, because a repaint
+/// reaches the wire a word at a time. The notice for a view with no channel
+/// says it too, so the view here is given a socket of its own.
+const POLLED_HERE: &[u8] = b"polling";
+
+/// A view under a config that reaches a project another way than the
+/// watcher's reads that project with bd itself, and says so at the foot.
+#[test]
+fn a_view_the_watcher_does_not_answer_for_says_it_polls_the_project_itself() {
+    let (home, tracker) = a_home_with_a_watcher_configured("watched-view-elsewhere");
+    let watcher = watching_in(&home, &tracker);
+    let config = home.join(".config/beady-eye/config.toml");
+    let text = std::fs::read_to_string(&config).expect("the config was just written");
+    std::fs::write(
+        &config,
+        text.replacen(
+            NOT_POLLED,
+            &format!("{NOT_POLLED}environment_command = \"env\"\n"),
+            1,
+        ),
+    )
+    .expect("the config is ours to write");
+    let read_by_the_watcher = reads_in_full(&tracker);
+    let mut environment = tracker.environment();
+    environment.push(a_socket_of_its_own(&home));
+
+    let mut bdi = Driven::bdi(40, 120, home.clone(), &environment);
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
+    bdi.read_until(POLLED_HERE, THE_SCREEN_GIVING_UP);
+    stopped(watcher);
+
+    assert!(
+        reads_in_full(&tracker) > read_by_the_watcher,
+        "the view read arkham itself"
+    );
+}
+
+/// The same view under the watcher's own config is answered for, and says
+/// nothing of polling.
+#[test]
+fn a_view_the_watcher_answers_for_says_nothing_of_polling() {
+    let (home, tracker) = a_home_with_a_watcher_configured("watched-view-answered");
+    let watcher = watching_in(&home, &tracker);
+    let mut environment = tracker.environment();
+    environment.push(a_socket_of_its_own(&home));
+
+    let mut bdi = Driven::bdi(40, 120, home.clone(), &environment);
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
+    bdi.read_until(b"dun-0tp", THE_SCREEN_GIVING_UP);
+    bdi.settle(Duration::from_millis(300), THE_SCREEN_GIVING_UP);
+    stopped(watcher);
+
+    assert!(
+        !contains(&bdi.everything(), POLLED_HERE),
+        "a view the watcher answers for said it polls: {}",
+        bdi.timeline()
+    );
 }
 
 /// `^R`, which asks every project for itself again.

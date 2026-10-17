@@ -272,6 +272,7 @@ fn the_json_carries_the_contract_fields() {
     assert_eq!(emitted["hidden_trees"], json!([]));
     assert_eq!(emitted["failed_projects"], json!([]));
     assert_eq!(emitted["projects_named_without_git"], json!([]));
+    assert_eq!(emitted["unanswered_by_the_watcher"], json!([]));
 
     // `w:p3` sits on a closed bead the one tree already draws, so a second
     // tree here is that pane rooting the bead beside its own tree.

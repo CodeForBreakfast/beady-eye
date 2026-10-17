@@ -268,6 +268,13 @@ pub enum Notice {
     /// than a program to install, which is what keeps it from being a warning
     /// readers learn to ignore.
     ProjectNamedWithoutGit,
+    /// A watcher is running and did not answer for these projects as this
+    /// run's config reaches them: it reads each from another tracker, or not
+    /// at all. So this run polls them itself on its refresh interval, as
+    /// stale as that between polls and a bd read each time, while the watcher
+    /// reads the rest. A view under a config other than the watcher's is the
+    /// usual cause.
+    UnansweredByTheWatcher(Vec<String>),
 }
 
 /// How fresh one project's rows are, said beside its name.
@@ -517,7 +524,10 @@ mod tests {
             Notice::NoInboundChannel => Some(Notice::AnotherBdiHadTheInboundChannel),
             Notice::AnotherBdiHadTheInboundChannel => Some(Notice::ConfigWouldNotReload),
             Notice::ConfigWouldNotReload => Some(Notice::ProjectNamedWithoutGit),
-            Notice::ProjectNamedWithoutGit => None,
+            Notice::ProjectNamedWithoutGit => {
+                Some(Notice::UnansweredByTheWatcher(vec!["dunwich".to_string()]))
+            }
+            Notice::UnansweredByTheWatcher(_) => None,
         })
     }
 
