@@ -210,8 +210,7 @@ struct Watcher {
     /// The projects the watcher said it does not read.
     refused: BTreeSet<String>,
     /// The projects the watcher is answering around: refused, or answered
-    /// from a tracker it reaches another way, so read by this run's own
-    /// polls.
+    /// from a tracker it reaches another way, so read by this run itself.
     around: BTreeSet<String>,
     /// Each project as of the last freshness line closing an answer for it.
     current: BTreeMap<String, Arc<Told>>,
@@ -1694,7 +1693,7 @@ path = "/srv/work/dunwich"
     }
 
     /// A watcher reading the project another way, one refusing it, and one
-    /// not saying how it reads it each leave it to this run's own polls.
+    /// not saying how it reads it each leave it to this run to read itself.
     #[test]
     fn a_project_a_watcher_answers_around_is_named() {
         for (named, lines, around) in [

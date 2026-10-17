@@ -2418,13 +2418,12 @@ leaves every project still unanswered to bd as well. The projects already
 answered stand, so the run gives a whole answer either way, each project read
 once by one of the two.
 
-**A view says which projects it polls while a watcher reads the rest.** The
-same rule leaves a project to a view's own polls, and a view polls it every
-`refresh_seconds` for as long as it runs. So the foot names every project a
-watcher that is still answering has left to it: one whose `reach` differs, one
-whose watch line was refused, and one whose freshness line says no `reach`. A
-watcher that has gone leaves every project to the view, which is not this
-notice.
+**A view says which projects it reads itself while a watcher reads the rest.**
+The same rule leaves a project to a view's own reads with `bd`, for as long as
+it runs. So the foot names every project a watcher that is still answering has
+left to it: one whose `reach` differs, one whose watch line was refused, and
+one whose freshness line says no `reach`. A watcher that has gone leaves every
+project to the view, which is not this notice.
 
 **What the run takes from a bead line is what bd would have told it:** the row
 and `bd`. The run's own trees work out `bdi`'s readiness again, so the screen
@@ -2861,7 +2860,7 @@ There is no `notices` array here. A notice is the sentence the status bar makes
 of a fact, and every fact it makes one of is already a field: the provider that
 would not answer is `agents.state`, the session that would not is
 `agents.sessions`, a project name git did not give is
-`projects_named_without_git`, and a project the view polls itself while a
+`projects_named_without_git`, and a project the view reads itself while a
 watcher reads the rest is `unanswered_by_the_watcher`. Both mouths read those
 fields — the foot draws its notices from the same snapshot `--json` prints — so
 a screen and a document of

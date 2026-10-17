@@ -270,10 +270,9 @@ pub enum Notice {
     ProjectNamedWithoutGit,
     /// A watcher is running and did not answer for these projects as this
     /// run's config reaches them: it reads each from another tracker, or not
-    /// at all. So this run polls them itself on its refresh interval, as
-    /// stale as that between polls and a bd read each time, while the watcher
-    /// reads the rest. A view under a config other than the watcher's is the
-    /// usual cause.
+    /// at all. So this run reads them with bd itself, on its own polls and
+    /// reports, while the watcher reads the rest. A view under a config other
+    /// than the watcher's is the usual cause.
     UnansweredByTheWatcher(Vec<String>),
 }
 

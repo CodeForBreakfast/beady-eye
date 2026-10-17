@@ -45,14 +45,14 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
     // repeat it.
     let guessed =
         (!snapshot.projects_named_without_git.is_empty()).then_some(Notice::ProjectNamedWithoutGit);
-    let polled = (!snapshot.unanswered_by_the_watcher.is_empty())
+    let read_here = (!snapshot.unanswered_by_the_watcher.is_empty())
         .then(|| Notice::UnansweredByTheWatcher(snapshot.unanswered_by_the_watcher.clone()));
 
     collected
         .into_iter()
         .chain(unanswered)
         .chain(guessed)
-        .chain(polled)
+        .chain(read_here)
         .chain(standing.iter().cloned())
         .collect()
 }
@@ -295,14 +295,14 @@ mod tests {
     /// key, and after the channel that costs every project its freshness.
     #[test]
     fn the_projects_a_watcher_does_not_answer_for_are_said_in_one_notice() {
-        let polled = Snapshot {
+        let read_here = Snapshot {
             projects_named_without_git: vec!["dunwich".to_string()],
             unanswered_by_the_watcher: vec!["dunwich".to_string(), "ferry".to_string()],
             ..nothing_to_qualify()
         };
 
         assert_eq!(
-            notices(&polled, &[Notice::NoInboundChannel]),
+            notices(&read_here, &[Notice::NoInboundChannel]),
             vec![
                 Notice::ProjectNamedWithoutGit,
                 Notice::UnansweredByTheWatcher(vec!["dunwich".to_string(), "ferry".to_string()]),

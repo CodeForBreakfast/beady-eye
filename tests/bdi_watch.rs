@@ -763,14 +763,13 @@ fn a_view_beside_a_watcher_reads_no_tracker_until_the_watcher_goes() {
 
 /// The word the foot's notice for a project the watcher does not answer for
 /// says in its full form and its brief one alike. One word, because a repaint
-/// reaches the wire a word at a time. The notice for a view with no channel
-/// says it too, so the view here is given a socket of its own.
-const POLLED_HERE: &[u8] = b"polling";
+/// reaches the wire a word at a time.
+const READ_HERE: &[u8] = b"itself";
 
 /// A view under a config that reaches a project another way than the
 /// watcher's reads that project with bd itself, and says so at the foot.
 #[test]
-fn a_view_the_watcher_does_not_answer_for_says_it_polls_the_project_itself() {
+fn a_view_the_watcher_does_not_answer_for_says_it_reads_the_project_itself() {
     let (home, tracker) = a_home_with_a_watcher_configured("watched-view-elsewhere");
     let watcher = watching_in(&home, &tracker);
     let config = home.join(".config/beady-eye/config.toml");
@@ -790,7 +789,7 @@ fn a_view_the_watcher_does_not_answer_for_says_it_polls_the_project_itself() {
 
     let mut bdi = Driven::bdi(40, 120, home.clone(), &environment);
     bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
-    bdi.read_until(POLLED_HERE, THE_SCREEN_GIVING_UP);
+    bdi.read_until(READ_HERE, THE_SCREEN_GIVING_UP);
     stopped(watcher);
 
     assert!(
@@ -800,9 +799,9 @@ fn a_view_the_watcher_does_not_answer_for_says_it_polls_the_project_itself() {
 }
 
 /// The same view under the watcher's own config is answered for, and says
-/// nothing of polling.
+/// nothing of reading the project itself.
 #[test]
-fn a_view_the_watcher_answers_for_says_nothing_of_polling() {
+fn a_view_the_watcher_answers_for_says_nothing_of_reading_the_project_itself() {
     let (home, tracker) = a_home_with_a_watcher_configured("watched-view-answered");
     let watcher = watching_in(&home, &tracker);
     let mut environment = tracker.environment();
@@ -815,8 +814,8 @@ fn a_view_the_watcher_answers_for_says_nothing_of_polling() {
     stopped(watcher);
 
     assert!(
-        !contains(&bdi.everything(), POLLED_HERE),
-        "a view the watcher answers for said it polls: {}",
+        !contains(&bdi.everything(), READ_HERE),
+        "a view the watcher answers for said it reads a project itself: {}",
         bdi.timeline()
     );
 }

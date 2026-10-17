@@ -114,7 +114,7 @@ pub fn notice(notice: &Notice) -> String {
         Notice::UnansweredByTheWatcher(projects) => {
             let them = if projects.len() == 1 { "it" } else { "them" };
             format!(
-                "the watcher does not answer for {} · bdi is polling {them} itself",
+                "the watcher does not answer for {} · bdi reads {them} itself",
                 projects.join(", ")
             )
         }
@@ -147,9 +147,11 @@ pub fn brief_notice(notice: &Notice) -> String {
         // what it is for. What the reader loses — a name that is a guess —
         // is not something they can act on; the variable that settles it is.
         Notice::ProjectNamedWithoutGit => "name guessed · set BDI_PROJECT".to_string(),
-        // The names survive the cut, because which projects are polled is
+        // The names survive the cut, because which projects are read here is
         // what points the reader at the config that differs.
-        Notice::UnansweredByTheWatcher(projects) => format!("polling {}", projects.join(", ")),
+        Notice::UnansweredByTheWatcher(projects) => {
+            format!("reading {} itself", projects.join(", "))
+        }
     }
 }
 
@@ -1855,23 +1857,24 @@ mod tests {
         );
     }
 
-    /// The reader is told which projects cost them a poll, because the remedy
-    /// is in how those projects are configured, and the rest are not polled.
+    /// The reader is told which projects cost them reads of their own,
+    /// because the remedy is in how those projects are configured, and the
+    /// rest are read through the watcher.
     #[test]
-    fn a_project_the_watcher_does_not_answer_for_is_named_as_polled_here() {
+    fn a_project_the_watcher_does_not_answer_for_is_named_as_read_here() {
         let one = Notice::UnansweredByTheWatcher(vec!["dunwich".to_string()]);
         let two = Notice::UnansweredByTheWatcher(vec!["dunwich".to_string(), "ferry".to_string()]);
 
         assert_eq!(
             notice(&one),
-            "the watcher does not answer for dunwich · bdi is polling it itself"
+            "the watcher does not answer for dunwich · bdi reads it itself"
         );
         assert_eq!(
             notice(&two),
-            "the watcher does not answer for dunwich, ferry · bdi is polling them itself"
+            "the watcher does not answer for dunwich, ferry · bdi reads them itself"
         );
-        assert_eq!(brief_notice(&one), "polling dunwich");
-        assert_eq!(brief_notice(&two), "polling dunwich, ferry");
+        assert_eq!(brief_notice(&one), "reading dunwich itself");
+        assert_eq!(brief_notice(&two), "reading dunwich, ferry itself");
     }
 
     /// Two ways of losing the channel that want different things of the
