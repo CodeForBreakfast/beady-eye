@@ -1,10 +1,12 @@
 //! `bdi gates`: every configured project's gh:pr, gh:issue and gh:release
 //! gates, settled on a poll and, where it listens, a pull request's gates on
 //! each of GitHub's deliveries, with what each settling found said on stdout.
+//! Given a socket, it reads a tracker a producer covers only once the
+//! producer says it changed.
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -13,8 +15,9 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 
-use crate::app::gates::{delivered, delivered_commit, look, Found, Read};
+use crate::app::gates::{delivered, delivered_commit, Found, Kept, Read};
 use crate::collect::bd;
+use crate::collect::changes;
 use crate::collect::environment::EnvironmentCache;
 use crate::collect::gates::{Done, Told};
 use crate::collect::run::RealRunner;
@@ -23,7 +26,7 @@ use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
 use crate::view::phrase;
 
-use super::{read_config, Launch, Reading};
+use super::{read_config, socket_refused, Launch, Reading};
 
 /// Where the secret GitHub signs deliveries with is read from, where no file
 /// is named for it.
@@ -36,7 +39,9 @@ const UNSAID_WAIT: Duration = Duration::from_secs(60);
 
 /// Look at the gates, report, and look again `[gates] poll_seconds` later,
 /// until a signal ends the process. Listening on `listen`, settle the pull
-/// request each delivery names in between. Nothing a settling finds stops the
+/// request each delivery names in between. Given a `socket`, take producers'
+/// reports on it, and read a tracker a producer covers only once the
+/// producer says it changed. Nothing a settling finds stops the
 /// next one, though a rate limit puts it off: GitHub is asked nothing until
 /// the limit resets, and a delivery in the meantime is left to the look after.
 ///
@@ -49,6 +54,7 @@ pub(super) fn settle(
     config: &Path,
     listen: Option<&str>,
     secret_file: Option<&Path>,
+    socket: Option<PathBuf>,
 ) -> anyhow::Result<ExitCode> {
     let from_environment = std::env::var(SECRET_VARIABLE).ok();
     std::env::remove_var(SECRET_VARIABLE);
@@ -67,6 +73,21 @@ pub(super) fn settle(
     )?
     .config;
     let projects: Vec<Project> = cfg.read().cloned().collect();
+    let (heard_by, heard) = mpsc::channel();
+    let covering = changes::Reported::watching(projects.iter().map(|each| each.name.clone()));
+    // Held, not discarded: the socket comes off the filesystem when this
+    // returns.
+    let _socket = match socket.as_ref() {
+        Some(at) => Some(
+            changes::watch(Some(at.clone()), &covering, heard_by).map_err(|refused| {
+                anyhow::anyhow!(
+                    "bdi gates cannot take reports: {}",
+                    socket_refused(&refused, "bdi gates", "with --socket")
+                )
+            })?,
+        ),
+        None => None,
+    };
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
     let (to_settle, delivered_for) = mpsc::sync_channel(webhook::MOST_WAITING);
     let reading_github = Arc::new(AtomicBool::new(true));
@@ -84,7 +105,11 @@ pub(super) fn settle(
         )?),
         _ => None,
     };
-    println!("{}", started(&cfg.gates, projects.len(), listening));
+    println!(
+        "{}",
+        started(&cfg.gates, projects.len(), listening, socket.as_deref())
+    );
+    let mut kept = Kept::new(projects);
     let mut next_look = Instant::now();
     // ponytail: one wait for every host. Wait per host if one `bdi gates`
     // ever settles for logins on two hosts at once.
@@ -93,8 +118,21 @@ pub(super) fn settle(
     let mut unseen = SaidUnseen::default();
     loop {
         let now = Instant::now();
+        // ponytail: a report is timed when the loop next wakes, so a lapse is
+        // said up to one look late. Time each report as it arrives if that
+        // ever matters.
+        for heard in heard.try_iter() {
+            kept.heard(&heard, now);
+        }
         let settling = if now >= next_look {
-            let settling = look(&trackers, &RealRunner, &projects, &cfg.gates, &told);
+            let settling = kept.look(
+                &trackers,
+                &RealRunner,
+                &cfg.gates,
+                &told,
+                now,
+                cfg.changes.covered_for(),
+            );
             next_look = Instant::now() + cfg.gates.poll();
             settling
         } else {
@@ -112,17 +150,23 @@ pub(super) fn settle(
                 Ok(Named::PullRequest(pull_request)) => delivered(
                     &trackers,
                     &RealRunner,
-                    &projects,
+                    kept.projects(),
                     &cfg.gates,
                     pull_request,
                     &told,
                 ),
-                Ok(Named::Commit(commit)) => {
-                    delivered_commit(&trackers, &RealRunner, &projects, &cfg.gates, commit, &told)
-                }
+                Ok(Named::Commit(commit)) => delivered_commit(
+                    &trackers,
+                    &RealRunner,
+                    kept.projects(),
+                    &cfg.gates,
+                    commit,
+                    &told,
+                ),
                 Err(_) => continue,
             }
         };
+        kept.settled(&settling);
         match settling.github {
             Read::Answered => reading_github.store(true, Ordering::SeqCst),
             Read::Refused => reading_github.store(false, Ordering::SeqCst),
@@ -196,7 +240,12 @@ fn secret(file: Option<&Path>, from_environment: Option<String>) -> anyhow::Resu
     Secret::new(&text).context("the webhook secret is empty")
 }
 
-fn started(gates: &Gates, projects: usize, listening: Option<SocketAddr>) -> String {
+fn started(
+    gates: &Gates,
+    projects: usize,
+    listening: Option<SocketAddr>,
+    socket: Option<&Path>,
+) -> String {
     let mut owners = if gates.owners.is_empty() {
         "every owner's repositories".to_string()
     } else {
@@ -213,9 +262,16 @@ fn started(gates: &Gates, projects: usize, listening: Option<SocketAddr>) -> Str
         Some(address) => format!(", and on GitHub's deliveries to {address}"),
         None => String::new(),
     };
+    let reports = match socket {
+        Some(at) => format!(
+            ", reading a tracker a producer covers once it reports a change to {}",
+            at.display()
+        ),
+        None => String::new(),
+    };
     format!(
         "bdi gates: settling the gh:pr, gh:issue and gh:release gates of {projects} project{plural}, for {owners}, every \
-         {}s{deliveries}",
+         {}s{deliveries}{reports}",
         gates.poll_seconds
     )
 }
@@ -319,6 +375,15 @@ fn reported(found: &Found) -> Option<String> {
                 phrase::tracker_failure(failure)
             ),
         },
+        Found::Lapsed {
+            project,
+            silent_for,
+        } => format!(
+            "{project}: no producer has said anything of it for {}s, so its gates are settled \
+             as last read until one does",
+            silent_for.as_secs()
+        ),
+        Found::Vouched { project } => format!("{project}: a producer is covering it again"),
         Found::Settling {
             pull_request,
             happening,
@@ -604,7 +669,7 @@ mod tests {
     #[test]
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
-            started(&Gates::default(), 1, None),
+            started(&Gates::default(), 1, None, None),
             "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories, \
              every 60s"
         );
@@ -616,6 +681,7 @@ mod tests {
                     ..Gates::default()
                 },
                 2,
+                None,
                 None
             ),
             "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 2 projects, for repositories owned by \
@@ -628,10 +694,47 @@ mod tests {
                     ..Gates::default()
                 },
                 1,
+                None,
                 None
             ),
             "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories \
              except those owned by miskatonic, every 60s"
+        );
+    }
+
+    #[test]
+    fn starting_with_a_socket_says_where_producers_report() {
+        assert_eq!(
+            started(
+                &Gates::default(),
+                1,
+                None,
+                Some(Path::new("/run/bdi/changes.sock"))
+            ),
+            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 1 project, for every owner's repositories, \
+             every 60s, reading a tracker a producer covers once it reports a change to /run/bdi/changes.sock"
+        );
+    }
+
+    #[test]
+    fn a_producer_falling_silent_and_speaking_again_are_each_said() {
+        assert_eq!(
+            reported(&Found::Lapsed {
+                project: "arkham".to_string(),
+                silent_for: Duration::from_secs(60),
+            })
+            .as_deref(),
+            Some(
+                "arkham: no producer has said anything of it for 60s, so its gates are settled \
+                 as last read until one does"
+            )
+        );
+        assert_eq!(
+            reported(&Found::Vouched {
+                project: "arkham".to_string(),
+            })
+            .as_deref(),
+            Some("arkham: a producer is covering it again")
         );
     }
 }

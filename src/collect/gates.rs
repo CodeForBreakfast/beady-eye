@@ -60,31 +60,6 @@ pub struct OpenGates {
     pub upstream: Vec<UpstreamGate>,
 }
 
-/// One configured project's open gates that `bdi gates` settles, or why its
-/// tracker did not give them.
-#[derive(Debug)]
-pub struct ProjectGates {
-    pub project: String,
-    pub gates: Result<OpenGates, OpenFailure>,
-}
-
-/// Every configured project's open gates that `bdi gates` settles and whose
-/// repo is `wanted`, in the order of `projects`. A project whose tracker does
-/// not answer is reported with its failure, and the rest are read.
-pub fn across(
-    cli: &Cli,
-    projects: &[Project],
-    wanted: impl Fn(Option<&str>) -> bool,
-) -> Vec<ProjectGates> {
-    projects
-        .iter()
-        .map(|project| ProjectGates {
-            project: project.name.clone(),
-            gates: cli.gates(project, &wanted),
-        })
-        .collect()
-}
-
 /// What settling the gates waiting on one pull request came to.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Settled {
@@ -578,8 +553,8 @@ mod tests {
         )
     }
 
-    fn read(runner: &FakeRunner, projects: &[Project]) -> Vec<ProjectGates> {
-        across(&Cli::new(runner), projects, |_| true)
+    fn read(runner: &FakeRunner, project: &Project) -> Result<OpenGates, OpenFailure> {
+        Cli::new(runner).gates(project, |_| true)
     }
 
     fn the_gate<'g>(gates: &'g [PrGate], id: &str) -> &'g PrGate {
@@ -593,13 +568,9 @@ mod tests {
     fn a_captured_tracker_gives_each_open_pull_request_gate_and_the_beads_it_holds_back() {
         let runner = captured(FakeRunner::default(), "arkham");
 
-        let read = read(&runner, &[project("arkham")]);
+        let read = read(&runner, &project("arkham"));
 
-        let gates = &read[0]
-            .gates
-            .as_ref()
-            .expect("the tracker answered")
-            .pull_requests;
+        let gates = &read.as_ref().expect("the tracker answered").pull_requests;
         let ids: Vec<&str> = gates.iter().map(|gate| gate.id.as_str()).collect();
         assert_eq!(ids, ["ark-6pp", "ark-tg0", "ark-eb1", "ark-0i5"]);
         assert_eq!(
@@ -631,13 +602,9 @@ mod tests {
     fn a_gate_waiting_on_anything_but_a_pull_request_is_not_read() {
         let runner = captured(FakeRunner::default(), "arkham");
 
-        let read = read(&runner, &[project("arkham")]);
+        let read = read(&runner, &project("arkham"));
 
-        let gates = &read[0]
-            .gates
-            .as_ref()
-            .expect("the tracker answered")
-            .pull_requests;
+        let gates = &read.as_ref().expect("the tracker answered").pull_requests;
         assert!(gates.iter().all(|gate| gate.id != "ark-77f"));
         assert!(runner
             .calls()
@@ -649,13 +616,9 @@ mod tests {
     fn a_gate_with_no_repo_is_reported_as_having_none() {
         let runner = captured(FakeRunner::default(), "arkham");
 
-        let read = read(&runner, &[project("arkham")]);
+        let read = read(&runner, &project("arkham"));
 
-        let gates = &read[0]
-            .gates
-            .as_ref()
-            .expect("the tracker answered")
-            .pull_requests;
+        let gates = &read.as_ref().expect("the tracker answered").pull_requests;
         assert_eq!(
             the_gate(gates, "ark-6pp"),
             &PrGate {
@@ -672,13 +635,9 @@ mod tests {
     fn a_gate_whose_await_id_is_not_a_number_is_reported_with_it() {
         let runner = captured(FakeRunner::default(), "arkham");
 
-        let read = read(&runner, &[project("arkham")]);
+        let read = read(&runner, &project("arkham"));
 
-        let gates = &read[0]
-            .gates
-            .as_ref()
-            .expect("the tracker answered")
-            .pull_requests;
+        let gates = &read.as_ref().expect("the tracker answered").pull_requests;
         assert_eq!(
             the_gate(gates, "ark-tg0").awaits,
             Err(vec![Fault::AwaitIdNotANumber("the-ninth".to_string())])
@@ -735,8 +694,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unreachable_tracker_is_reported_and_the_other_projects_are_still_read() {
-        let runner = captured(FakeRunner::default(), "dunwich").failing(
+    fn an_unreachable_tracker_is_reported() {
+        let runner = FakeRunner::default().failing(
             &gate_list("arkham"),
             RunFailure {
                 kind: FailureKind::Unavailable,
@@ -746,25 +705,12 @@ mod tests {
             },
         );
 
-        let read = read(&runner, &[project("arkham"), project("dunwich")]);
-
-        assert_eq!(read[0].project, "arkham");
-        match &read[0].gates {
+        match read(&runner, &project("arkham")) {
             Err(OpenFailure::Refused(failure)) => {
                 assert_eq!(failure.kind, FailureKind::Unavailable)
             }
             answered => panic!("arkham's tracker answered {answered:?}"),
         }
-        assert_eq!(read[1].project, "dunwich");
-        assert_eq!(
-            read[1]
-                .gates
-                .as_ref()
-                .expect("dunwich answered")
-                .pull_requests
-                .len(),
-            4
-        );
     }
 
     #[test]
@@ -774,9 +720,9 @@ mod tests {
             RunFailure::parse("bd", "not JSON"),
         );
 
-        let read = read(&runner, &[project("arkham")]);
+        let read = read(&runner, &project("arkham"));
 
-        match &read[0].gates {
+        match &read {
             Err(OpenFailure::Refused(failure)) => assert_eq!(failure.kind, FailureKind::Parse),
             answered => panic!("arkham's tracker answered {answered:?}"),
         }

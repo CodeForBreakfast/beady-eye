@@ -1,17 +1,25 @@
 //! One look at every configured project's gh:pr, gh:issue and gh:release
 //! gates, which `bdi gates` takes on its poll: each pull request, issue or
 //! repository's releases they wait on is asked of GitHub once, where its
-//! repository's owner is one this `bdi gates` settles for. A delivery from
-//! GitHub settles the one pull request it names, by the same rule.
+//! repository's owner is one this `bdi gates` settles for. A tracker is read
+//! for them only where it may have changed since it was last read. A
+//! delivery from GitHub settles the one pull request it names, by the same
+//! rule.
+
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
 use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
-use crate::collect::gates::{self, Awaited, Done, PullRequest, Settled, Told, Unseen, Waiting};
+use crate::collect::changes::Heard;
+use crate::collect::gates::{
+    self, Awaited, Done, OpenGates, PullRequest, Settled, Told, Unseen, Waiting,
+};
 use crate::collect::github;
 use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
+use crate::collect::tracker::OpenFailure;
 use crate::collect::upstream::{Answer, Upstream};
 use crate::collect::webhook::Commit;
 use crate::config::{Gates, Project};
@@ -72,6 +80,14 @@ pub enum Found {
         happened: String,
         done: Result<(), TrackerFailure>,
     },
+    /// The producer covering a project has said nothing of it for
+    /// `silent_for`, so its gates are settled as last read until it speaks.
+    Lapsed {
+        project: String,
+        silent_for: Duration,
+    },
+    /// The producer covering a project spoke again after it lapsed.
+    Vouched { project: String },
     /// A write settling a pull request asked of one bead, for what the pull
     /// request did, and what came of it.
     Settling {
@@ -104,66 +120,186 @@ pub struct Settling {
     pub github: Read,
 }
 
-/// Read every open gate across `projects`, then settle each pull request one
-/// of them waits on, once however many gates wait on it, asking GitHub about
-/// each repository's together, and then each gh:issue and gh:release gate,
-/// until GitHub refuses one for its rate limit. A gate whose repository
-/// `settles` leaves to another `bdi gates` is passed over without a word. No
-/// tracker is asked about a pull request that has done nothing new to the
-/// gates waiting on it, which `told` says of the beads they hold back.
-pub fn look(
+/// Each configured project's open gates as `bdi gates` last read them, and
+/// what says when its tracker is read again.
+///
+/// A project no producer has named is read on every look, as one nothing
+/// watches has to be. Once a producer names it, its tracker is read only
+/// when the producer says it changed, when its last read failed, or when
+/// settling wrote to it. The producer replaces the read on the clock rather
+/// than backing it up, so a producer that falls silent is said and the clock
+/// does not take over.
+pub struct Kept {
+    projects: Vec<Project>,
+    kept: Vec<KeptGates>,
+}
+
+struct KeptGates {
+    read: Result<OpenGates, OpenFailure>,
+    /// Whether `read` may no longer be what the tracker holds.
+    stale: bool,
+    /// When a producer last said anything of the project, or nothing where
+    /// none ever has.
+    vouched: Option<Instant>,
+    lapsed: bool,
+}
+
+impl KeptGates {
+    fn due(&self) -> bool {
+        self.stale || self.vouched.is_none()
+    }
+
+    /// What there is to say about the producer covering `project` falling
+    /// silent for longer than `covered_for`, or speaking again after it did.
+    fn lapse(&mut self, project: &str, now: Instant, covered_for: Duration) -> Option<Found> {
+        let lapsed = now.duration_since(self.vouched?) > covered_for;
+        if lapsed == std::mem::replace(&mut self.lapsed, lapsed) {
+            return None;
+        }
+        let project = project.to_string();
+        Some(if lapsed {
+            Found::Lapsed {
+                project,
+                silent_for: covered_for,
+            }
+        } else {
+            Found::Vouched { project }
+        })
+    }
+}
+
+impl Kept {
+    /// Every one of `projects`, none of them read yet.
+    pub fn new(projects: Vec<Project>) -> Self {
+        let kept = projects
+            .iter()
+            .map(|_| KeptGates {
+                read: Ok(OpenGates::default()),
+                stale: true,
+                vouched: None,
+                lapsed: false,
+            })
+            .collect();
+        Self { projects, kept }
+    }
+
+    pub fn projects(&self) -> &[Project] {
+        &self.projects
+    }
+
+    /// Take what a producer said, `now`.
+    pub fn heard(&mut self, heard: &Heard, now: Instant) {
+        let (Heard::Changed(project) | Heard::Covered(project)) = heard;
+        let Some(at) = self.projects.iter().position(|each| each.name == *project) else {
+            return;
+        };
+        let kept = &mut self.kept[at];
+        kept.vouched = Some(now);
+        kept.stale |= matches!(heard, Heard::Changed(_));
+    }
+
+    /// Mark every project `settling` wrote to, to be read again on the next
+    /// look.
+    pub fn settled(&mut self, settling: &Settling) {
+        for found in &settling.found {
+            let (Found::Ended { project, .. } | Found::Settling { project, .. }) = found else {
+                continue;
+            };
+            for (each, kept) in self.projects.iter().zip(&mut self.kept) {
+                kept.stale |= each.name == *project;
+            }
+        }
+    }
+
+    /// Read again each tracker that is due, then settle every gate kept, as
+    /// [`look`] does. A gate whose repository `settles` leaves to another
+    /// `bdi gates` is passed over without a word. `now` and `covered_for`
+    /// decide whether a producer has fallen silent. What the look wrote is
+    /// for [`Kept::settled`] to hear, as what a delivery wrote is.
+    pub fn look(
+        &mut self,
+        cli: &Cli,
+        gh: &dyn Runner,
+        settles: &Gates,
+        told: &Told,
+        now: Instant,
+        covered_for: Duration,
+    ) -> Settling {
+        let mut lapses = Vec::new();
+        for (project, kept) in self.projects.iter().zip(&mut self.kept) {
+            if kept.due() {
+                kept.read = cli.gates(project, |repo| settles.settles(repo.and_then(gate::owner)));
+                kept.stale = kept.read.is_err();
+            }
+            lapses.extend(kept.lapse(&project.name, now, covered_for));
+        }
+        let mut settling = look(cli, gh, &self.projects, self.reads(), told);
+        settling.found.splice(0..0, lapses);
+        settling
+    }
+
+    fn reads(&self) -> impl Iterator<Item = (&Project, &Result<OpenGates, OpenFailure>)> {
+        self.projects
+            .iter()
+            .zip(self.kept.iter().map(|kept| &kept.read))
+    }
+}
+
+/// Settle each pull request one of the gates `read` waits on, once however
+/// many gates wait on it, asking GitHub about each repository's together,
+/// and then each gh:issue and gh:release gate, until GitHub refuses one for
+/// its rate limit. No tracker is asked about a pull request that has done
+/// nothing new to the gates waiting on it, which `told` says of the beads
+/// they hold back.
+fn look<'a>(
     cli: &Cli,
     gh: &dyn Runner,
     projects: &[Project],
-    settles: &Gates,
+    read: impl Iterator<Item = (&'a Project, &'a Result<OpenGates, OpenFailure>)>,
     told: &Told,
 ) -> Settling {
     let mut found = Vec::new();
     let mut awaited: Vec<Vec<Awaited>> = Vec::new();
     let mut upstream = Vec::new();
-    let settled_here = |repo: Option<&str>| settles.settles(repo.and_then(gate::owner));
-    for (project, read) in projects
-        .iter()
-        .zip(gates::across(cli, projects, settled_here))
-    {
-        let name = &read.project;
-        let open = match read.gates {
+    for (project, read) in read {
+        let name = &project.name;
+        let open = match read {
             Ok(open) => open,
             Err(failure) => {
                 found.push(Found::TrackerUnread {
                     project: name.clone(),
-                    failure: open_failure(&failure),
+                    failure: open_failure(failure),
                 });
                 continue;
             }
         };
-        for gate in open.pull_requests {
-            match gate.awaits {
+        for gate in &open.pull_requests {
+            match &gate.awaits {
                 Err(faults) => found.push(Found::Unsettleable {
                     project: name.clone(),
-                    gate: gate.id,
-                    faults,
+                    gate: gate.id.clone(),
+                    faults: faults.clone(),
                 }),
                 Ok(wait) => awaiting(
                     &mut awaited,
-                    wait.pull_request,
+                    wait.pull_request.clone(),
                     Waiting {
                         project: name.clone(),
                         until: wait.until,
-                        blocks: gate.blocks,
+                        blocks: gate.blocks.clone(),
                         made: gate.made,
                     },
                 ),
             }
         }
-        for gate in open.upstream {
-            match gate.awaits {
+        for gate in &open.upstream {
+            match &gate.awaits {
                 Err(faults) => found.push(Found::Unsettleable {
                     project: name.clone(),
-                    gate: gate.id,
-                    faults,
+                    gate: gate.id.clone(),
+                    faults: faults.clone(),
                 }),
-                Ok(waits) => upstream.push((project, gate.id, waits)),
+                Ok(waits) => upstream.push((project, gate.id.clone(), waits.clone())),
             }
         }
     }
@@ -398,6 +534,8 @@ mod tests {
     use crate::collect::run::testing::FakeRunner;
     use std::path::PathBuf;
 
+    const COVERED_FOR: Duration = Duration::from_secs(60);
+
     const GATE_LIST: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list.json");
     const MERGED: &str = r#"{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}}"#;
     /// #7 open and #42 merged, as the one query a look asks reads them.
@@ -552,12 +690,23 @@ mod tests {
     }
 
     fn looked(runner: &FakeRunner, projects: &[Project], settles: &Gates) -> Settling {
-        look(
+        first_look(runner, projects, settles, &Told::default())
+    }
+
+    /// The look a `bdi gates` takes as it starts, which reads every tracker.
+    fn first_look(
+        runner: &FakeRunner,
+        projects: &[Project],
+        settles: &Gates,
+        told: &Told,
+    ) -> Settling {
+        Kept::new(projects.to_vec()).look(
             &Cli::new(runner),
             runner,
-            projects,
             settles,
-            &Told::default(),
+            told,
+            Instant::now(),
+            COVERED_FOR,
         )
     }
 
@@ -1186,14 +1335,7 @@ mod tests {
             captured(FakeRunner::default(), "arkham").with(&queried("ark"), &queried_7_closed());
         let told = Told::default();
         let look_with = |runner: &FakeRunner| {
-            look(
-                &Cli::new(runner),
-                runner,
-                &[project("arkham")],
-                &owners(&["example"]),
-                &told,
-            )
-            .found
+            first_look(runner, &[project("arkham")], &owners(&["example"]), &told).found
         };
 
         let found_first = look_with(&first);
@@ -1437,5 +1579,126 @@ mod tests {
 
         assert_eq!(found, []);
         assert_eq!(github, Read::Unasked);
+    }
+
+    /// #7 and #42 both open, as the one query a look asks reads them.
+    const QUERIED_OPEN: &str =
+        include_str!("../../tests/fixtures/gh_2.102.0_api_graphql_ark_open.json");
+
+    /// arkham's captured tracker, behind a GitHub where nothing has happened.
+    fn quiet() -> FakeRunner {
+        captured(FakeRunner::default(), "arkham").with(&queried("ark"), QUERIED_OPEN)
+    }
+
+    fn arkham() -> Kept {
+        Kept::new(vec![project("arkham")])
+    }
+
+    fn covered() -> Heard {
+        Heard::Covered("arkham".to_string())
+    }
+
+    fn look_at(kept: &mut Kept, runner: &FakeRunner, now: Instant) -> Vec<Found> {
+        kept.look(
+            &Cli::new(runner),
+            runner,
+            &owners(&["example"]),
+            &Told::default(),
+            now,
+            COVERED_FOR,
+        )
+        .found
+    }
+
+    #[test]
+    fn a_tracker_no_producer_names_is_read_on_every_look() {
+        let runner = quiet();
+        let mut kept = arkham();
+        let now = Instant::now();
+
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    #[test]
+    fn a_covered_tracker_is_read_again_only_once_its_producer_says_it_changed() {
+        let runner = quiet();
+        let mut kept = arkham();
+        let now = Instant::now();
+        kept.heard(&covered(), now);
+
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+        assert_eq!(gate_lists_read(&runner), 1);
+        assert_eq!(asked_github(&runner).len(), 3, "each look asks GitHub");
+
+        kept.heard(&Heard::Changed("arkham".to_string()), now);
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    #[test]
+    fn a_covered_tracker_settling_wrote_to_is_read_again_and_one_it_only_found_is_not() {
+        let runner = quiet();
+        let mut kept = arkham();
+        let now = Instant::now();
+        kept.heard(&covered(), now);
+        look_at(&mut kept, &runner, now);
+
+        kept.settled(&Settling {
+            found: vec![no_number("arkham")],
+            github: Read::Answered,
+        });
+        look_at(&mut kept, &runner, now);
+        assert_eq!(gate_lists_read(&runner), 1);
+
+        kept.settled(&Settling {
+            found: vec![settling("arkham")],
+            github: Read::Answered,
+        });
+        look_at(&mut kept, &runner, now);
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    #[test]
+    fn a_covered_tracker_whose_read_failed_is_read_again_on_the_next_look() {
+        let runner = FakeRunner::default().failing(&gate_list("arkham"), unavailable("bd"));
+        let mut kept = arkham();
+        let now = Instant::now();
+        kept.heard(&covered(), now);
+
+        look_at(&mut kept, &runner, now);
+        look_at(&mut kept, &runner, now);
+
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    /// The lapse is said, and the tracker is still not read on the clock.
+    #[test]
+    fn a_producer_falling_silent_is_said_once_and_speaking_again_is_said() {
+        let runner = quiet();
+        let mut kept = arkham();
+        let start = Instant::now();
+        kept.heard(&covered(), start);
+        let silent = start + COVERED_FOR + Duration::from_secs(1);
+        let lapsed = Found::Lapsed {
+            project: "arkham".to_string(),
+            silent_for: COVERED_FOR,
+        };
+        let vouched = Found::Vouched {
+            project: "arkham".to_string(),
+        };
+
+        assert!(!look_at(&mut kept, &runner, start).contains(&lapsed));
+        assert!(look_at(&mut kept, &runner, silent).contains(&lapsed));
+        assert!(!look_at(&mut kept, &runner, silent).contains(&lapsed));
+        kept.heard(&covered(), silent);
+        assert!(look_at(&mut kept, &runner, silent).contains(&vouched));
+        assert!(!look_at(&mut kept, &runner, silent).contains(&vouched));
+        assert_eq!(gate_lists_read(&runner), 1);
     }
 }

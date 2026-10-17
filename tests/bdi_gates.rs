@@ -2,7 +2,8 @@
 //! release published since the gate was made, and goes on looking
 //! through a GitHub that refuses it and a tracker that does not answer,
 //! reporting each. Listening, it settles the pull request a delivery signed
-//! with its secret names, and refuses every other.
+//! with its secret names, and refuses every other. Given a socket, it reads a
+//! tracker a producer covers only once the producer says it changed.
 //!
 //! The cases run the binary against the `bd` and `gh` shims, because what is
 //! under test is the process a supervisor starts and leaves running.
@@ -11,8 +12,9 @@ mod terminal;
 
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -516,6 +518,115 @@ fn a_tracker_that_does_not_answer_is_reported_and_the_others_are_settled() {
 
     settling.says("dunwich: its gates could not be read: the tracker did not answer");
     settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
+}
+
+const LISTING_GATES: &str = "gate list --limit 0 --json";
+
+/// A producer connected to the socket `bdi gates` was told to take reports
+/// on.
+struct Producer {
+    writing: UnixStream,
+    answers: BufReader<UnixStream>,
+}
+
+impl Producer {
+    fn connected(at: &Path) -> Self {
+        until(|| at.exists(), "the socket bdi gates takes reports on");
+        let writing = UnixStream::connect(at).expect("bdi gates takes the connection");
+        writing
+            .set_read_timeout(Some(GIVING_UP))
+            .expect("a timeout is ours to set");
+        let answers = BufReader::new(writing.try_clone().expect("the stream clones"));
+        Self { writing, answers }
+    }
+
+    /// Say `line`, and what `bdi gates` answered.
+    fn says(&mut self, line: &str) -> String {
+        writeln!(self.writing, "{line}").expect("the line is sent");
+        let mut answer = String::new();
+        self.answers
+            .read_line(&mut answer)
+            .expect("bdi gates answers");
+        answer.trim_end().to_string()
+    }
+}
+
+/// How many times `github` has been asked the query a look asks about the
+/// captured gates, which is how many looks there have been.
+fn looks(github: &ShimmedGitHub) -> usize {
+    github
+        .calls()
+        .iter()
+        .filter(|call| **call == queried())
+        .count()
+}
+
+/// Until a producer names arkham, each look reads its tracker again. Once
+/// one covers it, looks go on asking GitHub and read no bd at all, so a gate
+/// written there meanwhile waits until the producer says arkham changed.
+#[test]
+fn a_tracker_a_producer_covers_is_read_only_once_the_producer_says_it_changed() {
+    let home = a_home_naming("covered", &["arkham"]);
+    let socket = home.join("changes.sock");
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED_OPEN);
+    let mut command = gates(&home, &tracker, &github);
+    command.arg("--socket").arg(&socket);
+    let _settling = Settling::spawned(&home, command);
+    let listings = || {
+        tracker
+            .calls()
+            .iter()
+            .filter(|call| *call == LISTING_GATES)
+            .count()
+    };
+    until(
+        || listings() >= 2,
+        "a second read of a tracker nothing covers",
+    );
+
+    let mut producer = Producer::connected(&socket);
+    assert_eq!(producer.says("covered arkham"), "ok arkham");
+    let covered_from = looks(&github) + 1;
+    until(|| looks(&github) > covered_from, "a look after the cover");
+    let read_before = tracker.calls();
+    while looks(&github) < covered_from + 4 {
+        assert_eq!(producer.says("covered arkham"), "ok arkham");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(tracker.calls(), read_before);
+
+    tracker.answers_for("arkham", LISTING_GATES, UPSTREAM);
+    let closing_zl0 = "gate resolve ark-zl0 --reason example/ark#31 closed.";
+    tracker.answers_for("arkham", closing_zl0, "✓ Gate resolved: ark-zl0\n");
+    github.answers_with(
+        ISSUE_31,
+        r#"{"data":{"repository":{"issue":{"state":"CLOSED"}}}}"#,
+    );
+    github.answers_with(
+        RELEASES,
+        r#"{"data":{"repository":{"releases":{"nodes":[]}}}}"#,
+    );
+    let written_at = looks(&github);
+    until(
+        || looks(&github) >= written_at + 2,
+        "two looks after the write",
+    );
+    assert_eq!(tracker.calls(), read_before);
+
+    assert_eq!(producer.says("arkham"), "ok arkham");
+    until(
+        || tracker.calls().iter().any(|call| call == closing_zl0),
+        "the gate written in arkham closed",
+    );
+
+    let read_for_the_close = listings();
+    until(
+        || listings() > read_for_the_close,
+        "arkham read again after bdi gates closed a gate in it",
+    );
 }
 
 #[test]

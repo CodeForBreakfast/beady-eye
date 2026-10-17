@@ -1113,6 +1113,33 @@ the limit resets. The next look waits until then. A secondary limit's end is not
 said, so the next look waits at least a minute. A delivery during the wait is
 not settled, and the next look settles it.
 
+Each look reads every tracker's open gates again. Given `--socket <path>`,
+`bdi gates` takes the lines a producer sends a view instead, as
+[Telling `bdi` a project changed](#telling-bdi-a-project-changed) describes,
+on a socket of its own. Once a producer has named a project, a look reads that
+project's tracker only when one of these is true:
+
+- the producer said the project changed
+- the last read of it failed
+- `bdi gates` closed a gate or told a bead in it
+
+Every look still asks GitHub about every gate it holds, so a merge or a closed
+issue is still settled on the next look. A gate written into the tracker is
+picked up on the look after its producer reports the change. A project no
+producer has named is read on every look, as before.
+
+Once a producer has named a project, the clock never takes the read back. A
+producer that says nothing of the project for
+[`[changes] covered_for_seconds`](#changes) is reported, and so is its next word:
+
+```
+arkham: no producer has said anything of it for 60s, so its gates are settled as last read until one does
+arkham: a producer is covering it again
+```
+
+The socket is checked as a view's is. A path `bdi gates` cannot take stops it
+from starting.
+
 A systemd user unit, at `~/.config/systemd/user/bdi-gates.service`:
 
 ```ini
