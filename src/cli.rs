@@ -138,14 +138,15 @@ struct Cli {
 /// A command `bdi` passes to bd rather than draws.
 #[derive(Subcommand)]
 enum Passing {
-    /// Run `bd human respond` or `bd defer` against a configured project's
-    /// tracker, entered and credentialled as bdi reads it. No other bd command
-    /// is passed, and no flag but the response or the date deferred until.
+    /// Run `bd human respond`, `bd defer` or `bd comments add` against a
+    /// configured project's tracker, entered and credentialled as bdi reads
+    /// it. No other bd command is passed, and no flag but the response or the
+    /// date deferred until.
     Bd {
         /// The configured project whose tracker the command is run against.
         project: String,
-        /// `human respond`, the bead and the response, or `defer`, the bead and
-        /// `--until <date>`.
+        /// `human respond`, the bead and the response, `defer`, the bead and
+        /// `--until <date>`, or `comments add`, the bead and the text.
         #[arg(
             value_name = "ARGS",
             required = true,
