@@ -425,7 +425,8 @@ impl Collection {
             match self.draw(cfg, panes, out_of_reach, provider, filter, now) {
                 Ok(mut snapshot) => {
                     let unanswered = trackers.unanswered_by_the_watcher();
-                    snapshot.unanswered_by_the_watcher = cfg
+                    snapshot.unanswered_by_the_watcher = self
+                        .widened(cfg)
                         .read()
                         .map(|project| &project.name)
                         .filter(|name| unanswered.contains(*name))
@@ -3504,6 +3505,25 @@ path = "{FERRY}"
             trees_assembled(&standing),
             BTreeMap::from([("dunwich", 0), ("ferry", 1)])
         );
+    }
+
+    #[test]
+    fn a_project_read_on_demand_is_named_when_the_watcher_leaves_it_to_this_run() {
+        let trackers = AnsweredAround {
+            inner: ferry_waiting_on_dunwich(),
+            projects: ["dunwich".to_string()].into(),
+        };
+
+        let snap = Collection::default().collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &no_panes(),
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(snap.unanswered_by_the_watcher, ["dunwich"]);
     }
 
     /// A project the run comes to read for itself has its trees assembled,
