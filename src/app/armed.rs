@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 
 use super::due::due_after;
 use crate::app::Wanted;
-use crate::config::{Config, Scope};
+use crate::config::{Config, Poll, Scope};
 
 /// One disarmed `Armed` per project a config names.
 ///
@@ -61,6 +61,8 @@ pub struct Armed {
     /// How long after a read comes back this project asks for another, or
     /// nothing where it does not poll at all.
     every: Option<Duration>,
+    /// What a producer saying it covers this project does to that poll.
+    cover: Cover,
     /// When it asks, or nothing while a read it is waiting on is still on its
     /// way — and nothing for good where neither the interval nor the last
     /// read gives an instant to ask at.
@@ -77,6 +79,22 @@ pub struct Armed {
     vouched_at: Option<DateTime<Utc>>,
 }
 
+/// What a producer covering a project does to its poll.
+///
+/// The producer replaces the poll rather than backing it up, so a project
+/// that stands its poll down keeps it down for the run: a producer that goes
+/// quiet afterwards lapses the project, and a poll coming back would hide
+/// exactly that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cover {
+    /// Nothing: the reader chose the poll, or chose none.
+    KeepsThePoll,
+    /// Stands the poll down the first time a producer covers the project.
+    StandsThePollDown,
+    /// A producer has covered the project, and it polls no more.
+    HasStoodThePollDown,
+}
+
 impl Armed {
     /// A project that polls `every` after each read, or — where that is
     /// nothing — one that leaves being told to whatever else reports for it.
@@ -89,10 +107,29 @@ impl Armed {
         Self {
             project,
             every,
+            cover: Cover::KeepsThePoll,
             at: None,
             speaks_until: None,
             covered_for: None,
             vouched_at: None,
+        }
+    }
+
+    /// A project kept current as `poll` says, polling `every` after each read
+    /// where it polls at all.
+    pub fn as_poll_says(project: String, poll: Poll, every: Duration) -> Self {
+        match poll {
+            Poll::UntilCovered => Self::polling(project, Some(every)).until_covered(),
+            Poll::Always => Self::polling(project, Some(every)),
+            Poll::Never => Self::polling(project, None),
+        }
+    }
+
+    /// This project, polling only until a producer says it covers it.
+    fn until_covered(self) -> Self {
+        Self {
+            cover: Cover::StandsThePollDown,
+            ..self
         }
     }
 
@@ -121,8 +158,17 @@ impl Armed {
     /// A project the edit stopped polling keeps only the instant its last
     /// read stops speaking, which is the tracker's rather than the file's —
     /// so it asks then, and not at all where that read holds nothing back.
+    ///
+    /// A poll a producer has stood down stays down where the file still
+    /// leaves the poll to cover, because the cover is this run's and not the
+    /// file's.
     pub(super) fn still_due(self, named: Armed) -> Armed {
-        let at = if named.every.is_some() {
+        let cover = match (self.cover, named.cover) {
+            (Cover::HasStoodThePollDown, Cover::StandsThePollDown) => Cover::HasStoodThePollDown,
+            (_, named) => named,
+        };
+        let named = Armed { cover, ..named };
+        let at = if named.every().is_some() {
             self.at
         } else {
             self.at.and(self.speaks_until)
@@ -189,7 +235,13 @@ impl Armed {
     ///
     /// Only where an ask is armed. A read still on its way arms the next ask
     /// when it comes back, which is later than this word.
+    ///
+    /// A project that polls only until it is covered has its poll stood down
+    /// here, for the rest of the run.
     pub(super) fn covered(&mut self, at: DateTime<Utc>) {
+        if self.cover == Cover::StandsThePollDown {
+            self.cover = Cover::HasStoodThePollDown;
+        }
         if self.at.is_some() {
             self.at = self.due_from(at);
         }
@@ -216,12 +268,19 @@ impl Armed {
     /// stops speaking. An interval too long to reach is no candidate at all,
     /// as `due_after` says.
     fn due_from(&self, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let polled = self.every.and_then(|every| due_after(from, every));
+        let polled = self.every().and_then(|every| due_after(from, every));
         polled.into_iter().chain(self.speaks_until).min()
     }
 
+    /// How long after a read this project asks for another, now that any
+    /// producer covering it has had its say.
+    fn every(&self) -> Option<Duration> {
+        self.every
+            .filter(|_| self.cover != Cover::HasStoodThePollDown)
+    }
+
     fn lapses_at(&self) -> Option<DateTime<Utc>> {
-        if self.every.is_some() {
+        if self.every().is_some() {
             return None;
         }
         due_after(self.vouched_at?, self.covered_for?)
@@ -766,5 +825,120 @@ mod tests {
     #[test]
     fn a_project_answers_to_its_own_name() {
         assert_eq!(polling().project(), "arkham");
+    }
+
+    fn polling_until_covered() -> Armed {
+        polling().until_covered().lapsing_after(COVERED_FOR)
+    }
+
+    /// A project no producer covers is kept current by its poll, whatever it
+    /// would do once one did.
+    #[test]
+    fn a_project_no_producer_covers_polls() {
+        let mut armed = polling_until_covered();
+
+        armed.came_back(&arkham(), at(100), None);
+
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
+        assert!(!armed.lapsed(at(1_000_000)));
+    }
+
+    /// The producer replaces the poll rather than backing it up, so once it
+    /// has said it covers the project, no read that comes back arms one.
+    #[test]
+    fn a_project_a_producer_covers_polls_no_more() {
+        let mut armed = polling_until_covered();
+        armed.came_back(&arkham(), at(100), None);
+
+        armed.covered(at(110));
+
+        assert_eq!(armed.asks_in(at(110)), None);
+        assert_eq!(armed.asks(at(1_000_000)), None);
+
+        armed.came_back(&arkham(), at(150), None);
+
+        assert_eq!(armed.asks_in(at(150)), None);
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// A producer that goes quiet is shown as having gone, and is not polled
+    /// over: a poll quietly coming back would hide the failure.
+    #[test]
+    fn a_project_whose_producer_goes_quiet_lapses_rather_than_polls() {
+        let mut armed = polling_until_covered();
+        armed.came_back(&arkham(), at(100), None);
+
+        armed.covered(at(110));
+
+        assert!(!armed.lapsed(at(169)));
+        assert!(armed.lapsed(at(170)));
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// Covering says nothing was written, and a held bead falls due with
+    /// nothing written, so a covered project still asks then.
+    #[test]
+    fn a_project_a_producer_covers_still_asks_when_its_read_stops_speaking() {
+        let mut armed = polling_until_covered();
+        armed.came_back(&arkham(), at(100), Some(at(125)));
+
+        armed.covered(at(110));
+
+        assert_eq!(armed.asks(at(124)), None);
+        assert_eq!(armed.asks(at(125)), Some(arkham()));
+    }
+
+    /// A word heard while the first read is on its way stands the poll down
+    /// as much as one heard after: the read that comes back arms no poll.
+    #[test]
+    fn a_word_heard_while_a_read_is_out_stands_the_poll_down() {
+        let mut armed = polling_until_covered();
+
+        armed.covered(at(100));
+        armed.came_back(&arkham(), at(105), None);
+
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// The cover is a fact about this run, so saving the config does not
+    /// bring the poll back.
+    #[test]
+    fn a_config_the_reader_writes_keeps_the_poll_stood_down() {
+        let mut standing = polling_until_covered();
+        standing.came_back(&arkham(), at(100), None);
+        standing.covered(at(110));
+
+        let mut named = standing.still_due(polling_until_covered());
+        named.came_back(&arkham(), at(120), None);
+
+        assert_eq!(named.asks(at(1_000_000)), None);
+        assert!(named.lapsed(at(180)));
+    }
+
+    /// A reader who chooses the poll for a project has it, covered or not.
+    #[test]
+    fn a_config_that_chooses_the_poll_brings_it_back_under_cover() {
+        let mut standing = polling_until_covered();
+        standing.came_back(&arkham(), at(100), None);
+        standing.covered(at(110));
+
+        let mut named = standing.still_due(polling());
+        named.came_back(&arkham(), at(120), None);
+
+        assert_eq!(named.asks(at(150)), Some(arkham()));
+    }
+
+    /// The reader's choice of the poll outlasts any producer covering the
+    /// project.
+    #[test]
+    fn a_project_whose_poll_the_reader_chose_polls_under_cover() {
+        let mut armed = polling().lapsing_after(COVERED_FOR);
+        armed.came_back(&arkham(), at(100), None);
+
+        armed.covered(at(110));
+        armed.came_back(&arkham(), at(120), None);
+
+        assert_eq!(armed.asks(at(150)), Some(arkham()));
+        assert!(!armed.lapsed(at(1_000_000)));
     }
 }

@@ -554,6 +554,25 @@ impl Producer {
             .expect("bdi answers every line");
         answer.trim_end().to_string()
     }
+
+    /// Say every one of `lines` in one write, as a burst arrives, and hand
+    /// back what `bdi` answered to each.
+    pub fn says_at_once(&mut self, lines: &[&str]) -> Vec<String> {
+        let burst: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        self.speaking
+            .write_all(burst.as_bytes())
+            .expect("the burst is ours to send");
+        lines
+            .iter()
+            .map(|_| {
+                let mut answer = String::new();
+                self.watching
+                    .read_line(&mut answer)
+                    .expect("bdi answers every line");
+                answer.trim_end().to_string()
+            })
+            .collect()
+    }
 }
 
 /// What `bd list --all --limit 0 --json` said about one open epic of this
