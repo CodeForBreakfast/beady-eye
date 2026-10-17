@@ -1,5 +1,5 @@
-//! What GitHub says of a pull request, an issue or a repository's releases
-//! now, and of the rate limit asking spends, read through `gh`.
+//! What GitHub says of a pull request, an issue, a workflow run or a
+//! repository's releases now, and of the rate limit asking spends, read through `gh`.
 
 use std::collections::BTreeMap;
 
@@ -213,6 +213,27 @@ pub fn issue_closed(
             ),
         )),
     }
+}
+
+/// A workflow run as GitHub has it now: its workflow's name, where it
+/// stands, and how it ended, which GitHub says only once it has completed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Run {
+    pub name: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+}
+
+/// Workflow run `id` in `repo`, read from REST, since GraphQL finds a run
+/// only by its node id.
+pub fn workflow_run(runner: &dyn Runner, repo: &Repository, id: u64) -> Result<Run, RunFailure> {
+    let path = format!("repos/{}/{}/actions/runs/{id}", repo.owner, repo.name);
+    let mut args = vec!["api", &path];
+    if let Some(host) = repo.host {
+        args.extend(["--hostname", host]);
+    }
+    let out = runner.run("gh", &args, None, &Env::new())?;
+    serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))
 }
 
 /// A release a repository has published.
@@ -780,6 +801,54 @@ mod tests {
         let runner = FakeRunner::default().with(RELEASES, r#"{"data":{"repository":null}}"#);
 
         let failure = published_releases(&runner, &ark(None)).unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Parse);
+    }
+
+    const RUN_4242: &str = "gh api repos/example/ark/actions/runs/4242";
+
+    /// Run 4242 of example/ark's CI, cut to a few of the fields GitHub
+    /// answers with.
+    const RAN: &str = r#"{"id":4242,"name":"CI","head_branch":"main","run_number":17,
+        "event":"push","status":"completed","conclusion":"success","workflow_id":99}"#;
+
+    #[test]
+    fn a_run_is_read_for_its_workflow_where_it_stands_and_how_it_ended() {
+        let runner = FakeRunner::default().with(RUN_4242, RAN);
+
+        assert_eq!(
+            workflow_run(&runner, &ark(None), 4242),
+            Ok(Run {
+                name: "CI".to_string(),
+                status: "completed".to_string(),
+                conclusion: Some("success".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_run_still_going_has_no_conclusion() {
+        let going = r#"{"id":4242,"name":"CI","status":"in_progress","conclusion":null}"#;
+        let runner = FakeRunner::default().with(RUN_4242, going);
+
+        assert_eq!(
+            workflow_run(&runner, &ark(None), 4242).map(|run| run.conclusion),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_run_is_asked_of_the_host_its_repository_is_on() {
+        let on_forge = format!("{RUN_4242} --hostname forge.invalid");
+        let runner = FakeRunner::default().with(&on_forge, RAN);
+
+        assert!(workflow_run(&runner, &ark(Some("forge.invalid")), 4242).is_ok());
+    }
+
+    #[test]
+    fn an_answer_that_is_not_a_run_is_a_parse_failure() {
+        let runner = FakeRunner::default().with(RUN_4242, r#"{"message":"Moved"}"#);
+
+        let failure = workflow_run(&runner, &ark(None), 4242).unwrap_err();
         assert_eq!(failure.kind, FailureKind::Parse);
     }
 }

@@ -1,5 +1,5 @@
-//! `bdi gates`: every configured project's gh:pr, gh:issue and gh:release
-//! gates, settled on a poll and, where it listens, a pull request's gates on
+//! `bdi gates`: every configured project's gh:pr, gh:issue, gh:release and
+//! gh:run gates, settled on a poll and, where it listens, a pull request's gates on
 //! each of GitHub's deliveries, and its timer gates at their deadlines, with
 //! what each settling found said on stdout. Given a socket, it reads a
 //! tracker the clock does not read only once a producer says it changed, and
@@ -332,9 +332,9 @@ fn started(
     };
     // A timer gate and a bead gate name no repository.
     let kinds = if gates.settles(None) {
-        "gh:pr, gh:issue, gh:release, timer and bead"
+        "gh:pr, gh:issue, gh:release, gh:run, timer and bead"
     } else {
-        "gh:pr, gh:issue and gh:release"
+        "gh:pr, gh:issue, gh:release and gh:run"
     };
     format!(
         "bdi gates: settling the {kinds} gates of {projects} project{plural}, for {owners}, every \
@@ -452,6 +452,11 @@ fn reported(found: &Found) -> Option<String> {
                 phrase::tracker_failure(failure)
             ),
         },
+        Found::Failed {
+            project,
+            gate,
+            happened,
+        } => format!("{happened}: {project} left gate {gate} open"),
         Found::Lapsed {
             project,
             silent_for,
@@ -502,6 +507,10 @@ fn fault(fault: &Fault) -> String {
         Fault::NoRepo => "it names no repo".to_string(),
         Fault::NoAwaitId => "it has no await id".to_string(),
         Fault::AwaitIdNotANumber(id) => format!("its await id “{id}” is not a number"),
+        Fault::WorkflowName(workflow) => format!(
+            "its await id “{workflow}” names a workflow rather than one of its runs, and bdi \
+             gates waits only on a run's id"
+        ),
         Fault::UnknownAwaits(awaits) => {
             format!("it awaits “{awaits}”, which is neither ready_for_review nor approved")
         }
@@ -705,6 +714,31 @@ mod tests {
                  ready_for_review nor approved"
             )
         );
+        assert_eq!(
+            reported(&Found::Unsettleable {
+                project: "arkham".to_string(),
+                gate: "ark-68j".to_string(),
+                faults: vec![Fault::WorkflowName("release.yml".to_string())],
+            })
+            .as_deref(),
+            Some(
+                "arkham: gate ark-68j cannot be settled: its await id “release.yml” names a \
+                 workflow rather than one of its runs, and bdi gates waits only on a run's id"
+            )
+        );
+    }
+
+    #[test]
+    fn a_gate_whose_run_failed_is_reported_as_left_open() {
+        assert_eq!(
+            reported(&Found::Failed {
+                project: "arkham".to_string(),
+                gate: "ark-tft".to_string(),
+                happened: "example/ark's run 4242 of CI failed".to_string(),
+            })
+            .as_deref(),
+            Some("example/ark's run 4242 of CI failed: arkham left gate ark-tft open")
+        );
     }
 
     #[test]
@@ -755,7 +789,7 @@ mod tests {
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
             started(&Gates::default(), 1, None, None),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release, timer and bead gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run, timer and bead gates of 1 project, for every owner's repositories, \
              every 60s"
         );
         assert_eq!(
@@ -769,7 +803,7 @@ mod tests {
                 None,
                 None
             ),
-            "bdi gates: settling the gh:pr, gh:issue and gh:release gates of 2 projects, for repositories owned by \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release and gh:run gates of 2 projects, for repositories owned by \
              example, miskatonic, every 300s"
         );
         assert_eq!(
@@ -782,7 +816,7 @@ mod tests {
                 None,
                 None
             ),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release, timer and bead gates of 1 project, for every owner's repositories \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run, timer and bead gates of 1 project, for every owner's repositories \
              except those owned by miskatonic, every 60s"
         );
     }
@@ -796,7 +830,7 @@ mod tests {
                 None,
                 Some(Path::new("/run/bdi/changes.sock"))
             ),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release, timer and bead gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run, timer and bead gates of 1 project, for every owner's repositories, \
              every 60s, reading a tracker a producer covers once it reports a change to /run/bdi/changes.sock"
         );
     }
