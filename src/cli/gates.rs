@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 
-use crate::app::gates::{delivered, delivered_commit, Found, Kept, Read};
+use crate::app::gates::{Found, Kept, Read};
 use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::environment::EnvironmentCache;
@@ -134,9 +134,7 @@ pub(super) fn settle(
         // ponytail: a report is timed when the loop next wakes, so a lapse is
         // said up to one look late. Time each report as it arrives if that
         // ever matters.
-        for heard in heard.try_iter() {
-            kept.heard(&heard, now);
-        }
+        hear(&mut kept, &heard, now);
         let deadline = kept.next_deadline();
         let settling = if now >= next_look {
             let settling = kept.look(
@@ -156,9 +154,7 @@ pub(super) fn settle(
             let wake = deadline.map_or(next_look, |deadline| instant_of(deadline).min(next_look));
             match woken.recv_timeout(wake - now) {
                 Ok(Woken::Changed) => {
-                    for heard in heard.try_iter() {
-                        kept.heard(&heard, Instant::now());
-                    }
+                    hear(&mut kept, &heard, Instant::now());
                     kept.changed(&trackers, &cfg.gates)
                 }
                 Ok(Woken::Delivered(named)) if Instant::now() < rate_limited_until => {
@@ -171,22 +167,17 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(Woken::Delivered(Named::PullRequest(pull_request))) => delivered(
-                    &trackers,
-                    &RealRunner,
-                    kept.projects(),
-                    &cfg.gates,
-                    pull_request,
-                    &told,
-                ),
-                Ok(Woken::Delivered(Named::Commit(commit))) => delivered_commit(
-                    &trackers,
-                    &RealRunner,
-                    kept.projects(),
-                    &cfg.gates,
-                    commit,
-                    &told,
-                ),
+                Ok(Woken::Delivered(named)) => {
+                    hear(&mut kept, &heard, Instant::now());
+                    match named {
+                        Named::PullRequest(pull_request) => {
+                            kept.delivered(&trackers, &RealRunner, &cfg.gates, pull_request, &told)
+                        }
+                        Named::Commit(commit) => {
+                            kept.delivered_commit(&trackers, &RealRunner, &cfg.gates, commit, &told)
+                        }
+                    }
+                }
                 Err(_) => continue,
             }
         };
@@ -249,6 +240,14 @@ fn wakes_on_change(
         }
     });
     heard
+}
+
+/// Take every report a producer has made since the last, `now`, so a
+/// delivery settles against what they said.
+fn hear(kept: &mut Kept, heard: &mpsc::Receiver<changes::Heard>, now: Instant) {
+    for heard in heard.try_iter() {
+        kept.heard(&heard, now);
+    }
 }
 
 /// The events already said to be unseen, by repository. A token GitHub
