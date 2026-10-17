@@ -4059,8 +4059,11 @@ and a second line"
         # the one hash holds everywhere.
         pluginSource = sourceOf [ ./plugin ];
 
+        # A fixed-output store path is named by its name and output hash
+        # alone. With the lock left out of the name, a lock moved under a stale
+        # hash asks for the old path, which a cache hands back without a build.
         pluginModules = pkgs.stdenvNoCC.mkDerivation {
-          name = "beady-eye-plugin-modules";
+          name = "beady-eye-plugin-modules-${builtins.hashFile "sha256" ./plugin/bun.lock}";
           src = sourceOf [ ./plugin/package.json ./plugin/bun.lock ];
           nativeBuildInputs = [ pkgs.bun ];
           buildPhase = ''
@@ -4074,7 +4077,7 @@ and a second line"
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-IyPmGP1VHOscaKxT7gyYKPTpbUCm/TH+vWT17OS6S7g=";
+          outputHash = "sha256-BXcWdjtyMWWBbCxzn8BXd3VjtqdEwFyOwuR4hNXdgrw=";
         };
 
         # commy type-checks with Effect's build of tsc, which adds the Effect
