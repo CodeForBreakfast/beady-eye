@@ -71,12 +71,35 @@ impl TimerGate {
     }
 }
 
+/// One open bead gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BeadGate {
+    pub id: String,
+    /// The id of the bead the gate waits on closing, or why it names none.
+    pub awaits: Result<String, Vec<Fault>>,
+}
+
+impl BeadGate {
+    /// `gate` with the bead it awaits, where it is a bead gate.
+    pub(crate) fn of(gate: &Bead) -> Option<Self> {
+        (gate.value("await_type").as_deref() == Some(gate::BEAD)).then(|| BeadGate {
+            id: gate.id.clone(),
+            awaits: gate
+                .value("await_id")
+                .filter(|id| !id.is_empty())
+                .map(|id| id.to_string())
+                .ok_or_else(|| vec![Fault::NoAwaitId]),
+        })
+    }
+}
+
 /// The open gates one tracker holds that `bdi gates` settles.
 #[derive(Debug, Default)]
 pub struct OpenGates {
     pub pull_requests: Vec<PrGate>,
     pub upstream: Vec<UpstreamGate>,
     pub timers: Vec<TimerGate>,
+    pub beads: Vec<BeadGate>,
 }
 
 /// What settling the gates waiting on one pull request came to.
@@ -696,6 +719,72 @@ mod tests {
         let read = Cli::new(&runner).gates(&project("arkham"), |repo| repo.is_some());
 
         assert_eq!(read.expect("the tracker answered").timers, []);
+    }
+
+    /// ark-689, a bead gate in arkham awaiting dun-ski in dunwich.
+    const GATE_LIST_BEAD: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list_bead.json");
+
+    #[test]
+    fn a_bead_gate_is_read_with_the_bead_it_awaits_from_the_one_listing() {
+        let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST_BEAD);
+
+        let read = read(&runner, &project("arkham"));
+
+        assert_eq!(
+            read.expect("the tracker answered").beads,
+            [BeadGate {
+                id: "ark-689".to_string(),
+                awaits: Ok("dun-ski".to_string()),
+            }]
+        );
+        assert_eq!(runner.calls().len(), 1, "{:?}", runner.calls());
+    }
+
+    #[test]
+    fn a_bead_gate_without_an_await_id_cannot_say_what_it_awaits() {
+        let unnamed = GATE_LIST_BEAD.replace(",\n    \"await_id\": \"dun-ski\"", "");
+        assert_ne!(unnamed, GATE_LIST_BEAD);
+        let runner = FakeRunner::default().with(&gate_list("arkham"), &unnamed);
+
+        let read = read(&runner, &project("arkham"));
+
+        assert_eq!(
+            read.expect("the tracker answered").beads[0].awaits,
+            Err(vec![Fault::NoAwaitId])
+        );
+    }
+
+    /// A bead gate names no repository either, so it is read as a timer gate
+    /// is.
+    #[test]
+    fn a_bead_gate_is_read_only_where_a_gate_naming_no_repo_is_wanted() {
+        let runner = FakeRunner::default().with(&gate_list("arkham"), GATE_LIST_BEAD);
+
+        let read = Cli::new(&runner).gates(&project("arkham"), |repo| repo.is_some());
+
+        assert_eq!(read.expect("the tracker answered").beads, []);
+    }
+
+    #[test]
+    fn the_beads_gates_await_in_a_tracker_are_read_from_one_listing_closed_or_not() {
+        let closed = include_str!("../../tests/fixtures/bd_1.3.0_list_id_dun-ski_closed.json");
+        let runner = FakeRunner::default().with(
+            &spelled(
+                "dunwich",
+                "list --id dun-ski,dun-zzz --all --include-gates --include-infra --include-templates --limit 0 --json",
+            ),
+            closed,
+        );
+
+        let awaited = Cli::new(&runner).awaited(
+            &project("dunwich"),
+            &["dun-ski".to_string(), "dun-zzz".to_string()],
+        );
+
+        let awaited = awaited.expect("the tracker answered");
+        assert_eq!(awaited.len(), 1);
+        assert_eq!(awaited[0].id, "dun-ski");
+        assert_eq!(awaited[0].status, crate::model::types::Status::Closed);
     }
 
     /// A gh:pr gate as bd writes its row, holding `await_id` and `repo` where

@@ -1,7 +1,7 @@
 //! What a beads gate `bdi gates` settles waits on: a pull request for a
 //! `gh:pr` gate, an issue for a `gh:issue` gate, a repository's next release
-//! for a `gh:release` gate, a workflow run for a `gh:run` gate, and its
-//! deadline for a `timer` gate.
+//! for a `gh:release` gate, a workflow run for a `gh:run` gate, its deadline
+//! for a `timer` gate, and a bead closing for a `bead` gate.
 
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -23,6 +23,10 @@ pub const RUN: &str = "gh:run";
 /// The `await_type` of a gate that waits for its timeout to run out after
 /// the gate was made.
 pub const TIMER: &str = "timer";
+
+/// The `await_type` of a gate that waits on the bead its await id names
+/// closing, in its own tracker or another.
+pub const BEAD: &str = "bead";
 
 /// The metadata key naming what a gh:pr gate waits for its pull request to
 /// do, where that is anything but its merge.
@@ -65,6 +69,12 @@ pub enum Fault {
     Undated,
     /// A timer gate holds no timeout.
     NoTimeout,
+    /// No configured project can be told to hold the bead a bead gate
+    /// awaits: its prefix is not the gate's own, and not exactly one project
+    /// states it.
+    NoProjectHolds(String),
+    /// The project a bead gate's awaited bead belongs in holds no such bead.
+    NoSuchBead { project: String, bead: String },
 }
 
 /// Whether `gate` waits on a pull request, whichever one that is.

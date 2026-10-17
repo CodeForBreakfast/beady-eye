@@ -388,7 +388,11 @@ with the issue's number as its await id, closes once that issue closes. A
 release after the gate was made. A `gh:run` gate, with a workflow run's id as
 its await id, closes once that run succeeds or is skipped. All three name their repository
 in `repo`, and `bdi gates` settles them on each look. A `timer` gate closes at its deadline,
-its timeout after it was made, without a read of its tracker on the clock.
+its timeout after it was made, without a read of its tracker on the clock. A
+`bead` gate, with a bead's id as its await id, closes once that bead closes,
+in the gate's own tracker or in another project the config names. Where a
+producer covers the bead's tracker, the gate closes moments after the producer
+says that tracker changed.
 
 ## Being seen
 

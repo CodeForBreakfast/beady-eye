@@ -337,16 +337,16 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
 }
 
 /// Take requests on `address`, each on a thread of its own, and answer each
-/// at once. The pull request a signed delivery names goes to `settle`, and
+/// at once. What a signed delivery names goes to `settle`, and
 /// `told` is then given what every request came to. A readiness probe passes
 /// while `reading` holds. A request arriving while
 /// [`MOST_AT_ONCE`] are being answered is told to come back later. Gives back
 /// the address taken, which names the port where `address` left it to the
 /// system.
-pub fn listen(
+pub fn listen<T: From<Named> + Send + 'static>(
     address: &str,
     secret: Secret,
-    settle: SyncSender<Named>,
+    settle: SyncSender<T>,
     reading: Arc<AtomicBool>,
     told: impl Fn(&Heard) + Send + Sync + 'static,
 ) -> anyhow::Result<SocketAddr> {
@@ -391,10 +391,10 @@ impl Drop for Answering {
 
 /// Read one request from `stream` and answer it, or close it unanswered
 /// where it never arrives in full or is not HTTP.
-fn answer(
+fn answer<T: From<Named>>(
     stream: TcpStream,
     secret: &Secret,
-    settle: &SyncSender<Named>,
+    settle: &SyncSender<T>,
     reading: &AtomicBool,
     told: &dyn Fn(&Heard),
 ) {
@@ -410,7 +410,7 @@ fn answer(
         Heard::SettleCommit(commit) => Some(Named::Commit(commit.clone())),
         _ => None,
     };
-    let room = named.is_none_or(|named| settle.try_send(named).is_ok());
+    let room = named.is_none_or(|named| settle.try_send(named.into()).is_ok());
     reply(
         &stream.stream,
         said.answer(room, reading.load(Ordering::SeqCst)),
@@ -1154,7 +1154,7 @@ mod tests {
 
     #[test]
     fn a_signed_delivery_that_finds_every_place_to_wait_taken_is_answered_busy() {
-        let (full, _settling) = std::sync::mpsc::sync_channel(0);
+        let (full, _settling) = std::sync::mpsc::sync_channel::<Named>(0);
         let (reader, mut sender) = connected(PATIENCE);
         sender
             .write_all(&posted(

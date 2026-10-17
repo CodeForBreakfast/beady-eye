@@ -749,7 +749,7 @@ the next. The default is 60.
 matched in any case. A gate on a repository of any other owner is left
 alone and not reported. Where `owners` is empty, which is the default, every
 gate is settled. A gate whose `repo` names no owner is settled only then, and
-so is a timer gate, which names no repository. A delivery from GitHub is held
+so are a timer gate and a bead gate, which name no repository. A delivery from GitHub is held
 to the same rule.
 
 `excluded_owners` names the repository owners this `bdi gates` leaves alone,
@@ -1223,15 +1223,36 @@ first look. A timer gate names no repository, so only a `bdi gates` whose
 [`[gates] owners`](#gates) is empty closes it. Where two instances split the
 work by owner, the one naming `excluded_owners` closes the timer gates.
 
+A bead can also wait on another bead closing, with a bead gate:
+
+```console
+$ bd gate create --type=bead --blocks kad-13 --await-id=dun-0tp
+```
+
+`bdi gates` closes a bead gate once the bead it awaits has closed, as `bd gate
+check` does. The bead may sit in the gate's own tracker or in another project
+this config names. Where the two ids carry different prefixes, the project
+holding the bead is the one whose `prefix` states the bead's, so that project
+has to state it. `bdi gates` reads the bead once when it first finds the gate,
+and again only when it reads the tracker holding the bead. That tracker is
+read on the clock, or, where a producer covers it, at once when the producer
+says it changed. So the gate closes moments after the change is reported. A
+bead gate names no repository, so it is closed by the same `bdi gates` that
+closes the timer gates.
+
 Each look reports one line for each gate closed and each failure:
 
 ```
 dunwich/arkham#31 closed: kadath closed gate kad-4p1
 dunwich/arkham published v2.1.0: kadath closed gate kad-9sw
 Its timer ran out at 2026-10-12 09:32:28 UTC: kadath closed gate kad-6tm
+Bead dun-0tp in dunwich closed: kadath closed gate kad-5bd
 dunwich/arkham#33: GitHub did not answer for it, so kadath left gate kad-2ze open: gh found no such repository, pull request or issue on GitHub
+dunwich: dun-0tp could not be read, so kadath left gate kad-5bd open: the tracker did not answer
 kadath: gate kad-7tc cannot be settled: it names no repo
 kadath: gate kad-8tm cannot be settled: it has no timeout
+kadath: gate kad-6bd cannot be settled: it awaits ark-2, whose prefix is not its own and is stated by no one project this config names
+kadath: gate kad-7bd cannot be settled: it awaits dun-404, which dunwich does not hold
 ```
 
 ### Taking GitHub's deliveries

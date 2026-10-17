@@ -2,7 +2,9 @@
 //! gh:run gates, settled on a poll and, where it listens, a pull request's gates on
 //! each of GitHub's deliveries, and its timer gates at their deadlines, with
 //! what each settling found said on stdout. Given a socket, it reads a
-//! tracker the clock does not read only once a producer says it changed.
+//! tracker the clock does not read only once a producer says it changed, and
+//! closes a bead gate as soon as a producer says the tracker holding its bead
+//! changed.
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -83,7 +85,9 @@ pub(super) fn settle(
             ..project.clone()
         })
         .collect();
-    let (heard_by, heard) = mpsc::channel();
+    let (heard_by, from_producers) = mpsc::channel();
+    let (to_settle, woken) = mpsc::sync_channel(webhook::MOST_WAITING);
+    let heard = wakes_on_change(from_producers, to_settle.clone());
     let covering = changes::Reported::watching(projects.iter().map(|each| each.name.clone()));
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
@@ -99,7 +103,6 @@ pub(super) fn settle(
         None => None,
     };
     let trackers = bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here());
-    let (to_settle, delivered_for) = mpsc::sync_channel(webhook::MOST_WAITING);
     let reading_github = Arc::new(AtomicBool::new(true));
     let listening = match (listen, secret) {
         (Some(address), Some(secret)) => Some(webhook::listen(
@@ -149,8 +152,12 @@ pub(super) fn settle(
             kept.timers_run_out(&trackers, &cfg.gates, Utc::now())
         } else {
             let wake = deadline.map_or(next_look, |deadline| instant_of(deadline).min(next_look));
-            match delivered_for.recv_timeout(wake - now) {
-                Ok(named) if Instant::now() < rate_limited_until => {
+            match woken.recv_timeout(wake - now) {
+                Ok(Woken::Changed) => {
+                    hear(&mut kept, &heard, Instant::now());
+                    kept.changed(&trackers, &cfg.gates)
+                }
+                Ok(Woken::Delivered(named)) if Instant::now() < rate_limited_until => {
                     println!(
                         "{}",
                         spelled_out(&format!(
@@ -160,7 +167,7 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(named) => {
+                Ok(Woken::Delivered(named)) => {
                     hear(&mut kept, &heard, Instant::now());
                     match named {
                         Named::PullRequest(pull_request) => {
@@ -193,6 +200,46 @@ pub(super) fn settle(
             }
         }
     }
+}
+
+/// What wakes the loop between looks.
+enum Woken {
+    /// A delivery from GitHub named something to settle.
+    Delivered(Named),
+    /// A producer said a tracker changed.
+    Changed,
+}
+
+impl From<Named> for Woken {
+    fn from(named: Named) -> Self {
+        Woken::Delivered(named)
+    }
+}
+
+/// What producers report, passed on to the loop as it was, with the loop
+/// woken once for each run of reports holding a change. A wake waits for room
+/// behind GitHub's deliveries rather than being dropped, because no other
+/// wake reads a change.
+fn wakes_on_change(
+    reported: mpsc::Receiver<changes::Heard>,
+    wake: mpsc::SyncSender<Woken>,
+) -> mpsc::Receiver<changes::Heard> {
+    let (passed_on, heard) = mpsc::channel();
+    std::thread::spawn(move || {
+        while let Ok(first) = reported.recv() {
+            let mut changed = false;
+            for each in std::iter::once(first).chain(reported.try_iter()) {
+                changed |= matches!(each, changes::Heard::Changed(_));
+                if passed_on.send(each).is_err() {
+                    return;
+                }
+            }
+            if changed && wake.send(Woken::Changed).is_err() {
+                return;
+            }
+        }
+    });
+    heard
 }
 
 /// Take every report a producer has made since the last, `now`, so a
@@ -286,9 +333,9 @@ fn started(
         ),
         None => String::new(),
     };
-    // A timer gate names no repository.
+    // A timer gate and a bead gate name no repository.
     let kinds = if gates.settles(None) {
-        "gh:pr, gh:issue, gh:release, gh:run and timer"
+        "gh:pr, gh:issue, gh:release, gh:run, timer and bead"
     } else {
         "gh:pr, gh:issue, gh:release and gh:run"
     };
@@ -386,6 +433,16 @@ fn reported(found: &Found) -> Option<String> {
             "{upstream}: GitHub did not answer for it, so {project} left gate {gate} open: \
              {failure}"
         ),
+        Found::AwaitedUnread {
+            project,
+            gate,
+            holder,
+            bead,
+            failure,
+        } => format!(
+            "{holder}: {bead} could not be read, so {project} left gate {gate} open: {}",
+            phrase::tracker_failure(failure)
+        ),
         Found::Ended {
             project,
             gate,
@@ -462,6 +519,13 @@ fn fault(fault: &Fault) -> String {
         }
         Fault::Undated => "it does not say when it was made".to_string(),
         Fault::NoTimeout => "it has no timeout".to_string(),
+        Fault::NoProjectHolds(bead) => format!(
+            "it awaits {bead}, whose prefix is not its own and is stated by no one project \
+             this config names"
+        ),
+        Fault::NoSuchBead { project, bead } => {
+            format!("it awaits {bead}, which {project} does not hold")
+        }
     }
 }
 
@@ -724,11 +788,33 @@ mod tests {
         assert_eq!(refused(&Heard::Ignored), None);
     }
 
+    /// Such as when GitHub's deliveries fill the queue: the change is read on
+    /// no other wake.
+    #[test]
+    fn a_change_reported_while_the_loop_has_wakes_waiting_still_wakes_it() {
+        let (report, reported) = mpsc::channel();
+        let (wake, woken) = mpsc::sync_channel(1);
+        wake.try_send(Woken::Changed).expect("room for one");
+        let heard = wakes_on_change(reported, wake);
+
+        report
+            .send(changes::Heard::Changed("arkham".to_string()))
+            .expect("passed on");
+        heard.recv().expect("the report");
+        std::thread::sleep(Duration::from_millis(100));
+        woken.recv().expect("the wake already waiting");
+
+        assert!(matches!(
+            woken.recv_timeout(Duration::from_secs(5)),
+            Ok(Woken::Changed)
+        ));
+    }
+
     #[test]
     fn starting_says_how_many_projects_whose_repositories_and_how_often() {
         assert_eq!(
             started(&Gates::default(), 1, None, None),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run and timer gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run, timer and bead gates of 1 project, for every owner's repositories, \
              every 60s"
         );
         assert_eq!(
@@ -755,7 +841,7 @@ mod tests {
                 None,
                 None
             ),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run and timer gates of 1 project, for every owner's repositories \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run, timer and bead gates of 1 project, for every owner's repositories \
              except those owned by miskatonic, every 60s"
         );
     }
@@ -769,7 +855,7 @@ mod tests {
                 None,
                 Some(Path::new("/run/bdi/changes.sock"))
             ),
-            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run and timer gates of 1 project, for every owner's repositories, \
+            "bdi gates: settling the gh:pr, gh:issue, gh:release, gh:run, timer and bead gates of 1 project, for every owner's repositories, \
              every 60s, reading a tracker a producer covers once it reports a change to /run/bdi/changes.sock"
         );
     }
