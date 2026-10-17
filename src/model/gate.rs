@@ -1,6 +1,8 @@
 //! What a beads gate `bdi gates` settles waits on: a pull request for a
-//! `gh:pr` gate, an issue for a `gh:issue` gate, and a repository's next
-//! release for a `gh:release` gate.
+//! `gh:pr` gate, an issue for a `gh:issue` gate, a repository's next release
+//! for a `gh:release` gate, and its deadline for a `timer` gate.
+
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::model::types::Bead;
 
@@ -13,6 +15,10 @@ pub const ISSUE: &str = "gh:issue";
 /// The `await_type` of a gate that waits on a repository publishing a
 /// release after the gate was made.
 pub const RELEASE: &str = "gh:release";
+
+/// The `await_type` of a gate that waits for its timeout to run out after
+/// the gate was made.
+pub const TIMER: &str = "timer";
 
 /// The metadata key naming what a gh:pr gate waits for its pull request to
 /// do, where that is anything but its merge.
@@ -46,13 +52,35 @@ pub enum Fault {
     /// The gate's [`AWAITS`] metadata names nothing `bdi gates` waits for.
     UnknownAwaits(String),
     /// The gate does not say when it was made, so no release can be told to
-    /// have come after it.
+    /// have come after it and no timeout can be counted from it.
     Undated,
+    /// A timer gate holds no timeout, which bd also refuses to settle.
+    NoTimeout,
 }
 
 /// Whether `gate` waits on a pull request, whichever one that is.
 pub fn awaits_a_pull_request(gate: &Bead) -> bool {
     gate.value("await_type").as_deref() == Some(PULL_REQUEST)
+}
+
+/// When timer `gate` runs out: its timeout after it was made, as `bd gate
+/// check` counts it. bd writes the timeout in nanoseconds and leaves out one
+/// of none.
+pub fn deadline(gate: &Bead) -> Result<DateTime<Utc>, Vec<Fault>> {
+    let timeout = gate
+        .value("timeout")
+        .and_then(|nanoseconds| nanoseconds.parse().ok())
+        .filter(|nanoseconds| *nanoseconds > 0)
+        .map(TimeDelta::nanoseconds);
+    match (gate.created_at, timeout) {
+        (Some(made), Some(timeout)) => Ok(made + timeout),
+        (made, timeout) => Err(made
+            .is_none()
+            .then_some(Fault::Undated)
+            .into_iter()
+            .chain(timeout.is_none().then_some(Fault::NoTimeout))
+            .collect()),
+    }
 }
 
 /// The repository `gate` names, where it names one.
@@ -179,6 +207,48 @@ mod tests {
                 "{awaits:?}"
             );
         }
+    }
+
+    fn timer(row: serde_json::Value) -> Bead {
+        parse_beads(&serde_json::json!([row]).to_string())
+            .expect("the row parses")
+            .remove(0)
+    }
+
+    #[test]
+    fn a_timer_gate_runs_out_its_timeout_after_it_was_made() {
+        let captured = parse_beads(include_str!(
+            "../../tests/fixtures/bd_1.3.0_gate_list_timer.json"
+        ))
+        .expect("the capture parses");
+
+        assert_eq!(
+            deadline(&captured[0]),
+            Ok("2026-10-12T09:32:28Z".parse().expect("a time"))
+        );
+    }
+
+    #[test]
+    fn a_timer_gate_without_a_timeout_or_a_time_it_was_made_has_no_deadline() {
+        let untimed = timer(serde_json::json!({
+            "id": "ark-t1",
+            "title": "the ninth gate opens",
+            "status": "open",
+            "issue_type": "gate",
+            "created_at": "2026-10-12T07:32:28Z",
+            "await_type": TIMER,
+        }));
+        let undated = timer(serde_json::json!({
+            "id": "ark-t2",
+            "title": "the ninth gate opens",
+            "status": "open",
+            "issue_type": "gate",
+            "await_type": TIMER,
+            "timeout": 7_200_000_000_000_u64,
+        }));
+
+        assert_eq!(deadline(&untimed), Err(vec![Fault::NoTimeout]));
+        assert_eq!(deadline(&undated), Err(vec![Fault::Undated]));
     }
 
     #[test]

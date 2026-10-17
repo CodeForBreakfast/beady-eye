@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use chrono::{TimeDelta, Timelike, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use terminal::die_with;
@@ -627,6 +628,70 @@ fn a_tracker_a_producer_covers_is_read_only_once_the_producer_says_it_changed() 
         || listings() > read_for_the_close,
         "arkham read again after bdi gates closed a gate in it",
     );
+}
+
+/// ark-06g, a timer gate of two hours made on 2026-10-12 at 07:32:28.
+const TIMER: &str = include_str!("fixtures/bd_1.3.0_gate_list_timer.json");
+
+/// The close of ark-06g, whose timer ran out at `deadline`.
+fn closing_06g(deadline: &str) -> String {
+    format!("gate resolve ark-06g --reason Its timer ran out at {deadline} UTC.")
+}
+
+#[test]
+fn a_timer_gate_that_ran_out_while_bdi_gates_was_down_closes_on_the_first_look() {
+    let home = a_home_looking_every("timer-ran-out", &["arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("arkham", LISTING_GATES, TIMER);
+    let closing = closing_06g("2026-10-12 09:32:28");
+    tracker.answers_for("arkham", &closing, "✓ Gate resolved: ark-06g\n");
+    let github = ShimmedGitHub::beside(&home);
+
+    let settling = Settling::started(&home, &tracker, &github);
+
+    settling.says("Its timer ran out at 2026-10-12 09:32:28 UTC: arkham closed gate ark-06g");
+    assert!(tracker.calls().contains(&closing), "{:?}", tracker.calls());
+    assert_eq!(github.calls(), Vec::<String>::new());
+}
+
+/// Nothing but the deadline wakes `bdi gates` here: it looks once an hour,
+/// and the producer covering arkham reports no change.
+#[test]
+fn a_covered_tracker_s_timer_gate_closes_at_its_deadline_with_no_read_of_bd_meanwhile() {
+    let home = a_home_looking_every("timer-covered", &["arkham"], 3600);
+    let socket = home.join("changes.sock");
+    let tracker = ShimmedTracker::beside(&home);
+    let deadline = Utc::now()
+        .with_nanosecond(0)
+        .expect("a whole second is a time")
+        + TimeDelta::seconds(3);
+    let made = (deadline - TimeDelta::hours(2)).format("%Y-%m-%dT%H:%M:%SZ");
+    tracker.answers_for(
+        "arkham",
+        LISTING_GATES,
+        &TIMER.replace("2026-10-12T07:32:28Z", &made.to_string()),
+    );
+    let closing = closing_06g(&deadline.format("%Y-%m-%d %H:%M:%S").to_string());
+    tracker.answers_for("arkham", &closing, "✓ Gate resolved: ark-06g\n");
+    let github = ShimmedGitHub::beside(&home);
+    let mut command = gates(&home, &tracker, &github);
+    command.arg("--socket").arg(&socket);
+    let _settling = Settling::spawned(&home, command);
+    until(
+        || tracker.calls().iter().any(|call| call == LISTING_GATES),
+        "the first look's read of arkham",
+    );
+    let mut producer = Producer::connected(&socket);
+    assert_eq!(producer.says("covered arkham"), "ok arkham");
+
+    until(|| tracker.calls().contains(&closing), "ark-06g closed");
+
+    let late = Utc::now() - deadline;
+    assert!(
+        late < TimeDelta::seconds(3),
+        "closed {late} after its deadline"
+    );
+    assert_eq!(tracker.calls(), [LISTING_GATES.to_string(), closing]);
 }
 
 #[test]
