@@ -20,7 +20,7 @@ use serde::Deserializer;
 use serde_json::Value;
 
 use crate::collect::environment;
-use crate::collect::gates::{OpenGates, PrGate, Wait};
+use crate::collect::gates::{OpenGates, PrGate, TimerGate, Wait};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::collect::upstream::UpstreamGate;
@@ -422,7 +422,8 @@ impl Cli<'_> {
     }
 
     /// Every open gate `project`'s tracker holds that `bdi gates` settles and
-    /// whose repo is `wanted`, from one listing of them.
+    /// whose repo is `wanted`, from one listing of them. A timer gate names no
+    /// repo.
     pub fn gates(
         &self,
         project: &Project,
@@ -437,6 +438,11 @@ impl Cli<'_> {
                 .filter_map(UpstreamGate::of)
                 .filter(|gate| wanted(gate.repo.as_deref()))
                 .collect(),
+            timers: if wanted(None) {
+                listed.iter().filter_map(TimerGate::of).collect()
+            } else {
+                Vec::new()
+            },
         })
     }
 

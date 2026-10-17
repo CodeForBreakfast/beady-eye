@@ -1,0 +1,16 @@
+[
+  {
+    "id": "ark-06g",
+    "title": "the ninth gate opens",
+    "description": "Ad-hoc gate blocking ark-c0x",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-12T07:32:28Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-12T07:32:28Z",
+    "await_type": "timer",
+    "timeout": 7200000000000
+  }
+]
