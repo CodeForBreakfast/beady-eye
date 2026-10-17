@@ -1034,9 +1034,10 @@ SIGTERM, SIGINT or SIGHUP stops it and removes its socket.
 
 ## Settling pull-request gates
 
-`bdi gates` settles every configured project's gh:pr gates, and the gh:issue
-and gh:release gates that
-[A wait on an issue or a release](#a-wait-on-an-issue-or-a-release) describes.
+`bdi gates` settles every configured project's gh:pr gates, and the gh:issue,
+gh:release and gh:run gates that
+[A wait on an issue, a release or a workflow run](#a-wait-on-an-issue-a-release-or-a-workflow-run)
+describes.
 It looks at every open gh:pr gate, asks GitHub once about each pull request one of them waits
 on, and acts on what GitHub says:
 
@@ -1075,6 +1076,7 @@ repository:
 | *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
 | *Contents* | the merge commit, the head commit and the repository's releases | no merge is settled, no failing checks are told, and no gh:release gate is settled |
 | *Issues* | whether an issue is open or closed | no gh:issue gate is settled |
+| *Actions* | whether a workflow run has finished, and how it ended | no gh:run gate is settled |
 | *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing checks are told |
 
 A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
@@ -1171,28 +1173,35 @@ $ systemctl --user enable --now bdi-gates
 As with the watcher, each tracker is reached with the environment the unit
 starts in, and so is `gh`.
 
-### A wait on an issue or a release
+### A wait on an issue, a release or a workflow run
 
-A bead can also wait on an issue closing, or on a repository publishing its
-next release, usually in someone else's repository. Whoever waits records the
-wait as a gate, and names the repository in `repo` metadata as for a gh:pr
-gate:
+A bead can also wait on an issue closing, on a repository publishing its
+next release, or on a workflow run finishing, usually in someone else's
+repository. Whoever waits records the wait as a gate, and names the
+repository in `repo` metadata as for a gh:pr gate:
 
 ```console
 $ bd gate create --type=gh:issue --blocks dun-9 --await-id=31
 $ bd gate create --type=gh:release --blocks dun-11
+$ bd gate create --type=gh:run --blocks dun-15 --await-id=4242
 ```
 
-On each look, `bdi gates` asks GitHub about every open gh:issue and gh:release
-gate as well, once for each issue and once for each repository's releases,
-however many gates wait on them:
+On each look, `bdi gates` asks GitHub about every open gh:issue, gh:release
+and gh:run gate as well, once for each issue, each run and each repository's
+releases, however many gates wait on them:
 
 | the gate | what closes it |
 |---|---|
 | gh:issue, with the issue's number as its await id | the issue closing, whatever the reason |
 | gh:release, with no await id | the first release the repository publishes after the gate was made. A prerelease counts and a draft does not. It reads the ten releases the repository made last |
+| gh:run, with the run's id as its await id | the run completing with success, or being skipped |
 
-Neither tells the bead anything while it waits, and a closed gate starts
+A run that fails, is cancelled or ends any other way leaves its gate open,
+and `bdi gates` says so on every look until someone resolves the gate. `bd` also takes a workflow's name as a gh:run
+gate's await id, meaning that workflow's newest run. `bdi gates` does not look
+that run up, and reports the gate as one it cannot settle.
+
+None of these tells the bead anything while it waits, and a closed gate starts
 nothing. [`[gates] owners`](#gates) and `excluded_owners` hold these gates to
 the same rule as gh:pr gates. A rate limit stops the look's asking here too,
 and the next look asks again. Deliveries from GitHub settle only pull requests,

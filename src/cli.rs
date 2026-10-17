@@ -168,10 +168,11 @@ enum Passing {
         #[arg(long)]
         config: Option<String>,
     },
-    /// Settle every configured project's gh:pr, gh:issue, gh:release and
-    /// timer gates, looking again every [gates] poll_seconds: close a gate
-    /// whose pull request merged, whose issue closed, or whose repository
-    /// published a release after the gate was made, and comment on the beads
+    /// Settle every configured project's gh:pr, gh:issue, gh:release, gh:run
+    /// and timer gates, looking again every [gates] poll_seconds: close a gate
+    /// whose pull request merged, whose issue closed, whose workflow run
+    /// succeeded, or whose repository published a release after the gate was
+    /// made, and comment on the beads
     /// behind one whose pull request closed unmerged. Close a timer gate at
     /// its deadline.
     /// Each look is reported on stdout. Run one per GitHub login, under

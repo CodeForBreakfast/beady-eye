@@ -1,6 +1,7 @@
-//! One look at every configured project's gh:pr, gh:issue, gh:release and
-//! timer gates, which `bdi gates` takes on its poll: each pull request, issue
-//! or repository's releases they wait on is asked of GitHub once, where its
+//! One look at every configured project's gh:pr, gh:issue, gh:release, gh:run
+//! and timer gates, which `bdi gates` takes on its poll: each pull request,
+//! issue, workflow run or repository's releases they wait on is asked of
+//! GitHub once, where its
 //! repository's owner is one this `bdi gates` settles for. A tracker is read
 //! for them only where it may have changed since it was last read. A
 //! delivery from GitHub settles the one pull request it names, by the same
@@ -65,21 +66,28 @@ pub enum Found {
         pull_request: PullRequest,
         resets: Option<DateTime<Utc>>,
     },
-    /// GitHub did not say whether what a gh:issue or gh:release gate waits on
-    /// has happened, so the gate was left open.
+    /// GitHub did not say whether what a gh:issue, gh:release or gh:run gate
+    /// waits on has happened, so the gate was left open.
     UpstreamUnread {
         project: String,
         gate: String,
         upstream: Upstream,
         failure: RunFailure,
     },
-    /// What a gh:issue or gh:release gate waits on `happened`, or a timer
-    /// gate's deadline passed, and what came of closing the gate.
+    /// What a gh:issue, gh:release or gh:run gate waits on `happened`, or a
+    /// timer gate's deadline passed, and what came of closing the gate.
     Ended {
         project: String,
         gate: String,
         happened: String,
         done: Result<(), TrackerFailure>,
+    },
+    /// What a gh:run gate waits on `happened` and failed its wait, so the
+    /// gate was left open, as `bd gate check` leaves it.
+    Failed {
+        project: String,
+        gate: String,
+        happened: String,
     },
     /// The producer covering a project has said nothing of it for
     /// `silent_for`, so its gates are settled as last read until it speaks.
@@ -345,7 +353,7 @@ impl Kept {
 
 /// Settle each pull request one of the gates `read` waits on, once however
 /// many gates wait on it, asking GitHub about each repository's together,
-/// and then each gh:issue and gh:release gate, until GitHub refuses one for
+/// and then each gh:issue, gh:release and gh:run gate, until GitHub refuses one for
 /// its rate limit. No tracker is asked about a pull request that has done
 /// nothing new to the gates waiting on it, which `told` says of the beads
 /// they hold back.
@@ -432,7 +440,8 @@ fn look<'a>(
 
 /// Ask GitHub once about each thing the gates `waiting` wait on, and close
 /// each gate whose wait has ended, until GitHub refuses one for its rate
-/// limit.
+/// limit. A gate whose wait failed is reported on every look while it stays
+/// open.
 // ponytail: a rate limit stops this look but sets no wait of its own, so the
 // next look asks once more. Say it as `Found::RateLimited` if upstream gates
 // ever outnumber the pull requests that already set that wait.
@@ -466,12 +475,17 @@ fn ended(cli: &Cli, gh: &dyn Runner, waiting: &[(&Project, String, Upstream)]) -
             }
         };
         settling.github = Read::Answered;
-        let Some(happened) = upstream.ended(&answer) else {
-            continue;
-        };
-        settling
-            .found
-            .push(closed(cli, project, gate.clone(), happened));
+        if let Some(happened) = upstream.ended(&answer) {
+            settling
+                .found
+                .push(closed(cli, project, gate.clone(), happened));
+        } else if let Some(happened) = upstream.failed(&answer) {
+            settling.found.push(Found::Failed {
+                project: project.name.clone(),
+                gate: gate.clone(),
+                happened,
+            });
+        }
     }
     settling
 }
@@ -1667,6 +1681,90 @@ mod tests {
             ]
         );
         assert_eq!(github, Read::Refused);
+    }
+
+    const RUNS: &str = include_str!("../../tests/fixtures/bd_1.3.0_gate_list_run.json");
+
+    const RUN_4242: &str = "gh api repos/example/ark/actions/runs/4242";
+
+    fn ran(status: &str, conclusion: &str) -> String {
+        format!(r#"{{"id":4242,"name":"CI","status":"{status}","conclusion":{conclusion}}}"#)
+    }
+
+    fn runs_in(project: &str) -> FakeRunner {
+        FakeRunner::default().with(&gate_list(project), RUNS)
+    }
+
+    fn workflow_named(project: &str) -> Found {
+        unsettleable(
+            project,
+            "ark-68j",
+            Fault::WorkflowName("release.yml".to_string()),
+        )
+    }
+
+    #[test]
+    fn a_look_closes_a_gate_whose_run_has_succeeded() {
+        let runner = runs_in("arkham")
+            .with(RUN_4242, &ran("completed", r#""success""#))
+            .with(
+                &closing(
+                    "arkham",
+                    "ark-tft",
+                    "example/ark's run 4242 of CI succeeded.",
+                ),
+                "",
+            );
+
+        let Settling { found, github } = looked(&runner, &[project("arkham")], &Gates::default());
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-9zz", Fault::NoRepo),
+                workflow_named("arkham"),
+                ended(
+                    "arkham",
+                    "ark-tft",
+                    "example/ark's run 4242 of CI succeeded"
+                ),
+            ]
+        );
+        assert_eq!(github, Read::Answered);
+    }
+
+    /// The runner panics on any call it was not given, so closing the gate
+    /// would fail the test.
+    #[test]
+    fn a_look_leaves_open_a_gate_whose_run_failed_and_says_so() {
+        let runner = runs_in("arkham").with(RUN_4242, &ran("completed", r#""failure""#));
+
+        let found = looked(&runner, &[project("arkham")], &Gates::default()).found;
+
+        assert_eq!(
+            found.last(),
+            Some(&Found::Failed {
+                project: "arkham".to_string(),
+                gate: "ark-tft".to_string(),
+                happened: "example/ark's run 4242 of CI failed".to_string(),
+            })
+        );
+    }
+
+    /// The runner panics on any call it was not given.
+    #[test]
+    fn a_look_leaves_open_without_a_word_a_gate_whose_run_is_still_going() {
+        let runner = runs_in("arkham").with(RUN_4242, &ran("in_progress", "null"));
+
+        let found = looked(&runner, &[project("arkham")], &Gates::default()).found;
+
+        assert_eq!(
+            found,
+            [
+                unsettleable("arkham", "ark-9zz", Fault::NoRepo),
+                workflow_named("arkham"),
+            ]
+        );
     }
 
     /// The runner panics on any call it was not given, so asking after the
