@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 
-use crate::app::gates::{delivered, delivered_commit, Found, Kept, Read};
+use crate::app::gates::{Found, Kept, Read};
 use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::environment::EnvironmentCache;
@@ -131,9 +131,7 @@ pub(super) fn settle(
         // ponytail: a report is timed when the loop next wakes, so a lapse is
         // said up to one look late. Time each report as it arrives if that
         // ever matters.
-        for heard in heard.try_iter() {
-            kept.heard(&heard, now);
-        }
+        hear(&mut kept, &heard, now);
         let deadline = kept.next_deadline();
         let settling = if now >= next_look {
             let settling = kept.look(
@@ -162,22 +160,17 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(Named::PullRequest(pull_request)) => delivered(
-                    &trackers,
-                    &RealRunner,
-                    kept.projects(),
-                    &cfg.gates,
-                    pull_request,
-                    &told,
-                ),
-                Ok(Named::Commit(commit)) => delivered_commit(
-                    &trackers,
-                    &RealRunner,
-                    kept.projects(),
-                    &cfg.gates,
-                    commit,
-                    &told,
-                ),
+                Ok(named) => {
+                    hear(&mut kept, &heard, Instant::now());
+                    match named {
+                        Named::PullRequest(pull_request) => {
+                            kept.delivered(&trackers, &RealRunner, &cfg.gates, pull_request, &told)
+                        }
+                        Named::Commit(commit) => {
+                            kept.delivered_commit(&trackers, &RealRunner, &cfg.gates, commit, &told)
+                        }
+                    }
+                }
                 Err(_) => continue,
             }
         };
@@ -199,6 +192,14 @@ pub(super) fn settle(
                 println!("{said}");
             }
         }
+    }
+}
+
+/// Take every report a producer has made since the last, `now`, so a
+/// delivery settles against what they said.
+fn hear(kept: &mut Kept, heard: &mpsc::Receiver<changes::Heard>, now: Instant) {
+    for heard in heard.try_iter() {
+        kept.heard(&heard, now);
     }
 }
 

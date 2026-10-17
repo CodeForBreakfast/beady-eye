@@ -4,8 +4,9 @@
 //! GitHub once, where its
 //! repository's owner is one this `bdi gates` settles for. A tracker is read
 //! for them only where it may have changed since it was last read. A
-//! delivery from GitHub settles the one pull request it names, by the same
-//! rule, and a timer gate kept from the last read closes at its deadline.
+//! delivery from GitHub settles the one pull request it names against the
+//! gates kept from the last read, reading only a tracker that is stale, and a
+//! timer gate kept from the last read closes at its deadline.
 
 use std::time::{Duration, Instant};
 
@@ -16,7 +17,7 @@ use crate::app::tracker::{open_failure, tracker_failure};
 use crate::collect::bd::Cli;
 use crate::collect::changes::Heard;
 use crate::collect::gates::{
-    self, Awaited, Done, OpenGates, PullRequest, Settled, Told, Unseen, Waiting,
+    self, Awaited, Done, OpenGates, PrGate, PullRequest, Settled, Told, Unseen, Wait, Waiting,
 };
 use crate::collect::github;
 use crate::collect::pr_events::EVENTS;
@@ -234,10 +235,6 @@ impl Kept {
         Self { projects, kept }
     }
 
-    pub fn projects(&self) -> &[Project] {
-        &self.projects
-    }
-
     /// Take what a producer said, `now`.
     pub fn heard(&mut self, heard: &Heard, now: Instant) {
         let (Heard::Changed(project) | Heard::Covered(project)) = heard;
@@ -311,9 +308,115 @@ impl Kept {
     /// A gate that would not close is left to the next look, which reads its
     /// tracker again for the write.
     pub fn timers_run_out(&mut self, cli: &Cli, settles: &Gates, at: DateTime<Utc>) -> Settling {
+        let mut found = self.read_where(cli, settles, |kept| {
+            kept.due() && kept.deadlines().any(|deadline| deadline <= at)
+        });
+        found.extend(self.close_run_out(cli, at));
+        Settling {
+            found,
+            github: Read::Unasked,
+        }
+    }
+
+    /// Settle the one pull request a delivery named against the gates kept,
+    /// as a look settles each one it finds. Only a stale tracker is read
+    /// again first, so a tracker the clock reads waits for the next look. A
+    /// pull request no gate kept waits on asks nothing of GitHub, and one
+    /// whose repository `settles` leaves to another `bdi gates` is passed
+    /// over without a word.
+    pub fn delivered(
+        &mut self,
+        cli: &Cli,
+        gh: &dyn Runner,
+        settles: &Gates,
+        pull_request: PullRequest,
+        told: &Told,
+    ) -> Settling {
+        if !settles.settles(gate::owner(&pull_request.repo)) {
+            return Settling::default();
+        }
+        let mut found = self.read_where(cli, settles, |kept| kept.stale);
+        let Some(awaited) = self.awaited(pull_request) else {
+            return Settling {
+                found,
+                github: Read::Unasked,
+            };
+        };
+        let settled = gates::settle_together(
+            cli,
+            gh,
+            &self.projects,
+            &EVENTS,
+            std::slice::from_ref(&awaited),
+            told,
+        )
+        .next()
+        .expect("one pull request asked about is one settled");
+        let settled = findings(gh, awaited.pull_request, settled);
+        found.extend(settled.found);
+        Settling {
+            found,
+            github: settled.github,
+        }
+    }
+
+    /// Settle the open pull requests whose head is the commit a delivery about
+    /// its checks named, each as [`Kept::delivered`] settles one. A lookup the
+    /// rate limit refuses is reported like any other and does not put off the
+    /// asks after it, which the next one finds refused again.
+    pub fn delivered_commit(
+        &mut self,
+        cli: &Cli,
+        gh: &dyn Runner,
+        settles: &Gates,
+        commit: Commit,
+        told: &Told,
+    ) -> Settling {
+        let Some(repository) = gate::repository(&commit.repo) else {
+            return Settling::default();
+        };
+        if !settles.settles(Some(repository.owner)) {
+            return Settling::default();
+        }
+        let numbers = match github::open_pull_requests_headed_by(gh, &repository, &commit.sha) {
+            Ok(numbers) => numbers,
+            Err(failure) => {
+                return Settling {
+                    found: vec![Found::CommitUnread { commit, failure }],
+                    github: Read::Refused,
+                }
+            }
+        };
+        let mut settling = Settling {
+            found: Vec::new(),
+            github: Read::Answered,
+        };
+        for number in numbers {
+            let pull_request = PullRequest {
+                repo: commit.repo.clone(),
+                number,
+            };
+            let each = self.delivered(cli, gh, settles, pull_request, told);
+            settling.found.extend(each.found);
+            settling.github = settling.github.max(each.github);
+            if matches!(settling.found.last(), Some(Found::RateLimited { .. })) {
+                break;
+            }
+        }
+        settling
+    }
+
+    /// Read again each tracker `wanted` picks, saying each that does not
+    /// answer.
+    fn read_where(
+        &mut self,
+        cli: &Cli,
+        settles: &Gates,
+        wanted: impl Fn(&KeptGates) -> bool,
+    ) -> Vec<Found> {
         let mut found = Vec::new();
         for (project, kept) in self.projects.iter().zip(&mut self.kept) {
-            if kept.due() && kept.deadlines().any(|deadline| deadline <= at) {
+            if wanted(kept) {
                 kept.read(cli, project, settles);
                 if let Err(failure) = &kept.read {
                     found.push(Found::TrackerUnread {
@@ -323,11 +426,28 @@ impl Kept {
                 }
             }
         }
-        found.extend(self.close_run_out(cli, at));
-        Settling {
-            found,
-            github: Read::Unasked,
-        }
+        found
+    }
+
+    /// The gates kept that wait on `pull_request`, or nothing where none does.
+    fn awaited(&self, pull_request: PullRequest) -> Option<Awaited> {
+        let asked = &pull_request;
+        let waiting: Vec<Waiting> = self
+            .reads()
+            .filter_map(|(project, read)| Some((project, read.as_ref().ok()?)))
+            .flat_map(|(project, open)| {
+                open.pull_requests.iter().filter_map(move |gate| {
+                    let wait = gate.awaits.as_ref().ok()?;
+                    wait.pull_request
+                        .is(asked)
+                        .then(|| waiting(&project.name, gate, wait))
+                })
+            })
+            .collect();
+        (!waiting.is_empty()).then_some(Awaited {
+            pull_request,
+            waiting,
+        })
     }
 
     fn close_run_out(&mut self, cli: &Cli, at: DateTime<Utc>) -> Vec<Found> {
@@ -389,12 +509,7 @@ fn look<'a>(
                 Ok(wait) => awaiting(
                     &mut awaited,
                     wait.pull_request.clone(),
-                    Waiting {
-                        project: name.clone(),
-                        until: wait.until,
-                        blocks: gate.blocks.clone(),
-                        made: gate.made,
-                    },
+                    waiting(name, gate, wait),
                 ),
             }
         }
@@ -536,68 +651,14 @@ fn awaiting(awaited: &mut Vec<Vec<Awaited>>, pull_request: PullRequest, gate: Wa
     }
 }
 
-/// Settle the one pull request a delivery named, as a look settles each one
-/// it finds. A pull request whose repository `settles` leaves to another
-/// `bdi gates` is passed over without a word.
-pub fn delivered(
-    cli: &Cli,
-    gh: &dyn Runner,
-    projects: &[Project],
-    settles: &Gates,
-    pull_request: PullRequest,
-    told: &Told,
-) -> Settling {
-    if !settles.settles(gate::owner(&pull_request.repo)) {
-        return Settling::default();
+/// `gate` in `project`, waiting on what `wait` names.
+fn waiting(project: &str, gate: &PrGate, wait: &Wait) -> Waiting {
+    Waiting {
+        project: project.to_string(),
+        until: wait.until,
+        blocks: gate.blocks.clone(),
+        made: gate.made,
     }
-    let settled = gates::settle(cli, gh, projects, &EVENTS, &pull_request, told);
-    findings(gh, pull_request, settled)
-}
-
-/// Settle the open pull requests whose head is the commit a delivery about
-/// its checks named, each as [`delivered`] settles one. A lookup the rate
-/// limit refuses is reported like any other and does not put off the asks
-/// after it, which the next one finds refused again.
-pub fn delivered_commit(
-    cli: &Cli,
-    gh: &dyn Runner,
-    projects: &[Project],
-    settles: &Gates,
-    commit: Commit,
-    told: &Told,
-) -> Settling {
-    let Some(repository) = gate::repository(&commit.repo) else {
-        return Settling::default();
-    };
-    if !settles.settles(Some(repository.owner)) {
-        return Settling::default();
-    }
-    let numbers = match github::open_pull_requests_headed_by(gh, &repository, &commit.sha) {
-        Ok(numbers) => numbers,
-        Err(failure) => {
-            return Settling {
-                found: vec![Found::CommitUnread { commit, failure }],
-                github: Read::Refused,
-            }
-        }
-    };
-    let mut settling = Settling {
-        found: Vec::new(),
-        github: Read::Answered,
-    };
-    for number in numbers {
-        let pull_request = PullRequest {
-            repo: commit.repo.clone(),
-            number,
-        };
-        let each = delivered(cli, gh, projects, settles, pull_request, told);
-        settling.found.extend(each.found);
-        settling.github = settling.github.max(each.github);
-        if matches!(settling.found.last(), Some(Found::RateLimited { .. })) {
-            break;
-        }
-    }
-    settling
 }
 
 /// What settling `pull_request` found to report, and whether GitHub answered.
@@ -1082,11 +1143,15 @@ mod tests {
         assert_eq!(github, Read::Unasked);
     }
 
+    /// A delivery naming #`number` to a `bdi gates` that has read nothing yet.
     fn delivered_here(runner: &FakeRunner, settles: &Gates, number: u64) -> Settling {
-        delivered(
+        deliver(&mut arkham(), runner, settles, number)
+    }
+
+    fn deliver(kept: &mut Kept, runner: &FakeRunner, settles: &Gates, number: u64) -> Settling {
+        kept.delivered(
             &Cli::new(runner),
             runner,
-            &[project("arkham")],
             settles,
             pr(number),
             &Told::default(),
@@ -1105,10 +1170,9 @@ mod tests {
     }
 
     fn delivered_commit_here(runner: &FakeRunner, settles: &Gates) -> Settling {
-        delivered_commit(
+        arkham().delivered_commit(
             &Cli::new(runner),
             runner,
-            &[project("arkham")],
             settles,
             commit(),
             &Told::default(),
@@ -1190,18 +1254,17 @@ mod tests {
         assert_eq!(asked_github(&runner), [viewed(42)]);
     }
 
-    /// GitHub is asked about it, as the settling of any pull request asks
-    /// first, and the tracker is asked which gates wait on it. The runner
-    /// panics on any call it was not given, so a write would fail the test.
+    /// The runner panics on any call it was not given, so a write would fail
+    /// the test.
     #[test]
-    fn a_delivery_for_a_merged_pull_request_no_gate_waits_on_writes_nothing() {
-        let runner = captured(FakeRunner::default(), "arkham").with(&viewed(9), &answer(9, MERGED));
+    fn a_delivery_for_a_pull_request_no_gate_waits_on_asks_github_nothing_and_writes_nothing() {
+        let runner = captured(FakeRunner::default(), "arkham");
 
         let Settling { found, github } = delivered_here(&runner, &Gates::default(), 9);
 
         assert_eq!(found, []);
-        assert_eq!(asked_github(&runner), [viewed(9)]);
-        assert_eq!(github, Read::Answered);
+        assert_eq!(asked_github(&runner), Vec::<String>::new());
+        assert_eq!(github, Read::Unasked);
     }
 
     #[test]
@@ -1224,6 +1287,124 @@ mod tests {
         assert_eq!(found, []);
         assert_eq!(runner.calls(), []);
         assert_eq!(github, Read::Unasked);
+    }
+
+    const OPEN: &str = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null}"#;
+
+    fn bd_started(runner: &FakeRunner) -> usize {
+        runner
+            .calls()
+            .iter()
+            .filter(|call| call.argv.starts_with("bd "))
+            .count()
+    }
+
+    /// arkham, covered by a producer, after the look a `bdi gates` takes as
+    /// it starts.
+    fn covered_and_looked_at(runner: &FakeRunner) -> Kept {
+        let mut kept = arkham();
+        let now = Instant::now();
+        kept.heard(&covered(), now);
+        look_at(&mut kept, runner, now);
+        kept
+    }
+
+    /// Such as the check deliveries that follow a merge. #7 and #42 stay
+    /// open, so nothing a delivery reads of them is new to a gate, and no
+    /// gate waits on #9.
+    #[test]
+    fn a_burst_of_deliveries_on_trackers_unchanged_since_they_were_read_starts_no_bd() {
+        let runner = quiet()
+            .with(&viewed(7), &answer(7, OPEN))
+            .with(&viewed(42), &answer(42, OPEN));
+        let mut kept = covered_and_looked_at(&runner);
+        let looked = bd_started(&runner);
+
+        for number in [42, 7, 9, 42, 42, 7] {
+            let settling = deliver(&mut kept, &runner, &owners(&["example"]), number);
+            assert_eq!(settling.found, [], "#{number}");
+            kept.settled(&settling);
+        }
+
+        assert_eq!(bd_started(&runner), looked);
+        assert_eq!(
+            asked_github(&runner).len(),
+            1 + 5,
+            "the look's one query, then one for each delivery a gate waits on"
+        );
+    }
+
+    #[test]
+    fn a_delivery_closes_the_gate_on_a_merged_pull_request_and_reads_no_other_tracker() {
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(
+                &gate_list("dunwich"),
+                include_str!("../../tests/fixtures/bd_1.3.0_gate_list_none.json"),
+            )
+            .with(&queried("ark"), QUERIED_OPEN)
+            .with(&viewed(42), &answer(42, MERGED))
+            .with(&resolving_42("arkham"), "");
+        let mut kept = Kept::new(vec![project("arkham"), project("dunwich")]);
+        let now = Instant::now();
+        kept.heard(&covered(), now);
+        kept.heard(&Heard::Covered("dunwich".to_string()), now);
+        look_at(&mut kept, &runner, now);
+        let looked = runner.calls().len();
+
+        let found = deliver(&mut kept, &runner, &owners(&["example"]), 42).found;
+
+        assert_eq!(found, [settling("arkham")]);
+        let delivering: Vec<String> = runner.calls()[looked..]
+            .iter()
+            .map(|call| call.argv.clone())
+            .collect();
+        assert!(
+            delivering
+                .iter()
+                .all(|argv| !argv.contains("/nowhere/dunwich")),
+            "{delivering:?}"
+        );
+    }
+
+    #[test]
+    fn a_tracker_a_producer_says_changed_is_read_again_by_the_next_delivery_alone() {
+        let runner = quiet().with(&viewed(42), &answer(42, OPEN));
+        let mut kept = covered_and_looked_at(&runner);
+
+        kept.heard(&Heard::Changed("arkham".to_string()), Instant::now());
+        deliver(&mut kept, &runner, &owners(&["example"]), 42);
+        deliver(&mut kept, &runner, &owners(&["example"]), 42);
+
+        assert_eq!(gate_lists_read(&runner), 2);
+    }
+
+    #[test]
+    fn a_tracker_whose_read_failed_is_read_again_by_the_next_delivery_and_its_gate_closes() {
+        let failing = FakeRunner::default().failing(&gate_list("arkham"), unavailable("bd"));
+        let mut kept = covered_and_looked_at(&failing);
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(42), &answer(42, MERGED))
+            .with(&resolving_42("arkham"), "");
+
+        let found = deliver(&mut kept, &runner, &owners(&["example"]), 42).found;
+
+        assert_eq!(found, [settling("arkham")]);
+        assert_eq!(
+            gate_lists_read(&runner),
+            2,
+            "read again for the delivery, then once more to settle"
+        );
+    }
+
+    #[test]
+    fn a_delivery_leaves_a_tracker_the_clock_reads_to_the_next_look() {
+        let runner = quiet().with(&viewed(42), &answer(42, OPEN));
+        let mut kept = arkham();
+        look_at(&mut kept, &runner, Instant::now());
+
+        deliver(&mut kept, &runner, &owners(&["example"]), 42);
+
+        assert_eq!(gate_lists_read(&runner), 1);
     }
 
     fn unavailable(program: &str) -> RunFailure {
@@ -1408,19 +1589,17 @@ mod tests {
         )
         .found;
 
-        let arkham_unread = || Found::TrackerUnread {
-            project: "arkham".to_string(),
-            failure: TrackerFailure::Unavailable,
-        };
         assert_eq!(
             found,
             [
-                arkham_unread(),
+                Found::TrackerUnread {
+                    project: "arkham".to_string(),
+                    failure: TrackerFailure::Unavailable,
+                },
                 no_number("dunwich"),
-                arkham_unread(),
                 settling("dunwich"),
             ],
-            "settling #42 asks arkham again, and arkham is unread again"
+            "settling #42 asks only dunwich, the tracker holding its gate"
         );
     }
 

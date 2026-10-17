@@ -186,7 +186,8 @@ fn told(project: &str, bead: &str, text: &str) -> (String, String, String) {
 /// Re-read `pr` from GitHub, then settle it as [`settled`] does, acting on
 /// everything `events` say it has done, since no look said which gates wait
 /// on it.
-pub fn settle(
+#[cfg(test)]
+fn settle(
     cli: &Cli,
     gh: &dyn Runner,
     projects: &[Project],
@@ -279,7 +280,7 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 /// what each of `events` asks of what GitHub said. Where a look found the
 /// gates `waiting` on `pr`, an event's outcome is acted on only where it is
 /// new to them: a gate waiting for it, or a bead held back that has not been
-/// told it.
+/// told it. Only the trackers holding those gates are then read again.
 ///
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. A pull request GitHub did not
@@ -308,6 +309,10 @@ fn settled(
     Settled::Acted {
         projects: projects
             .iter()
+            .filter(|project| {
+                waiting
+                    .is_none_or(|waiting| waiting.iter().any(|gate| gate.project == project.name))
+            })
             .map(|project| ProjectSettled {
                 project: project.name.clone(),
                 acts: cli.settling(project).and_then(|tracker| {
