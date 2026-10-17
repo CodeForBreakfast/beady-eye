@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ark-9zz",
+    "title": "a run somewhere",
+    "description": "Ad-hoc gate blocking ark-fx7",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-17T13:03:23Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-17T13:03:23Z",
+    "await_type": "gh:run",
+    "await_id": "4243"
+  },
+  {
+    "id": "ark-68j",
+    "title": "example/ark runs release.yml",
+    "description": "Ad-hoc gate blocking ark-62q",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-17T13:03:22Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-17T13:03:25Z",
+    "metadata": {
+      "repo": "example/ark"
+    },
+    "await_type": "gh:run",
+    "await_id": "release.yml"
+  },
+  {
+    "id": "ark-tft",
+    "title": "example/ark finishes run 4242",
+    "description": "Ad-hoc gate blocking ark-e4v",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "gate",
+    "owner": "bdi@example.invalid",
+    "created_at": "2026-10-17T13:03:20Z",
+    "created_by": "bdi",
+    "updated_at": "2026-10-17T13:03:24Z",
+    "metadata": {
+      "repo": "example/ark"
+    },
+    "await_type": "gh:run",
+    "await_id": "4242"
+  }
+]

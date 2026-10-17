@@ -6,8 +6,9 @@ each thing it does in the world is a pseudopod, a limb grown for one job. It
 has four. `bdi bd` passes `bd human respond` through to carry a person's
 answer to a bead, `bd defer --until` to put a bead off until a date a
 person chose, and `bd comments add` to put a person's words on a bead. `bdi gates` settles a gate once GitHub says its pull request
-has merged, closed, or left draft, its issue has closed, or its repository has
-published a release, and closes a timer gate at its deadline. Every other bd
+has merged, closed, or left draft, its issue has closed, its workflow run has
+succeeded or been skipped, or its repository has published a release, and
+closes a timer gate at its deadline. Every other bd
 command line `bdi`
 spells is a read, and `collect/` spells all of them.
 `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
@@ -22,8 +23,10 @@ measurements.
   One defers a bead until the date a person chose. One adds a person's comment
   to a bead. The fourth settles a gate:
   it re-reads the pull request from GitHub, closes the gate on a merge, and
-  on a close without one tells the beads the gate holds back. A gate on an issue or a release closes once the issue closes or
-  a release is published, and a timer gate closes at its deadline.
+  on a close without one tells the beads the gate holds back. A gate on an
+  issue, a release or a workflow run closes once the issue closes, a release
+  is published, or the run succeeds or is skipped. A timer gate closes at its
+  deadline.
 - The model that joins the two sources, including the anomalies where they
   disagree, and the words and colours `bdi` draws.
 - The `bdi` configuration format: `[[badges]]`, `join.pane_key` and the rest.
