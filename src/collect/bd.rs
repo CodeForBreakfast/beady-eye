@@ -458,6 +458,10 @@ impl Cli<'_> {
     /// status and any kind bd hides from a listing by default: gates,
     /// infrastructure beads, wisps and templates. An id it does not hold is
     /// left out.
+    ///
+    /// `--include-infra` is what reads the wisps' table: on a throwaway bd
+    /// 1.3.0 tracker, `bd list --id` with these flags answered a closed wisp,
+    /// and answered `[]` for it without `--include-infra`.
     pub fn awaited(&self, project: &Project, ids: &[String]) -> Result<Vec<Bead>, OpenFailure> {
         let reader = self.reader(project)?;
         let listed = reader.asked(&[
@@ -634,8 +638,8 @@ impl Reader<'_> {
 
     /// A tracker's wisps, closed ones included.
     ///
-    /// A second call, because bd keeps its ephemeral beads in a table `bd
-    /// list` does not read: measured against this project's own tracker on
+    /// A second call, because bd keeps its ephemeral beads in a table a plain
+    /// `bd list` does not read: measured against this project's own tracker on
     /// 2026-08-31, `bd list --all` answered 120 rows both before and after two
     /// wisps were written, and `bd list --wisp-type heartbeat` answered `[]`
     /// against a heartbeat wisp that existed. `bd query` is the one call that
