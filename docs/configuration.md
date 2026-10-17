@@ -189,6 +189,12 @@ telling `bdi` when the project changed from the start. Nothing covers for a
 producer that dies, so a project that does not poll turns its mark to `?` once
 nothing has vouched for it for `covered_for_seconds`.
 
+[`bdi gates`](#settling-pull-request-gates) takes `poll` the same way: a
+project that polls has its tracker read on every look. A `poll = false`
+tracker is read once when `bdi gates` starts, and after that only when a
+producer reports it changed. So where no producer reports it, `bdi gates`
+never sees a gate written there after it started.
+
 **`events_journal = true`** says that every writer to this project's tracker
 keeps bd's events journal. [The watcher](#running-the-watcher) then reads
 the journal whenever the project has moved, and sends each record to the
@@ -908,8 +914,9 @@ bd() {
 A Dolt trigger, a git hook, a systemd path unit or a cron job comparing a head
 hash all work equally well; `bdi` provides the socket and cannot tell them apart.
 
-`--poll` and `--no-poll` override every project's `poll` setting for one run,
-which is how to find out whether a suspect producer was the only thing wrong.
+`--poll` and `--no-poll` override every project's `poll` setting for one run
+of a view or of `bdi gates`, which is how to find out whether a suspect
+producer was the only thing wrong.
 
 ### Telling `bdi` where to watch
 
@@ -1113,11 +1120,13 @@ the limit resets. The next look waits until then. A secondary limit's end is not
 said, so the next look waits at least a minute. A delivery during the wait is
 not settled, and the next look settles it.
 
-Each look reads every tracker's open gates again. Given `--socket <path>`,
-`bdi gates` takes the lines a producer sends a view instead, as
-[Telling `bdi` a project changed](#telling-bdi-a-project-changed) describes,
-on a socket of its own. Once a producer has named a project, a look reads that
-project's tracker only when one of these is true:
+Each look reads every polled tracker's open gates again, with each project's
+[`poll`](#projects), `--poll` and `--no-poll` meaning what they mean to a view.
+Given `--socket <path>`, `bdi gates` takes the lines a producer sends a view,
+as [Telling `bdi` a project changed](#telling-bdi-a-project-changed)
+describes, on a socket of its own. Once a project's poll is stood down, or
+where it never polls, a look reads that project's tracker only when one of
+these is true:
 
 - the producer said the project changed
 - the last read of it failed
@@ -1125,11 +1134,11 @@ project's tracker only when one of these is true:
 
 Every look still asks GitHub about every gate it holds, so a merge or a closed
 issue is still settled on the next look. A gate written into the tracker is
-picked up on the look after its producer reports the change. A project no
-producer has named is read on every look, as before.
+picked up on the look after its producer reports the change. A project that
+polls and only ever hears bare names is still read on every look.
 
-Once a producer has named a project, the clock never takes the read back. A
-producer that says nothing of the project for
+Once a project's poll is stood down, the clock never takes the read back. A
+producer that says nothing of a project that does not poll for
 [`[changes] covered_for_seconds`](#changes) is reported, and so is its next word:
 
 ```

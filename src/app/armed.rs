@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
+use super::cover::Cover;
 use super::due::due_after;
 use crate::app::Wanted;
 use crate::config::{Config, Poll, Scope};
@@ -79,22 +80,6 @@ pub struct Armed {
     vouched_at: Option<DateTime<Utc>>,
 }
 
-/// What a producer covering a project does to its poll.
-///
-/// The producer replaces the poll rather than backing it up, so a project
-/// that stands its poll down keeps it down for the run: a producer that goes
-/// quiet afterwards lapses the project, and a poll coming back would hide
-/// exactly that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Cover {
-    /// Nothing: the reader chose the poll, or chose none.
-    KeepsThePoll,
-    /// Stands the poll down the first time a producer covers the project.
-    StandsThePollDown,
-    /// A producer has covered the project, and it polls no more.
-    HasStoodThePollDown,
-}
-
 impl Armed {
     /// A project that polls `every` after each read, or — where that is
     /// nothing — one that leaves being told to whatever else reports for it.
@@ -118,18 +103,10 @@ impl Armed {
     /// A project kept current as `poll` says, polling `every` after each read
     /// where it polls at all.
     pub fn as_poll_says(project: String, poll: Poll, every: Duration) -> Self {
-        match poll {
-            Poll::UntilCovered => Self::polling(project, Some(every)).until_covered(),
-            Poll::Always => Self::polling(project, Some(every)),
-            Poll::Never => Self::polling(project, None),
-        }
-    }
-
-    /// This project, polling only until a producer says it covers it.
-    fn until_covered(self) -> Self {
+        let every = (poll != Poll::Never).then_some(every);
         Self {
-            cover: Cover::StandsThePollDown,
-            ..self
+            cover: Cover::of(poll),
+            ..Self::polling(project, every)
         }
     }
 
@@ -235,8 +212,7 @@ impl Armed {
     /// read stops speaking, which passes with nothing written. Any other
     /// poll is the reader's and is left as it was.
     pub(super) fn covered(&mut self, at: DateTime<Utc>) {
-        if self.cover == Cover::StandsThePollDown {
-            self.cover = Cover::HasStoodThePollDown;
+        if self.cover.covered() {
             self.at = self.at.and(self.speaks_until);
         }
         self.vouched_at = Some(at);
@@ -269,8 +245,7 @@ impl Armed {
     /// How long after a read this project asks for another, now that any
     /// producer covering it has had its say.
     fn every(&self) -> Option<Duration> {
-        self.every
-            .filter(|_| self.cover != Cover::HasStoodThePollDown)
+        self.every.filter(|_| self.cover.keeps_the_poll())
     }
 
     fn lapses_at(&self) -> Option<DateTime<Utc>> {
@@ -811,7 +786,8 @@ mod tests {
     }
 
     fn polling_until_covered() -> Armed {
-        polling().until_covered().lapsing_after(COVERED_FOR)
+        Armed::as_poll_says("arkham".to_string(), Poll::UntilCovered, EVERY)
+            .lapsing_after(COVERED_FOR)
     }
 
     /// A project no producer covers is kept current by its poll, whatever it

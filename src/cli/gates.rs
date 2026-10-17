@@ -26,7 +26,7 @@ use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
 use crate::view::phrase;
 
-use super::{read_config, socket_refused, Launch, Reading};
+use super::{read_config, socket_refused, Launch, Polling, Reading};
 
 /// Where the secret GitHub signs deliveries with is read from, where no file
 /// is named for it.
@@ -40,8 +40,9 @@ const UNSAID_WAIT: Duration = Duration::from_secs(60);
 /// Look at the gates, report, and look again `[gates] poll_seconds` later,
 /// until a signal ends the process. Listening on `listen`, settle the pull
 /// request each delivery names in between. Given a `socket`, take producers'
-/// reports on it, and read a tracker a producer covers only once the
-/// producer says it changed. Nothing a settling finds stops the
+/// reports on it, and read a tracker the clock does not read only once a
+/// producer says it changed. `polling` says which trackers the clock reads,
+/// over what each project's `poll` says. Nothing a settling finds stops the
 /// next one, though a rate limit puts it off: GitHub is asked nothing until
 /// the limit resets, and a delivery in the meantime is left to the look after.
 ///
@@ -55,6 +56,7 @@ pub(super) fn settle(
     listen: Option<&str>,
     secret_file: Option<&Path>,
     socket: Option<PathBuf>,
+    polling: Polling,
 ) -> anyhow::Result<ExitCode> {
     let from_environment = std::env::var(SECRET_VARIABLE).ok();
     std::env::remove_var(SECRET_VARIABLE);
@@ -72,7 +74,13 @@ pub(super) fn settle(
         },
     )?
     .config;
-    let projects: Vec<Project> = cfg.read().cloned().collect();
+    let projects: Vec<Project> = cfg
+        .read()
+        .map(|project| Project {
+            poll: polling.poll(project),
+            ..project.clone()
+        })
+        .collect();
     let (heard_by, heard) = mpsc::channel();
     let covering = changes::Reported::watching(projects.iter().map(|each| each.name.clone()));
     // Held, not discarded: the socket comes off the filesystem when this
