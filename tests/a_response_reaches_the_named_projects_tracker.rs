@@ -97,6 +97,27 @@ fn a_defer_until_a_date_is_run_against_the_named_projects_tracker() {
     assert_eq!(tracker.calls(), [deferred]);
 }
 
+/// A comment goes the way a response does, with its text after `--` as the
+/// caller wrote it.
+#[test]
+fn a_comment_is_run_against_the_named_projects_tracker() {
+    let home = a_home_naming_two_projects("comment-reaches-kadath", "");
+    let tracker = ShimmedTracker::beside(&home);
+    let commented = "comments add kad-1 -- -C is only text, and one more thing";
+    let said_by_bd = "Comment added to kad-1\n";
+    tracker.answers_for("kadath", commented, said_by_bd);
+
+    let out = bdi(
+        &home,
+        &tracker,
+        "bd kadath comments add kad-1 -- -C is only text, and one more thing",
+    );
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(said(&out.stdout), said_by_bd);
+    assert_eq!(tracker.calls(), [commented]);
+}
+
 /// A permission rule reads the command line, and an exported variable is not
 /// on it. So a database the caller exports never reaches bd, and the response
 /// lands where kadath's own config says. Only kadath has an answer, so a
@@ -212,6 +233,8 @@ fn any_command_line_but_a_response_is_refused_before_bd_is_reached() {
     for args in [
         "bd kadath close kad-1",
         "bd kadath defer kad-1 --until tomorrow --db arkham",
+        "bd kadath comments add kad-1 --db arkham yes",
+        "bd kadath comments add kad-1 -f notes.txt",
         "bd kadath human respond kad-1 --db arkham yes",
         "bd kadath human respond kad-1 -C ../arkham yes",
         "bd kadath --global human respond kad-1 yes",
