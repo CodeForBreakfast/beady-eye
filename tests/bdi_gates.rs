@@ -658,6 +658,29 @@ fn a_tracker_a_producer_covers_is_read_only_once_the_producer_says_it_changed() 
     );
 }
 
+/// arkham's config says nothing of `poll`, so without `--no-poll` each look
+/// would read it again.
+#[test]
+fn bdi_gates_with_no_poll_reads_a_tracker_once_and_goes_on_asking_github() {
+    let home = a_home_naming("no-poll", &["arkham"]);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED_OPEN);
+    let mut command = gates(&home, &tracker, &github);
+    command.arg("--no-poll");
+    let _settling = Settling::spawned(&home, command);
+
+    until(|| looks(&github) >= 3, "three looks");
+
+    let listings = tracker
+        .calls()
+        .iter()
+        .filter(|call| *call == LISTING_GATES)
+        .count();
+    assert_eq!(listings, 1);
+}
+
 /// ark-06g, a timer gate of two hours made on 2026-10-12 at 07:32:28.
 const TIMER: &str = include_str!("fixtures/bd_1.3.0_gate_list_timer.json");
 

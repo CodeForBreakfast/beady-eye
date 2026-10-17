@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::app::{
     allocate_from_one_arena, armed_unread, hold, serve, Armed, Arming, Hold, Outstanding,
@@ -124,13 +124,8 @@ struct Cli {
     #[arg(long)]
     all: bool,
 
-    /// Poll every project this run, whatever the config says about each.
-    #[arg(long, conflicts_with = "no_poll")]
-    poll: bool,
-
-    /// Poll no project this run, whatever the config says about each.
-    #[arg(long = "no-poll")]
-    no_poll: bool,
+    #[command(flatten)]
+    polling: PollSwitch,
 
     /// Watch for reports that a project's work has moved on this socket,
     /// rather than the one the config names or the one under
@@ -194,12 +189,26 @@ enum Passing {
         /// Read the secret GitHub signs each delivery with from this file.
         #[arg(long, value_name = "PATH", requires = "listen")]
         webhook_secret_file: Option<PathBuf>,
-        /// Take producers' reports on this socket, and read a project's
-        /// tracker only when its producer says it changed. A project no
-        /// producer names is read on every look.
+        /// Take producers' reports on this socket. A project that does not
+        /// poll, or whose poll a producer has stood down, is read on a look
+        /// only when its producer says it changed.
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
+        #[command(flatten)]
+        polling: PollSwitch,
     },
+}
+
+/// The run-level switch `Polling` is read from.
+#[derive(Args)]
+struct PollSwitch {
+    /// Poll every project this run, whatever the config says about each.
+    #[arg(long, conflicts_with = "no_poll")]
+    poll: bool,
+
+    /// Poll no project this run, whatever the config says about each.
+    #[arg(long = "no-poll")]
+    no_poll: bool,
 }
 
 /// What this run was told about where to watch, over what its config says.
@@ -231,8 +240,8 @@ enum Polling {
 }
 
 impl Polling {
-    fn asked_for(cli: &Cli) -> Self {
-        match (cli.poll, cli.no_poll) {
+    fn asked_for(switch: &PollSwitch) -> Self {
+        match (switch.poll, switch.no_poll) {
             (true, _) => Polling::Everything,
             (_, true) => Polling::Nothing,
             _ => Polling::AsConfigured,
@@ -313,6 +322,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
             listen,
             webhook_secret_file,
             socket,
+            polling,
         }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return gates::settle(
@@ -320,6 +330,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 listen.as_deref(),
                 webhook_secret_file.as_deref(),
                 socket.clone(),
+                Polling::asked_for(polling),
             );
         }
         None => {}
@@ -386,7 +397,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // projects that poll is the set the file names. The command line is what
     // it carries that a config cannot: `--poll` and `--no-poll` overrule
     // every project's own key, and they are settled here.
-    let arms = arming(Polling::asked_for(&cli));
+    let arms = arming(Polling::asked_for(&cli.polling));
     // Built before the config goes to the collector, and holding a copy of
     // it: what a re-read is compared against is the config this run is
     // working to, and after this line the collector owns the only other one.
@@ -1479,22 +1490,16 @@ detached
     /// project is then read as its own config key says.
     #[test]
     fn a_run_that_says_nothing_about_polling_leaves_it_to_the_config() {
-        assert_eq!(
-            Polling::asked_for(&Cli::parse_from(["bdi"])),
-            Polling::AsConfigured
-        );
+        assert_eq!(the_view_polls(&[]), Polling::AsConfigured);
+        assert_eq!(bdi_gates_polls(&[]), Polling::AsConfigured);
     }
 
     #[test]
     fn a_run_can_turn_the_poll_on_or_off_for_every_project() {
-        assert_eq!(
-            Polling::asked_for(&Cli::parse_from(["bdi", "--poll"])),
-            Polling::Everything
-        );
-        assert_eq!(
-            Polling::asked_for(&Cli::parse_from(["bdi", "--no-poll"])),
-            Polling::Nothing
-        );
+        assert_eq!(the_view_polls(&["--poll"]), Polling::Everything);
+        assert_eq!(the_view_polls(&["--no-poll"]), Polling::Nothing);
+        assert_eq!(bdi_gates_polls(&["--poll"]), Polling::Everything);
+        assert_eq!(bdi_gates_polls(&["--no-poll"]), Polling::Nothing);
     }
 
     /// Asking for both is a command line that contradicts itself, and clap
@@ -1502,6 +1507,27 @@ detached
     #[test]
     fn a_run_cannot_ask_for_the_poll_and_against_it_at_once() {
         assert!(Cli::try_parse_from(["bdi", "--poll", "--no-poll"]).is_err());
+        assert!(Cli::try_parse_from(["bdi", "gates", "--poll", "--no-poll"]).is_err());
+    }
+
+    /// `bdi watch` reads every project as its config says, so a switch it
+    /// would ignore is refused rather than taken.
+    #[test]
+    fn bdi_watch_takes_no_poll_switch() {
+        assert!(Cli::try_parse_from(["bdi", "watch", "--poll"]).is_err());
+    }
+
+    fn the_view_polls(args: &[&str]) -> Polling {
+        let cli = Cli::parse_from(["bdi"].iter().chain(args));
+        Polling::asked_for(&cli.polling)
+    }
+
+    fn bdi_gates_polls(args: &[&str]) -> Polling {
+        let cli = Cli::parse_from(["bdi", "gates"].iter().chain(args));
+        let Some(Passing::Gates { polling, .. }) = &cli.passing else {
+            panic!("bdi gates parsed as something else");
+        };
+        Polling::asked_for(polling)
     }
 
     /// How each project is kept current: what the run said, over what its

@@ -12,6 +12,7 @@
 
 mod armed;
 mod collection;
+mod cover;
 mod due;
 pub mod gates;
 mod outstanding;
