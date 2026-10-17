@@ -237,7 +237,7 @@ it in a directory of its own under `~/.cache/beady-eye/trackers/`, one per
 database, and makes that directory again whenever it is gone. The password
 comes from the entry's `credential_command` or the shell `bdi` was started in,
 as it does for a checkout. A user that only reads the database is enough for
-`bdi`'s view and the watcher. `bdi bd`'s `human respond` and `defer` and
+`bdi`'s view and the watcher. `bdi bd`'s `human respond`, `defer` and `comments add` and
 `bdi gates` write, and on a Dolt server bd's own commit of a write needs every privilege on the
 database.
 

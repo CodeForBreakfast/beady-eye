@@ -326,7 +326,11 @@ person chose, and takes no flag but `--until`. It reaches the tracker the
 same way, and `bdi --beads` gives each bead deferred to a date its
 `defer_until`.
 
-For both, nothing after the project can pick another
+`bdi bd <project> comments add <bead> -- <text>` puts a comment a person wrote
+on a bead, and takes no flag at all. A word that starts with a dash goes after
+`--`.
+
+For all three, nothing after the project can pick another
 tracker, and neither can a `BEADS_` or `BD_` variable the caller exports.
 What the project's own directory sets still applies. So a permission rule on
 `bdi bd <project>` holds a caller to that one project, provided the caller
