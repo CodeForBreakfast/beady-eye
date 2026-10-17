@@ -2351,45 +2351,21 @@ mod tests {
         );
     }
 
-    /// A heartbeat can give a claim a lease, or renew one that ran out,
-    /// without a write, so a read that saw a claim with no live lease is
-    /// asked again a lease period later.
+    /// A claim with no live lease names no instant at which it changes, so
+    /// its read stands until the tracker reports a change. A heartbeat that
+    /// leases it without a journaled write shows only then.
     #[test]
-    fn a_read_stops_speaking_for_its_tracker_a_lease_period_after_it_saw_a_claim_without_a_live_lease(
-    ) {
+    fn a_claim_without_a_live_lease_says_nothing_about_when_its_read_stops_speaking() {
         let unleased = r#"[
           {"id":"dun-7","title":"lift the ground station","status":"in_progress",
            "priority":1,"issue_type":"epic","assignee":"Rowan Ash"},
           {"id":"dun-8","title":"rig the mast","status":"in_progress",
            "priority":1,"issue_type":"task","assignee":"Rowan Ash",
-           "lease_expires_at":"2026-08-30T11:55:00Z"}
+           "lease_expires_at":"2026-08-30T11:55:00Z"},
+          {"id":"dun-9","title":"stow the winch","status":"open",
+           "priority":1,"issue_type":"task","assignee":"Rowan Ash"}
         ]"#;
         let trackers = dunwich_with(dunwich_holding(unleased));
-
-        let snap = Collection::default().collect(
-            &one_project(),
-            &panes(),
-            &trackers,
-            &Wanted::Everything,
-            Filter::All,
-            now(),
-        );
-
-        assert_eq!(
-            snap.speaks_until.get("dunwich"),
-            Some(&"2026-08-30T12:05:00Z".parse().expect("the instant parses"))
-        );
-    }
-
-    /// bd grants a lease only to a claim in progress, so an assigned bead
-    /// that is not in progress gives a heartbeat nothing to lease.
-    #[test]
-    fn an_assigned_bead_not_in_progress_says_nothing_about_when_its_read_stops_speaking() {
-        let assigned = r#"[
-          {"id":"dun-7","title":"lift the ground station","status":"open",
-           "priority":1,"issue_type":"epic","assignee":"Rowan Ash"}
-        ]"#;
-        let trackers = dunwich_with(dunwich_holding(assigned));
 
         let snap = Collection::default().collect(
             &one_project(),
