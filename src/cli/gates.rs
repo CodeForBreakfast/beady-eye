@@ -226,21 +226,25 @@ impl From<Named> for Woken {
 }
 
 /// What producers report, passed on to the loop as it was, with the loop
-/// woken for each change among it. A wake there is no room for is dropped:
-/// the change is kept all the same, and the next wake reads it.
+/// woken once for each run of reports holding a change. A wake waits for room
+/// behind GitHub's deliveries rather than being dropped, because no other
+/// wake reads a change.
 fn wakes_on_change(
     reported: mpsc::Receiver<changes::Heard>,
     wake: mpsc::SyncSender<Woken>,
 ) -> mpsc::Receiver<changes::Heard> {
     let (passed_on, heard) = mpsc::channel();
     std::thread::spawn(move || {
-        for each in reported {
-            let changed = matches!(each, changes::Heard::Changed(_));
-            if passed_on.send(each).is_err() {
-                return;
+        while let Ok(first) = reported.recv() {
+            let mut changed = false;
+            for each in std::iter::once(first).chain(reported.try_iter()) {
+                changed |= matches!(each, changes::Heard::Changed(_));
+                if passed_on.send(each).is_err() {
+                    return;
+                }
             }
-            if changed {
-                let _ = wake.try_send(Woken::Changed);
+            if changed && wake.send(Woken::Changed).is_err() {
+                return;
             }
         }
     });
@@ -783,6 +787,28 @@ mod tests {
             None
         );
         assert_eq!(refused(&Heard::Ignored), None);
+    }
+
+    /// Such as when GitHub's deliveries fill the queue: the change is read on
+    /// no other wake.
+    #[test]
+    fn a_change_reported_while_the_loop_has_wakes_waiting_still_wakes_it() {
+        let (report, reported) = mpsc::channel();
+        let (wake, woken) = mpsc::sync_channel(1);
+        wake.try_send(Woken::Changed).expect("room for one");
+        let heard = wakes_on_change(reported, wake);
+
+        report
+            .send(changes::Heard::Changed("arkham".to_string()))
+            .expect("passed on");
+        heard.recv().expect("the report");
+        std::thread::sleep(Duration::from_millis(100));
+        woken.recv().expect("the wake already waiting");
+
+        assert!(matches!(
+            woken.recv_timeout(Duration::from_secs(5)),
+            Ok(Woken::Changed)
+        ));
     }
 
     #[test]
