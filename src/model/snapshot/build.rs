@@ -133,6 +133,7 @@ pub fn build_tree(
                 updated_at: bead.updated_at,
                 defer_until: bead.defer_until,
                 due_at: bead.due_at,
+                lease_expires_at: bead.lease_expires_at,
                 metadata: bead.metadata.clone(),
                 parent: tied.parent,
                 depends_on: tied.depends_on,
@@ -514,7 +515,7 @@ mod tests {
             })
             .collect();
         for tree in &assembled {
-            joined.cover("dunwich", tree);
+            joined.cover("dunwich", tree, now());
         }
         let relations = relations(&beads);
         assembled
@@ -703,6 +704,24 @@ mod tests {
                 in_flight("dun-6.1", Some("dun-6"), &[], false),
             ],
             &["dun-6"],
+        );
+        assert_eq!(fired, BTreeMap::new());
+    }
+
+    /// A seat on another machine has no pane here, but the lease on the bead
+    /// it sits on is still live, so the claims beneath it are covered.
+    #[test]
+    fn a_claim_beneath_a_bead_holding_a_live_lease_is_not_orphaned() {
+        let leased = r#"{"id":"dun-6","title":"dun-6","status":"in_progress",
+                         "updated_at":"2026-08-29T12:00:00Z","assignee":"Rowan Ash",
+                         "lease_expires_at":"2026-08-30T12:05:00Z"}"#;
+        let fired = fired_under(
+            "dun-6",
+            &[
+                leased.to_string(),
+                in_flight("dun-6.1", Some("dun-6"), &[], false),
+            ],
+            &[],
         );
         assert_eq!(fired, BTreeMap::new());
     }

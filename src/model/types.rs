@@ -122,6 +122,10 @@ pub struct Bead {
     /// on the clock rather than on a write.
     pub defer_until: Option<DateTime<Utc>>,
     pub due_at: Option<DateTime<Utc>>,
+    /// When the claim on this bead lapses unless its holder renews it first.
+    /// A heartbeat renews it with nothing else written, so like
+    /// `defer_until` it turns over on the clock.
+    pub lease_expires_at: Option<DateTime<Utc>>,
     /// The row as the tracker printed it, every field it wrote whether `bdi`
     /// reads it or not. The description and notes are read from it rather
     /// than held beside it.
@@ -129,6 +133,12 @@ pub struct Bead {
 }
 
 impl Bead {
+    /// Whether a holder is still renewing the claim on this bead at `now`,
+    /// from whichever machine it runs on.
+    pub fn claim_is_live(&self, now: DateTime<Utc>) -> bool {
+        self.lease_expires_at.is_some_and(|expires| now < expires)
+    }
+
     /// The keys whose text a field of `Bead` holds, which `values` therefore
     /// does not.
     pub const TEXT_FIELDS: [&str; 8] = [

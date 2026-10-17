@@ -49,6 +49,10 @@ struct Listed<'a> {
     defer_until: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     due_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assignee: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lease_expires_at: Option<DateTime<Utc>>,
     metadata: &'a BTreeMap<String, String>,
 }
 
@@ -70,6 +74,8 @@ impl<'a> From<&'a Node> for Listed<'a> {
             created_at: node.created_at,
             defer_until: node.defer_until,
             due_at: node.due_at,
+            assignee: node.assignee.as_deref(),
+            lease_expires_at: node.lease_expires_at,
             metadata: &node.metadata,
         }
     }
