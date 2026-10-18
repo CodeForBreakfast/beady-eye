@@ -3595,7 +3595,9 @@ to open, so expanding one draws what its bead holds up instead. That is the
 forest's rule for what must finish first, turned round. The forest hangs a
 child under its parent and a blocker under the bead it blocks, so a bead holds
 up its parent and the beads it blocks, and those hold up theirs, all the way to
-each root, in every tree read. Each step hangs on the forest's connectors,
+each root, in every tree read. That reaches across projects: another read
+project's tree hangs the bead it waits on beneath its waiter, so that waiter is
+a step like any other. Each step hangs on the forest's connectors,
 solid for a parent and dashed for a bead it blocks, and the arm ends in `↑`
 because this tree reads upward. A row with nothing unfinished waiting on it has
 no fold.
