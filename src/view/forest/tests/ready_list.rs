@@ -544,6 +544,51 @@ fn a_waiter_under_another_root_is_drawn_up_to_its_root() {
     );
 }
 
+/// Dunwich's ground station holds up two of harbour's beads. Clearing the
+/// berth waits on it alone, and mooring the tender also waits on sounding
+/// the channel.
+fn harbour_waiting_on_the_ground_station() -> Snapshot {
+    harbour_and_dunwich_ready(
+        r#"[{"id":"hbr-0","title":"open the harbour","status":"open","issue_type":"epic"},
+            {"id":"hbr-1","title":"clear the berth","status":"open",
+             "dependencies":[{"depends_on_id":"hbr-0","type":"parent-child"},
+                             {"depends_on_id":"dun-7","type":"blocks"}]},
+            {"id":"hbr-2","title":"moor the tender","status":"open",
+             "dependencies":[{"depends_on_id":"hbr-0","type":"parent-child"},
+                             {"depends_on_id":"dun-7","type":"blocks"},
+                             {"depends_on_id":"hbr-3","type":"blocks"}]},
+            {"id":"hbr-3","title":"sound the channel","status":"open",
+             "dependencies":[{"depends_on_id":"hbr-0","type":"parent-child"}]}]"#,
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"open"}]"#,
+        &[("dunwich", "dun-7"), ("harbour", "hbr-0")],
+        &[],
+        &["dun-7", "hbr-3"],
+    )
+}
+
+/// What a bead unblocks in another project the run reads is drawn too,
+/// marked like any other step, with what that step holds up above it.
+#[test]
+fn a_waiter_in_another_project_is_drawn_up_to_its_root() {
+    let mut forest = listed(harbour_waiting_on_the_ground_station());
+    select_bead(&mut forest, "dun-7");
+
+    forest.apply(Action::ExpandOrChild);
+
+    assert_eq!(
+        expansion_of(&forest, "dun-7"),
+        vec![
+            "▾ ○ dun-7 lift the ground station",
+            "  ├┄↑ ○ hbr-1 clear the berth · would be unblocked",
+            "  │   └─↑ ○ hbr-0 open the harbour · waits on 2 more",
+            "  └┄↑ ○ hbr-2 moor the tender · waits on 1 more",
+            "      └─↑ ○ hbr-0 open the harbour · waits on 2 more",
+        ]
+    );
+    select_bead(&mut forest, "hbr-1");
+    assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-1")));
+}
+
 /// How many more beads the first step drawn for a bead says it waits on,
 /// found by the whole id its line carries.
 fn also_waits_on(forest: &Forest, id: &str) -> usize {
