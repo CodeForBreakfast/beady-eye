@@ -172,10 +172,17 @@ fn the_selection_walks_the_beads_and_not_the_headings() {
     let mut forest = listed(lighthouse());
     forest.apply(Action::Move(Motion::FirstRow));
 
+    let last = key("dunwich", "lgt-4.4");
     let mut visited = vec![forest.selected_line()];
-    while forest.apply(Action::Move(Motion::NextRow)) {
-        visited.push(forest.selected_line());
-    }
+    walk::until(
+        &mut forest,
+        |forest| cursor(forest) == Some(&last),
+        |forest| {
+            forest.apply(Action::Move(Motion::NextRow));
+            visited.push(forest.selected_line());
+        },
+        |forest| format!("the selection never reached lgt-4.4: {:#?}", sketch(forest)),
+    );
     let beads: Vec<String> = visited
         .into_iter()
         .filter_map(|at| forest.lines()[at].bead().map(|bead| bead.id.clone()))
