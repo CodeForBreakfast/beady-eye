@@ -164,6 +164,19 @@ pub enum Content {
     Scoped {
         project: String,
     },
+    /// The heading over one of the ready list's sections, and how many beads
+    /// it holds.
+    Section { section: Section, count: usize },
+}
+
+/// One of the ready list's two sections, in the order it draws them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    /// The beads bd answers ready, less the ones in the other section.
+    Ready,
+    /// The beads in progress, and every unfinished bead with a live agent on
+    /// it, ready or not.
+    InProgress,
 }
 
 /// A project's own line: what it is and how much of it there is.
@@ -216,6 +229,14 @@ pub enum Note {
     /// forest is empty. Under no tree, because there is none: it is the only
     /// line on the screen.
     NoRoots,
+    /// The beads with an anomaly in the trees the ready list covers, which
+    /// the forest draws and the list does not.
+    ToCheck(usize),
+    /// The roots the ready list covers whose tracker gave no rows for them.
+    Unread(usize),
+    /// The projects whose tracker could not be read at all, so the ready
+    /// list has nothing of theirs.
+    FailedProjects(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

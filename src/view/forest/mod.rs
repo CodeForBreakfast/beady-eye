@@ -9,6 +9,7 @@ mod drawn;
 mod facts;
 mod handle;
 mod layout;
+mod ready;
 mod search;
 mod spine;
 
@@ -114,6 +115,9 @@ pub struct Forest {
     /// Which cells a bead's row draws, and in what order: what the lines'
     /// identity widths are measured over.
     layout: row::Layout,
+    /// Whether the ready list is drawn in place of the trees. The reader's,
+    /// so a refresh keeps it as it keeps the folds.
+    ready_list: bool,
 }
 
 /// Flatten a snapshot into its lines.
@@ -136,6 +140,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         named_at_launch: false,
         searched: None,
         layout: row::Layout::default(),
+        ready_list: false,
     };
     forest.lay_out();
     forest.select_first_root();
@@ -614,6 +619,13 @@ impl Forest {
                 self.toggle_filter();
                 true
             }
+            // Laid out as it switches, so there is nothing left to compare:
+            // the list and the trees are never the same screen.
+            Action::ToggleReadyList => {
+                self.toggle_ready_list();
+                self.reveal();
+                return true;
+            }
             Action::FocusForest => {
                 self.focus_forest();
                 true
@@ -813,6 +825,24 @@ impl Forest {
             .chain(place.forebears())
             .find_map(|above| self.spines.get(&Handle::Bead(above)).copied())
             .unwrap_or(self.spine)
+    }
+
+    /// Whether the ready list is drawn in place of the trees.
+    pub fn is_ready_list(&self) -> bool {
+        self.ready_list
+    }
+
+    /// Draw the ready list in place of the trees, or the trees in place of
+    /// the list, keeping the selection on the bead it was on. The list finds
+    /// the bead by its key as it lays itself out, and the forest opens out to
+    /// wherever it draws the bead.
+    fn toggle_ready_list(&mut self) {
+        let on = self.place().map(|place| place.key().clone());
+        self.ready_list = !self.ready_list;
+        self.lay_out();
+        if let (false, Some(key)) = (self.ready_list, on) {
+            self.go_to(&key);
+        }
     }
 
     fn toggle_filter(&mut self) {
@@ -1527,6 +1557,9 @@ impl Forest {
     /// and a caller asking whether the screen moved can compare the two sets
     /// without duplicating either.
     fn lay_out(&mut self) -> Drawn {
+        if self.ready_list {
+            return self.lay_out_ready_list();
+        }
         self.settle_cursor();
         let rooted = self.rooted();
         let drawn = layout::lay_out(
@@ -1549,6 +1582,29 @@ impl Forest {
                         .or_else(|| self.scan(self.selected, true))
                         .and_then(|at| self.handle_at(at))
                 });
+        }
+        self.selected = self.find_cursor().unwrap_or(0);
+        was
+    }
+
+    /// The ready list's lines in place of the trees', with the selection on
+    /// the bead it was holding wherever the list draws that bead, and on the
+    /// nearest line where the list draws it nowhere.
+    fn lay_out_ready_list(&mut self) -> Drawn {
+        let drawn = ready::lay_out(&self.snapshot, &self.facts, &self.rooted(), &self.layout);
+        let was = std::mem::replace(&mut self.lines, drawn);
+        if self.find_cursor().is_none() {
+            let on = match &self.cursor {
+                Some(Handle::Bead(place)) => Some(place.key().clone()),
+                _ => None,
+            };
+            self.cursor = on
+                .and_then(|key| (0..self.lines.len()).find(|at| self.lines[*at].bead() == Some(&key)))
+                .or_else(|| {
+                    self.scan(self.selected, false)
+                        .or_else(|| self.scan(self.selected, true))
+                })
+                .and_then(|at| self.handle_at(at));
         }
         self.selected = self.find_cursor().unwrap_or(0);
         was

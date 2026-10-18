@@ -213,6 +213,11 @@ pub(super) fn fitted(
         Content::Group(group) => group_line(&line.prefix, group),
         Content::Item(item) => item_line(&line.prefix, item),
         Content::Scoped { project } => scoped_line(&line.prefix, project),
+        Content::Section { section, count } => sentence(
+            &line.prefix,
+            phrase::section(*section, *count),
+            palette::HEADING,
+        ),
     }
 }
 
@@ -235,6 +240,9 @@ fn finding(note: Note) -> (String, Style) {
     let said = match note {
         Note::OrphanedDependencies(count) => phrase::orphaned_dependency(count),
         Note::Cycle(count) => phrase::cycle(count),
+        Note::ToCheck(count) => phrase::to_check_in_the_forest(count),
+        Note::Unread(count) => phrase::unread_trees(count),
+        Note::FailedProjects(count) => phrase::failed_projects(count),
         Note::NoRoots => return (phrase::no_roots().to_string(), palette::PLAIN),
     };
     (format!("{WARNING} {said}"), palette::ATTENTION)

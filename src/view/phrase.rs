@@ -23,6 +23,7 @@ use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::tree::Unreachable;
 use crate::model::types::{PaneKey, PaneStatus, Status};
 use crate::view::forest::Spine;
+use crate::view::lines::Section;
 use crate::view::{Freshness, Mark, Notice, Said};
 
 /// The oldest bd whose command line `bdi` runs, as README states it. A
@@ -498,6 +499,29 @@ pub fn agents_beneath(count: usize) -> String {
 pub fn anomalies_beneath(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
     format!("{count} {bead} to check")
+}
+
+/// The beads with an anomaly that the ready list covers, whose rows saying
+/// what is wrong are the forest's.
+pub fn to_check_in_the_forest(count: usize) -> String {
+    format!("{} in the forest", anomalies_beneath(count))
+}
+
+/// The roots the ready list covers whose tracker gave no rows for them, so
+/// the beads beneath them are missing from it.
+pub fn unread_trees(count: usize) -> String {
+    let tree = if count == 1 { "tree" } else { "trees" };
+    format!("{count} {tree} could not be read")
+}
+
+/// The heading over one of the ready list's sections, with how many beads it
+/// holds.
+pub fn section(section: Section, count: usize) -> String {
+    let heading = match section {
+        Section::Ready => "Ready",
+        Section::InProgress => "In progress",
+    };
+    format!("{heading} · {count}")
 }
 
 /// Projects whose tracker could not be read at all, so they have no root to
