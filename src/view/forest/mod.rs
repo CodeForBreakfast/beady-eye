@@ -828,6 +828,7 @@ impl Forest {
     }
 
     /// Whether the ready list is drawn in place of the trees.
+    #[cfg(test)]
     pub fn is_ready_list(&self) -> bool {
         self.ready_list
     }
