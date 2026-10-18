@@ -22,6 +22,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
+use crate::model::edges::{self, Related};
 use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
@@ -224,6 +225,9 @@ struct Reached {
     from: Option<ReachedFrom>,
     /// Each tree by its project and then its root.
     trees: BTreeMap<String, BTreeMap<String, Assembled>>,
+    /// The beads waiting on each project's beads from another project, by
+    /// the blocker's project and then its id.
+    waiting: BTreeMap<String, BTreeMap<String, Vec<Related>>>,
 }
 
 /// What a set of trees reaching across projects was assembled from.
@@ -680,9 +684,16 @@ impl Collection {
             return;
         }
         let trees = assembled_across(&answered, &not_read, &rooted.scope);
+        let waiting = edges::waiting_across(
+            &answered
+                .iter()
+                .map(|(project, work)| (*project, work.beads.as_slice()))
+                .collect::<Vec<_>>(),
+        );
         self.reached = Reached {
             from: Some(from),
             trees,
+            waiting,
         };
     }
 
@@ -777,6 +788,7 @@ impl Collection {
                     Said {
                         readiness: &work.readiness,
                         relations: &work.relations,
+                        waiting: self.reached.waiting.get(*project),
                     },
                 )
             })
@@ -1212,7 +1224,7 @@ mod tests {
     use crate::model::snapshot::LoosePane;
     use crate::model::tree::Unreachable;
     use crate::model::types::testing::{key, A_SESSION};
-    use crate::model::types::{PaneStatus, Status};
+    use crate::model::types::{Edge, PaneStatus, Status};
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -2806,6 +2818,41 @@ path = "{}"
         collect(&mut standing, &no_panes(), &trackers, &Wanted::Everything);
 
         assert_eq!(crate::model::tree::nestings_on_this_thread() - before, 0);
+    }
+
+    /// What ferry's `fer-2` is to the bead it waits on, as dunwich's window
+    /// on `dun-7` names it.
+    fn ferry_s_barge_waiting() -> Related {
+        Related {
+            id: "fer-2".to_string(),
+            project: Some("ferry".to_string()),
+            edge: Edge::Blocks,
+            status: Some(Status::Open),
+            title: Some("moor the barge".to_string()),
+        }
+    }
+
+    /// Ferry's tracker holds the edge, and bd reads no edge to another
+    /// project's bead, so dunwich's answer names no waiter. The window on
+    /// the blocker lists the bead waiting on it all the same.
+    #[test]
+    fn a_bead_blocks_another_projects_bead_that_waits_on_it() {
+        let snap = collect(
+            &mut Collection::default(),
+            &no_panes(),
+            &ferry_waiting_on_dunwich(),
+            &Wanted::Everything,
+        );
+
+        assert_eq!(
+            node(tree_of(&snap, "dunwich"), "dun-7").blocks,
+            vec![ferry_s_barge_waiting()]
+        );
+        assert_eq!(
+            node(tree_of(&snap, "ferry"), "dun-7").blocks,
+            vec![ferry_s_barge_waiting()],
+            "the tree that reached the blocker from ferry draws it the same"
+        );
     }
 
     /// Dunwich's epic under a new title.

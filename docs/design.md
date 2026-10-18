@@ -984,7 +984,9 @@ stays work the answer does not hold, and the bead is reported as an orphaned
 dependency.
 Only a `blocks` edge crosses: a blocker hangs beneath the bead waiting on it,
 whereas a parent in another project would put this project's bead inside
-that project's trees.
+that project's trees. The bead window reads the edge the other way too: a
+bead's `blocks` also lists each bead of another read project that waits on it,
+found by the same rule, though no tree hangs that bead beneath it.
 
 **A blocker no answer holds is drawn where it would hang, saying why.** A
 tracker's beads carry its prefix, the id up to its first `-` as bd reads one,
