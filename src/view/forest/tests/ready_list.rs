@@ -289,3 +289,43 @@ fn an_orphaned_dependency_and_a_loop_are_said_at_the_foot() {
     );
     assert!(looped.contains(&"! Cycle(1)".to_string()), "{looped:#?}");
 }
+
+/// A search in the list counts the beads the list draws. `lgt-4.8` is open
+/// and waits on nothing bd called ready, and `lgt-4.7` is closed, so the
+/// list draws neither of them.
+#[test]
+fn a_search_finds_only_the_beads_the_list_draws() {
+    let mut forest = listed(lighthouse());
+    forest.apply(Action::Move(Motion::FirstRow));
+
+    assert_eq!(
+        forest.seek_here("rail"),
+        went_to("dunwich", "lgt-4.6", 1, 2)
+    );
+    assert_eq!(
+        forest.next_match(true),
+        Some(went_to("dunwich", "lgt-4.5", 2, 2))
+    );
+    assert_eq!(
+        forest.seek_here("lgt-4.8"),
+        Landed::Nowhere("lgt-4.8".into())
+    );
+}
+
+/// A term only a bead the list leaves out holds finds nothing, and the
+/// selection stays where it was.
+#[test]
+fn a_search_matching_only_beads_the_list_omits_says_nowhere() {
+    let mut forest = listed(lighthouse());
+    select_bead(&mut forest, "lgt-4.3");
+
+    assert_eq!(
+        forest.seek_here("daymark"),
+        Landed::Nowhere("daymark".into())
+    );
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "lgt-4.3")));
+    assert_eq!(
+        forest.next_match(true),
+        Some(Landed::Nowhere("daymark".into()))
+    );
+}

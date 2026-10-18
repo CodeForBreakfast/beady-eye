@@ -9,7 +9,7 @@
 //! worked out once per bead and added up, the way layout counts a subtree
 //! nothing draws, and a match is found by counting down to it.
 
-use crate::model::snapshot::{Snapshot, Tree};
+use crate::model::snapshot::{Node as Bead, Snapshot, Tree};
 use crate::view::lines::{root_key, Place};
 
 use super::facts::{Facts, TreeFacts};
@@ -36,7 +36,10 @@ impl Sought {
     }
 
     fn finds(&self, tree: &Tree, at: usize) -> bool {
-        let bead = &tree.beads[at];
+        self.finds_bead(&tree.beads[at])
+    }
+
+    fn finds_bead(&self, bead: &Bead) -> bool {
         match self {
             Sought::Holding(text) => {
                 bead.id.to_lowercase().contains(text) || bead.title.to_lowercase().contains(text)
@@ -48,14 +51,83 @@ impl Sought {
 
 /// Every drawn copy of a bead a search is after, numbered in the order the
 /// screen draws them, from zero.
-pub(super) struct Matches<'a> {
+pub(super) enum Matches<'a> {
+    /// In the trees the forest draws.
+    Walked(Walked<'a>),
+    /// In the rows of the ready list, which draws each bead once.
+    Listed(Listed),
+}
+
+impl Matches<'_> {
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Matches::Walked(walked) => walked.len(),
+            Matches::Listed(listed) => listed.len(),
+        }
+    }
+
+    /// Where the `n`th match is drawn. Nothing past the last.
+    pub(super) fn nth(&mut self, n: usize) -> Option<Place> {
+        match self {
+            Matches::Walked(walked) => walked.nth(n),
+            Matches::Listed(listed) => listed.nth(n),
+        }
+    }
+
+    /// How many matches are drawn before a place, and whether the place is
+    /// one itself. Nothing where nothing is drawn there.
+    pub(super) fn before(&mut self, place: &Place) -> Option<(usize, bool)> {
+        match self {
+            Matches::Walked(walked) => walked.before(place),
+            Matches::Listed(listed) => listed.before(place),
+        }
+    }
+}
+
+/// The beads the ready list draws in the order it draws them, each marked
+/// with whether the search is after it.
+pub(super) struct Listed {
+    rows: Vec<(Place, bool)>,
+}
+
+impl Listed {
+    pub(super) fn of(snapshot: &Snapshot, rows: Vec<Place>, sought: &Sought) -> Self {
+        let rows = rows
+            .into_iter()
+            .map(|place| {
+                let found = snapshot
+                    .node(place.key())
+                    .is_some_and(|bead| sought.finds_bead(bead));
+                (place, found)
+            })
+            .collect();
+        Listed { rows }
+    }
+
+    fn len(&self) -> usize {
+        self.rows.iter().filter(|(_, found)| *found).count()
+    }
+
+    fn nth(&self, n: usize) -> Option<Place> {
+        let mut found = self.rows.iter().filter(|(_, found)| *found);
+        found.nth(n).map(|(place, _)| place.clone())
+    }
+
+    fn before(&self, place: &Place) -> Option<(usize, bool)> {
+        let at = self.rows.iter().position(|(row, _)| row == place)?;
+        let before = self.rows[..at].iter().filter(|(_, found)| *found).count();
+        Some((before, self.rows[at].1))
+    }
+}
+
+pub(super) struct Walked<'a> {
     sought: Sought,
     walks: Vec<Walk<'a>>,
     /// How many matches each walk draws, beside it.
     totals: Vec<usize>,
 }
 
-impl<'a> Matches<'a> {
+impl<'a> Walked<'a> {
     /// Over every tree the forest draws, in the order `layout::walked` gives
     /// them: the order the screen draws them in with every fold open.
     pub(super) fn of(
@@ -69,21 +141,21 @@ impl<'a> Matches<'a> {
             .map(|(tree, way)| Walk::new(tree, facts.tree(&root_key(tree)), way))
             .collect();
         let totals = walks.iter_mut().map(|walk| walk.total(&sought)).collect();
-        Matches {
+        Walked {
             sought,
             walks,
             totals,
         }
     }
 
-    pub(super) fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.totals
             .iter()
             .fold(0, |sum, total| sum.saturating_add(*total))
     }
 
     /// Where the `n`th match is drawn. Nothing past the last.
-    pub(super) fn nth(&mut self, mut n: usize) -> Option<Place> {
+    fn nth(&mut self, mut n: usize) -> Option<Place> {
         for (walk, total) in self.walks.iter_mut().zip(&self.totals) {
             if n < *total {
                 return Some(walk.nth(&self.sought, n));
@@ -95,7 +167,7 @@ impl<'a> Matches<'a> {
 
     /// How many matches are drawn before a place, and whether the place is
     /// one itself. Nothing where the forest draws no bead there.
-    pub(super) fn before(&mut self, place: &Place) -> Option<(usize, bool)> {
+    fn before(&mut self, place: &Place) -> Option<(usize, bool)> {
         let mut passed = 0usize;
         for (walk, total) in self.walks.iter_mut().zip(&self.totals) {
             if let Some((before, found)) = walk.before(&self.sought, place) {

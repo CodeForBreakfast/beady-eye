@@ -27,7 +27,7 @@ use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
-use search::{Matches, Sought};
+use search::{Listed, Matches, Sought, Walked};
 pub use spine::Spine;
 
 /// Where a search came to.
@@ -1121,9 +1121,13 @@ impl Forest {
         if !self.drawn(place) {
             return false;
         }
-        self.folds.shut_what_the_last_step_opened();
-        for over in self.folds_over(place) {
-            self.folds.open_for_a_step(over);
+        // The list has no folds, and opening the forest's behind it would
+        // show on the reader's return.
+        if !self.ready_list {
+            self.folds.shut_what_the_last_step_opened();
+            for over in self.folds_over(place) {
+                self.folds.open_for_a_step(over);
+            }
         }
         self.select_place(place)
     }
@@ -1389,8 +1393,20 @@ impl Forest {
     ///
     /// A bead reachable more than once is drawn more than once and counted
     /// once per way down to it.
+    ///
+    /// In the ready list they are the beads its rows draw, so a search lands
+    /// on a bead the list shows or finds nothing.
     fn matches(&self, sought: Sought) -> Matches<'_> {
-        Matches::of(&self.snapshot, &self.facts, &self.rooted(), sought)
+        if self.ready_list {
+            let rows = self.lines.iter().filter_map(Self::place_of_a_bead);
+            return Matches::Listed(Listed::of(&self.snapshot, rows.collect(), &sought));
+        }
+        Matches::Walked(Walked::of(
+            &self.snapshot,
+            &self.facts,
+            &self.rooted(),
+            sought,
+        ))
     }
 
     /// Whether the forest can take the reader to a bead: whether any tree it
