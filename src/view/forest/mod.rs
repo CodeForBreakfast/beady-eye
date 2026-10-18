@@ -1599,7 +1599,9 @@ impl Forest {
                 _ => None,
             };
             self.cursor = on
-                .and_then(|key| (0..self.lines.len()).find(|at| self.lines[*at].bead() == Some(&key)))
+                .and_then(|key| {
+                    (0..self.lines.len()).find(|at| self.lines[*at].bead() == Some(&key))
+                })
                 .or_else(|| {
                     self.scan(self.selected, false)
                         .or_else(|| self.scan(self.selected, true))

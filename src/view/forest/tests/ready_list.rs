@@ -109,7 +109,11 @@ fn an_anomaly_on_a_bead_the_list_does_not_draw_is_counted_at_its_foot() {
 
     assert!(lines_of(&forest, "lgt-4.7").is_empty());
     assert_eq!(
-        forest.lines().iter().last().map(|line| line.content.clone()),
+        forest
+            .lines()
+            .iter()
+            .last()
+            .map(|line| line.content.clone()),
         Some(Content::Note(Note::ToCheck(1)))
     );
 }
@@ -152,7 +156,9 @@ fn a_refresh_keeps_the_list() {
         "dunwich",
         LIGHTHOUSE,
         &panes_on(&["lgt-4.4", "lgt-4.5", "lgt-4.7"]),
-        &["lgt-4", "lgt-4.1", "lgt-4.2", "lgt-4.3", "lgt-4.6", "lgt-4.8"],
+        &[
+            "lgt-4", "lgt-4.1", "lgt-4.2", "lgt-4.3", "lgt-4.6", "lgt-4.8",
+        ],
     ));
 
     assert!(forest.is_ready_list());
@@ -249,5 +255,8 @@ fn a_tree_that_would_not_read_is_said_at_the_foot() {
         .filter(|line| line.starts_with('!'))
         .collect();
     assert!(foot.contains(&"! Unread(1)".to_string()), "{foot:#?}");
-    assert!(foot.contains(&"! FailedProjects(1)".to_string()), "{foot:#?}");
+    assert!(
+        foot.contains(&"! FailedProjects(1)".to_string()),
+        "{foot:#?}"
+    );
 }

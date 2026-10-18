@@ -13,7 +13,9 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::numeric_id_order;
 use crate::model::types::Status;
-use crate::view::lines::{links_below, root_key, Content, Line, Note, Place, ProjectLine, Section, INDENT};
+use crate::view::lines::{
+    links_below, root_key, Content, Line, Note, Place, ProjectLine, Section, INDENT,
+};
 use crate::view::row;
 
 use super::drawn::{Drawn, Node};
@@ -108,7 +110,9 @@ pub(super) fn lay_out(
 
 /// Each bead the covered trees reach, once, with the tree and the way down
 /// it was first reached by: the shallowest, in the first tree to reach it.
-fn each_once<'a>(covered: &[(&'a Tree, Vec<usize>)]) -> BTreeMap<BeadKey, (&'a Bead, &'a Tree, Vec<usize>)> {
+fn each_once<'a>(
+    covered: &[(&'a Tree, Vec<usize>)],
+) -> BTreeMap<BeadKey, (&'a Bead, &'a Tree, Vec<usize>)> {
     let mut once = BTreeMap::new();
     for (tree, way) in covered {
         let mut going = std::collections::VecDeque::from([way.clone()]);

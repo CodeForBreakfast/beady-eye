@@ -946,10 +946,7 @@ pub(super) mod tests {
     /// their own, and a key nothing is bound to asks for nothing.
     #[test]
     fn a_key_bound_to_nothing_asks_for_nothing() {
-        for pressed in [
-            key(KeyCode::Char('u')),
-            key(KeyCode::Char('z')),
-        ] {
+        for pressed in [key(KeyCode::Char('u')), key(KeyCode::Char('z'))] {
             assert_eq!(action(pressed), None, "for {pressed:?}");
         }
     }

@@ -148,10 +148,17 @@ Keys to start with. `?` lists the lot.
 | `f` | focus the selected bead's pane |
 | `a` | every tree, not only the ones with a live agent |
 | `F` | only the selected bead and the work beneath it; again for the whole forest |
+| `r` | the ready list in place of the forest; again for the forest |
 | `/` `n` `N` | search ids and titles |
 | `y` | copy the bead id (OSC 52, so it survives ssh and a multiplexer) |
 | `^R` | read the trackers again now |
 | `q` | avert the eye |
+
+`bdi --ready` opens on the ready list: what you could pick up now, then what
+is in progress or has a live agent on it, each bead once and most urgent
+first. Name a bead, as in `bdi --ready dun-7`, and the list covers that bead
+and the work beneath it. The forest is one `r` away, and the list's foot
+counts the beads the forest flags.
 
 `bdi --json` writes the same snapshot to stdout instead of drawing it. That
 is also what to reach for when stdout is not a terminal; `bdi | cat` says so and

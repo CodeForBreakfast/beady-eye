@@ -166,7 +166,10 @@ pub enum Content {
     },
     /// The heading over one of the ready list's sections, and how many beads
     /// it holds.
-    Section { section: Section, count: usize },
+    Section {
+        section: Section,
+        count: usize,
+    },
 }
 
 /// One of the ready list's two sections, in the order it draws them.

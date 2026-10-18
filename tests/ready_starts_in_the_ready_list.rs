@@ -63,10 +63,20 @@ fn ready_with_a_root_opens_on_that_roots_ready_list() {
     let drawn = |said: &str| contains(&screen, said.as_bytes());
     let what_bdi_drew = || format!("{:?}\n{}", String::from_utf8_lossy(&screen), bdi.timeline());
 
-    for said in ["Ready", "progress", "ark-12.1", "folios", "ark-12.2", "ledgers"] {
-        assert!(drawn(said), "{said} is not on the screen: {}", what_bdi_drew());
+    for said in [
+        "Ready", "progress", "ark-12.1", "folios", "ark-12.2", "ledgers",
+    ] {
+        assert!(
+            drawn(said),
+            "{said} is not on the screen: {}",
+            what_bdi_drew()
+        );
     }
     // Neither ready nor in progress, so the forest draws it and the list
     // does not.
-    assert!(!drawn("ark-12.3"), "the waiting bead is listed: {}", what_bdi_drew());
+    assert!(
+        !drawn("ark-12.3"),
+        "the waiting bead is listed: {}",
+        what_bdi_drew()
+    );
 }

@@ -85,6 +85,7 @@ coin one — and say so.**
 | **unconfigured** | *coined* | a directory no `[[projects]]` entry covers, and the panes working in it. `bdi` has not failed to attribute them; it was never told the project exists. |
 | **finished** | *coined* | a branch every bead of which is closed, with no agent and no anomaly anywhere beneath it — the whole branch, not merely its head. beads has *closed*, which is one bead's status; this is a claim about a subtree. |
 | **run** | *coined* | several finished siblings drawn as one counted line — the code calls the line *elided* and the siblings a run. Neither project draws one. |
+| **ready list** | *coined*, after `bd ready` | the view drawn in place of the forest that lists what a reader could pick up now and what is being worked, each bead once (see *The ready list*). beads has `bd ready`, which answers one tracker's ready beads and draws no view; neither project has a view of them. |
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
@@ -3530,6 +3531,59 @@ a key, losing the answer to it read as the group shutting itself. Carrying it
 cannot resurrect a filter herdr has made meaningless, because with no herdr
 there is no filter to apply and every tree renders.
 
+### The ready list
+
+A reader choosing what to pick up next wants a list, not the forest. On a
+mature root the forest draws a couple of hundred shut lines around a dozen
+unfinished beads, and a pruned tree is barely different from that and still
+draws a blocker once under each bead it blocks. So `bdi --ready` starts in the
+ready list, and `r` switches between the list and the forest. There is no
+filtered tree as well.
+
+```
+dunwich  ✓ 9s ago                                      1/9   3 agents  ⚠ 1
+Ready · 5
+  ○ lgt-4    relight the lighthouse                    1/8
+  ○ lgt-4.2  re-silver the reflector
+  ○ lgt-4.3  rewire the lamp
+  ○ lgt-4.1  scrape the lantern glass
+  ○ lgt-4.6  cast the rail stanchions
+In progress · 2
+  ○ lgt-4.5  replace the gallery rail                       ◍ w:p4 · working
+  ◐ lgt-4.4  test the fog signal                            ◍ w:p3 · idle
+⚠ 1 bead to check in the forest
+```
+
+**It covers what the forest would draw.** That is every tree read, whether
+the live-agent filter shows it or holds it back, since work nobody is on is the
+work there is to pick up. When the command line names beads, or the reader
+focuses one with `F`, the list covers those beads and what is beneath them. bdi needs no idea of what a project is, because the reader names
+the roots.
+
+**Two sections, each bead once.** "Ready" holds the beads that are ready as
+the forest already decides it: bd's answer, plus the rule that a bead waiting
+on another project's unfinished bead is not ready. "In progress" holds the
+beads in progress and every unfinished bead with a live agent on it, so a seat
+on blocked work still shows. A bead in both goes in the second. A bead the
+trees reach by several ways down is listed once, and each section is sorted
+by priority, then oldest first, as `bd ready` sorts. An epic is taken as bd
+answers for it, like any other bead. That includes an epic that holds its work
+as children and so reads as ready.
+
+**The rows are beads.** Each row stands on the bead's shallowest way down its
+tree, so the selection, the bead window, the tail and the agent annotation work
+on it as they do in the forest. Its whole id is drawn, because no parent stands
+above it. The bead selected when the reader switches is the bead selected
+after, and the forest opens out to wherever it draws it.
+
+**Nothing is hidden without being reported.** Each project's own line heads
+the list, saying how fresh its rows are, so a list on its way from the trackers
+does not read as an empty one. The foot counts the beads the covered trees
+carry an anomaly on, listed or not, with the forest one key away to say what is
+wrong with them. It also counts the roots whose tracker gave no rows and the
+projects that could not be read at all. A refresh keeps the list, as it keeps
+the filter and the folds.
+
 ### Keys
 
 The row under the tail names the handful of bindings worth a permanent line,
@@ -3562,6 +3616,7 @@ The bindings are vim-like, with the arrows as aliases:
 | `Space` | fold or unfold the selected node |
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
+| `r` | list the ready and in-progress beads, or put the forest back |
 | `s` | cycle which copy of a bead opens, under the selected node |
 | `S` | cycle which copy of a bead opens, across the whole forest |
 | `F` | draw the selected bead as the only root, or put the forest back |
