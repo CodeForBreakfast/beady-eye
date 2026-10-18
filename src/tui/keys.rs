@@ -86,16 +86,16 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: Some("all"),
     },
     Binding {
-        keys: &[alone(KeyCode::Char('r'), "r")],
-        action: Action::ToggleReadyList,
-        does: "list the ready and in-progress beads, or put the forest back",
-        hint: None,
-    },
-    Binding {
         keys: &[alone(KeyCode::Char('?'), "?")],
         action: Action::ShowBindings,
         does: "show these key bindings",
         hint: Some("keys"),
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('r'), "r")],
+        action: Action::ToggleReadyList,
+        does: "list the ready and in-progress beads, or put the forest back",
+        hint: None,
     },
     Binding {
         keys: &[alone(KeyCode::Char('s'), "s")],

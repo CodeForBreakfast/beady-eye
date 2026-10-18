@@ -124,6 +124,12 @@ struct Cli {
     #[arg(long)]
     all: bool,
 
+    /// Start in the ready list: the beads ready to start, then the beads in
+    /// progress or with a live agent on them, each once, by priority and
+    /// then age. r switches between the list and the forest.
+    #[arg(long, conflicts_with_all = ["json", "each_bead"])]
+    ready: bool,
+
     #[command(flatten)]
     polling: PollSwitch,
 
@@ -453,6 +459,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     crate::tui::run(
         &started_on,
         filter,
+        cli.ready,
         arms,
         agents,
         Hearing {
@@ -1484,6 +1491,20 @@ detached
             assert!(
                 Cli::try_parse_from(asked).is_err(),
                 "--beads with {forest:?} was taken"
+            );
+        }
+    }
+
+    /// `--ready` is where the view starts, so it is a way of drawing and the
+    /// two documents contradict it. A bead named beside it roots the list.
+    #[test]
+    fn ready_starts_the_view_and_stands_apart_from_the_documents() {
+        assert!(Cli::parse_from(["bdi", "--ready", "dun-7"]).ready);
+        assert!(Cli::parse_from(["bdi", "--ready", "--all"]).ready);
+        for document in ["--json", "--beads"] {
+            assert!(
+                Cli::try_parse_from(["bdi", "--ready", document]).is_err(),
+                "--ready with {document} was taken"
             );
         }
     }

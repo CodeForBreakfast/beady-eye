@@ -1024,6 +1024,11 @@ impl Screen {
     pub(super) fn focus_when_drawn(&mut self, beads: Vec<BeadKey>) {
         self.shown.forest.focus_when_drawn(beads);
     }
+
+    /// Start in the ready list, as `r` would put it there.
+    pub(super) fn list_ready(&mut self) {
+        self.shown.apply(Action::ToggleReadyList);
+    }
 }
 
 /// The search prompt: what has been typed into it, and where the search
@@ -1403,7 +1408,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
-                "  … 37 more bindings · no room on a screen this short",
+                "  … 38 more bindings · no room on a screen this short",
             ]
         );
     }
@@ -1510,6 +1515,7 @@ mod tests {
                 "  Space     fold or unfold the selected node",
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
+                "  r         list the ready and in-progress beads, or put the forest back",
                 "  s         cycle which copy of a bead opens, under the selected node",
                 "  S         cycle which copy of a bead opens, across the whole forest",
                 "  F         draw the selected bead as the only root, or put the forest back",

@@ -102,9 +102,11 @@ use wire::wire;
 /// what `--json` prints. What the wiring finds has no snapshot to ride on and
 /// is handed to the screen directly, so the foot draws both without knowing
 /// which is which.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     cfg: &Config,
     filter: Filter,
+    ready_list: bool,
     arms: Arming,
     agents: Arc<dyn Agents>,
     hearing: Hearing,
@@ -157,6 +159,9 @@ pub fn run(
 
     let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg), started)?;
     screen.focus_when_drawn(cfg.roots.named_beads());
+    if ready_list {
+        screen.list_ready();
+    }
     screen.collecting(outstanding.awaited());
 
     drive(
