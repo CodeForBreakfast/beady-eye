@@ -182,6 +182,43 @@ fn the_window_on_a_bead_waiting_on_another_projects_bead_follows_it_there() {
     );
 }
 
+/// The bead window on the blocker names the other project's bead waiting on
+/// it under what it blocks, from its own project's tree and from the copy
+/// under the bead waiting on it, and the reader can follow it there.
+#[test]
+fn the_window_on_a_bead_another_projects_bead_waits_on_follows_the_waiter_there() {
+    for copy in [0, 1] {
+        let mut forest = flatten(harbour_waiting_on_dunwich());
+        let blocker = lines_of(&forest, "dun-7")[copy];
+        step_onto(&mut forest, blocker);
+
+        let node = crate::view::show::selected(&forest).expect("a bead is selected");
+        let waiter = &node.blocks[0];
+        assert_eq!(
+            (
+                waiter.id.as_str(),
+                waiter.status.as_ref(),
+                waiter.title.as_deref()
+            ),
+            (
+                "hbr-1",
+                Some(&crate::model::types::Status::Blocked),
+                Some("clear the berth")
+            ),
+            "copy {copy}"
+        );
+        assert!(crate::view::show::followable(&forest, waiter));
+
+        let followed = crate::view::show::key_of(&forest, waiter).expect("the bead is keyed");
+        assert!(forest.go_to(&followed));
+        assert_eq!(
+            forest.place().map(|place| place.key()),
+            Some(&key("harbour", "hbr-1")),
+            "copy {copy}"
+        );
+    }
+}
+
 /// A search matches every drawn copy, and the copy under the bead
 /// waiting on another project's bead is a match on that project's bead.
 #[test]

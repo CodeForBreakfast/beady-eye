@@ -547,6 +547,19 @@ fn descend<K: Copy + Ord>(
 /// A bead in one of several projects' answers: which answer, and its id there.
 type Held<'a> = (usize, &'a str);
 
+/// The one answer, other than answer `at`, that holds a bead by `id`, where
+/// `at` holds none itself. `holding` is which answers hold a bead of each id.
+pub(crate) fn held_by_one_other(
+    holding: &BTreeMap<&str, Vec<usize>>,
+    at: usize,
+    id: &str,
+) -> Option<usize> {
+    match holding.get(id)?.as_slice() {
+        [only] if *only != at => Some(*only),
+        _ => None,
+    }
+}
+
 /// Several projects' answers read as one, so that a bead waiting on another
 /// project's bead holds it beneath itself as it would a bead of its own.
 ///
@@ -624,20 +637,14 @@ impl<'a> Across<'a> {
     /// The bead in another project's answer that `dependency` of a bead in
     /// answer `at` names, where it names one.
     fn elsewhere(&self, at: usize, dependency: &Dependency) -> Option<Held<'a>> {
-        if dependency.edge != Edge::Blocks
-            || self.answers[at].by_id.contains_key(dependency.on.as_str())
-        {
+        if dependency.edge != Edge::Blocks {
             return None;
         }
-        match self.holding.get(dependency.on.as_str())?.as_slice() {
-            [only] => {
-                let (&id, _) = self.answers[*only]
-                    .by_id
-                    .get_key_value(dependency.on.as_str())?;
-                Some((*only, id))
-            }
-            _ => None,
-        }
+        let only = held_by_one_other(&self.holding, at, &dependency.on)?;
+        let (&id, _) = self.answers[only]
+            .by_id
+            .get_key_value(dependency.on.as_str())?;
+        Some((only, id))
     }
 
     /// The beads beneath one, its own answer's and every other project's

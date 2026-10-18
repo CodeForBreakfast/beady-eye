@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::model::tree::held_by_one_other;
 use crate::model::types::{Bead, Edge, Status};
 
 /// A bead an edge ties this one to: its id, and what the answer said of it
@@ -78,6 +79,55 @@ pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
     }
 
     relations
+}
+
+/// The beads waiting on a bead in another project, by that project and then
+/// the bead's id.
+///
+/// bd reads no edge to another project's bead, so a project's answer never
+/// lists a waiter in another project under what a bead blocks. The waiter's
+/// own answer names the blocker, and only an id its answer lacks, which
+/// exactly one other answer holds, is that other project's bead — the rule
+/// the tree uses to hang the blocker beneath it.
+pub fn waiting_across(
+    answers: &[(&str, &[Arc<Bead>])],
+) -> BTreeMap<String, BTreeMap<String, Vec<Related>>> {
+    let mut holding: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (at, (_, beads)) in answers.iter().enumerate() {
+        for bead in *beads {
+            holding.entry(bead.id.as_str()).or_default().push(at);
+        }
+    }
+
+    let mut waiting: BTreeMap<String, BTreeMap<String, Vec<Related>>> = BTreeMap::new();
+    for (at, (project, beads)) in answers.iter().enumerate() {
+        for bead in *beads {
+            for dependency in &bead.dependencies {
+                if dependency.edge != Edge::Blocks {
+                    continue;
+                }
+                let Some(held_by) = held_by_one_other(&holding, at, &dependency.on) else {
+                    continue;
+                };
+                waiting
+                    .entry(answers[held_by].0.to_string())
+                    .or_default()
+                    .entry(dependency.on.clone())
+                    .or_default()
+                    .push(Related {
+                        id: bead.id.clone(),
+                        project: Some((*project).to_string()),
+                        edge: Edge::Blocks,
+                        status: Some(bead.status.clone()),
+                        title: Some(bead.title.clone()),
+                    });
+            }
+        }
+    }
+    for waiters in waiting.values_mut().flat_map(BTreeMap::values_mut) {
+        waiters.sort_by(|a, b| (&a.project, &a.id).cmp(&(&b.project, &b.id)));
+    }
+    waiting
 }
 
 #[cfg(test)]
@@ -194,6 +244,88 @@ mod tests {
                 .map(|r| r.id.as_str())
                 .collect::<Vec<_>>(),
             ["dun-4.1", "dun-4.9"]
+        );
+    }
+
+    fn waiting_among(answers: &[(&str, &str)]) -> BTreeMap<String, BTreeMap<String, Vec<Related>>> {
+        let parsed: Vec<(&str, Vec<Arc<Bead>>)> = answers
+            .iter()
+            .map(|(project, rows)| (*project, parse_shared_beads(rows).expect("the rows parse")))
+            .collect();
+        let borrowed: Vec<(&str, &[Arc<Bead>])> = parsed
+            .iter()
+            .map(|(project, beads)| (*project, beads.as_slice()))
+            .collect();
+        waiting_across(&borrowed)
+    }
+
+    const FERRY_WAITING: &str = r#"[
+      {"id":"fer-2","title":"moor the barge","status":"open",
+       "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]}
+    ]"#;
+
+    const DUNWICH_WAITED_ON: &str = r#"[
+      {"id":"dun-7","title":"the one waited on","status":"open"}
+    ]"#;
+
+    /// What ferry's answer names and only dunwich's holds is a bead of
+    /// dunwich's, and the bead naming it is listed under it as ferry's.
+    #[test]
+    fn a_bead_naming_only_another_answers_bead_is_listed_under_that_bead() {
+        let waiting = waiting_among(&[("ferry", FERRY_WAITING), ("dunwich", DUNWICH_WAITED_ON)]);
+
+        assert_eq!(
+            waiting["dunwich"]["dun-7"],
+            vec![Related {
+                id: "fer-2".to_string(),
+                project: Some("ferry".to_string()),
+                edge: Edge::Blocks,
+                status: Some(Status::Open),
+                title: Some("moor the barge".to_string()),
+            }]
+        );
+        assert_eq!(waiting.len(), 1, "ferry's bead is waited on by nothing");
+    }
+
+    /// Prefixes are uncoordinated: the edge is to the answer's own bead
+    /// where it holds one, and to nothing where several others do.
+    #[test]
+    fn an_id_the_waiters_answer_holds_or_several_others_hold_names_no_other_projects_bead() {
+        let ferry_holding_a_dun_7 = r#"[
+          {"id":"dun-7","title":"ferry's own","status":"open"},
+          {"id":"fer-2","title":"moor the barge","status":"open",
+           "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}]}
+        ]"#;
+        assert_eq!(
+            waiting_among(&[
+                ("ferry", ferry_holding_a_dun_7),
+                ("dunwich", DUNWICH_WAITED_ON)
+            ]),
+            BTreeMap::new(),
+            "ferry holds a dun-7 of its own"
+        );
+        assert_eq!(
+            waiting_among(&[
+                ("ferry", FERRY_WAITING),
+                ("dunwich", DUNWICH_WAITED_ON),
+                ("harbour", DUNWICH_WAITED_ON),
+            ]),
+            BTreeMap::new(),
+            "two answers hold a dun-7, and nothing says which is meant"
+        );
+    }
+
+    /// Only a blocks edge says the other bead is waited on.
+    #[test]
+    fn an_edge_that_is_not_a_blocks_edge_lists_no_waiter_in_another_project() {
+        let ferry = r#"[
+          {"id":"fer-2","title":"moor the barge","status":"open",
+           "dependencies":[{"depends_on_id":"dun-7","type":"relates-to"}]}
+        ]"#;
+
+        assert_eq!(
+            waiting_among(&[("ferry", ferry), ("dunwich", DUNWICH_WAITED_ON)]),
+            BTreeMap::new()
         );
     }
 

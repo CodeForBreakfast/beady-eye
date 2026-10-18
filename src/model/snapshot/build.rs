@@ -29,6 +29,10 @@ use super::{
 pub struct Said<'a> {
     pub readiness: &'a Readiness,
     pub relations: &'a BTreeMap<String, Relations>,
+    /// The beads in other projects waiting on each of this project's beads,
+    /// which no answer from this project names. Nothing where no other
+    /// project was read.
+    pub waiting: Option<&'a BTreeMap<String, Vec<Related>>>,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -43,6 +47,7 @@ pub fn said_by<'a>(
         Said {
             readiness,
             relations,
+            waiting: None,
         },
     )])
 }
@@ -89,6 +94,12 @@ pub fn build_tree(
                 .cloned()
                 .unwrap_or_default();
             held_elsewhere(&mut tied.depends_on, assembled, at, project);
+            if let Some(waiting) = said
+                .and_then(|said| said.waiting)
+                .and_then(|waiting| waiting.get(&bead.id))
+            {
+                tied.blocks.extend(waiting.iter().cloned());
+            }
             let badged = badges::badges_for(bead, &badges[own]);
             let mut blocked_by = readiness
                 .and_then(|r| r.blocked_by.get(&bead.id))
