@@ -557,3 +557,64 @@ fn also_waits_on(forest: &Forest, id: &str) -> usize {
         .unwrap_or_else(|| panic!("{id} is drawn as no step: {:#?}", sketch(forest)))
         .also_waits_on
 }
+
+/// A search in the list counts the beads the list draws. `lgt-4.8` is open
+/// and waits on nothing bd called ready, and `lgt-4.7` is closed, so the
+/// list draws neither of them.
+#[test]
+fn a_search_finds_only_the_beads_the_list_draws() {
+    let mut forest = listed(lighthouse());
+    forest.apply(Action::Move(Motion::FirstRow));
+
+    assert_eq!(
+        forest.seek_here("rail"),
+        went_to("dunwich", "lgt-4.6", 1, 2)
+    );
+    assert_eq!(
+        forest.next_match(true),
+        Some(went_to("dunwich", "lgt-4.5", 2, 2))
+    );
+    assert_eq!(
+        forest.seek_here("lgt-4.8"),
+        Landed::Nowhere("lgt-4.8".into())
+    );
+}
+
+/// A term only a bead the list leaves out holds finds nothing, and the
+/// selection stays where it was.
+#[test]
+fn a_search_matching_only_beads_the_list_omits_says_nowhere() {
+    let mut forest = listed(lighthouse());
+    select_bead(&mut forest, "lgt-4.3");
+
+    assert_eq!(
+        forest.seek_here("daymark"),
+        Landed::Nowhere("daymark".into())
+    );
+    assert_eq!(cursor(&forest), Some(&key("dunwich", "lgt-4.3")));
+    assert_eq!(
+        forest.next_match(true),
+        Some(Landed::Nowhere("daymark".into()))
+    );
+}
+
+/// What an expanded row unblocks is not counted by a search, which finds the
+/// list's own rows, and a search begun on a step carries on from the row
+/// below it.
+#[test]
+fn a_search_in_the_list_passes_over_what_a_row_unblocks() {
+    let mut forest = listed(slipway());
+    select_bead(&mut forest, "slp-1.1");
+    forest.apply(Action::ExpandOrChild);
+    let step = lines_of(&forest, "slp-1.3")[0];
+    step_onto(&mut forest, step);
+
+    assert_eq!(
+        forest.seek_here("lifeboat"),
+        went_to("dunwich", "slp-1", 1, 1)
+    );
+    assert_eq!(
+        forest.seek_here("keel"),
+        went_to("dunwich", "slp-1.4", 1, 1)
+    );
+}
