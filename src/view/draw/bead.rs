@@ -612,6 +612,27 @@ mod tests {
         says(&narrow[0], "21 unfinished beads beneath ");
     }
 
+    /// A step above a ready list row says whether finishing what is beneath
+    /// it would unblock it, or how much else it waits on. Any other row says
+    /// neither.
+    #[test]
+    fn a_step_says_whether_it_would_be_unblocked() {
+        let mut freed = row(&node("smt-4kd3p.3", "lift the mast", Status::Open));
+        freed.also_waits_on = Some(0);
+        let mut waiting = freed.clone();
+        waiting.also_waits_on = Some(2);
+        let plain = row(&node("smt-4kd3p.3", "lift the mast", Status::Open));
+
+        let drawn = |row: &Row| {
+            Painted::of(bead_line(row, BRANCH, &ids(3), &Layout::default()), 80, 1).rows()
+        };
+
+        says(&drawn(&freed)[0], "would be unblocked");
+        says(&drawn(&waiting)[0], "waits on 2 more");
+        does_not_say(&drawn(&plain)[0], "would be unblocked");
+        does_not_say(&drawn(&plain)[0], "waits on");
+    }
+
     /// A leaf stands for itself alone. A fraction over one bead would say
     /// nothing its glyph has not already said, and would spend width a title
     /// needs.

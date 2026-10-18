@@ -475,11 +475,12 @@ pub fn unfinished_beneath(count: usize) -> String {
     format!("{count} unfinished {bead} beneath this")
 }
 
-/// Whether a step the ready list draws above a row is freed up once the
-/// steps beneath it finish, or how many other unfinished beads it waits on.
+/// Whether a step the ready list draws above a row would be unblocked once
+/// the steps beneath it finish, or how many other unfinished beads it waits
+/// on. "Unblocked" is bd's word, from what `bd close --suggest-next` lists.
 pub fn also_waits_on(count: usize) -> String {
     match count {
-        0 => "frees up".to_string(),
+        0 => "would be unblocked".to_string(),
         count => format!("waits on {count} more"),
     }
 }

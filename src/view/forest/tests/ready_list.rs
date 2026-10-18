@@ -351,9 +351,9 @@ fn expansion_of(forest: &Forest, id: &str) -> Vec<String> {
 
 /// Expanding a row draws what the bead holds up, then what each of those
 /// holds up, all the way to the root, hung on the forest's connectors with
-/// an arrow saying the tree reads upward. A step the expanded bead is the
-/// last thing in the way of frees up, and so does one whose only wait is
-/// on the bead beneath it; one waiting on more says how many.
+/// an arrow saying the tree reads upward. A step waiting on nothing but the
+/// steps beneath it would be unblocked, and one waiting on more says how
+/// many more.
 #[test]
 fn expanding_a_row_draws_what_it_unblocks_up_to_the_root() {
     let mut forest = listed(slipway());
@@ -366,8 +366,8 @@ fn expanding_a_row_draws_what_it_unblocks_up_to_the_root() {
         vec![
             "▾ ○ slp-1.1 drain the slipway",
             "  ├─↑ ○ slp-1 refit the lifeboat · waits on 3 more",
-            "  ├┄↑ ○ slp-1.2.1 lower the cradle · frees up",
-            "  │   └─↑ ○ slp-1.2 haul out the hull · frees up",
+            "  ├┄↑ ○ slp-1.2.1 lower the cradle · would be unblocked",
+            "  │   └─↑ ○ slp-1.2 haul out the hull · would be unblocked",
             "  │       └─↑ ○ slp-1 refit the lifeboat · waits on 2 more",
             "  └┄↑ ○ slp-1.3 launch the lifeboat · waits on 1 more",
             "      └─↑ ○ slp-1 refit the lifeboat · waits on 2 more",
@@ -453,11 +453,12 @@ fn a_waiter_under_another_root_is_drawn_up_to_its_root() {
 
     let expanded = expansion_of(&forest, "slp-1.1");
     assert!(
-        expanded.contains(&"  └┄↑ ○ slp-2.1 strip the old paint · frees up".to_string()),
+        expanded.contains(&"  └┄↑ ○ slp-2.1 strip the old paint · would be unblocked".to_string()),
         "{expanded:#?}"
     );
     assert!(
-        expanded.contains(&"      └─↑ ○ slp-2 paint the boathouse · frees up".to_string()),
+        expanded
+            .contains(&"      └─↑ ○ slp-2 paint the boathouse · would be unblocked".to_string()),
         "{expanded:#?}"
     );
 }

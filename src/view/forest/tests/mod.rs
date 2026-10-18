@@ -847,7 +847,11 @@ fn said(content: &Content) -> String {
             step.row.glyph,
             step.row.id,
             step.row.title,
-            phrase::also_waits_on(step.row.also_waits_on.expect("a step says what else it waits on"))
+            phrase::also_waits_on(
+                step.row
+                    .also_waits_on
+                    .expect("a step says what else it waits on")
+            )
         ),
     }
 }

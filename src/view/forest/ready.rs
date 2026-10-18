@@ -14,8 +14,8 @@ use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree}
 use crate::model::tree::numeric_id_order;
 use crate::model::types::{Edge, Status};
 use crate::view::lines::{
-    links_below, marker, root_key, upward_prefix, Content, Line, Note, Place, ProjectLine,
-    Section, Waiting, INDENT,
+    links_below, marker, root_key, upward_prefix, Content, Line, Note, Place, ProjectLine, Section,
+    Waiting, INDENT,
 };
 use crate::view::row;
 

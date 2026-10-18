@@ -69,7 +69,7 @@ pub struct Row {
     pub notes: Vec<String>,
     /// On a step the ready list draws above a row, how many unfinished beads
     /// the step waits on beyond the steps beneath it: none where finishing
-    /// those frees it up.
+    /// those would unblock it.
     pub also_waits_on: Option<usize>,
 }
 

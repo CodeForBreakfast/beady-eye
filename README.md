@@ -158,7 +158,9 @@ Keys to start with. `?` lists the lot.
 is in progress or has a live agent on it, each bead once and most urgent
 first. Name a bead, as in `bdi --ready dun-7`, and the list covers that bead
 and the work beneath it. The forest is one `r` away, and the list's foot
-counts the beads the forest flags.
+counts the beads the forest flags. Expand a row to see what its bead
+unblocks, up to the root, and which of those would be unblocked once it
+closes.
 
 `bdi --json` writes the same snapshot to stdout instead of drawing it. That
 is also what to reach for when stdout is not a terminal; `bdi | cat` says so and
