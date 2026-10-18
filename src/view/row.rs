@@ -67,6 +67,10 @@ pub struct Row {
     /// stopped at, unfinished work the line is shut over, a status outside
     /// bd's own set.
     pub notes: Vec<String>,
+    /// On a step the ready list draws above a row, how many unfinished beads
+    /// the step waits on beyond the steps beneath it: none where finishing
+    /// those frees it up.
+    pub also_waits_on: Option<usize>,
 }
 
 /// One cell of a bead's row, named rather than drawn: a built-in, or one
@@ -325,6 +329,7 @@ pub fn cells(
         anomalies: node.anomalies.iter().map(phrase::anomaly).collect(),
         shut_over,
         notes,
+        also_waits_on: None,
     }
 }
 

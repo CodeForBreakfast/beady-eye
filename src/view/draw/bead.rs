@@ -239,7 +239,8 @@ impl Walk<'_> {
     }
 
     /// What the row reports about itself, after whatever the layout put in
-    /// the state: the fold's counts, then the notes.
+    /// the state: the fold's counts, then the notes, then what else a step
+    /// above a ready list row waits on.
     ///
     /// After the row's own cells, because those name one bead and the counts
     /// count several: a number met before the name it belongs beside reads
@@ -271,6 +272,14 @@ impl Walk<'_> {
         }
         for note in &row.notes {
             beside(state, Span::styled(note.clone(), palette::ATTENTION));
+        }
+        if let Some(count) = row.also_waits_on {
+            let style = if count == 0 {
+                palette::STRONG
+            } else {
+                palette::QUIET
+            };
+            beside(state, Span::styled(phrase::also_waits_on(count), style));
         }
     }
 }

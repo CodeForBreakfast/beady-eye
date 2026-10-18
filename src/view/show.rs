@@ -18,7 +18,7 @@ use crate::view::draw::tone::status_style;
 use crate::view::draw::{done, key_rows};
 use crate::view::fitted::{self, cover, indent, Fitted, Link};
 use crate::view::forest::Forest;
-use crate::view::lines::Content;
+use crate::view::lines::{Content, Waiting};
 use crate::view::markdown;
 use crate::view::palette;
 use crate::view::phrase;
@@ -275,7 +275,7 @@ pub struct Page {
 /// under the bead, which the bead's own fields say nothing about.
 pub fn fraction(forest: &Forest) -> Option<Progress> {
     match &forest.lines().get(forest.selected_line())?.content {
-        Content::Bead(row) => row.progress,
+        Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => row.progress,
         _ => None,
     }
 }

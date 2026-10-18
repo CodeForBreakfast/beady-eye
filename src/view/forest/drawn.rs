@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::model::snapshot::Tree;
 use crate::view::draw::identity_widths;
-use crate::view::lines::{Content, Line};
+use crate::view::lines::{Content, Line, Waiting};
 use crate::view::row::{self, Widths};
 
 use super::facts::Facts;
@@ -156,6 +156,10 @@ impl Node {
                     place.tree == own.tree && place.steps.starts_with(&own.steps)
                 })
             }
+            (Content::Bead(_), Handle::Waiting(up)) => self.line.bead() == up.first(),
+            (Content::Waiting(step), Handle::Waiting(up)) => {
+                up.len() > step.up.len() && up.starts_with(&step.up)
+            }
             (Content::Elided { under, .. }, Handle::Bead(place) | Handle::Elided(place)) => {
                 place.tree == under.tree
                     && place.steps.len() > under.steps.len()
@@ -285,7 +289,7 @@ impl Drawn {
         let mut widest = Widths::default();
         let mut left: Vec<&Node> = self.top.iter().collect();
         while let Some(node) = left.pop() {
-            if let Content::Bead(row) = &node.line.content {
+            if let Content::Bead(row) | Content::Waiting(Waiting { row, .. }) = &node.line.content {
                 widest.merge(&identity_widths(row, layout));
             }
             match &node.beneath {

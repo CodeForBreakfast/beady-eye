@@ -475,6 +475,15 @@ pub fn unfinished_beneath(count: usize) -> String {
     format!("{count} unfinished {bead} beneath this")
 }
 
+/// Whether a step the ready list draws above a row is freed up once the
+/// steps beneath it finish, or how many other unfinished beads it waits on.
+pub fn also_waits_on(count: usize) -> String {
+    match count {
+        0 => "frees up".to_string(),
+        count => format!("waits on {count} more"),
+    }
+}
+
 /// The agents at work behind a line resting shut over them.
 ///
 /// Said as a count where the line's own agent is said by name, because the
