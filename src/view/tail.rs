@@ -70,7 +70,7 @@ pub fn target(forest: &Forest) -> Target<'_> {
     };
 
     match &line.content {
-        Content::Bead(_) => line
+        Content::Bead(_) | Content::Waiting(_) => line
             .bead()
             .and_then(|key| agent(forest.snapshot(), key))
             .map_or(Target::NoAgent, |agent| Target::Pane(&agent.pane)),

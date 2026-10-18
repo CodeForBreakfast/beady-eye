@@ -842,6 +842,22 @@ fn said(content: &Content) -> String {
         Content::Item(item) => format!("- {item:?}"),
         Content::Scoped { project } => format!("~ reading {project}"),
         Content::Section { section, count } => format!("# {section:?} {count}"),
+        Content::Waiting(waiting) => {
+            let row = &waiting.row;
+            let step = row.step.expect("a step says what else it waits on");
+            let mut said = format!(
+                "{} {} {} · {}",
+                row.glyph,
+                row.id,
+                row.title,
+                phrase::also_waits_on(step.also_waits_on)
+            );
+            if step.unblocks_as_above {
+                said.push_str(" · ");
+                said.push_str(phrase::unblocks_as_above());
+            }
+            said
+        }
     }
 }
 
@@ -1006,11 +1022,22 @@ fn together(project: &str, jsons: &[&str], panes: &[Pane]) -> Snapshot {
     ready_together(project, jsons, panes, &[])
 }
 
+/// Each root is assembled from the whole answer, as a collection assembles
+/// it, so a bead under one root can wait on a bead under another.
 fn ready_together(project: &str, jsons: &[&str], panes: &[Pane], ready: &[&str]) -> Snapshot {
-    let roots: Vec<Assembled> = jsons.iter().map(|json| assembled(json)).collect();
-    let rows: Vec<Arc<Bead>> = roots
+    let answers: Vec<Vec<Arc<Bead>>> = jsons
         .iter()
-        .flat_map(|root| root.beads.iter().cloned())
+        .map(|json| parse_shared_beads(json).expect("the rows parse"))
+        .collect();
+    let rows: Vec<Arc<Bead>> = answers.iter().flatten().cloned().collect();
+    let nesting = Nesting::of(&rows);
+    let roots: Vec<Assembled> = answers
+        .iter()
+        .map(|answer| {
+            nesting
+                .assemble(&root_row(answer))
+                .expect("the rows assemble")
+        })
         .collect();
     let cfg = cfg();
     let joined = join::resolve(

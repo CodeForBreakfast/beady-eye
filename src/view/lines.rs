@@ -40,6 +40,10 @@ const BLOCKS_ARM: char = '┄';
 /// content would then start further right for having something folded under
 /// it.
 const SHUT_IN_THE_ARM: char = '▸';
+/// Drawn into the arm's last column of a line the ready list hangs under the
+/// bead it waits on, because there the tree reads upward: each line waits on
+/// the line it hangs under, where in the forest it is part of it.
+const UP_THE_ARM: char = '↑';
 const TRUNK: &str = "│   ";
 const GAP: &str = "    ";
 
@@ -170,6 +174,19 @@ pub enum Content {
         section: Section,
         count: usize,
     },
+    /// A bead the ready list draws under an expanded row, as one that row's
+    /// bead holds up, directly or through the steps beneath it.
+    Waiting(Waiting),
+}
+
+/// One step up from a ready list row: a bead waiting on the one beneath it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    pub row: Row,
+    /// The expanded row's bead, then each bead stepped up through, this one
+    /// last. What the line is known by, because one bead can be held up
+    /// several ways and by several rows.
+    pub up: Vec<BeadKey>,
 }
 
 /// One of the ready list's two sections, in the order it draws them.
@@ -337,6 +354,16 @@ pub(crate) fn marker(open: bool) -> &'static str {
 /// rather than one row twice. Every other kind of line, and a root, hangs by
 /// no edge and takes the solid arm.
 pub(crate) fn prefix(trunk: &[bool], last: bool, shut: bool, edge: Option<&Edge>) -> String {
+    elbow(trunk, last, edge, shut.then_some(SHUT_IN_THE_ARM))
+}
+
+/// `prefix` for a line the ready list hangs under the bead it waits on: the
+/// same connectors, with the arm ending in an arrow up.
+pub(crate) fn upward_prefix(trunk: &[bool], last: bool, edge: &Edge) -> String {
+    elbow(trunk, last, Some(edge), Some(UP_THE_ARM))
+}
+
+fn elbow(trunk: &[bool], last: bool, edge: Option<&Edge>, end: Option<char>) -> String {
     let mut drawn = String::from(INDENT);
     for more in trunk {
         drawn.push_str(if *more { TRUNK } else { GAP });
@@ -347,7 +374,7 @@ pub(crate) fn prefix(trunk: &[bool], last: bool, shut: bool, edge: Option<&Edge>
     };
     drawn.push(if last { LAST } else { BRANCH });
     drawn.push(arm);
-    drawn.push(if shut { SHUT_IN_THE_ARM } else { arm });
+    drawn.push(end.unwrap_or(arm));
     drawn.push(' ');
     drawn
 }

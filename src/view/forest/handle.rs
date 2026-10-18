@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::join::Conflict;
+use crate::model::join::{BeadKey, Conflict};
 use crate::model::snapshot::Tree;
 use crate::model::types::PaneKey;
 use crate::view::lines::{root_key, Content, GroupKind, Item, Line, Place};
@@ -32,6 +32,9 @@ pub(super) enum Handle {
     Item(ItemKey),
     /// A project, by its name, which the config makes unique.
     Project(String),
+    /// A step above a ready list row, by the beads stepped up through from
+    /// the row's.
+    Waiting(Vec<BeadKey>),
 }
 
 /// What one thing in a group is known by.
@@ -302,6 +305,7 @@ pub(super) fn handle_of(line: &Line) -> Option<Handle> {
         Content::Elided { under, .. } => Some(Handle::Elided(under.clone())),
         Content::Group(group) => Some(Handle::Group(group.kind, group.project.clone())),
         Content::Item(item) => item_key(item).map(Handle::Item),
+        Content::Waiting(step) => Some(Handle::Waiting(step.up.clone())),
         Content::Orphaned(_)
         | Content::Note(_)
         | Content::Scoped { .. }
@@ -336,6 +340,7 @@ pub(super) fn names(line: &Line, handle: &Handle) -> bool {
             group.kind == *kind && group.project == *project
         }
         (Handle::Item(key), Content::Item(item)) => item_key(item).as_ref() == Some(key),
+        (Handle::Waiting(up), Content::Waiting(step)) => step.up == *up,
         _ => false,
     }
 }

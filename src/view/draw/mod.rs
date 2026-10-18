@@ -26,7 +26,7 @@ use crate::app::Awaited;
 use crate::model::types::PaneStatus;
 use crate::view::fitted::{Fitted, GAP};
 use crate::view::forest::Forest;
-use crate::view::lines::{self, Content, Note, ProjectLine};
+use crate::view::lines::{self, Content, Note, ProjectLine, Waiting};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::query::Query;
@@ -203,7 +203,9 @@ pub(super) fn fitted(
         }
         Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
         Content::Absent(absent) => absent_line(absent, &line.prefix, widths.of(&Cell::Id)),
-        Content::Bead(row) => bead_line(row, &line.prefix, widths, layout),
+        Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
+            bead_line(row, &line.prefix, widths, layout)
+        }
         Content::Elided { count, .. } => elided_run(&line.prefix, *count),
         Content::Orphaned(orphaned) => orphaned_line(orphaned, &line.prefix, widths.of(&Cell::Id)),
         Content::Note(note) => {

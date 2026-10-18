@@ -118,6 +118,11 @@ pub struct Forest {
     /// Whether the ready list is drawn in place of the trees. The reader's,
     /// so a refresh keeps it as it keeps the folds.
     ready_list: bool,
+    /// The ready list's rows the reader has expanded to what they unblock.
+    /// Apart from `folds`, because expanding a bead in the forest means what
+    /// must finish first, and the list draws each bead once, so the bead
+    /// names the row.
+    unblocking: BTreeSet<BeadKey>,
 }
 
 /// Flatten a snapshot into its lines.
@@ -141,6 +146,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         searched: None,
         layout: row::Layout::default(),
         ready_list: false,
+        unblocking: BTreeSet::new(),
     };
     forest.lay_out();
     forest.select_first_root();
@@ -583,6 +589,17 @@ impl Forest {
                 self.toggle_fold();
                 true
             }
+            Action::ExpandSubtree
+            | Action::CollapseSubtree
+            | Action::RestoreSubtree
+            | Action::ExpandForest
+            | Action::CollapseForest
+            | Action::RestoreDefault
+                if self.ready_list =>
+            {
+                self.fold_the_list(action);
+                true
+            }
             Action::ExpandSubtree => {
                 self.fold_subtree(true);
                 true
@@ -1012,7 +1029,55 @@ impl Forest {
         if let (Some(open), Some(handle)) =
             (self.fold_at(self.selected), self.handle_at(self.selected))
         {
-            self.folds.set(handle, !open);
+            self.point(handle, !open);
+        }
+    }
+
+    /// Point one fold the way the reader asked: a ready list row's at what
+    /// it unblocks, and any other line's as the forest's folds hold it.
+    fn point(&mut self, handle: Handle, open: bool) {
+        match handle {
+            Handle::Bead(place) if self.ready_list => {
+                let bead = place.key().clone();
+                if open {
+                    self.unblocking.insert(bead);
+                } else {
+                    self.unblocking.remove(&bead);
+                }
+            }
+            handle => self.folds.set(handle, open),
+        }
+    }
+
+    /// A key that points many folds, pressed in the ready list: it points
+    /// the selected row's expansion, or every row's, and leaves the forest's
+    /// folds as they are. A row rests shut, so putting one back shuts it.
+    fn fold_the_list(&mut self, action: Action) {
+        let selected = self
+            .lines
+            .get(self.selected)
+            .filter(|line| line.folded.is_some())
+            .and_then(Line::bead)
+            .cloned();
+        match action {
+            Action::ExpandSubtree => self.unblocking.extend(selected),
+            Action::CollapseSubtree | Action::RestoreSubtree => {
+                if let Some(bead) = selected {
+                    self.unblocking.remove(&bead);
+                }
+            }
+            Action::ExpandForest => {
+                let rows: Vec<BeadKey> = self
+                    .lines
+                    .iter()
+                    .filter(|line| line.folded.is_some())
+                    .filter_map(Line::bead)
+                    .cloned()
+                    .collect();
+                self.unblocking.extend(rows);
+            }
+            Action::CollapseForest | Action::RestoreDefault => self.unblocking.clear(),
+            _ => {}
         }
     }
 
@@ -1021,7 +1086,7 @@ impl Forest {
     fn collapse_or_parent(&mut self) -> bool {
         match (self.fold_at(self.selected), self.handle_at(self.selected)) {
             (Some(true), Some(handle)) => {
-                self.folds.set(handle, false);
+                self.point(handle, false);
                 true
             }
             _ => {
@@ -1036,7 +1101,7 @@ impl Forest {
     fn expand_or_child(&mut self) -> bool {
         match (self.fold_at(self.selected), self.handle_at(self.selected)) {
             (Some(false), Some(handle)) => {
-                self.folds.set(handle, true);
+                self.point(handle, true);
                 true
             }
             _ => {
@@ -1608,11 +1673,18 @@ impl Forest {
     /// the bead it was holding wherever the list draws that bead, and on the
     /// nearest line where the list draws it nowhere.
     fn lay_out_ready_list(&mut self) -> Drawn {
-        let drawn = ready::lay_out(&self.snapshot, &self.facts, &self.rooted(), &self.layout);
+        let drawn = ready::lay_out(
+            &self.snapshot,
+            &self.facts,
+            &self.rooted(),
+            &self.unblocking,
+            &self.layout,
+        );
         let was = std::mem::replace(&mut self.lines, drawn);
         if self.find_cursor().is_none() {
             let on = match &self.cursor {
                 Some(Handle::Bead(place)) => Some(place.key().clone()),
+                Some(Handle::Waiting(up)) => up.first().cloned(),
                 _ => None,
             };
             self.cursor = on
@@ -1691,6 +1763,9 @@ impl Forest {
             Handle::Project(project) => {
                 layout::project_drawn(&self.snapshot, project, &self.rooted())
             }
+            // Only laying the list out finds one again, and where it does not,
+            // the selection falls back to the row the step was expanded from.
+            Handle::Waiting(_) => self.ready_list,
         }
     }
 

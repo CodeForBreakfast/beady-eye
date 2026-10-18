@@ -86,6 +86,8 @@ coin one — and say so.**
 | **finished** | *coined* | a branch every bead of which is closed, with no agent and no anomaly anywhere beneath it — the whole branch, not merely its head. beads has *closed*, which is one bead's status; this is a claim about a subtree. |
 | **run** | *coined* | several finished siblings drawn as one counted line — the code calls the line *elided* and the siblings a run. Neither project draws one. |
 | **ready list** | *coined*, after `bd ready` | the view drawn in place of the forest that lists what a reader could pick up now and what is being worked, each bead once (see *The ready list*). beads has `bd ready`, which answers one tracker's ready beads and draws no view; neither project has a view of them. |
+| unblocked | beads (`bd close --suggest-next`'s "Newly unblocked") | a bead whose last unfinished dependency has closed. The ready list says a step above a row *would be unblocked* once the beads on its way up close (see *The ready list*). |
+| **way up** | *coined* | the beads stepped through from a ready list row's bead to a line in what it unblocks. The way down turned round: it tells apart the lines of a bead reached more than once, holds the selection, and is where a loop is cut. |
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
@@ -3587,6 +3589,48 @@ waiting on work no tracker holds, and the loops the walk cut. Then it counts
 the roots whose tracker gave no rows and the projects that could not be read
 at all. A refresh keeps the list, as it keeps
 the filter and the folds.
+
+**Expanding a row shows what its bead unblocks.** A list row has no children
+to open, so expanding one draws what its bead holds up instead. That is the
+forest's rule for what must finish first, turned round. The forest hangs a
+child under its parent and a blocker under the bead it blocks, so a bead holds
+up its parent and the beads it blocks, and those hold up theirs, all the way to
+each root, in every tree read. Each step hangs on the forest's connectors,
+solid for a parent and dashed for a bead it blocks, and the arm ends in `↑`
+because this tree reads upward. A row with nothing unfinished waiting on it has
+no fold.
+
+```
+Ready · 3
+  ○ slp-1      refit the lifeboat
+▾ ○ slp-1.1    drain the slipway
+  ├─↑ ○ slp-1      refit the lifeboat          waits on 3 more
+  ├┄↑ ○ slp-1.2.1  lower the cradle            would be unblocked
+  │   └─↑ ○ slp-1.2  haul out the hull         would be unblocked
+  │       └─↑ ○ slp-1  refit the lifeboat      waits on 2 more
+  └┄↑ ○ slp-1.3    launch the lifeboat         waits on 1 more
+      └─↑ ○ slp-1  refit the lifeboat          waits on 2 more
+▸ ○ slp-1.4    order the new keel
+```
+
+**Each step says whether it would be unblocked.** A step would be unblocked
+when the only unfinished beads it waits on are the ones on its way up: the
+steps beneath it and the expanded bead. On the first step up, that is bd's
+*newly unblocked*: closing the expanded bead unblocks it. Further up, a run of
+steps marked so is a chain that closing the expanded bead sets off, each step
+unblocked as the one beneath it finishes. A step waiting on anything else says
+how many more beads, counting a blocker no tracker holds that may be
+unfinished.
+
+**The expansion is the list's own.** Expanding a row opens nothing in the
+forest, where expanding a bead means what must finish first. An expanded row
+stays expanded through a refresh and a trip to the forest and back. A bead the
+walk reaches by several ways up is drawn once for each, and the selection
+holds the way up it is on. What that bead unblocks is drawn under its first
+line alone, and each later line says *unblocks as above*. Diamonds in the
+dependencies multiply the ways up, so drawing it again under each would grow
+the expansion with the ways up rather than with the edges. Each step is a
+bead's row to the bead window, the tail and the agent annotation.
 
 ### Keys
 
