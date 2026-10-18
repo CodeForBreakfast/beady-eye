@@ -67,10 +67,20 @@ pub struct Row {
     /// stopped at, unfinished work the line is shut over, a status outside
     /// bd's own set.
     pub notes: Vec<String>,
-    /// On a step the ready list draws above a row, how many unfinished beads
-    /// the step waits on beyond the steps beneath it: none where finishing
-    /// those would unblock it.
-    pub also_waits_on: Option<usize>,
+    /// What a step the ready list draws above a row says of itself, on such
+    /// a step alone.
+    pub step: Option<Step>,
+}
+
+/// What a step above a ready list row says beside the bead's own cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Step {
+    /// How many unfinished beads the step waits on beyond the steps beneath
+    /// it: none where finishing those would unblock it.
+    pub also_waits_on: usize,
+    /// Whether what the bead unblocks is drawn under an earlier line for it
+    /// rather than under this one.
+    pub unblocks_as_above: bool,
 }
 
 /// One cell of a bead's row, named rather than drawn: a built-in, or one
@@ -329,7 +339,7 @@ pub fn cells(
         anomalies: node.anomalies.iter().map(phrase::anomaly).collect(),
         shut_over,
         notes,
-        also_waits_on: None,
+        step: None,
     }
 }
 

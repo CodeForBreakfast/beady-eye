@@ -17,7 +17,7 @@ use crate::view::lines::{
     links_below, marker, root_key, upward_prefix, Content, Line, Note, Place, ProjectLine, Section,
     Waiting, INDENT,
 };
-use crate::view::row;
+use crate::view::row::{self, Step};
 
 use super::drawn::{Drawn, Node};
 use super::facts::Facts;
@@ -105,7 +105,8 @@ pub(super) fn lay_out(
                 line.folded = Some(open);
                 line.prefix = marker(open).to_string();
                 if open {
-                    return Node::drawn(line, up.steps_above(&from, &[]));
+                    let steps = up.steps_above(&from, &[], &mut BTreeSet::new());
+                    return Node::drawn(line, steps);
                 }
             }
             drawn(line)
@@ -261,33 +262,51 @@ impl<'a> Up<'a> {
 
     /// A line for each bead waiting on the last bead of `up`, hung on an
     /// arrow up, with the lines for what waits on it beneath it in turn.
-    fn steps_above(&self, up: &[BeadKey], trunk: &[bool]) -> Vec<Node> {
+    ///
+    /// What a bead unblocks is drawn under its first line in the expansion
+    /// alone, and `drawn` is the beads that have had theirs. A bead is drawn
+    /// once for every way up to it, and diamonds in the dependencies make
+    /// the ways up multiply, so drawing each one's steps above again would
+    /// grow with the ways up rather than with the edges.
+    fn steps_above(
+        &self,
+        up: &[BeadKey],
+        trunk: &[bool],
+        drawn: &mut BTreeSet<BeadKey>,
+    ) -> Vec<Node> {
         let waiting = self.waiting_on(up);
         let count = waiting.len();
-        waiting
-            .into_iter()
-            .enumerate()
-            .map(|(nth, (bead, edge))| {
-                let last = nth + 1 == count;
-                let mut stepped = up.to_vec();
-                stepped.push(bead.key());
-                let mut row = row::cells(bead, None, None, None);
-                row.also_waits_on = Some(self.also_waits_on(&stepped));
-                let line = Line {
-                    prefix: upward_prefix(trunk, last, edge),
-                    depth: trunk.len() as u16 + 2,
-                    folded: None,
-                    place: self.place_of(&bead.key()),
-                    content: Content::Waiting(Waiting {
-                        row,
-                        up: stepped.clone(),
-                    }),
-                };
+        let mut steps = Vec::with_capacity(count);
+        for (nth, (bead, edge)) in waiting.into_iter().enumerate() {
+            let last = nth + 1 == count;
+            let mut stepped = up.to_vec();
+            stepped.push(bead.key());
+            let first = drawn.insert(bead.key());
+            let mut row = row::cells(bead, None, None, None);
+            row.step = Some(Step {
+                also_waits_on: self.also_waits_on(&stepped),
+                unblocks_as_above: !first && !self.waiting_on(&stepped).is_empty(),
+            });
+            let line = Line {
+                prefix: upward_prefix(trunk, last, edge),
+                depth: trunk.len() as u16 + 2,
+                folded: None,
+                place: self.place_of(&bead.key()),
+                content: Content::Waiting(Waiting {
+                    row,
+                    up: stepped.clone(),
+                }),
+            };
+            let above = if first {
                 let mut beneath = trunk.to_vec();
                 beneath.push(!last);
-                Node::drawn(line, self.steps_above(&stepped, &beneath))
-            })
-            .collect()
+                self.steps_above(&stepped, &beneath, drawn)
+            } else {
+                Vec::new()
+            };
+            steps.push(Node::drawn(line, above));
+        }
+        steps
     }
 
     /// How many unfinished beads the last bead of `up` waits on besides the

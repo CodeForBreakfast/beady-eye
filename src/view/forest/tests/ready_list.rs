@@ -330,6 +330,29 @@ const BOATHOUSE: &str = r#"[
 
 const SLIPWAY_READY: &[&str] = &["slp-1", "slp-1.1", "slp-1.4"];
 
+/// A diamond: pouring the footings blocks the mast and the jib, and the lift
+/// test waits on both of them.
+const CRANE: &str = r#"[
+  {"id":"slp-3","title":"rig the crane","status":"open",
+   "priority":2,"issue_type":"epic","created_at":"2026-09-10T09:00:00Z"},
+  {"id":"slp-3.1","title":"pour the footings","status":"open",
+   "dependencies":[{"depends_on_id":"slp-3","type":"parent-child"}],
+   "priority":2,"issue_type":"task","created_at":"2026-09-11T09:00:00Z"},
+  {"id":"slp-3.2","title":"raise the mast","status":"open",
+   "dependencies":[{"depends_on_id":"slp-3","type":"parent-child"},
+                   {"depends_on_id":"slp-3.1","type":"blocks"}],
+   "priority":2,"issue_type":"task","created_at":"2026-09-12T09:00:00Z"},
+  {"id":"slp-3.3","title":"fit the jib","status":"open",
+   "dependencies":[{"depends_on_id":"slp-3","type":"parent-child"},
+                   {"depends_on_id":"slp-3.1","type":"blocks"}],
+   "priority":2,"issue_type":"task","created_at":"2026-09-13T09:00:00Z"},
+  {"id":"slp-3.4","title":"test the lift","status":"open",
+   "dependencies":[{"depends_on_id":"slp-3","type":"parent-child"},
+                   {"depends_on_id":"slp-3.2","type":"blocks"},
+                   {"depends_on_id":"slp-3.3","type":"blocks"}],
+   "priority":2,"issue_type":"task","created_at":"2026-09-14T09:00:00Z"}
+]"#;
+
 fn slipway() -> Snapshot {
     ready_alone("dunwich", SLIPWAY, &[], SLIPWAY_READY)
 }
@@ -375,6 +398,33 @@ fn expanding_a_row_draws_what_it_unblocks_up_to_the_root() {
     );
 }
 
+/// A bead reached by two ways up is drawn on each, and what it unblocks is
+/// drawn under its first line alone, so an expansion grows with the edges
+/// above the bead rather than with the ways up them. The later line says
+/// where the rest is.
+#[test]
+fn what_a_bead_reached_twice_unblocks_is_drawn_once() {
+    let mut forest = listed(ready_alone("dunwich", CRANE, &[], &["slp-3", "slp-3.1"]));
+    select_bead(&mut forest, "slp-3.1");
+
+    forest.apply(Action::ExpandOrChild);
+
+    assert_eq!(
+        expansion_of(&forest, "slp-3.1"),
+        vec![
+            "▾ ○ slp-3.1 pour the footings",
+            "  ├─↑ ○ slp-3 rig the crane · waits on 3 more",
+            "  ├┄↑ ○ slp-3.2 raise the mast · would be unblocked",
+            "  │   ├─↑ ○ slp-3 rig the crane · waits on 2 more",
+            "  │   └┄↑ ○ slp-3.4 test the lift · waits on 1 more",
+            "  │       └─↑ ○ slp-3 rig the crane · waits on 1 more",
+            "  └┄↑ ○ slp-3.3 fit the jib · would be unblocked",
+            "      ├─↑ ○ slp-3 rig the crane · waits on 2 more",
+            "      └┄↑ ○ slp-3.4 test the lift · waits on 1 more · unblocks as above",
+        ]
+    );
+}
+
 /// The mark is a count of what else is in the way, so a step the expanded
 /// bead alone holds up and one still waiting on another unfinished bead are
 /// told apart by the row itself.
@@ -384,8 +434,8 @@ fn a_step_the_bead_alone_holds_up_is_marked_apart_from_one_waiting_on_more() {
     select_bead(&mut forest, "slp-1.1");
     forest.apply(Action::ExpandOrChild);
 
-    assert_eq!(step_of(&forest, "slp-1.2.1").also_waits_on, Some(0));
-    assert_eq!(step_of(&forest, "slp-1.3").also_waits_on, Some(1));
+    assert_eq!(also_waits_on(&forest, "slp-1.2.1"), 0);
+    assert_eq!(also_waits_on(&forest, "slp-1.3"), 1);
 }
 
 /// A row starts shut, a row with nothing waiting on it has nothing to
@@ -494,14 +544,16 @@ fn a_waiter_under_another_root_is_drawn_up_to_its_root() {
     );
 }
 
-/// The row a step is drawn on, found by the whole id its line carries.
-fn step_of<'a>(forest: &'a Forest, id: &str) -> &'a Row {
+/// How many more beads the first step drawn for a bead says it waits on,
+/// found by the whole id its line carries.
+fn also_waits_on(forest: &Forest, id: &str) -> usize {
     forest
         .lines()
         .iter()
         .find_map(|line| match (line.bead(), &line.content) {
-            (Some(bead), Content::Waiting(step)) if bead.id == id => Some(&step.row),
+            (Some(bead), Content::Waiting(waiting)) if bead.id == id => waiting.row.step,
             _ => None,
         })
         .unwrap_or_else(|| panic!("{id} is drawn as no step: {:#?}", sketch(forest)))
+        .also_waits_on
 }

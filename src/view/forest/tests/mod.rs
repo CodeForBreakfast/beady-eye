@@ -842,17 +842,22 @@ fn said(content: &Content) -> String {
         Content::Item(item) => format!("- {item:?}"),
         Content::Scoped { project } => format!("~ reading {project}"),
         Content::Section { section, count } => format!("# {section:?} {count}"),
-        Content::Waiting(step) => format!(
-            "{} {} {} · {}",
-            step.row.glyph,
-            step.row.id,
-            step.row.title,
-            phrase::also_waits_on(
-                step.row
-                    .also_waits_on
-                    .expect("a step says what else it waits on")
-            )
-        ),
+        Content::Waiting(waiting) => {
+            let row = &waiting.row;
+            let step = row.step.expect("a step says what else it waits on");
+            let mut said = format!(
+                "{} {} {} · {}",
+                row.glyph,
+                row.id,
+                row.title,
+                phrase::also_waits_on(step.also_waits_on)
+            );
+            if step.unblocks_as_above {
+                said.push_str(" · ");
+                said.push_str(phrase::unblocks_as_above());
+            }
+            said
+        }
     }
 }
 

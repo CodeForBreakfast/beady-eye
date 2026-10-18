@@ -3626,8 +3626,11 @@ unfinished.
 forest, where expanding a bead means what must finish first. An expanded row
 stays expanded through a refresh and a trip to the forest and back. A bead the
 walk reaches by several ways up is drawn once for each, and the selection
-holds the way up it is on. Each step is a bead's row to the bead window, the
-tail and the agent annotation.
+holds the way up it is on. What that bead unblocks is drawn under its first
+line alone, and each later line says *unblocks as above*. Diamonds in the
+dependencies multiply the ways up, so drawing it again under each would grow
+the expansion with the ways up rather than with the edges. Each step is a
+bead's row to the bead window, the tail and the agent annotation.
 
 ### Keys
 

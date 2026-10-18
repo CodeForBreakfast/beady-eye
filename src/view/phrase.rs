@@ -485,6 +485,12 @@ pub fn also_waits_on(count: usize) -> String {
     }
 }
 
+/// A step the ready list draws a second time in one expansion, whose own
+/// steps above are drawn under its first line.
+pub fn unblocks_as_above() -> &'static str {
+    "unblocks as above"
+}
+
 /// The agents at work behind a line resting shut over them.
 ///
 /// Said as a count where the line's own agent is said by name, because the

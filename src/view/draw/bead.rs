@@ -273,13 +273,20 @@ impl Walk<'_> {
         for note in &row.notes {
             beside(state, Span::styled(note.clone(), palette::ATTENTION));
         }
-        if let Some(count) = row.also_waits_on {
-            let style = if count == 0 {
+        if let Some(step) = row.step {
+            let style = if step.also_waits_on == 0 {
                 palette::STRONG
             } else {
                 palette::QUIET
             };
-            beside(state, Span::styled(phrase::also_waits_on(count), style));
+            let said = phrase::also_waits_on(step.also_waits_on);
+            beside(state, Span::styled(said, style));
+            if step.unblocks_as_above {
+                beside(
+                    state,
+                    Span::styled(phrase::unblocks_as_above(), palette::QUIET),
+                );
+            }
         }
     }
 }
@@ -613,22 +620,28 @@ mod tests {
     }
 
     /// A step above a ready list row says whether finishing what is beneath
-    /// it would unblock it, or how much else it waits on. Any other row says
-    /// neither.
+    /// it would unblock it, or how much else it waits on, and where what it
+    /// unblocks is drawn under an earlier line. Any other row says none of
+    /// it.
     #[test]
     fn a_step_says_whether_it_would_be_unblocked() {
-        let mut freed = row(&node("smt-4kd3p.3", "lift the mast", Status::Open));
-        freed.also_waits_on = Some(0);
-        let mut waiting = freed.clone();
-        waiting.also_waits_on = Some(2);
         let plain = row(&node("smt-4kd3p.3", "lift the mast", Status::Open));
-
-        let drawn = |row: &Row| {
-            Painted::of(bead_line(row, BRANCH, &ids(3), &Layout::default()), 80, 1).rows()
+        let step = |also_waits_on, unblocks_as_above| Row {
+            step: Some(row::Step {
+                also_waits_on,
+                unblocks_as_above,
+            }),
+            ..plain.clone()
         };
 
-        says(&drawn(&freed)[0], "would be unblocked");
-        says(&drawn(&waiting)[0], "waits on 2 more");
+        let drawn = |row: &Row| {
+            Painted::of(bead_line(row, BRANCH, &ids(3), &Layout::default()), 100, 1).rows()
+        };
+
+        says(&drawn(&step(0, false))[0], "would be unblocked");
+        does_not_say(&drawn(&step(0, false))[0], "unblocks as above");
+        says(&drawn(&step(2, true))[0], "waits on 2 more");
+        says(&drawn(&step(2, true))[0], "unblocks as above");
         does_not_say(&drawn(&plain)[0], "would be unblocked");
         does_not_say(&drawn(&plain)[0], "waits on");
     }
