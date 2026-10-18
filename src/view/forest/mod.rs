@@ -589,6 +589,17 @@ impl Forest {
                 self.toggle_fold();
                 true
             }
+            Action::ExpandSubtree
+            | Action::CollapseSubtree
+            | Action::RestoreSubtree
+            | Action::ExpandForest
+            | Action::CollapseForest
+            | Action::RestoreDefault
+                if self.ready_list =>
+            {
+                self.fold_the_list(action);
+                true
+            }
             Action::ExpandSubtree => {
                 self.fold_subtree(true);
                 true
@@ -1035,6 +1046,38 @@ impl Forest {
                 }
             }
             handle => self.folds.set(handle, open),
+        }
+    }
+
+    /// A key that points many folds, pressed in the ready list: it points
+    /// the selected row's expansion, or every row's, and leaves the forest's
+    /// folds as they are. A row rests shut, so putting one back shuts it.
+    fn fold_the_list(&mut self, action: Action) {
+        let selected = self
+            .lines
+            .get(self.selected)
+            .filter(|line| line.folded.is_some())
+            .and_then(Line::bead)
+            .cloned();
+        match action {
+            Action::ExpandSubtree => self.unblocking.extend(selected),
+            Action::CollapseSubtree | Action::RestoreSubtree => {
+                if let Some(bead) = selected {
+                    self.unblocking.remove(&bead);
+                }
+            }
+            Action::ExpandForest => {
+                let rows: Vec<BeadKey> = self
+                    .lines
+                    .iter()
+                    .filter(|line| line.folded.is_some())
+                    .filter_map(Line::bead)
+                    .cloned()
+                    .collect();
+                self.unblocking.extend(rows);
+            }
+            Action::CollapseForest | Action::RestoreDefault => self.unblocking.clear(),
+            _ => {}
         }
     }
 

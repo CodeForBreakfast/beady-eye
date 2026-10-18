@@ -419,6 +419,37 @@ fn expanding_a_row_leaves_the_forest_as_it_was() {
     assert_eq!(sketch(&forest), trees);
 }
 
+/// The keys that point many folds point the list's rows while it is up: the
+/// selected row's, or every row's, and putting one back shuts it, which is
+/// how a row rests. The forest's folds are left as they were.
+#[test]
+fn the_keys_over_many_folds_point_the_lists_rows() {
+    let mut forest = flatten(slipway());
+    let trees = sketch(&forest);
+    forest.apply(Action::ToggleReadyList);
+    let rows = |forest: &Forest| resting_open(forest);
+    select_bead(&mut forest, "slp-1.1");
+
+    forest.apply(Action::ExpandSubtree);
+    assert_eq!(rows(&forest), ["slp-1.1"]);
+    forest.apply(Action::CollapseSubtree);
+    assert!(rows(&forest).is_empty());
+    forest.apply(Action::ExpandForest);
+    assert_eq!(rows(&forest), ["slp-1.1", "slp-1.4"]);
+    select_bead(&mut forest, "slp-1.4");
+    forest.apply(Action::RestoreSubtree);
+    assert_eq!(rows(&forest), ["slp-1.1"]);
+    forest.apply(Action::ExpandForest);
+    forest.apply(Action::CollapseForest);
+    assert!(rows(&forest).is_empty());
+    forest.apply(Action::ExpandForest);
+    forest.apply(Action::RestoreDefault);
+    assert!(rows(&forest).is_empty());
+
+    forest.apply(Action::ToggleReadyList);
+    assert_eq!(sketch(&forest), trees);
+}
+
 /// A bead the expansion reaches more than one way is drawn on several
 /// lines, and the selection keeps to the one it is on through a
 /// collection landing.
