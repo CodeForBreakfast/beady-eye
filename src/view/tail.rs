@@ -82,7 +82,8 @@ pub fn target(forest: &Forest) -> Target<'_> {
         | Content::Orphaned(_)
         | Content::Note(_)
         | Content::Group(_)
-        | Content::Scoped { .. } => Target::NotABead,
+        | Content::Scoped { .. }
+        | Content::Section { .. } => Target::NotABead,
     }
 }
 

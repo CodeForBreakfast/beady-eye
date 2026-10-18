@@ -95,6 +95,8 @@ pub enum Action {
     CycleSpineForest,
     /// Show every tree, rather than only those with a live agent.
     ToggleFilter,
+    /// Draw the ready list in place of the forest, or put the forest back.
+    ToggleReadyList,
     /// Hide the tail and give its rows to the forest, or bring it back.
     ToggleTail,
     /// Focus the selected bead's pane in herdr.

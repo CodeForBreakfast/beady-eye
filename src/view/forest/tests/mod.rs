@@ -40,6 +40,7 @@ mod motion;
 mod other_projects;
 mod progress;
 mod projects;
+mod ready_list;
 mod refused;
 mod runs;
 mod searching;
@@ -840,6 +841,7 @@ fn said(content: &Content) -> String {
         ),
         Content::Item(item) => format!("- {item:?}"),
         Content::Scoped { project } => format!("~ reading {project}"),
+        Content::Section { section, count } => format!("# {section:?} {count}"),
     }
 }
 
@@ -1264,9 +1266,13 @@ fn on_screen(forest: &Forest) -> Reported {
             Content::Note(note) => match note {
                 Note::OrphanedDependencies(n) => found.orphaned_dependencies += n,
                 Note::Cycle(n) => found.cycles += n,
+                Note::FailedProjects(n) => found.failed_projects += n,
                 // A property of the drawing rather than a finding in the
                 // snapshot, so there is no count for it to reach.
                 Note::NoRoots => {}
+                // The ready list's count of what the forest draws, which is
+                // where each of them is reported.
+                Note::ToCheck(_) | Note::Unread(_) => {}
             },
             Content::Group(Group { kind, count, .. }) => match kind {
                 GroupKind::Conflicts => found.conflicts += count,

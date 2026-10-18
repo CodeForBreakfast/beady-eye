@@ -92,6 +92,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: Some("keys"),
     },
     Binding {
+        keys: &[alone(KeyCode::Char('r'), "r")],
+        action: Action::ToggleReadyList,
+        does: "list the ready and in-progress beads, or put the forest back",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Char('s'), "s")],
         action: Action::CycleSpine,
         does: "cycle which copy of a bead opens, under the selected node",
@@ -544,6 +550,7 @@ pub(super) mod tests {
             Action::CycleSpine,
             Action::CycleSpineForest,
             Action::ToggleFilter,
+            Action::ToggleReadyList,
             Action::ToggleTail,
             Action::Focus,
             Action::FocusForest,
@@ -581,6 +588,7 @@ pub(super) mod tests {
                 | Action::CycleSpine
                 | Action::CycleSpineForest
                 | Action::ToggleFilter
+                | Action::ToggleReadyList
                 | Action::ToggleTail
                 | Action::Focus
                 | Action::FocusForest
@@ -813,6 +821,7 @@ pub(super) mod tests {
             (key(KeyCode::Esc), Action::Back),
             (key(KeyCode::Char('y')), Action::CopyId),
             (key(KeyCode::Char('a')), Action::ToggleFilter),
+            (key(KeyCode::Char('r')), Action::ToggleReadyList),
             (key(KeyCode::Char('s')), Action::CycleSpine),
             (key(KeyCode::Char('S')), Action::CycleSpineForest),
             (key(KeyCode::Char('F')), Action::FocusForest),
@@ -937,11 +946,7 @@ pub(super) mod tests {
     /// their own, and a key nothing is bound to asks for nothing.
     #[test]
     fn a_key_bound_to_nothing_asks_for_nothing() {
-        for pressed in [
-            key(KeyCode::Char('u')),
-            key(KeyCode::Char('r')),
-            key(KeyCode::Char('z')),
-        ] {
+        for pressed in [key(KeyCode::Char('u')), key(KeyCode::Char('z'))] {
             assert_eq!(action(pressed), None, "for {pressed:?}");
         }
     }
@@ -952,5 +957,6 @@ pub(super) mod tests {
     fn a_control_key_does_not_answer_for_the_letter_under_it() {
         assert_ne!(action(control('c')), action(key(KeyCode::Char('c'))));
         assert_ne!(action(control('d')), action(key(KeyCode::Char('d'))));
+        assert_ne!(action(control('r')), action(key(KeyCode::Char('r'))));
     }
 }
