@@ -267,3 +267,25 @@ fn a_tree_that_would_not_read_is_said_at_the_foot() {
         "{foot:#?}"
     );
 }
+
+/// The foot of the screen's lines, as the sketch draws them.
+fn foot_of(forest: &Forest) -> Vec<String> {
+    sketch(forest)
+        .into_iter()
+        .filter(|line| line.starts_with('!'))
+        .collect()
+}
+
+/// A bead waiting on work no tracker holds, and a loop the walk cut, are
+/// said at the foot as the forest says them under their tree.
+#[test]
+fn an_orphaned_dependency_and_a_loop_are_said_at_the_foot() {
+    let orphaned = foot_of(&listed(snapshot()));
+    let looped = foot_of(&listed(alone("dunwich", LOOPED, &panes_on(&["cyc-1.1"]))));
+
+    assert!(
+        orphaned.contains(&"! OrphanedDependencies(1)".to_string()),
+        "{orphaned:#?}"
+    );
+    assert!(looped.contains(&"! Cycle(1)".to_string()), "{looped:#?}");
+}

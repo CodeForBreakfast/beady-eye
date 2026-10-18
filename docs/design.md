@@ -3582,8 +3582,10 @@ after, and the forest opens out to wherever it draws it.
 the list, saying how fresh its rows are, so a list on its way from the trackers
 does not read as an empty one. The foot counts the beads the covered trees
 carry an anomaly on, listed or not, with the forest one key away to say what is
-wrong with them. It also counts the roots whose tracker gave no rows and the
-projects that could not be read at all. A refresh keeps the list, as it keeps
+wrong with them. It also counts what the forest says under a tree: the beads
+waiting on work no tracker holds, and the loops the walk cut. Then it counts
+the roots whose tracker gave no rows and the projects that could not be read
+at all. A refresh keeps the list, as it keeps
 the filter and the folds.
 
 ### Keys

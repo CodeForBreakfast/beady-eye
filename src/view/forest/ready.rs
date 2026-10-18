@@ -95,9 +95,19 @@ pub(super) fn lay_out(
         );
     }
     let to_check = Counts::over(reached.values().map(|(bead, _, _)| *bead)).anomalies;
+    let orphaned = reached
+        .values()
+        .filter(|(bead, tree, _)| tree.orphaned_dependencies.contains(&bead.id))
+        .count();
+    let looped = reached
+        .values()
+        .filter(|(bead, tree, _)| tree.cycles.contains(&bead.id))
+        .count();
     let failed = snapshot.failed_projects.len();
     for (count, note) in [
         (to_check, Note::ToCheck(to_check)),
+        (orphaned, Note::OrphanedDependencies(orphaned)),
+        (looped, Note::Cycle(looped)),
         (unread, Note::Unread(unread)),
         (failed, Note::FailedProjects(failed)),
     ] {
