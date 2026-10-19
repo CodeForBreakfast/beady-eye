@@ -4,7 +4,9 @@
 //! It covers what the forest would draw — every tree read, shown or held
 //! back, or what is at and beneath the beads the forest is rooted at — and
 //! takes each bead's readiness from its tree, so the list and the forest
-//! cannot disagree about whether a bead is free to start.
+//! cannot disagree about whether a bead is free to start. The list offers
+//! fewer: a parent with a child still open is free to start by its tree's
+//! word, but its children are the work left on it.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -63,7 +65,7 @@ pub(super) fn lay_out(
         }
         if bead.status == Status::InProgress || bead.agent.is_some() {
             in_progress.push((*bead, *tree, way));
-        } else if bead.ready {
+        } else if bead.ready && !waits_on_its_children(tree, way) {
             ready.push((*bead, *tree, way));
         }
     }
@@ -160,6 +162,15 @@ fn each_once<'a>(
         }
     }
     once
+}
+
+/// Whether a bead has a child still open. bd answers such a parent ready,
+/// but nobody can start it, because its children are the work left on it.
+fn waits_on_its_children(tree: &Tree, way: &[usize]) -> bool {
+    let at = *way.last().expect("a way down ends somewhere");
+    tree.children[at]
+        .iter()
+        .any(|link| link.edge == Edge::ParentChild && !tree.beads[link.bead].status.is_finished())
 }
 
 /// The order a section lists its beads in: the most urgent first, and the

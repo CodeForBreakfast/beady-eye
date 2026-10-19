@@ -40,8 +40,7 @@ const LIGHTHOUSE: &str = r#"[
 ]"#;
 
 /// The beads bd answers `bd ready` with in the lighthouse. The epic is one
-/// of them: bd calls it ready, and the list takes bd's word for an epic as
-/// for any other bead.
+/// of them, though its open children leave nothing on it to start.
 const LIGHTHOUSE_READY: &[&str] = &["lgt-4", "lgt-4.1", "lgt-4.2", "lgt-4.3", "lgt-4.6"];
 
 fn lighthouse() -> Snapshot {
@@ -70,8 +69,7 @@ fn the_ready_list_draws_each_bead_once_by_priority_then_age() {
         sketch(&forest),
         vec![
             "dunwich",
-            "# Ready 5",
-            "  ○ lgt-4 relight the lighthouse",
+            "# Ready 4",
             "▸ ○ lgt-4.2 re-silver the reflector",
             "▸ ○ lgt-4.3 rewire the lamp",
             "▸ ○ lgt-4.1 scrape the lantern glass",
@@ -162,7 +160,7 @@ fn a_refresh_keeps_the_list() {
     ));
 
     assert!(forest.is_ready_list());
-    assert!(sketch(&forest).contains(&"# Ready 6".to_string()));
+    assert!(sketch(&forest).contains(&"# Ready 5".to_string()));
 }
 
 /// Each row is the bead's own, so the selection sits on it and walks the
@@ -190,7 +188,7 @@ fn the_selection_walks_the_beads_and_not_the_headings() {
 
     assert_eq!(
         beads,
-        ["lgt-4", "lgt-4.2", "lgt-4.3", "lgt-4.1", "lgt-4.6", "lgt-4.5", "lgt-4.4"]
+        ["lgt-4.2", "lgt-4.3", "lgt-4.1", "lgt-4.6", "lgt-4.5", "lgt-4.4"]
     );
 }
 
@@ -246,6 +244,47 @@ fn a_tree_with_no_live_agent_is_listed() {
             "harbour",
             "# Ready 1",
             "▸ ○ hbr-3.1 survey the silt",
+            "# InProgress 0",
+        ]
+    );
+}
+
+/// bd answers a parent ready while its children are open, but its children
+/// are the work left on it, so the list offers the children and not it.
+#[test]
+fn a_parent_with_an_open_child_is_not_offered() {
+    let forest = listed(ready_alone("harbour", HARBOUR, &[], &["hbr-3", "hbr-3.1"]));
+
+    assert_eq!(
+        sketch(&forest),
+        vec![
+            "harbour",
+            "# Ready 1",
+            "▸ ○ hbr-3.1 survey the silt",
+            "# InProgress 0",
+        ]
+    );
+}
+
+/// A parent whose children are all closed has work of its own left, and is
+/// offered as bd answers it, with nothing waiting on it to expand to.
+#[test]
+fn a_parent_whose_children_are_closed_is_offered() {
+    const SURVEYED: &str = r#"[
+      {"id":"hbr-3","title":"dredge the channel","status":"open",
+       "priority":2,"issue_type":"epic"},
+      {"id":"hbr-3.1","title":"survey the silt","status":"closed",
+       "dependencies":[{"depends_on_id":"hbr-3","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+    let forest = listed(ready_alone("harbour", SURVEYED, &[], &["hbr-3"]));
+
+    assert_eq!(
+        sketch(&forest),
+        vec![
+            "harbour",
+            "# Ready 1",
+            "  ○ hbr-3 dredge the channel",
             "# InProgress 0",
         ]
     );
@@ -438,14 +477,13 @@ fn a_step_the_bead_alone_holds_up_is_marked_apart_from_one_waiting_on_more() {
     assert_eq!(also_waits_on(&forest, "slp-1.3"), 1);
 }
 
-/// A row starts shut, a row with nothing waiting on it has nothing to
-/// expand, and shutting the row again puts the list back as it was.
+/// A row starts shut, and shutting the row again puts the list back as it
+/// was.
 #[test]
 fn a_row_shuts_over_what_it_unblocks() {
     let mut forest = listed(slipway());
     let shut = sketch(&forest);
     assert!(shut.contains(&"▸ ○ slp-1.1 drain the slipway".to_string()));
-    assert!(shut.contains(&"  ○ slp-1 refit the lifeboat".to_string()));
     select_bead(&mut forest, "slp-1.1");
 
     forest.apply(Action::ExpandOrChild);
@@ -644,8 +682,8 @@ fn a_search_matching_only_beads_the_list_omits_says_nowhere() {
 }
 
 /// What an expanded row unblocks is not counted by a search, which finds the
-/// list's own rows, and a search begun on a step carries on from the row
-/// below it.
+/// list's own rows, so the lifeboat drawn only on steps is found nowhere. A
+/// search begun on a step carries on from the row below it.
 #[test]
 fn a_search_in_the_list_passes_over_what_a_row_unblocks() {
     let mut forest = listed(slipway());
@@ -656,7 +694,7 @@ fn a_search_in_the_list_passes_over_what_a_row_unblocks() {
 
     assert_eq!(
         forest.seek_here("lifeboat"),
-        went_to("dunwich", "slp-1", 1, 1)
+        Landed::Nowhere("lifeboat".into())
     );
     assert_eq!(
         forest.seek_here("keel"),

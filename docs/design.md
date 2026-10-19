@@ -3546,8 +3546,7 @@ filtered tree as well.
 
 ```
 dunwich  ✓ 9s ago                                      1/9   3 agents  ⚠ 1
-Ready · 5
-  ○ lgt-4    relight the lighthouse                    1/8
+Ready · 4
   ○ lgt-4.2  re-silver the reflector
   ○ lgt-4.3  rewire the lamp
   ○ lgt-4.1  scrape the lantern glass
@@ -3570,9 +3569,10 @@ on another project's unfinished bead is not ready. "In progress" holds the
 beads in progress and every unfinished bead with a live agent on it, so a seat
 on blocked work still shows. A bead in both goes in the second. A bead the
 trees reach by several ways down is listed once, and each section is sorted
-by priority, then oldest first, as `bd ready` sorts. An epic is taken as bd
-answers for it, like any other bead. That includes an epic that holds its work
-as children and so reads as ready.
+by priority, then oldest first, as `bd ready` sorts. A parent with a child
+still open is not offered, though bd answers it ready, because nobody can
+start it: its children are the work left on it. Its children are offered in
+its place, and once they have all closed it is offered as bd answers.
 
 **The rows are beads.** Each row stands on the bead's shallowest way down its
 tree, so the selection, the bead window, the tail and the agent annotation work
