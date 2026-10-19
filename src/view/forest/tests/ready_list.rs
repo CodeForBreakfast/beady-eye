@@ -170,7 +170,7 @@ fn the_selection_walks_the_beads_and_not_the_headings() {
     let mut forest = listed(lighthouse());
     forest.apply(Action::Move(Motion::FirstRow));
 
-    let last = key("dunwich", "lgt-4.4");
+    let last = key("dunwich", "lgt-4.6");
     let mut visited = vec![forest.selected_line()];
     walk::until(
         &mut forest,
@@ -179,7 +179,7 @@ fn the_selection_walks_the_beads_and_not_the_headings() {
             forest.apply(Action::Move(Motion::NextRow));
             visited.push(forest.selected_line());
         },
-        |forest| format!("the selection never reached lgt-4.4: {:#?}", sketch(forest)),
+        |forest| format!("the selection never reached lgt-4.6: {:#?}", sketch(forest)),
     );
     let beads: Vec<String> = visited
         .into_iter()
@@ -188,7 +188,7 @@ fn the_selection_walks_the_beads_and_not_the_headings() {
 
     assert_eq!(
         beads,
-        ["lgt-4.2", "lgt-4.3", "lgt-4.1", "lgt-4.6", "lgt-4.5", "lgt-4.4"]
+        ["lgt-4.5", "lgt-4.4", "lgt-4.2", "lgt-4.3", "lgt-4.1", "lgt-4.6"]
     );
 }
 
@@ -221,10 +221,10 @@ fn a_named_root_lists_only_its_own_tree() {
         sketch(&forest),
         vec![
             "dunwich",
-            "# Ready 1",
-            "▸ ○ lgt-4.6 cast the rail stanchions",
             "# InProgress 1",
             "▸ ○ lgt-4.5 replace the gallery rail",
+            "# Ready 1",
+            "▸ ○ lgt-4.6 cast the rail stanchions",
         ]
     );
 }
@@ -242,9 +242,9 @@ fn a_tree_with_no_live_agent_is_listed() {
         sketch(&forest),
         vec![
             "harbour",
+            "# InProgress 0",
             "# Ready 1",
             "▸ ○ hbr-3.1 survey the silt",
-            "# InProgress 0",
         ]
     );
 }
@@ -259,9 +259,9 @@ fn a_parent_with_an_open_child_is_not_offered() {
         sketch(&forest),
         vec![
             "harbour",
+            "# InProgress 0",
             "# Ready 1",
             "▸ ○ hbr-3.1 survey the silt",
-            "# InProgress 0",
         ]
     );
 }
@@ -283,9 +283,9 @@ fn a_parent_whose_children_are_closed_is_offered() {
         sketch(&forest),
         vec![
             "harbour",
+            "# InProgress 0",
             "# Ready 1",
             "  ○ hbr-3 dredge the channel",
-            "# InProgress 0",
         ]
     );
 }
@@ -651,11 +651,11 @@ fn a_search_finds_only_the_beads_the_list_draws() {
 
     assert_eq!(
         forest.seek_here("rail"),
-        went_to("dunwich", "lgt-4.6", 1, 2)
+        went_to("dunwich", "lgt-4.5", 1, 2)
     );
     assert_eq!(
         forest.next_match(true),
-        Some(went_to("dunwich", "lgt-4.5", 2, 2))
+        Some(went_to("dunwich", "lgt-4.6", 2, 2))
     );
     assert_eq!(
         forest.seek_here("lgt-4.8"),
