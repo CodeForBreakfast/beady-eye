@@ -154,8 +154,8 @@ Keys to start with. `?` lists the lot.
 | `^R` | read the trackers again now |
 | `q` | avert the eye |
 
-`bdi --ready` opens on the ready list: what you could pick up now, then what
-is in progress or has a live agent on it, each bead once and most urgent
+`bdi --ready` opens on the ready list: what is in progress or has a live agent
+on it, then what you could pick up now, each bead once and most urgent
 first. Name a bead, as in `bdi --ready dun-7`, and the list covers that bead
 and the work beneath it. The forest is one `r` away, and the list's foot
 counts the beads the forest flags. Expand a row to see what its bead

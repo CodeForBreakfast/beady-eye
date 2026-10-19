@@ -124,8 +124,8 @@ struct Cli {
     #[arg(long)]
     all: bool,
 
-    /// Start in the ready list: the beads ready to start, then the beads in
-    /// progress or with a live agent on them, each once, by priority and
+    /// Start in the ready list: the beads in progress or with a live agent
+    /// on them, then the beads ready to start, each once, by priority and
     /// then age. r switches between the list and the forest.
     #[arg(long, conflicts_with_all = ["json", "each_bead"])]
     ready: bool,
