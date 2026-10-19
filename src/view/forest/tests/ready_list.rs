@@ -701,3 +701,35 @@ fn a_search_in_the_list_passes_over_what_a_row_unblocks() {
         went_to("dunwich", "slp-1.4", 1, 1)
     );
 }
+
+/// The beads a line of the list stands on, in the order it draws them: each
+/// row's bead, and none of a project's line, a heading or the foot.
+fn drawn_beads(forest: &Forest) -> Vec<BeadKey> {
+    forest
+        .lines()
+        .iter()
+        .filter_map(|line| line.bead())
+        .cloned()
+        .collect()
+}
+
+/// What the list hands a script is what it draws, bead for bead and in
+/// order, across projects and with an in-progress section and a ready one.
+#[test]
+fn the_ready_list_picks_the_beads_it_draws() {
+    for snapshot in [
+        lighthouse(),
+        slipway(),
+        harbour_waiting_on_the_ground_station(),
+    ] {
+        let [in_progress, ready] = ready_list(&snapshot);
+        let picked: Vec<BeadKey> = in_progress
+            .iter()
+            .chain(&ready)
+            .map(|bead| bead.key())
+            .collect();
+
+        assert!(!picked.is_empty());
+        assert_eq!(picked, drawn_beads(&listed(snapshot)));
+    }
+}

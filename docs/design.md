@@ -3635,6 +3635,14 @@ dependencies multiply the ways up, so drawing it again under each would grow
 the expansion with the ways up rather than with the edges. Each step is a
 bead's row to the bead window, the tail and the agent annotation.
 
+**`bdi --beads --ready` writes the list for a script.** It is the `--beads`
+document with `beads` replaced by `in_progress` and `ready`, holding the
+beads of the list's two sections in the order it draws them, each written as
+`--beads` writes a bead. The screen and the document take their beads from one
+function, so they cannot disagree about what is free to start. It covers every
+tree read, as the unrooted list does, since `--beads` takes no bead on the
+command line.
+
 ### Keys
 
 The row under the tail names the handful of bindings worth a permanent line,

@@ -26,8 +26,9 @@ use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
 use crate::config::{Config, Poll};
-use crate::model::snapshot::{Filter, Listing, Snapshot};
+use crate::model::snapshot::{Filter, Listing, ReadyListing, Snapshot};
 use crate::tui::{Hearing, Reload, CHECKED_EVERY};
+use crate::view::forest::ready_list;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
@@ -116,7 +117,8 @@ struct Cli {
     /// Emit each unfinished bead once as JSON: whether it is ready, what
     /// blocks it in its own project or another, the agent on it, and its
     /// labels, description, created date and metadata. Beads with no live agent in their tree are
-    /// listed too.
+    /// listed too. With --ready, list only the beads the ready list draws, as
+    /// in_progress and ready, in the order it draws them.
     #[arg(long = "beads", conflicts_with_all = ["json", "all", "beads"])]
     each_bead: bool,
 
@@ -127,7 +129,7 @@ struct Cli {
     /// Start in the ready list: the beads in progress or with a live agent
     /// on them, then the beads ready to start, each once, by priority and
     /// then age. r switches between the list and the forest.
-    #[arg(long, conflicts_with_all = ["json", "each_bead"])]
+    #[arg(long, conflicts_with = "json")]
     ready: bool,
 
     #[command(flatten)]
@@ -383,7 +385,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     }
     if cli.each_bead {
         let snapshot = read_for_each_bead(&cfg, &RealRunner, EnvironmentCache::here(), Utc::now());
-        println!("{}", serde_json::to_string_pretty(&Listing::of(&snapshot))?);
+        println!("{}", beads_document(&snapshot, cli.ready)?);
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -517,6 +519,16 @@ fn read_for_each_bead(
         Filter::All,
         now,
     )
+}
+
+/// What `bdi --beads` writes: every unfinished bead, or under `--ready` the
+/// beads the ready list draws, in its order.
+fn beads_document(snapshot: &Snapshot, ready: bool) -> serde_json::Result<String> {
+    if ready {
+        serde_json::to_string_pretty(&ReadyListing::of(snapshot, ready_list(snapshot)))
+    } else {
+        serde_json::to_string_pretty(&Listing::of(snapshot))
+    }
 }
 
 /// The trackers a run that reads once is read through: the watcher's
@@ -1495,18 +1507,16 @@ detached
         }
     }
 
-    /// `--ready` is where the view starts, so it is a way of drawing and the
-    /// two documents contradict it. A bead named beside it roots the list.
+    /// `--ready` is where the view starts, and a bead named beside it roots
+    /// the list. The snapshot document contradicts it, and `--beads` takes
+    /// it to list the ready list's beads.
     #[test]
-    fn ready_starts_the_view_and_stands_apart_from_the_documents() {
+    fn ready_starts_the_view_or_narrows_the_beads_document() {
         assert!(Cli::parse_from(["bdi", "--ready", "dun-7"]).ready);
         assert!(Cli::parse_from(["bdi", "--ready", "--all"]).ready);
-        for document in ["--json", "--beads"] {
-            assert!(
-                Cli::try_parse_from(["bdi", "--ready", document]).is_err(),
-                "--ready with {document} was taken"
-            );
-        }
+        let listed = Cli::parse_from(["bdi", "--beads", "--ready"]);
+        assert!(listed.each_bead && listed.ready);
+        assert!(Cli::try_parse_from(["bdi", "--ready", "--json"]).is_err());
     }
 
     /// The run says nothing about polling unless it is asked to, and each
@@ -1842,5 +1852,59 @@ kadath = ["kad-11"]
                 "{asked:?}"
             );
         }
+    }
+
+    /// One bd row at a priority.
+    fn row_at(priority: u8, id: &str, status: &str, deps: &[(&str, &str)]) -> serde_json::Value {
+        let mut row = row(id, status, deps);
+        row["priority"] = priority.into();
+        row
+    }
+
+    /// `--beads --ready` lists what the ready list draws: the bead in
+    /// progress, then the ready ones most urgent first. The epic bd answers
+    /// ready is left out for its open children, as is the bead waiting on
+    /// one of them and the closed one.
+    #[test]
+    fn the_beads_document_under_ready_lists_the_ready_list() {
+        let cfg = Config::from_toml(
+            "[[projects]]\nname = \"celephais\"\npath = \"/nowhere/celephais\"\n",
+        )
+        .unwrap();
+        let tracker = WholeTracker {
+            rows: vec![
+                row_at(1, "cel-1", "open", &[]),
+                row_at(3, "cel-1.1", "open", &[("cel-1", "parent-child")]),
+                row_at(1, "cel-1.2", "open", &[("cel-1", "parent-child")]),
+                row_at(2, "cel-1.3", "in_progress", &[("cel-1", "parent-child")]),
+                row_at(
+                    0,
+                    "cel-1.4",
+                    "open",
+                    &[("cel-1", "parent-child"), ("cel-1.1", "blocks")],
+                ),
+                row_at(0, "cel-1.5", "closed", &[("cel-1", "parent-child")]),
+            ],
+            wisps: vec![],
+            ready: vec!["cel-1", "cel-1.1", "cel-1.2"],
+            asked: Mutex::default(),
+        };
+
+        let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
+        let written: serde_json::Value =
+            serde_json::from_str(&beads_document(&snapshot, true).unwrap()).unwrap();
+
+        let ids = |section: &str| -> Vec<&str> {
+            written[section]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|bead| bead["id"].as_str().unwrap())
+                .collect()
+        };
+        assert_eq!(ids("in_progress"), ["cel-1.3"]);
+        assert_eq!(ids("ready"), ["cel-1.2", "cel-1.1"]);
+        assert_eq!(written["ready"][0]["description"], "what cel-1.2 is for");
+        assert!(written.get("beads").is_none());
     }
 }
