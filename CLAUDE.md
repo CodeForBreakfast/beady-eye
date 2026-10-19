@@ -1,11 +1,12 @@
 # beady-eye — working notes
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
-root, annotated with the live agent on each node. The eye only looks, and
-each thing it does in the world is a pseudopod, a limb grown for one job. It
-has four. `bdi bd` passes `bd human respond` through to carry a person's
-answer to a bead, `bd defer --until` to put a bead off until a date a
-person chose, and `bd comments add` to put a person's words on a bead. `bdi gates` settles a gate once GitHub says its pull request
+root, annotated with the live agent on each node. It writes in two ways. `bdi bd`
+is the command that whatever showed a person a question calls to carry their
+reply to the right tracker: it passes `bd human respond` through to carry an
+answer, `bd defer --until` to put a bead off until a date the person chose,
+and `bd comments add` to put their words on a bead. Gates is a writer fed by
+GitHub, the clock and other trackers: `bdi gates` settles a gate once GitHub says its pull request
 has merged, closed, or left draft, its issue has closed, its workflow run has
 succeeded or been skipped, or its repository has published a release, closes a
 timer gate at its deadline, and closes a bead gate once the bead it awaits has
@@ -20,9 +21,10 @@ measurements.
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
 - The reading side: which `bd`, `herdr` and `gh` command lines it spells, and
   how it parses what they print.
-- The four pseudopods. One carries a person's answer to the bead that asked.
-  One defers a bead until the date a person chose. One adds a person's comment
-  to a bead. The fourth settles a gate:
+- `bdi bd`, which carries a person's reply to the right tracker: their answer
+  to the bead that asked, the date they chose to defer a bead until, or their
+  comment on a bead.
+- Gates, which settles a gate:
   it re-reads the pull request from GitHub, closes the gate on a merge, and
   on a close without one tells the beads the gate holds back. A gate on an
   issue, a release or a workflow run closes once the issue closes, a release
@@ -43,8 +45,8 @@ measurements.
 - **herdr.** Panes, agent detection and agent status belong to the herdr
   project. `bdi` draws what herdr reports.
 - **Every other write to a tracker.** `bdi` never creates a bead, and it
-  writes only through its pseudopods. `bdi bd`'s `human respond` records a
-  person's answer and closes the bead that asked, its `defer` puts a bead
+  writes only through `bdi bd` and by settling gates. `bdi bd`'s
+  `human respond` records a person's answer and closes the bead that asked, its `defer` puts a bead
   off until a date, and its `comments add` puts a person's comment on a bead.
   Settling a gate closes it or
   comments on the beads it holds back. Whoever runs `bdi` does
