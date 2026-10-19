@@ -3,7 +3,7 @@ name = "beady-eye"
 version = "0.32.0"
 min_herdr_version = "0.9.1"
 platforms = ["linux", "macos"]
-description = "Shows the trees of work and the agents on them, wakes an agent when a bead it waits on changes, and settles pull-request waits from GitHub."
+description = "Shows you, live, what every agent is doing across your projects: the trees of work, with the agent beside each claimed bead. Part of beady-eye, which also tells agents and scripts when the beads they wait on change."
 
 # Fetches this version's released bdi into bin/, so installing needs no Rust
 # toolchain. `herdr plugin link` skips it: a linked checkout runs it by hand.
