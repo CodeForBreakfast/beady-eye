@@ -36,39 +36,9 @@ pub(super) fn lay_out(
     unblocking: &BTreeSet<BeadKey>,
     layout: &row::Layout,
 ) -> Drawn {
-    let mut unread = 0;
-    let mut covered: Vec<(&Tree, Vec<usize>)> = Vec::new();
-    if rooted.is_empty() {
-        for tree in &snapshot.collected {
-            if tree.tracker != TrackerState::Ok {
-                unread += 1;
-            }
-            if !tree.beads.is_empty() {
-                covered.push((tree, vec![0]));
-            }
-        }
-    } else {
-        for root in rooted {
-            match (&root.way, snapshot.tree(&root.place.tree)) {
-                (Ok(way), Some(tree)) => covered.push((tree, way.clone())),
-                _ => unread += 1,
-            }
-        }
-    }
-
+    let (covered, unread) = covered(snapshot, rooted);
     let reached = each_once(&covered);
-    let mut ready = Vec::new();
-    let mut in_progress = Vec::new();
-    for (bead, tree, way) in reached.values() {
-        if bead.status.is_finished() {
-            continue;
-        }
-        if bead.status == Status::InProgress || bead.agent.is_some() {
-            in_progress.push((*bead, *tree, way));
-        } else if bead.ready && !waits_on_its_children(tree, way) {
-            ready.push((*bead, *tree, way));
-        }
-    }
+    let [in_progress, ready] = sections(&reached);
 
     let mut lines: Vec<Node> = snapshot
         .projects
@@ -93,8 +63,7 @@ pub(super) fn lay_out(
         facts,
         waiters: waiters(snapshot),
     };
-    for (section, mut beads) in [(Section::InProgress, in_progress), (Section::Ready, ready)] {
-        beads.sort_by(|a, b| next_first(a.0, b.0));
+    for (section, beads) in [(Section::InProgress, in_progress), (Section::Ready, ready)] {
         lines.push(drawn(said(Content::Section {
             section,
             count: beads.len(),
@@ -138,11 +107,68 @@ pub(super) fn lay_out(
     Drawn::over(lines, None, layout)
 }
 
+/// The beads the ready list draws when it is rooted nowhere: those in
+/// progress or with a live agent on them, then those ready to start, each
+/// section in the order the list draws it.
+pub fn ready_list(snapshot: &Snapshot) -> [Vec<&Bead>; 2] {
+    let (covered, _) = covered(snapshot, &[]);
+    sections(&each_once(&covered)).map(|beads| beads.into_iter().map(|(bead, ..)| bead).collect())
+}
+
+/// A bead with the tree and the way down it was reached by.
+type Reached<'a> = (&'a Bead, &'a Tree, Vec<usize>);
+
+/// The trees the list covers, each with the way down it starts from, and how
+/// many it could not cover because their tracker did not read them.
+fn covered<'a>(snapshot: &'a Snapshot, rooted: &[Rooted]) -> (Vec<(&'a Tree, Vec<usize>)>, usize) {
+    let mut unread = 0;
+    let mut covered: Vec<(&Tree, Vec<usize>)> = Vec::new();
+    if rooted.is_empty() {
+        for tree in &snapshot.collected {
+            if tree.tracker != TrackerState::Ok {
+                unread += 1;
+            }
+            if !tree.beads.is_empty() {
+                covered.push((tree, vec![0]));
+            }
+        }
+    } else {
+        for root in rooted {
+            match (&root.way, snapshot.tree(&root.place.tree)) {
+                (Ok(way), Some(tree)) => covered.push((tree, way.clone())),
+                _ => unread += 1,
+            }
+        }
+    }
+    (covered, unread)
+}
+
+/// The beads in progress or with a live agent on them, then the beads ready
+/// to start, each section the most urgent first.
+fn sections<'r, 'a>(
+    reached: &'r BTreeMap<BeadKey, Reached<'a>>,
+) -> [Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)>; 2] {
+    let mut in_progress = Vec::new();
+    let mut ready = Vec::new();
+    for (bead, tree, way) in reached.values() {
+        if bead.status.is_finished() {
+            continue;
+        }
+        if bead.status == Status::InProgress || bead.agent.is_some() {
+            in_progress.push((*bead, *tree, way));
+        } else if bead.ready && !waits_on_its_children(tree, way) {
+            ready.push((*bead, *tree, way));
+        }
+    }
+    for beads in [&mut in_progress, &mut ready] {
+        beads.sort_by(|a, b| next_first(a.0, b.0));
+    }
+    [in_progress, ready]
+}
+
 /// Each bead the covered trees reach, once, with the tree and the way down
 /// it was first reached by: the shallowest, in the first tree to reach it.
-fn each_once<'a>(
-    covered: &[(&'a Tree, Vec<usize>)],
-) -> BTreeMap<BeadKey, (&'a Bead, &'a Tree, Vec<usize>)> {
+fn each_once<'a>(covered: &[(&'a Tree, Vec<usize>)]) -> BTreeMap<BeadKey, Reached<'a>> {
     let mut once = BTreeMap::new();
     for (tree, way) in covered {
         let mut going = std::collections::VecDeque::from([way.clone()]);

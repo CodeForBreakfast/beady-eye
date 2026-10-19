@@ -27,6 +27,7 @@ use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
+pub use ready::ready_list;
 use search::{Listed, Matches, Sought, Walked};
 pub use spine::Spine;
 

@@ -173,6 +173,11 @@ Unlike `bd ready`, it counts a blocker in another project, so
 nothing. With `--all-projects`, `select(.labels | index("human"))` picks out
 every project's beads labelled `human` in one query.
 
+`bdi --beads --ready` writes only the beads the ready list draws, in its
+order, as `in_progress` and `ready`. So `bdi --beads --ready | jq '.ready[].id'`
+is what you could pick up now, without the parents whose children are the work
+left on them, which `bd ready` still offers.
+
 ## Several trackers
 
 A config file opens the eye on all of them:

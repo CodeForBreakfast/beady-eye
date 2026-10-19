@@ -109,16 +109,49 @@ impl<'a> Listing<'a> {
             agents: &snapshot.agents,
             beads,
             failed_projects: &snapshot.failed_projects,
-            unread_trees: snapshot
-                .collected
-                .iter()
-                .filter(|tree| tree.tracker != TrackerState::Ok)
-                .map(|tree| UnreadTree {
-                    project: &tree.project,
-                    root: &tree.root,
-                    tracker: &tree.tracker,
-                })
-                .collect(),
+            unread_trees: unread_trees(snapshot),
         }
     }
+}
+
+/// The ready list with the screen taken out: the beads in progress or with
+/// a live agent on them, then the beads ready to start, each as `Listing`
+/// writes it and in the order the list draws it.
+#[derive(Debug, Serialize)]
+pub struct ReadyListing<'a> {
+    generated_at: DateTime<Utc>,
+    agents: &'a AgentProvider,
+    in_progress: Vec<Listed<'a>>,
+    ready: Vec<Listed<'a>>,
+    failed_projects: &'a [FailedProject],
+    unread_trees: Vec<UnreadTree<'a>>,
+}
+
+impl<'a> ReadyListing<'a> {
+    /// `sections` is the ready list's two sections, as the view picks them.
+    pub fn of(snapshot: &'a Snapshot, sections: [Vec<&'a Node>; 2]) -> Self {
+        let [in_progress, ready] =
+            sections.map(|beads| beads.into_iter().map(Listed::from).collect());
+        ReadyListing {
+            generated_at: snapshot.generated_at,
+            agents: &snapshot.agents,
+            in_progress,
+            ready,
+            failed_projects: &snapshot.failed_projects,
+            unread_trees: unread_trees(snapshot),
+        }
+    }
+}
+
+fn unread_trees(snapshot: &Snapshot) -> Vec<UnreadTree<'_>> {
+    snapshot
+        .collected
+        .iter()
+        .filter(|tree| tree.tracker != TrackerState::Ok)
+        .map(|tree| UnreadTree {
+            project: &tree.project,
+            root: &tree.root,
+            tracker: &tree.tracker,
+        })
+        .collect()
 }
