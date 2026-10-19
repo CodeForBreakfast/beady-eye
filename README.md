@@ -3,28 +3,20 @@
 ![A screen-printed cosmic-horror poster: a colossal eye with a red pupil hangs in a green-black sky, tentacles trailing away behind it, while a line of small robots below hauls a chain of glowing beads under its gaze.](docs/images/beady-eye-hero.png)
 
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
-tracker you point it at, and it tells agents and scripts when the beads they
-wait on change. Anything that can write to a bead can reach whoever watches
-that bead, and neither side needs to know the other. The bead is the address,
-and the tracker keeps the message long after the listener has gone.
+tracker you point it at. It shows you, live, what every agent is doing across
+your projects, and it tells agents and scripts when the beads they wait on
+change. `bd` is all it needs. It will also look at whatever else you leave
+lying about, and each thing you let it see gives it more to do.
 
-![A diagram in the poster's colours. On the left, the writers: people with bd, other agents, and scripts and CI, each with an arrow into a beads tracker. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which wakes the session that waits; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. Two tentacles reach from the eye back into the tracker. They are the pseudopods: bdi gates, which closes a gate once what it awaits says the wait is over and comments on the waiting bead when its pull request has news, and bdi bd, which carries a person's answer, deferral or comment to one project's tracker.](docs/images/writers-and-listeners.svg)
-
-`bd` is all it needs. It will also look at whatever else you leave lying
-about, and each thing you let it see gives it more to do.
-
-- **It wakes whoever is waiting.** `bdi watch` keeps watch over every tracker
-  at once, and tells anything connected to it the moment a bead it watches
-  changes. Add Claude Code with the beady-eye plugin, and a sleeping session
-  is woken by the bead it waits on.
-- **It feeds whatever else is listening.** A script that connects to the
-  watcher is sent each bead it watches as a line of JSON, first as it stands
-  and then each time it changes. A bar widget, a mirror into another system or
-  a relay to a chat can follow beads without reading a tracker itself.
 - **It shows you the work.** Each tracker's work is drawn as a tree, and a
   bead waiting on another project's work has that work drawn beneath it,
   whichever tracker holds it. Add [herdr](https://herdr.dev), and beside every
   bead an agent has claimed sits the live pane that agent is in.
+- **It wakes whoever is waiting.** `bdi watch` keeps watch over every tracker
+  at once, and tells anything connected to it the moment a bead it watches
+  changes. Add Claude Code with the beady-eye plugin, and a sleeping session
+  is woken by the bead it waits on. A script on the watcher's socket is sent
+  each bead it watches as a line of JSON, and again each time it changes.
 - **It settles waits on pull requests, issues and releases.** Add `gh`, and
   `bdi gates` asks GitHub where each awaited pull request stands. A merge ends
   the bead's wait. A failing check, a conflict, a review or a comment is passed
@@ -38,6 +30,13 @@ them, and the band at the foot is what the selected one's pane is saying.
 `ark-5` is what else falls out of watching beads and herdr at once: beads says
 an agent claimed it, herdr has no pane for that agent, and the eye says so. It
 has seen a pane die on a Tuesday before.
+
+The waking happens while you are looking elsewhere. Anything that can write to
+a bead can reach whoever watches that bead, and neither side needs to know the
+other. The bead is the address, and the tracker keeps the message long after
+the listener has gone. The view you just saw is one of the listeners.
+
+![A diagram in the poster's colours. On the left, the writers: people with bd, other agents, and scripts and CI, each with an arrow into a beads tracker. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which wakes the session that waits; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. Two tentacles reach from the eye back into the tracker. They are the pseudopods: bdi gates, which closes a gate once what it awaits says the wait is over and comments on the waiting bead when its pull request has news, and bdi bd, which carries a person's answer, deferral or comment to one project's tracker.](docs/images/writers-and-listeners.svg)
 
 The eye only looks. Waking an agent is still looking, only louder. When there
 is something it must write, it grows a pseudopod for the job, the way a
