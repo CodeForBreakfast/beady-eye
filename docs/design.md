@@ -3546,14 +3546,14 @@ filtered tree as well.
 
 ```
 dunwich  ✓ 9s ago                                      1/9   3 agents  ⚠ 1
+In progress · 2
+  ○ lgt-4.5  replace the gallery rail                       ◍ w:p4 · working
+  ◐ lgt-4.4  test the fog signal                            ◍ w:p3 · idle
 Ready · 4
   ○ lgt-4.2  re-silver the reflector
   ○ lgt-4.3  rewire the lamp
   ○ lgt-4.1  scrape the lantern glass
   ○ lgt-4.6  cast the rail stanchions
-In progress · 2
-  ○ lgt-4.5  replace the gallery rail                       ◍ w:p4 · working
-  ◐ lgt-4.4  test the fog signal                            ◍ w:p3 · idle
 ⚠ 1 bead to check in the forest
 ```
 
@@ -3563,11 +3563,12 @@ work there is to pick up. When the command line names beads, or the reader
 focuses one with `F`, the list covers those beads and what is beneath them. bdi needs no idea of what a project is, because the reader names
 the roots.
 
-**Two sections, each bead once.** "Ready" holds the beads that are ready as
-the forest already decides it: bd's answer, plus the rule that a bead waiting
-on another project's unfinished bead is not ready. "In progress" holds the
+**Two sections, each bead once.** "In progress" comes first and holds the
 beads in progress and every unfinished bead with a live agent on it, so a seat
-on blocked work still shows. A bead in both goes in the second. A bead the
+on blocked work still shows. "Ready" follows and holds the beads that are ready
+as the forest already decides it: bd's answer, plus the rule that a bead waiting
+on another project's unfinished bead is not ready. A bead in both goes in "In
+progress". A bead the
 trees reach by several ways down is listed once, and each section is sorted
 by priority, then oldest first, as `bd ready` sorts. A parent with a child
 still open is not offered, though bd answers it ready, because nobody can

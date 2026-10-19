@@ -1,5 +1,5 @@
-//! `bdi --ready <root>` opens on that root's ready list: the beads bd calls
-//! ready, then the beads in progress, and none of the tree's other beads.
+//! `bdi --ready <root>` opens on that root's ready list: the beads in
+//! progress, then the beads bd calls ready, and none of the tree's other beads.
 
 mod terminal;
 

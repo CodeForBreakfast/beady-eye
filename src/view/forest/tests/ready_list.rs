@@ -59,8 +59,8 @@ fn listed(snapshot: Snapshot) -> Forest {
 }
 
 /// The project's own line, which says how fresh its rows are, then the
-/// ready beads, then the in-progress ones and the one with an agent on
-/// blocked work, each once, by priority and then oldest first.
+/// in-progress beads and the one with an agent on blocked work, then the
+/// ready ones, each once, by priority and then oldest first.
 #[test]
 fn the_ready_list_draws_each_bead_once_by_priority_then_age() {
     let forest = listed(lighthouse());
@@ -69,20 +69,20 @@ fn the_ready_list_draws_each_bead_once_by_priority_then_age() {
         sketch(&forest),
         vec![
             "dunwich",
+            "# InProgress 2",
+            "▸ ○ lgt-4.5 replace the gallery rail",
+            "▸ ◐ lgt-4.4 test the fog signal",
             "# Ready 4",
             "▸ ○ lgt-4.2 re-silver the reflector",
             "▸ ○ lgt-4.3 rewire the lamp",
             "▸ ○ lgt-4.1 scrape the lantern glass",
             "▸ ○ lgt-4.6 cast the rail stanchions",
-            "# InProgress 2",
-            "▸ ○ lgt-4.5 replace the gallery rail",
-            "▸ ◐ lgt-4.4 test the fog signal",
             "! ToCheck(1)",
         ]
     );
 }
 
-/// A bead waiting on another with a live agent on it is in the second
+/// A bead waiting on another with a live agent on it is in the in-progress
 /// section, so the seat on blocked work still shows.
 #[test]
 fn a_blocked_bead_with_a_live_agent_is_in_progress() {

@@ -1,5 +1,5 @@
-//! The ready list: what a reader could pick up now, and what is being
-//! worked, each bead once, drawn in place of the forest.
+//! The ready list: what is being worked, and what a reader could pick up
+//! now, each bead once, drawn in place of the forest.
 //!
 //! It covers what the forest would draw — every tree read, shown or held
 //! back, or what is at and beneath the beads the forest is rooted at — and
@@ -93,7 +93,7 @@ pub(super) fn lay_out(
         facts,
         waiters: waiters(snapshot),
     };
-    for (section, mut beads) in [(Section::Ready, ready), (Section::InProgress, in_progress)] {
+    for (section, mut beads) in [(Section::InProgress, in_progress), (Section::Ready, ready)] {
         beads.sort_by(|a, b| next_first(a.0, b.0));
         lines.push(drawn(said(Content::Section {
             section,
