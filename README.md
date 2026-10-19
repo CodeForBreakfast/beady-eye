@@ -36,13 +36,13 @@ a bead can reach whoever watches that bead, and neither side needs to know the
 other. The bead is the address, and the tracker keeps the message long after
 the listener has gone. The view you just saw is one of the listeners.
 
-![A diagram in the poster's colours. On the left, the writers: people with bd, other agents, and scripts and CI, each with an arrow into a beads tracker. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which wakes the session that waits; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. Two tentacles reach from the eye into the tracker. Above the tracker, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds bdi gates, a pseudopod that closes a gate once what it awaits says the wait is over and comments on the waiting bead when its pull request has news. Below, a second tentacle is bdi bd, which carries a person's answer, deferral or comment to one project's tracker.](docs/images/writers-and-listeners.svg)
+![A diagram in the poster's colours. Above, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds gates, the first of the writers on the left, which ships with beady-eye: bdi gates closes a gate once what it awaits says the wait is over, and comments on the bead when its pull request has news. Below it are the other writers: people with bd, other agents, and scripts and CI. Each writer has an arrow into a beads tracker, and the one from gates is a tentacle. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which wakes the session that waits; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. A second tentacle curls from the scripts back into the tracker, labelled the way back: a person answers, defers or comments, with bdi bd.](docs/images/writers-and-listeners.svg)
 
-The tentacles in the diagram are beady-eye writing back. It grows a pseudopod
-for each job, the way a shoggoth grows a limb from its own body. `bdi gates`
-reads GitHub, the clock and other beads, and closes the gates whose wait is
-over. `bdi bd` carries a person's answer, deferral or comment to a bead.
-Writing back, below, has both.
+The tentacles are beady-eye's own reach into the tracker. `bdi gates` is one
+of the writers. It reads GitHub, the clock and other beads, and closes the
+gates whose wait is over. `bdi bd` is the way back. Whatever showed a person
+the bead passes on their answer, deferral or comment, and `bdi bd` writes it
+to the bead. Writing back, below, has both.
 
 ## Summoning
 
@@ -314,7 +314,7 @@ the socket you can poke to say a tracker changed so the eye stops polling it.
 
 ## Writing back
 
-beady-eye writes to a tracker through its pseudopods, each grown for one job.
+beady-eye writes to a tracker in two ways.
 `bdi bd` writes what a person decided: an answer, a deferral or a comment.
 `bdi gates` writes what GitHub, the clock and other beads say about a wait.
 Each works in a tracker the config names, with that project's own `bd`.
