@@ -36,7 +36,8 @@ pub struct Held {
     /// printed it, so a field `bdi` never reads still reaches a consumer.
     pub bead: Arc<Bead>,
     pub ready: bool,
-    /// Every bead blocking this one, in its own project or another.
+    /// Every bead read as unfinished that blocks this one, in its own project
+    /// or another.
     pub blocked_by: Vec<String>,
     /// What bd itself says, from this one tracker. A consumer reading some
     /// projects through the watcher and the rest itself builds its trees
