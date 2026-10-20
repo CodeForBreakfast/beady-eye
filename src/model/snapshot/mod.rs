@@ -13,7 +13,7 @@ mod listing;
 #[cfg(feature = "testing")]
 pub use build::said_by;
 pub use build::{build, build_tree, Said};
-pub use listing::{DependencyListing, Listing, ReadyListing};
+pub use listing::{DependencyListing, Listing, Only, ReadyListing};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

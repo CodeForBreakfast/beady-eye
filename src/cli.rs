@@ -27,7 +27,7 @@ use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
 use crate::config::{Config, Poll};
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{DependencyListing, Filter, Listing, ReadyListing, Snapshot};
+use crate::model::snapshot::{DependencyListing, Filter, Listing, Only, ReadyListing, Snapshot};
 use crate::tui::{Hearing, Reload, CHECKED_EVERY};
 use crate::view::forest::ready_list;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -128,6 +128,29 @@ struct Cli {
     /// still waiting on.
     #[arg(long = "beads", conflicts_with_all = ["json", "all"])]
     each_bead: bool,
+
+    /// Under --beads, list only the beads carrying every label named,
+    /// repeating the option or naming them between commas.
+    #[arg(
+        long = "label",
+        value_name = "LABEL",
+        value_delimiter = ',',
+        requires = "each_bead"
+    )]
+    labels: Vec<String>,
+
+    /// Under --beads, list only the beads of this type, as bd names it.
+    #[arg(long = "type", value_name = "TYPE", requires = "each_bead")]
+    issue_type: Option<String>,
+
+    /// Under --beads, list only the beads assigned to this assignee.
+    #[arg(long, requires = "each_bead")]
+    assignee: Option<String>,
+
+    /// Under --beads, list only the beads beneath this one by parent links,
+    /// at any depth. Write it as a bead named beside bdi is written.
+    #[arg(long, value_name = "BEAD-ID", requires = "each_bead")]
+    parent: Option<String>,
 
     /// Draw every tree, including those with no live agent.
     #[arg(long)]
@@ -397,10 +420,11 @@ pub fn run() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     if cli.each_bead {
+        let only = only_asked_for(&cli, &cfg)?;
         let snapshot = read_for_each_bead(&cfg, &RealRunner, EnvironmentCache::here(), Utc::now());
         println!(
             "{}",
-            beads_document(&snapshot, cli.ready, &cfg.roots.named_beads())?
+            beads_document(&snapshot, cli.ready, &cfg.roots.named_beads(), &only)?
         );
         return Ok(ExitCode::SUCCESS);
     }
@@ -539,19 +563,40 @@ fn read_for_each_bead(
 
 /// What `bdi --beads` writes: the dependency trees of the beads `named`
 /// where it names any, or else every unfinished bead, or under `--ready`
-/// the beads the ready list draws, in its order.
+/// the beads the ready list draws, in its order, each kept as `only` says.
 fn beads_document(
     snapshot: &Snapshot,
     ready: bool,
     named: &[BeadKey],
+    only: &Only,
 ) -> serde_json::Result<String> {
     if !named.is_empty() {
-        serde_json::to_string_pretty(&DependencyListing::of(snapshot, named))
+        serde_json::to_string_pretty(&DependencyListing::of(snapshot, named, only))
     } else if ready {
-        serde_json::to_string_pretty(&ReadyListing::of(snapshot, ready_list(snapshot)))
+        serde_json::to_string_pretty(&ReadyListing::of(snapshot, ready_list(snapshot), only))
     } else {
-        serde_json::to_string_pretty(&Listing::of(snapshot))
+        serde_json::to_string_pretty(&Listing::of(snapshot, only))
     }
+}
+
+/// Which beads `bdi --beads` keeps, as its command line narrows them.
+fn only_asked_for(cli: &Cli, cfg: &Config) -> anyhow::Result<Only> {
+    Ok(Only {
+        labels: cli
+            .labels
+            .iter()
+            .map(|label| label.trim())
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+            .collect(),
+        issue_type: cli.issue_type.clone(),
+        assignee: cli.assignee.clone(),
+        beneath: cli
+            .parent
+            .as_deref()
+            .map(|named| cfg.bead_read(named))
+            .transpose()?,
+    })
 }
 
 /// The trackers a run that reads once is read through: the watcher's
@@ -1871,8 +1916,8 @@ kadath = ["kad-11"]
             let listed = read_for_each_bead(&cfg, &without_text, None, noon());
 
             assert_eq!(
-                serde_json::to_value(Listing::of(&listed)).unwrap(),
-                serde_json::to_value(Listing::of(&everything)).unwrap()
+                serde_json::to_value(Listing::of(&listed, &Only::default())).unwrap(),
+                serde_json::to_value(Listing::of(&everything, &Only::default())).unwrap()
             );
             assert_eq!(
                 trees_without_finished_text(&listed),
@@ -1924,7 +1969,8 @@ kadath = ["kad-11"]
 
         let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
         let written: serde_json::Value =
-            serde_json::from_str(&beads_document(&snapshot, true, &[]).unwrap()).unwrap();
+            serde_json::from_str(&beads_document(&snapshot, true, &[], &Only::default()).unwrap())
+                .unwrap();
 
         let ids = |section: &str| -> Vec<&str> {
             written[section]
@@ -1938,5 +1984,187 @@ kadath = ["kad-11"]
         assert_eq!(ids("ready"), ["cel-1.2", "cel-1.1"]);
         assert_eq!(written["ready"][0]["description"], "what cel-1.2 is for");
         assert!(written.get("beads").is_none());
+    }
+
+    /// The trimming options are a way of narrowing `--beads`, and say nothing
+    /// to the forest.
+    #[test]
+    fn the_trimming_options_are_taken_only_beside_beads() {
+        for trim in [
+            &["--label", "human"][..],
+            &["--type", "bug"],
+            &["--assignee", "ward"],
+            &["--parent", "cel-1"],
+        ] {
+            assert!(Cli::try_parse_from([&["bdi", "--beads"][..], trim].concat()).is_ok());
+            assert!(
+                Cli::try_parse_from([&["bdi"][..], trim].concat()).is_err(),
+                "{trim:?} was taken without --beads"
+            );
+        }
+    }
+
+    /// One bd row with its type, labels and assignee.
+    fn row_as(
+        id: &str,
+        issue_type: &str,
+        labels: &[&str],
+        assignee: Option<&str>,
+        deps: &[(&str, &str)],
+    ) -> serde_json::Value {
+        let mut row = row(id, "open", deps);
+        row["issue_type"] = issue_type.into();
+        row["labels"] = labels.into();
+        row["assignee"] = assignee.into();
+        row
+    }
+
+    /// What `bdi --beads` writes of celephais's beads with `asked` on its
+    /// command line. The archive's two children and a grandchild hang under
+    /// it, and the second child, a bug, waits on the bead outside it.
+    fn celephais_trimmed_by(asked: &[&str]) -> anyhow::Result<serde_json::Value> {
+        let cfg = Config::from_toml(
+            "[[projects]]\nname = \"celephais\"\npath = \"/nowhere/celephais\"\n",
+        )
+        .unwrap();
+        let tracker = WholeTracker {
+            rows: vec![
+                row_as("cel-1", "epic", &[], None, &[]),
+                row_as(
+                    "cel-1.1",
+                    "task",
+                    &["human", "urgent"],
+                    Some("ward"),
+                    &[("cel-1", "parent-child")],
+                ),
+                row_as(
+                    "cel-1.1.1",
+                    "task",
+                    &["human"],
+                    None,
+                    &[("cel-1.1", "parent-child")],
+                ),
+                row_as(
+                    "cel-1.2",
+                    "bug",
+                    &[],
+                    Some("ward"),
+                    &[("cel-1", "parent-child"), ("cel-2", "blocks")],
+                ),
+                row_as("cel-2", "task", &["urgent"], None, &[]),
+            ],
+            wisps: vec![],
+            ready: vec!["cel-1", "cel-1.1", "cel-1.1.1", "cel-2"],
+            asked: Mutex::default(),
+        };
+        let cli = Cli::try_parse_from([&["bdi", "--beads"][..], asked].concat())?;
+        let only = only_asked_for(&cli, &cfg)?;
+
+        let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
+        Ok(serde_json::from_str(&beads_document(
+            &snapshot,
+            cli.ready,
+            &[],
+            &only,
+        )?)?)
+    }
+
+    fn ids_in<'a>(written: &'a serde_json::Value, section: &str) -> Vec<&'a str> {
+        written[section]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bead| bead["id"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn nothing_asked_trims_nothing() {
+        let written = celephais_trimmed_by(&[]).unwrap();
+
+        assert_eq!(
+            ids_in(&written, "beads"),
+            ["cel-1", "cel-1.1", "cel-1.1.1", "cel-1.2", "cel-2"]
+        );
+    }
+
+    /// As `bd ready --label`: a bead is kept only where it carries every
+    /// label named, whether they are named apart or between commas.
+    #[test]
+    fn label_keeps_the_beads_carrying_every_label_named() {
+        let human = celephais_trimmed_by(&["--label", "human"]).unwrap();
+        assert_eq!(ids_in(&human, "beads"), ["cel-1.1", "cel-1.1.1"]);
+
+        for both in [
+            &["--label", "human", "--label", "urgent"][..],
+            &["--label", "human, urgent"],
+        ] {
+            let written = celephais_trimmed_by(both).unwrap();
+            assert_eq!(ids_in(&written, "beads"), ["cel-1.1"], "{both:?}");
+        }
+    }
+
+    #[test]
+    fn type_keeps_the_beads_of_that_type() {
+        let written = celephais_trimmed_by(&["--type", "bug"]).unwrap();
+
+        assert_eq!(ids_in(&written, "beads"), ["cel-1.2"]);
+    }
+
+    #[test]
+    fn assignee_keeps_the_beads_assigned_to_them() {
+        let written = celephais_trimmed_by(&["--assignee", "ward"]).unwrap();
+
+        assert_eq!(ids_in(&written, "beads"), ["cel-1.1", "cel-1.2"]);
+    }
+
+    /// As `bd ready --parent`: every bead beneath the parent at any depth,
+    /// and not the parent itself.
+    #[test]
+    fn parent_keeps_the_beads_beneath_it_at_any_depth() {
+        for parent in ["cel-1", "celephais:cel-1"] {
+            let written = celephais_trimmed_by(&["--parent", parent]).unwrap();
+            assert_eq!(
+                ids_in(&written, "beads"),
+                ["cel-1.1", "cel-1.1.1", "cel-1.2"],
+                "{parent}"
+            );
+        }
+        let under_the_child = celephais_trimmed_by(&["--parent", "cel-1.1"]).unwrap();
+        assert_eq!(ids_in(&under_the_child, "beads"), ["cel-1.1.1"]);
+    }
+
+    /// A parent in a project the run does not read has nothing beneath it
+    /// that the run could list, so it is refused rather than answered empty.
+    #[test]
+    fn a_parent_in_a_project_not_read_is_refused() {
+        let err = celephais_trimmed_by(&["--parent", "kadath:kad-1"]).unwrap_err();
+
+        assert!(err.to_string().contains("kadath"), "{err}");
+    }
+
+    /// Trimming chooses which beads are written and never what is written of
+    /// them: the bug still waits on the bead the trim left out.
+    #[test]
+    fn a_trimmed_bead_reads_as_ready_as_it_did_untrimmed() {
+        let untrimmed = celephais_trimmed_by(&[]).unwrap();
+        let trimmed = celephais_trimmed_by(&["--type", "bug"]).unwrap();
+
+        assert_eq!(trimmed["beads"][0]["ready"], false);
+        assert_eq!(trimmed["beads"][0], untrimmed["beads"][3]);
+    }
+
+    /// The trims narrow the ready list and never add to it: the first child
+    /// is urgent, but the list leaves it out for its own open child.
+    #[test]
+    fn the_trims_combine_with_ready_and_with_each_other() {
+        let untrimmed = celephais_trimmed_by(&["--ready"]).unwrap();
+        assert_eq!(ids_in(&untrimmed, "ready"), ["cel-1.1.1", "cel-2"]);
+        let ready = celephais_trimmed_by(&["--ready", "--label", "urgent"]).unwrap();
+        assert_eq!(ids_in(&ready, "in_progress"), Vec::<&str>::new());
+        assert_eq!(ids_in(&ready, "ready"), ["cel-2"]);
+
+        let both = celephais_trimmed_by(&["--parent", "cel-1", "--label", "human"]).unwrap();
+        assert_eq!(ids_in(&both, "beads"), ["cel-1.1", "cel-1.1.1"]);
     }
 }

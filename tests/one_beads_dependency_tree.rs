@@ -8,7 +8,7 @@ use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::FailureKind;
 use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
-use beady_eye::model::snapshot::{DependencyListing, Filter};
+use beady_eye::model::snapshot::{DependencyListing, Filter, Only};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
@@ -108,11 +108,12 @@ fn dunwich() -> Fake {
 
 /// The document a run naming `named` writes.
 fn tree_of(named: &[&str]) -> Value {
-    tree_over(named, trackers_beside(dunwich()))
+    tree_over(named, trackers_beside(dunwich()), &Only::default())
 }
 
-/// The document a run naming `named` writes over `trackers`.
-fn tree_over(named: &[&str], trackers: Fakes) -> Value {
+/// The document a run naming `named` writes over `trackers`, keeping the
+/// beads `only` keeps.
+fn tree_over(named: &[&str], trackers: Fakes, only: &Only) -> Value {
     let named: Vec<String> = named.iter().map(|bead| bead.to_string()).collect();
     let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
         .expect("the config parses")
@@ -120,8 +121,12 @@ fn tree_over(named: &[&str], trackers: Fakes) -> Value {
         .expect("every bead names a project being read");
     let nobody = Canned::default().herdr_holding(r#"{"result":{"agents":[]}}"#);
     let snapshot = beady_eye::app::run(&cfg, &Herdr::new(&nobody), &trackers, Filter::All, now());
-    serde_json::to_value(DependencyListing::of(&snapshot, &cfg.roots.named_beads()))
-        .expect("the document serialises")
+    serde_json::to_value(DependencyListing::of(
+        &snapshot,
+        &cfg.roots.named_beads(),
+        only,
+    ))
+    .expect("the document serialises")
 }
 
 /// Each `project:id` in `list`, in the order the document gives them.
@@ -272,6 +277,7 @@ fn a_waiting_bead_names_a_blocker_in_a_tracker_that_could_not_be_read() {
     let document = tree_over(
         &["arkham:ark-1"],
         trackers_beside(dunwich().failing(Asked::All, refused(FailureKind::Auth))),
+        &Only::default(),
     );
 
     let lamps = entry(&document, "waiting", "ark-5");
@@ -279,6 +285,38 @@ fn a_waiting_bead_names_a_blocker_in_a_tracker_that_could_not_be_read() {
     assert_eq!(
         lamps["orphaned_dependencies"],
         json!([{"id": "dun-1", "reason": "not-read", "projects": ["dunwich"]}])
+    );
+}
+
+/// A trim to tasks leaves the archive's epic and the ledgers' gate out of
+/// every list. It chooses which beads are written and not what is written
+/// of them, so the ledgers still wait on the gate.
+#[test]
+fn a_trim_keeps_only_the_beads_it_matches_in_each_list() {
+    let tasks = Only {
+        issue_type: Some("task".to_string()),
+        ..Only::default()
+    };
+    let document = tree_over(&["arkham:ark-1"], trackers_beside(dunwich()), &tasks);
+
+    assert_eq!(
+        keys(&document, "ready"),
+        ["arkham:ark-1.2", "arkham:ark-2", "dunwich:dun-2"]
+    );
+    assert_eq!(keys(&document, "ready_gates"), Vec::<String>::new());
+    assert_eq!(
+        keys(&document, "waiting"),
+        [
+            "arkham:ark-3",
+            "arkham:ark-4",
+            "arkham:ark-5",
+            "arkham:ark-7",
+            "dunwich:dun-1"
+        ]
+    );
+    assert_eq!(
+        entry(&document, "waiting", "ark-4")["unmet_dependencies"][0]["id"],
+        "ark-6"
     );
 }
 

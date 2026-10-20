@@ -1249,6 +1249,26 @@ impl Config {
     /// widened to take the project in: `bdi meadow:mdw-1` from another
     /// project's desktop reads both.
     fn placed(&mut self, named: &str) -> anyhow::Result<(String, String)> {
+        let (project, id) = self.placed_without_widening(named)?;
+        if !self.reads(&project) && !self.scope.widen_to(&project) {
+            return Err(self.not_reading(named, &project));
+        }
+        Ok((project, id))
+    }
+
+    /// The bead `named` names, written as a command-line root is, in a
+    /// project the run reads. Unlike a root, it never widens what is read.
+    pub fn bead_read(&self, named: &str) -> anyhow::Result<BeadKey> {
+        let (project, id) = self.placed_without_widening(named)?;
+        if !self.reads(&project) {
+            return Err(self.not_reading(named, &project));
+        }
+        Ok(BeadKey { project, id })
+    }
+
+    /// The project and bead `named` names, in a configured project that the
+    /// run may or may not read.
+    fn placed_without_widening(&self, named: &str) -> anyhow::Result<(String, String)> {
         let Some((project, id)) = named.split_once(':') else {
             let reading: Vec<&Project> = self.read().collect();
             return match reading.as_slice() {
@@ -1274,16 +1294,17 @@ impl Config {
                 names_of(&self.projects).join(", ")
             );
         }
-        if !self.reads(project) && !self.scope.widen_to(project) {
-            anyhow::bail!(
-                "{named}: bdi is not reading {project}; it is reading {}",
-                self.read()
-                    .map(|p| p.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
         Ok((project.to_string(), id.to_string()))
+    }
+
+    fn not_reading(&self, named: &str, project: &str) -> anyhow::Error {
+        anyhow::anyhow!(
+            "{named}: bdi is not reading {project}; it is reading {}",
+            self.read()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 
     fn is_configured(&self, name: &str) -> bool {

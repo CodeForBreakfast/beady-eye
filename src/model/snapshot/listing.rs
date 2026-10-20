@@ -93,14 +93,19 @@ struct UnreadTree<'a> {
 }
 
 impl<'a> Listing<'a> {
-    pub fn of(snapshot: &'a Snapshot) -> Self {
+    pub fn of(snapshot: &'a Snapshot, only: &Only) -> Self {
         let mut once: BTreeMap<BeadKey, &Node> = BTreeMap::new();
         for node in snapshot.collected.iter().flat_map(|tree| &tree.beads) {
             if !node.status.is_finished() {
                 once.entry(node.key()).or_insert(node);
             }
         }
-        let mut beads: Vec<Listed> = once.into_values().map(Listed::from).collect();
+        let keeps = only.keeping(snapshot);
+        let mut beads: Vec<Listed> = once
+            .into_values()
+            .filter(|node| keeps(node))
+            .map(Listed::from)
+            .collect();
         beads.sort_by(|a, b| {
             a.project
                 .cmp(b.project)
@@ -131,9 +136,15 @@ pub struct ReadyListing<'a> {
 
 impl<'a> ReadyListing<'a> {
     /// `sections` is the ready list's two sections, as the view picks them.
-    pub fn of(snapshot: &'a Snapshot, sections: [Vec<&'a Node>; 2]) -> Self {
-        let [in_progress, ready] =
-            sections.map(|beads| beads.into_iter().map(Listed::from).collect());
+    pub fn of(snapshot: &'a Snapshot, sections: [Vec<&'a Node>; 2], only: &Only) -> Self {
+        let keeps = only.keeping(snapshot);
+        let [in_progress, ready] = sections.map(|beads| {
+            beads
+                .into_iter()
+                .filter(|node| keeps(node))
+                .map(Listed::from)
+                .collect()
+        });
         ReadyListing {
             generated_at: snapshot.generated_at,
             agents: &snapshot.agents,
@@ -223,11 +234,17 @@ impl<'a> InTree<'a> {
 }
 
 impl<'a> DependencyListing<'a> {
-    pub fn of(snapshot: &'a Snapshot, named: &[BeadKey]) -> Self {
+    /// Each bead in the trees is kept as `only` says, and its unmet
+    /// dependencies are written whether or not they are kept.
+    pub fn of(snapshot: &'a Snapshot, named: &[BeadKey], only: &Only) -> Self {
         let mut ready = Vec::new();
         let mut ready_gates = Vec::new();
         let mut waiting = Vec::new();
-        let mut reached: Vec<_> = dependency_trees(snapshot, named).into_values().collect();
+        let keeps = only.keeping(snapshot);
+        let mut reached: Vec<_> = dependency_trees(snapshot, named)
+            .into_values()
+            .filter(|(node, ..)| keeps(node))
+            .collect();
         reached.sort_by(|(a, ..), (b, ..)| {
             a.project
                 .cmp(&b.project)
@@ -338,6 +355,56 @@ fn waits_on(node: &Node, below: &Node) -> bool {
             && on.id == below.id
             && on.project.as_deref().unwrap_or(&node.project) == below.project
     })
+}
+
+/// Which beads a listing keeps, as its reader narrowed it: every one where
+/// nothing is asked. Each test is the one `bd ready` makes of the option of
+/// the same name.
+#[derive(Debug, Default)]
+pub struct Only {
+    /// Every label a kept bead carries.
+    pub labels: Vec<String>,
+    pub issue_type: Option<String>,
+    pub assignee: Option<String>,
+    /// The bead a kept bead hangs beneath, by parent links at any depth.
+    pub beneath: Option<BeadKey>,
+}
+
+impl Only {
+    /// Whether a bead of `snapshot` is kept.
+    fn keeping<'s>(&'s self, snapshot: &Snapshot) -> impl Fn(&Node) -> bool + 's {
+        let parents: BTreeMap<BeadKey, BeadKey> = snapshot
+            .collected
+            .iter()
+            .flat_map(|tree| &tree.beads)
+            .filter_map(|node| {
+                let parent = node.parent.as_ref()?;
+                Some((
+                    node.key(),
+                    BeadKey {
+                        project: parent.project.as_ref().unwrap_or(&node.project).clone(),
+                        id: parent.id.clone(),
+                    },
+                ))
+            })
+            .collect();
+        move |node: &Node| {
+            self.labels.iter().all(|label| node.labels.contains(label))
+                && self
+                    .issue_type
+                    .as_ref()
+                    .is_none_or(|issue_type| *issue_type == node.issue_type)
+                && self
+                    .assignee
+                    .as_deref()
+                    .is_none_or(|assignee| node.assignee.as_deref() == Some(assignee))
+                && self.beneath.as_ref().is_none_or(|above| {
+                    std::iter::successors(parents.get(&node.key()), |at| parents.get(at))
+                        .take(parents.len())
+                        .any(|ancestor| ancestor == above)
+                })
+        }
+    }
 }
 
 fn unread_trees(snapshot: &Snapshot) -> Vec<UnreadTree<'_>> {
