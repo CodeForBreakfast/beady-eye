@@ -276,7 +276,11 @@ impl<'a> DependencyListing<'a> {
             failed_projects: &snapshot.failed_projects,
             unread_trees: unread_trees(snapshot)
                 .into_iter()
-                .filter(|tree| named.iter().any(|key| key.project == tree.project && key.id == tree.root))
+                .filter(|tree| {
+                    named
+                        .iter()
+                        .any(|key| key.project == tree.project && key.id == tree.root)
+                })
                 .collect(),
         }
     }

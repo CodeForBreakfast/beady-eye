@@ -26,7 +26,8 @@ use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
 use crate::config::{Config, Poll};
-use crate::model::snapshot::{Filter, Listing, ReadyListing, Snapshot};
+use crate::model::join::BeadKey;
+use crate::model::snapshot::{DependencyListing, Filter, Listing, ReadyListing, Snapshot};
 use crate::tui::{Hearing, Reload, CHECKED_EVERY};
 use crate::view::forest::ready_list;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
@@ -91,6 +92,7 @@ struct Cli {
     /// id means the one project being read. A bead under a project the
     /// directory left out reads that project too. Under --json, a project
     /// with a bead named in it writes only the trees those beads are in.
+    /// Under --beads, only the beads each named bead depends on are written.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
 
@@ -118,8 +120,12 @@ struct Cli {
     /// blocks it in its own project or another, the agent on it, and its
     /// labels, description, created date and metadata. Beads with no live agent in their tree are
     /// listed too. With --ready, list only the beads the ready list draws, as
-    /// in_progress and ready, in the order it draws them.
-    #[arg(long = "beads", conflicts_with_all = ["json", "all", "beads"])]
+    /// in_progress and ready, in the order it draws them. With a bead named,
+    /// list that bead and everything it depends on in any project, never
+    /// following a parent link: the ready beads, the ready gates apart from
+    /// them, and every other bead as waiting, with the dependencies it is
+    /// still waiting on.
+    #[arg(long = "beads", conflicts_with_all = ["json", "all"])]
     each_bead: bool,
 
     /// Draw every tree, including those with no live agent.
@@ -345,6 +351,12 @@ pub fn run() -> anyhow::Result<ExitCode> {
         }
         None => {}
     }
+    if cli.each_bead && cli.ready && !cli.beads.is_empty() {
+        anyhow::bail!(
+            "--beads with a bead named already lists the ready beads in its tree, \
+             and --ready would list every tree's; leave out one or the other"
+        );
+    }
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let launch = Launch {
         cwd: &cwd,
@@ -385,7 +397,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
     }
     if cli.each_bead {
         let snapshot = read_for_each_bead(&cfg, &RealRunner, EnvironmentCache::here(), Utc::now());
-        println!("{}", beads_document(&snapshot, cli.ready)?);
+        println!(
+            "{}",
+            beads_document(&snapshot, cli.ready, &cfg.roots.named_beads())?
+        );
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -521,10 +536,17 @@ fn read_for_each_bead(
     )
 }
 
-/// What `bdi --beads` writes: every unfinished bead, or under `--ready` the
-/// beads the ready list draws, in its order.
-fn beads_document(snapshot: &Snapshot, ready: bool) -> serde_json::Result<String> {
-    if ready {
+/// What `bdi --beads` writes: the dependency trees of the beads `named`
+/// where it names any, or else every unfinished bead, or under `--ready`
+/// the beads the ready list draws, in its order.
+fn beads_document(
+    snapshot: &Snapshot,
+    ready: bool,
+    named: &[BeadKey],
+) -> serde_json::Result<String> {
+    if !named.is_empty() {
+        serde_json::to_string_pretty(&DependencyListing::of(snapshot, named))
+    } else if ready {
         serde_json::to_string_pretty(&ReadyListing::of(snapshot, ready_list(snapshot)))
     } else {
         serde_json::to_string_pretty(&Listing::of(snapshot))
@@ -1498,13 +1520,22 @@ detached
     #[test]
     fn beads_stands_apart_from_the_forests_options() {
         assert!(Cli::parse_from(["bdi", "--beads"]).each_bead);
-        for forest in [&["--json"][..], &["--all"], &["dun-7"]] {
+        for forest in [&["--json"][..], &["--all"]] {
             let asked = [&["bdi", "--beads"][..], forest].concat();
             assert!(
                 Cli::try_parse_from(asked).is_err(),
                 "--beads with {forest:?} was taken"
             );
         }
+    }
+
+    /// A bead named beside `--beads` is the bead whose dependency tree it
+    /// lists.
+    #[test]
+    fn beads_takes_the_beads_whose_dependencies_it_lists() {
+        let cli = Cli::parse_from(["bdi", "--beads", "dun-7", "ferry:fer-9"]);
+        assert!(cli.each_bead);
+        assert_eq!(cli.beads, ["dun-7", "ferry:fer-9"]);
     }
 
     /// `--ready` is where the view starts, and a bead named beside it roots
@@ -1892,7 +1923,7 @@ kadath = ["kad-11"]
 
         let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
         let written: serde_json::Value =
-            serde_json::from_str(&beads_document(&snapshot, true).unwrap()).unwrap();
+            serde_json::from_str(&beads_document(&snapshot, true, &[]).unwrap()).unwrap();
 
         let ids = |section: &str| -> Vec<&str> {
             written[section]

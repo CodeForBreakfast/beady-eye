@@ -23,6 +23,9 @@ path = "/srv/work/arkham"
 [[projects]]
 name = "dunwich"
 path = "/srv/work/dunwich"
+
+[roots.explicit]
+dunwich = ["dun-404"]
 "#;
 
 /// The archive's reopening waits on five beads and a closed one, and has a
@@ -72,14 +75,15 @@ fn now() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-/// The two trackers, each answering ready what bd would: bd cannot see that
-/// ark-5 waits on dun-1, so it answers ark-5 ready.
+/// The two trackers, each answering ready what bd would. bd counts a bead
+/// being worked as ready, and cannot see that ark-5 waits on dun-1, so it
+/// answers both ready.
 fn trackers() -> Fakes {
     Fakes::default()
         .with(
             "arkham",
             Fake::holding(parse_beads(ARKHAM).expect("the rows parse"))
-                .ready(["ark-1.1", "ark-2", "ark-5", "ark-6", "ark-9"])
+                .ready(["ark-1.1", "ark-2", "ark-3", "ark-5", "ark-6", "ark-9"])
                 .blocked("ark-1", &["ark-2", "ark-3", "ark-4", "ark-5", "ark-7"])
                 .blocked("ark-4", &["ark-6"]),
         )
@@ -110,7 +114,13 @@ fn keys(document: &Value, list: &str) -> Vec<String> {
         .as_array()
         .unwrap_or_else(|| panic!("{list} is an array: {document}"))
         .iter()
-        .map(|bead| format!("{}:{}", bead["project"].as_str().unwrap(), bead["id"].as_str().unwrap()))
+        .map(|bead| {
+            format!(
+                "{}:{}",
+                bead["project"].as_str().unwrap(),
+                bead["id"].as_str().unwrap()
+            )
+        })
         .collect()
 }
 
@@ -228,6 +238,15 @@ fn each_bead_carries_the_pane_its_metadata_names() {
         entry(&document, "waiting", "ark-3")["metadata"]["agent_pane"],
         "w:p4"
     );
+}
+
+/// A root the config names and the tracker lacks is no part of the tree
+/// asked about.
+#[test]
+fn a_root_outside_the_tree_that_went_unread_is_left_out() {
+    let document = tree_of(&["arkham:ark-1"]);
+
+    assert_eq!(document["unread_trees"], json!([]));
 }
 
 /// A bead the tracker does not hold has no tree, and says so rather than

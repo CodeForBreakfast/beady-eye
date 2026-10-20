@@ -167,6 +167,12 @@ order, as `in_progress` and `ready`. So `bdi --beads --ready | jq '.ready[].id'`
 is what you could pick up now, without the parents whose children are the work
 left on them, which `bd ready` still offers.
 
+`bdi --beads <bead>` writes only that bead and everything it depends on, in
+any project, without following parent links. It lists the `ready` beads, the
+`ready_gates` apart from them, and every other bead as `waiting`, with the
+`unmet_dependencies` it still waits on. So
+`bdi --beads dun-7 | jq '.ready[].id'` is what can start now towards `dun-7`.
+
 ## Several trackers
 
 A config file opens the eye on all of them:
