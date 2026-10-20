@@ -54,8 +54,9 @@ smt-4kd3p.20 in summit-works, "the daily wallpaper timer calls dms", has changed
 
 Then act on the change, and decide whether the session still waits on the bead.
 
-A change the session makes to a watched bead's status wakes it too. Expect that
-message after closing or blocking a bead you watch, and do not act on it twice.
+The session also hears of a change it makes itself to a watched bead's status.
+Expect that message after closing or blocking a bead you watch, and do not act
+on it twice.
 
 ## When the watcher is down
 
