@@ -538,7 +538,7 @@ impl Kept {
             cli,
             gh,
             &self.projects,
-            &EVENTS,
+            EVENTS,
             std::slice::from_ref(&awaited),
             told,
         )
@@ -704,7 +704,7 @@ fn look<'a>(
     }
     let mut github = Read::Unasked;
     for repository in &awaited {
-        let settled = gates::settle_together(cli, gh, projects, &EVENTS, repository, told);
+        let settled = gates::settle_together(cli, gh, projects, EVENTS, repository, told);
         for (each, settled) in repository.iter().zip(settled) {
             let each = findings(gh, each.pull_request.clone(), settled);
             found.extend(each.found);
@@ -889,6 +889,7 @@ fn unread(gh: &dyn Runner, pull_request: PullRequest, failure: RunFailure) -> Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::pr_events;
     use crate::collect::run::testing::FakeRunner;
     use std::path::PathBuf;
 
@@ -975,7 +976,8 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
+             (number:{number}){{state {}}}}}}}",
+            pr_events::fields(EVENTS)
         )
     }
 
@@ -989,7 +991,8 @@ mod tests {
         format!(
             "gh api graphql -f owner=example -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7)\
-             {{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}} pr42:pullRequest(number:42){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
+             {{state {fields}}} pr42:pullRequest(number:42){{state {fields}}}}}}}",
+            fields = pr_events::fields(EVENTS)
         )
     }
 

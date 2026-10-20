@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use beady_eye::collect::pr_events::{self, EVENTS};
 use chrono::{TimeDelta, Timelike, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -65,7 +66,8 @@ fn viewed(number: u64) -> String {
     format!(
         "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
          {{repository(owner:$owner,name:$name){{pr{number}:pullRequest(number:{number})\
-         {{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
+         {{state {}}}}}}}",
+        pr_events::fields(EVENTS)
     )
 }
 
@@ -80,10 +82,12 @@ const QUERIED_OPEN: &str = include_str!("fixtures/gh_2.102.0_api_graphql_ark_ope
 
 /// The one query a look asks about #7 and #42 in example/ark.
 fn queried() -> String {
-    "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
-     {repository(owner:$owner,name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}} reviews(last:5){nodes{url state submittedAt author{login}}} mergeable headRefOid headRef{target{...on Commit{committedDate}}} baseRef{target{...on Commit{committedDate}}} comments(last:5){nodes{url createdAt author{login}}}} \
-     pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}} reviews(last:5){nodes{url state submittedAt author{login}}} mergeable headRefOid headRef{target{...on Commit{committedDate}}} baseRef{target{...on Commit{committedDate}}} comments(last:5){nodes{url createdAt author{login}}}}}}"
-        .to_string()
+    format!(
+        "api graphql -f owner=example -f name=ark -f query=query($owner:String!,$name:String!)\
+         {{repository(owner:$owner,name:$name){{pr7:pullRequest(number:7){{state {fields}}} \
+         pr42:pullRequest(number:42){{state {fields}}}}}}}",
+        fields = pr_events::fields(EVENTS)
+    )
 }
 
 /// A home holding a config that names `projects`, each a directory of its
