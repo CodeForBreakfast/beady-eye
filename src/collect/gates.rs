@@ -1628,6 +1628,77 @@ mod tests {
         assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
     }
 
+    /// An open pull request whose latest reviews are bob's reply in a review
+    /// thread and carol's inline comment made on its own, each of which
+    /// GitHub records as a bodyless review holding that one comment.
+    const INLINE_COMMENTED: &str = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"reviews":{"nodes":[
+        {"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-31","state":"COMMENTED","body":"","author":{"login":"bob"},
+         "comments":{"totalCount":1,"nodes":[{"url":"https://forge.invalid/example/ark/pull/7#discussion_r22","replyTo":{"id":"PRRC_21"}}]}},
+        {"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-32","state":"COMMENTED","body":"","author":{"login":"carol"},
+         "comments":{"totalCount":1,"nodes":[{"url":"https://forge.invalid/example/ark/pull/7#discussion_r23","replyTo":null}]}}]}}"#;
+
+    fn reply_telling(bead: &str) -> String {
+        written(
+            "arkham",
+            &format!(
+                "comments add {bead} bob replied in a review thread on pull request example/ark#7. \
+                 https://forge.invalid/example/ark/pull/7#discussion_r22"
+            ),
+        )
+    }
+
+    fn lone_inline_telling(bead: &str) -> String {
+        written(
+            "arkham",
+            &format!(
+                "comments add {bead} carol commented inline on pull request example/ark#7. \
+                 https://forge.invalid/example/ark/pull/7#discussion_r23"
+            ),
+        )
+    }
+
+    #[test]
+    fn an_inline_reply_and_a_lone_inline_comment_are_each_told_once_on_each_held_back_bead() {
+        let told = Told::default();
+        let mut runner = captured(FakeRunner::default(), "arkham")
+            .with(&queried(7..=7), &answer(7, INLINE_COMMENTED));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner
+                .with(&comments_on("arkham", bead), NO_COMMENTS)
+                .with(&reply_telling(bead), &format!("Comment added to {bead}\n"))
+                .with(
+                    &lone_inline_telling(bead),
+                    &format!("Comment added to {bead}\n"),
+                );
+        }
+        let awaiting = [awaited(7, Until::Merged, &["ark-2ud", "ark-45c"])];
+        let sweep = || {
+            settle_together(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                EVENTS,
+                &awaiting,
+                &told,
+            )
+            .collect::<Vec<_>>()
+        };
+
+        sweep();
+        let again = sweep();
+
+        assert_eq!(
+            writes(&runner),
+            [
+                reply_telling("ark-2ud"),
+                reply_telling("ark-45c"),
+                lone_inline_telling("ark-2ud"),
+                lone_inline_telling("ark-45c"),
+            ]
+        );
+        assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
+    }
+
     /// An open pull request with a conversation comment from each of
     /// `comments`, as `(author, comment number)`.
     fn commented_by(comments: &[(&str, u32)]) -> String {
@@ -1806,13 +1877,14 @@ mod tests {
         awaited
     }
 
-    /// #7 open with failing checks, a review, a conflict, a comment and a new
-    /// head, each of them `at`.
+    /// #7 open with failing checks, a review, a conflict, a comment, an
+    /// inline reply and a new head, each of them `at`.
     fn everything_at(at: &str) -> String {
         format!(
             r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,
             "commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"nodes":[{{"conclusion":"FAILURE","completedAt":"{at}"}}]}}}}}}}}]}},
-            "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}}]}},
+            "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}},
+            {{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-31","state":"COMMENTED","body":"","submittedAt":"{at}","author":{{"login":"bob"}},"comments":{{"totalCount":1,"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#discussion_r22","replyTo":{{"id":"PRRC_21"}}}}]}}}}]}},
             "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"oid":"a1b2c3d4","url":"https://forge.invalid/example/ark/commit/a1b2c3","committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
             "comments":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-12","createdAt":"{at}","author":{{"login":"bob"}}}}]}}}}"#
         )
@@ -1830,8 +1902,7 @@ mod tests {
     /// Whoever made a gate could already see what its pull request had done,
     /// so a bdi that newly tells it would wake every seat for old news.
     #[test]
-    fn a_gate_made_after_failing_checks_a_review_a_conflict_a_comment_and_a_new_head_tells_none_of_them(
-    ) {
+    fn a_gate_made_after_all_its_pull_request_did_tells_none_of_it() {
         let runner = captured(FakeRunner::default(), "arkham").with(
             &viewed(7),
             &answer(7, &everything_at("2026-10-06T08:24:48Z")),
@@ -1848,14 +1919,14 @@ mod tests {
     }
 
     #[test]
-    fn a_gate_made_before_failing_checks_a_review_a_conflict_a_comment_and_a_new_head_tells_each_once(
-    ) {
+    fn a_gate_made_before_all_its_pull_request_did_tells_each_thing_once() {
         let tellings = |bead| {
             [
                 checks_failed_telling("arkham", bead, "a1b2c3"),
                 review_telling(bead, "alice", "commented", 11),
                 conflict_telling("arkham", bead, "a1b2c3"),
                 comment_telling(bead, "bob", 12),
+                reply_telling(bead),
                 head_telling(bead),
             ]
         };
@@ -1887,9 +1958,9 @@ mod tests {
         sweep();
         let again = sweep();
 
-        let [a, b, c, d, e] = tellings("ark-2ud");
-        let [f, g, h, i, j] = tellings("ark-45c");
-        assert_eq!(writes(&runner), [a, f, b, g, c, h, d, i, e, j]);
+        let [a, b, c, d, e, f] = tellings("ark-2ud");
+        let [g, h, i, j, k, l] = tellings("ark-45c");
+        assert_eq!(writes(&runner), [a, g, b, h, c, i, d, j, e, k, f, l]);
         assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
     }
 
