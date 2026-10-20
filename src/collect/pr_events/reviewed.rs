@@ -103,19 +103,19 @@ fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, se
         .into_iter()
         .filter(|review| !matches!(review.state.as_str(), "PENDING" | "DISMISSED"))
         .filter(|review| review.lone_inline_comment().is_none())
-        .map(|review| {
-            let reviewer = review.author();
-            let state = review.state.to_ascii_lowercase().replace('_', " ");
-            Telling {
-                text: format!(
-                    "{reviewer} reviewed pull request {pr}: {state}. {}",
-                    review.url
-                ),
-                happened: review.submitted_at,
-            }
+        .map(|review| Telling {
+            text: told(review.author(), pr, &review.state, &review.url),
+            happened: review.submitted_at,
         })
         .collect();
     Ok((observed.state == State::Open && !told.is_empty()).then_some(Outcome::Tell(told)))
+}
+
+/// How a review in `state`, as GitHub spells it in either case, is told, by
+/// the sweep and by a delivery alike.
+pub(super) fn told(reviewer: &str, pr: &PullRequest, state: &str, url: &str) -> String {
+    let state = state.to_ascii_lowercase().replace('_', " ");
+    format!("{reviewer} reviewed pull request {pr}: {state}. {url}")
 }
 
 #[cfg(test)]

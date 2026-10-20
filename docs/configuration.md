@@ -1306,8 +1306,8 @@ empty one, refuses to start.
 
 On GitHub, give the webhook the address `bdi gates` is reached at, the content
 type `application/json`, the same secret, and the *Pull requests*, *Pull request
-reviews*, *Pull request review comments*, *Issue comments*, *Check suites* and *Statuses* events. A delivery is
-a trigger only. `bdi gates` reads the repository and number out of it and settles that pull
+reviews*, *Pull request review comments*, *Issue comments*, *Check suites* and *Statuses* events.
+`bdi gates` reads the repository and number out of a delivery and settles that pull
 request against the gates it holds from its last read, asking GitHub where it
 stands. It passes the pull request over without a word where no gate it holds
 waits on it, or where [`[gates]`](#gates) leaves its owner to another
@@ -1316,7 +1316,41 @@ it changed, its last read failed, or `bdi gates` has closed a gate or told a
 bead in it since. A tracker on the clock is otherwise left to the next look,
 so a gate written there since the last look waits for that look. A check suite or status names a commit and no pull request, so
 `bdi gates` asks GitHub for the open pull requests whose head is that commit
-and settles each. Each delivery is answered before it is settled:
+and settles each.
+
+Once the settling has closed what it closes, the delivery tells each bead held
+back by a gate still open on the pull request what happened. It names who
+acted and links to what they did. It never quotes what anyone wrote, so no
+comment, review or pull request body, title, label, branch name or commit
+message reaches a bead. Where a look tells the same thing, the delivery uses
+the look's words, so the bead is told once:
+
+| the delivery | what it tells |
+|---|---|
+| `issue_comment` created on a pull request | the comment, as a look tells it |
+| `pull_request_review` submitted, approving, requesting changes or commenting with a body | the review, as a look tells it |
+| `pull_request_review_comment`, or `pull_request_review` submitted commenting with no body | nothing of its own. GitHub records an inline comment inside a review, and neither delivery says how many comments the review holds, so the look the delivery prompts tells the review or its inline comment |
+| `check_suite` concluded as a failure, a timeout, a cancellation, an action required or a startup failure, or `status` in `failure` or `error` | failing checks on the head commit, as a look tells them |
+| `pull_request` synchronize | the new head, as a look tells it |
+| `pull_request` closed | nothing more, because the settling closes the gate on a merge, or tells a close without one |
+| anything else from these six events, such as a label, a dismissed review or checks that passed | who acted, the event and its action, and a link to what they acted on |
+
+A bead told by that last row reads like this:
+
+```
+alice acted on pull request dunwich/arkham#18: pull_request labeled. https://github.com/dunwich/arkham/pull/18
+```
+
+Each bead told is reported on stdout as a look reports one, such as
+`dunwich/arkham#18 was acted on: arkham told ark-7mw`. A bead is told the same
+thing once, so a second delivery saying it writes nothing. A comment or a
+review made before the gate is not told, as a look does not tell one. `bdi gates` keeps
+no record of deliveries. One it misses is not told, and that includes one that
+arrives while a rate limit is waited out or while GitHub does not say where the
+pull request stands. The next look tells only what a look tells, and a woken
+seat reads the pull request for itself.
+
+Each delivery is answered before it is settled:
 
 | the request | the answer |
 |---|---|

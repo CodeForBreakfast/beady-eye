@@ -18,6 +18,7 @@ use crate::collect::pr_events::{self, Event, Outcome};
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::collect::upstream::UpstreamGate;
+use crate::collect::webhook::Said;
 use crate::config::Project;
 use crate::model::gate::{self, Fault, Until};
 use crate::model::types::Bead;
@@ -219,7 +220,8 @@ fn settle(
     told: &Told,
 ) -> Settled {
     let observed = observe(gh, pr, &pr_events::fields(events));
-    settled(cli, projects, events, pr, observed, None, told)
+    let read = observed.map(|observed| outcomes(events, pr, &observed, None));
+    settled(cli, projects, pr, read, None, told)
 }
 
 /// The most pull requests one query asks about. The query is one argument to
@@ -244,10 +246,36 @@ pub fn settle_together<'a>(
 ) -> impl Iterator<Item = Settled> + 'a {
     awaited
         .chunks(PULL_REQUESTS_PER_QUERY)
-        .flat_map(move |asked| settle_asked_together(cli, gh, projects, events, asked, told))
+        .flat_map(move |asked| settle_asked_together(cli, gh, projects, events, asked, None, told))
 }
 
-/// Re-read every one of `asked` in one query, then settle each.
+/// Settle `awaited` as [`settle_together`] settles each pull request, and
+/// tell each bead held back by a gate still open on it what a delivery
+/// `said`, after every event has done what it asks.
+pub fn settle_delivered(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    events: &[Event],
+    awaited: &Awaited,
+    said: Option<&Said>,
+    told: &Told,
+) -> Settled {
+    settle_asked_together(
+        cli,
+        gh,
+        projects,
+        events,
+        std::slice::from_ref(awaited),
+        said,
+        told,
+    )
+    .next()
+    .expect("one pull request asked about is one settled")
+}
+
+/// Re-read every one of `asked` in one query, then settle each, telling what
+/// a delivery `said` of them.
 ///
 /// A query naming one pull request or repository GitHub does not have fails
 /// as a whole, so then each is read on its own and the rest are still
@@ -261,6 +289,7 @@ fn settle_asked_together<'a>(
     projects: &'a [Project],
     events: &'a [Event],
     asked: &'a [Awaited],
+    said: Option<&'a Said>,
     told: &'a Told,
 ) -> impl Iterator<Item = Settled> + 'a {
     let fields = pr_events::fields(events);
@@ -281,15 +310,9 @@ fn settle_asked_together<'a>(
         ),
     };
     asked.iter().zip(observed).map(move |(each, observed)| {
-        settled(
-            cli,
-            projects,
-            events,
-            &each.pull_request,
-            observed,
-            Some(&each.waiting),
-            told,
-        )
+        let pr = &each.pull_request;
+        let read = observed.map(|observed| outcomes(events, pr, &observed, said));
+        settled(cli, projects, pr, read, Some(&each.waiting), told)
     })
 }
 
@@ -300,10 +323,10 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 }
 
 /// Settle every open gh:pr gate waiting on `pr` in each of `projects`, doing
-/// what each of `events` asks of what GitHub said. Where a look found the
-/// gates `waiting` on `pr`, an event's outcome is acted on only where it is
-/// new to them: a gate waiting for it, or a bead held back that has not been
-/// told it. Only the trackers holding those gates are then read again.
+/// what each outcome `read` of what GitHub said asks. Where a look found the
+/// gates `waiting` on `pr`, an outcome is acted on only where it is new to
+/// them: a gate waiting for it, or a bead held back that has not been told
+/// it. Only the trackers holding those gates are then read again.
 ///
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. A pull request GitHub did not
@@ -312,14 +335,13 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 fn settled(
     cli: &Cli,
     projects: &[Project],
-    events: &[Event],
     pr: &PullRequest,
-    observed: Result<Observed, RunFailure>,
+    read: Result<Outcomes, RunFailure>,
     waiting: Option<&[Waiting]>,
     told: &Told,
 ) -> Settled {
-    let (outcomes, unseen) = match observed {
-        Ok(observed) => outcomes(events, pr, &observed),
+    let (outcomes, unseen) = match read {
+        Ok(read) => read,
         Err(failure) => return Settled::Unread(failure),
     };
     let new: Vec<(&'static str, Outcome)> = outcomes
@@ -351,13 +373,20 @@ fn settled(
     }
 }
 
+/// What each event makes of a pull request, beside what it did, and each
+/// event GitHub's answer did not let it see.
+type Outcomes = (Vec<(&'static str, Outcome)>, Vec<Unseen>);
+
 /// What each of `events` makes of `pr`, beside what it did, as the event
-/// says it, and each event GitHub's answer did not let it see.
+/// says it, and each event GitHub's answer did not let it see. What a
+/// delivery `said` comes after every event, so a gate a merge closed does not
+/// tell it.
 fn outcomes(
     events: &[Event],
     pr: &PullRequest,
     observed: &Observed,
-) -> (Vec<(&'static str, Outcome)>, Vec<Unseen>) {
+    said: Option<&Said>,
+) -> Outcomes {
     let mut seen = Vec::new();
     let mut unseen = Vec::new();
     for event in events {
@@ -381,6 +410,10 @@ fn outcomes(
                 why,
             }),
         }
+    }
+    if let Some(said) = said {
+        let (happening, telling) = pr_events::delivered(said, pr);
+        seen.push((happening, Outcome::Tell(vec![telling])));
     }
     (seen, unseen)
 }
@@ -1852,7 +1885,7 @@ mod tests {
             "commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"nodes":[{{"conclusion":"FAILURE","completedAt":"{at}"}}]}}}}}}}}]}},
             "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}},
             {{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-31","state":"COMMENTED","body":"","submittedAt":"{at}","author":{{"login":"bob"}},"comments":{{"totalCount":1,"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#discussion_r22","replyTo":{{"id":"PRRC_21"}}}}]}}}}]}},
-            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"abbreviatedOid":"a1b2c3d","url":"https://forge.invalid/example/ark/commit/a1b2c3","committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
+            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"oid":"a1b2c3d4","url":"https://forge.invalid/example/ark/commit/a1b2c3","committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
             "comments":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-12","createdAt":"{at}","author":{{"login":"bob"}}}}]}}}}"#
         )
     }

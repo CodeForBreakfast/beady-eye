@@ -29,7 +29,7 @@ use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::collect::upstream::{Answer, Upstream};
-use crate::collect::webhook::Commit;
+use crate::collect::webhook::{Commit, Said};
 use crate::config::{Gates, Poll, Project};
 use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
@@ -514,13 +514,15 @@ impl Kept {
     /// pull request no gate kept waits on asks nothing of GitHub, and one
     /// whose repository `settles` leaves to another `bdi gates` is passed
     /// over without a word. A bead gate whose bead is in a tracker read again
-    /// is settled too.
+    /// is settled too. What the delivery `said` happened is told to each bead
+    /// a gate still open on the pull request holds back.
     pub fn delivered(
         &mut self,
         cli: &Cli,
         gh: &dyn Runner,
         settles: &Gates,
         pull_request: PullRequest,
+        said: Option<&Said>,
         told: &Told,
     ) -> Settling {
         if !settles.settles(gate::owner(&pull_request.repo)) {
@@ -534,16 +536,8 @@ impl Kept {
                 github: Read::Unasked,
             };
         };
-        let settled = gates::settle_together(
-            cli,
-            gh,
-            &self.projects,
-            EVENTS,
-            std::slice::from_ref(&awaited),
-            told,
-        )
-        .next()
-        .expect("one pull request asked about is one settled");
+        let settled =
+            gates::settle_delivered(cli, gh, &self.projects, EVENTS, &awaited, said, told);
         let settled = findings(gh, awaited.pull_request, settled);
         found.extend(settled.found);
         Settling {
@@ -562,6 +556,7 @@ impl Kept {
         gh: &dyn Runner,
         settles: &Gates,
         commit: Commit,
+        said: Option<&Said>,
         told: &Told,
     ) -> Settling {
         let Some(repository) = gate::repository(&commit.repo) else {
@@ -588,7 +583,7 @@ impl Kept {
                 repo: commit.repo.clone(),
                 number,
             };
-            let each = self.delivered(cli, gh, settles, pull_request, told);
+            let each = self.delivered(cli, gh, settles, pull_request, said, told);
             settling.found.extend(each.found);
             settling.github = settling.github.max(each.github);
             if matches!(settling.found.last(), Some(Found::RateLimited { .. })) {
@@ -891,6 +886,9 @@ mod tests {
     use super::*;
     use crate::collect::pr_events;
     use crate::collect::run::testing::FakeRunner;
+    use crate::collect::webhook::{self, Delivery, Named, Secret};
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
     use std::path::PathBuf;
 
     const COVERED_FOR: Duration = Duration::from_secs(60);
@@ -1326,6 +1324,7 @@ mod tests {
             runner,
             settles,
             pr(number),
+            None,
             &Told::default(),
         )
     }
@@ -1347,6 +1346,7 @@ mod tests {
             runner,
             settles,
             commit(),
+            None,
             &Told::default(),
         )
     }
@@ -1424,6 +1424,345 @@ mod tests {
 
         assert_eq!(found, [settling("arkham")]);
         assert_eq!(asked_github(&runner), [viewed(42)]);
+    }
+
+    /// Written into every field of a delivery that holds someone's own words.
+    const WRITTEN: &str = "words someone wrote";
+
+    const REPOSITORY: &str =
+        r#""repository":{"full_name":"example/ark","html_url":"https://github.com/example/ark"}"#;
+
+    /// `body` as GitHub sends it for `event`, signed, and what it comes to.
+    fn signed(event: &str, body: &str) -> Delivery {
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"swordfish").expect("any key");
+        mac.update(body.as_bytes());
+        let digest: String = mac
+            .finalize()
+            .into_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        match webhook::delivery(
+            &Secret::new("swordfish").expect("a secret"),
+            Some(event),
+            Some(&format!("sha256={digest}")),
+            body.as_bytes(),
+        ) {
+            webhook::Heard::Settle(delivery) => delivery,
+            other => panic!("a {event} delivery that settles nothing: {other:?}"),
+        }
+    }
+
+    fn deliver_signed(
+        kept: &mut Kept,
+        runner: &FakeRunner,
+        delivery: &Delivery,
+        told: &Told,
+    ) -> Settling {
+        let (cli, settles) = (Cli::new(runner), owners(&["example"]));
+        let said = delivery.said.as_ref();
+        match &delivery.named {
+            Named::PullRequest(pull_request) => {
+                kept.delivered(&cli, runner, &settles, pull_request.clone(), said, told)
+            }
+            Named::Commit(commit) => {
+                kept.delivered_commit(&cli, runner, &settles, commit.clone(), said, told)
+            }
+        }
+    }
+
+    /// One delivery of each event the hook subscribes to, about open #7, as
+    /// `(event, body, what it tells, what a line reporting it says)`. An
+    /// inline comment tells nothing of its own, so
+    /// [`an_inline_comment_tells_nothing_of_its_own`] has its delivery.
+    fn each_event() -> Vec<(&'static str, String, String, &'static str)> {
+        vec![
+            (
+                "pull_request",
+                format!(
+                    r#"{{"action":"labeled","number":7,"label":{{"name":"{WRITTEN}"}},"pull_request":{{"number":7,"title":"{WRITTEN}","body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7","head":{{"ref":"{WRITTEN}","sha":"{SHA}"}}}},{REPOSITORY},"sender":{{"login":"alice"}}}}"#
+                ),
+                "alice acted on pull request example/ark#7: pull_request labeled. \
+                 https://github.com/example/ark/pull/7"
+                    .to_string(),
+                "was acted on",
+            ),
+            (
+                "pull_request_review",
+                format!(
+                    r#"{{"action":"submitted","review":{{"state":"approved","body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#pullrequestreview-21","user":{{"login":"bob"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"bob"}}}}"#
+                ),
+                "bob reviewed pull request example/ark#7: approved. \
+                 https://github.com/example/ark/pull/7#pullrequestreview-21"
+                    .to_string(),
+                "was reviewed",
+            ),
+            (
+                "issue_comment",
+                format!(
+                    r#"{{"action":"created","issue":{{"number":7,"title":"{WRITTEN}","pull_request":{{"url":"https://api.github.com/repos/example/ark/pulls/7"}}}},"comment":{{"body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#issuecomment-41","user":{{"login":"dave"}}}},{REPOSITORY},"sender":{{"login":"dave"}}}}"#
+                ),
+                "dave commented on pull request example/ark#7. \
+                 https://github.com/example/ark/pull/7#issuecomment-41"
+                    .to_string(),
+                "was commented on",
+            ),
+            (
+                "check_suite",
+                format!(
+                    r#"{{"action":"completed","check_suite":{{"head_sha":"{SHA}","head_branch":"{WRITTEN}","conclusion":"failure","head_commit":{{"message":"{WRITTEN}"}}}},{REPOSITORY},"sender":{{"login":"erin"}}}}"#
+                ),
+                format!(
+                    "The checks on {SHA}, the head of pull request example/ark#7, failed, so the \
+                     gh:pr gate waiting on it stays open."
+                ),
+                "has failing checks",
+            ),
+            (
+                "status",
+                format!(
+                    r#"{{"state":"success","sha":"{SHA}","context":"{WRITTEN}","description":"{WRITTEN}","target_url":"https://ci.invalid/{WRITTEN}","commit":{{"html_url":"https://github.com/example/ark/commit/{SHA}","commit":{{"message":"{WRITTEN}"}}}},{REPOSITORY},"sender":{{"login":"frank"}}}}"#
+                ),
+                format!(
+                    "frank acted on pull request example/ark#7: status success. \
+                     https://github.com/example/ark/commit/{SHA}"
+                ),
+                "was acted on",
+            ),
+            (
+                "pull_request",
+                format!(
+                    r#"{{"action":"synchronize","number":7,"before":"0badc0de0badc0de0badc0de0badc0de0badc0de","after":"{SHA}","pull_request":{{"number":7,"title":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7","head":{{"ref":"{WRITTEN}","sha":"{SHA}"}}}},{REPOSITORY},"sender":{{"login":"grace"}}}}"#
+                ),
+                format!(
+                    "Pull request example/ark#7 has a new head, 5eaf00d. \
+                     https://github.com/example/ark/commit/{SHA}"
+                ),
+                "has a new head",
+            ),
+        ]
+    }
+
+    /// arkham's captured tracker, behind a GitHub where #7 is open, headed by
+    /// [`SHA`], and has nothing new for the sweep to tell.
+    fn seven_open() -> FakeRunner {
+        let no_comments = include_str!("../../tests/fixtures/bd_1.3.0_comments_none.json");
+        captured(FakeRunner::default(), "arkham")
+            .with(&viewed(7), &answer(7, OPEN))
+            .with(
+                HEADED_BY_SHA,
+                &format!(r#"[{{"number":7,"state":"open","head":{{"sha":"{SHA}"}}}}]"#),
+            )
+            .with(&read("arkham", "comments ark-2ud --json"), no_comments)
+            .with(&read("arkham", "comments ark-45c --json"), no_comments)
+    }
+
+    /// The one of [`each_event`] that is `event`'s `action`.
+    fn delivery_of(event: &str, action: &str) -> (&'static str, String, String) {
+        let (event, body, text, _) = each_event()
+            .into_iter()
+            .find(|(each, body, ..)| {
+                *each == event && body.contains(&format!(r#""action":"{action}""#))
+            })
+            .expect("each_event has one");
+        (event, body, text)
+    }
+
+    fn comment_added(bead: &str, text: &str) -> String {
+        format!("bd -C /nowhere/arkham comments add {bead} {text}")
+    }
+
+    fn comments_added(runner: &FakeRunner) -> Vec<String> {
+        runner
+            .calls()
+            .into_iter()
+            .map(|call| call.argv)
+            .filter(|argv| argv.contains(" comments add "))
+            .collect()
+    }
+
+    fn told_of_7(bead: &str, happening: &'static str, done: Done) -> Found {
+        Found::Settling {
+            pull_request: pr(7),
+            happening,
+            project: "arkham".to_string(),
+            bead: bead.to_string(),
+            done: Ok(done),
+        }
+    }
+
+    /// ark-eb1 waits on #7 and holds back ark-2ud and ark-45c.
+    #[test]
+    fn a_delivery_of_each_event_tells_each_held_back_bead_once_and_quotes_nobody() {
+        for (event, body, text, happening) in each_event() {
+            let delivery = signed(event, &body);
+            let mut runner = seven_open();
+            for bead in ["ark-2ud", "ark-45c"] {
+                runner = runner.with(&comment_added(bead, &text), "");
+            }
+            let (mut kept, told) = (arkham(), Told::default());
+
+            let first = deliver_signed(&mut kept, &runner, &delivery, &told).found;
+            let again = deliver_signed(&mut kept, &runner, &delivery, &told).found;
+
+            assert_eq!(
+                first,
+                [
+                    told_of_7("ark-2ud", happening, Done::Commented),
+                    told_of_7("ark-45c", happening, Done::Commented),
+                ],
+                "{event}"
+            );
+            assert_eq!(again, [], "{event}");
+            assert_eq!(
+                comments_added(&runner),
+                [
+                    comment_added("ark-2ud", &text),
+                    comment_added("ark-45c", &text)
+                ],
+                "{event}"
+            );
+            let quoting: Vec<String> = runner
+                .calls()
+                .into_iter()
+                .map(|call| call.argv)
+                .filter(|argv| argv.contains(WRITTEN))
+                .collect();
+            assert_eq!(quoting, Vec::<String>::new(), "{event}");
+        }
+    }
+
+    #[test]
+    fn a_comment_both_a_delivery_and_github_tell_of_is_told_once() {
+        let (event, body, text) = delivery_of("issue_comment", "created");
+        let commented = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null,"comments":{"nodes":[{"url":"https://github.com/example/ark/pull/7#issuecomment-41","author":{"login":"dave"}}]}}"#;
+        let mut runner = seven_open().with(&viewed(7), &answer(7, commented));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner.with(&comment_added(bead, &text), "");
+        }
+
+        deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &body),
+            &Told::default(),
+        );
+
+        assert_eq!(
+            comments_added(&runner),
+            [
+                comment_added("ark-2ud", &text),
+                comment_added("ark-45c", &text)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_head_both_a_delivery_and_github_tell_of_is_told_once() {
+        let (event, body, text) = delivery_of("pull_request", "synchronize");
+        let moved = format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"headRef":{{"target":{{"oid":"{SHA}","url":"https://github.com/example/ark/commit/{SHA}"}}}}}}"#
+        );
+        let mut runner = seven_open().with(&viewed(7), &answer(7, &moved));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner.with(&comment_added(bead, &text), "");
+        }
+
+        deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &body),
+            &Told::default(),
+        );
+
+        assert_eq!(
+            comments_added(&runner),
+            [
+                comment_added("ark-2ud", &text),
+                comment_added("ark-45c", &text)
+            ]
+        );
+    }
+
+    /// GitHub records an inline comment inside a review, and the look tells a
+    /// review's lone inline comment in place of the review. Neither delivery
+    /// says how many comments the review holds, so each leaves it to the look
+    /// it prompts, which here has nothing to tell.
+    #[test]
+    fn an_inline_comment_tells_nothing_of_its_own() {
+        let inline = format!(
+            r#"{{"action":"created","comment":{{"body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#discussion_r31","user":{{"login":"carol"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"carol"}}}}"#
+        );
+        let (_, approving, _) = delivery_of("pull_request_review", "submitted");
+        let bodyless = approving
+            .replace(r#""state":"approved""#, r#""state":"commented""#)
+            .replace(&format!(r#""body":"{WRITTEN}","#), r#""body":null,"#);
+        assert_ne!(bodyless, approving);
+
+        for (event, body) in [
+            ("pull_request_review_comment", inline),
+            ("pull_request_review", bodyless),
+        ] {
+            let runner = seven_open();
+            let found = deliver_signed(
+                &mut arkham(),
+                &runner,
+                &signed(event, &body),
+                &Told::default(),
+            )
+            .found;
+
+            assert_eq!(found, [], "{event}");
+            assert_eq!(asked_github(&runner), [viewed(7)], "{event} prompts a look");
+            assert_eq!(comments_added(&runner), Vec::<String>::new(), "{event}");
+        }
+    }
+
+    /// ark-eb1 was made at 2026-10-06T08:24:49Z, so whoever made it could
+    /// already see a comment made before then.
+    #[test]
+    fn a_delivery_of_a_comment_made_before_the_gate_tells_nothing() {
+        let (event, body, _) = delivery_of("issue_comment", "created");
+        let earlier = body.replace(
+            r#""user":{"login":"dave"}"#,
+            r#""created_at":"2026-10-01T00:00:00Z","user":{"login":"dave"}"#,
+        );
+        assert_ne!(earlier, body);
+        let runner = seven_open();
+
+        let found = deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &earlier),
+            &Told::default(),
+        )
+        .found;
+
+        assert_eq!(found, []);
+        assert_eq!(comments_added(&runner), Vec::<String>::new());
+    }
+
+    /// ark-0i5 waits on #42 and holds back ark-qca. The runner gives no
+    /// comments to read, so asking ark-qca for its comments would fail the
+    /// test.
+    #[test]
+    fn a_delivery_about_a_pull_request_that_merged_closes_its_gate_and_tells_nothing() {
+        let (event, body, _) = delivery_of("pull_request_review", "submitted");
+        let body = body.replace(r#""number":7"#, r#""number":42"#);
+        let runner = captured(FakeRunner::default(), "arkham")
+            .with(&viewed(42), &answer(42, MERGED))
+            .with(&resolving_42("arkham"), "");
+
+        let found = deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &body),
+            &Told::default(),
+        )
+        .found;
+
+        assert_eq!(found, [settling("arkham")]);
+        assert_eq!(comments_added(&runner), Vec::<String>::new());
     }
 
     /// The runner panics on any call it was not given, so a write would fail
