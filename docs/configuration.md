@@ -1072,18 +1072,19 @@ on, and acts on what GitHub says:
 | open and approved | closes each gate waiting on it with `awaits=approved` in its metadata, and leaves the rest open |
 | open or a draft, and its head commit has failing checks | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a fix that fails again is told again |
 | open or a draft, and every check on its head commit has passed | leaves each gate open, and comments once on each bead a gate holds back for that commit, so each new head that passes is told again |
-| open or a draft, and reviewed | leaves each gate open, and comments on each bead a gate holds back once for each review submitted, approving, requesting changes or commenting, naming the reviewer and the state. A dismissed review is not told. It reads the latest five reviews |
+| open or a draft, and reviewed | leaves each gate open, and comments on each bead a gate holds back once for each review submitted, approving, requesting changes or commenting, naming the reviewer and the state. A dismissed review is not told, and neither is an inline comment made on its own, which is told as an inline comment below. It reads the latest five reviews |
 | open or a draft, and GitHub says its head commit conflicts with its base | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a rebase that still conflicts is told again. A pull request GitHub has not yet worked out is not told |
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
+| open or a draft, and commented on inline | leaves each gate open, and comments on each bead a gate holds back once for each inline comment made on its own, a reply in a review thread among them, naming the comment's author, saying whether it replied, and linking it. It never quotes the comment. GitHub records such a comment as a review that comments, has no body and holds that one comment, so it reads the latest five reviews. An inline comment made as part of a larger review is told as that review. There is no author filter, so a seat's own inline comments arrive too |
 | open or a draft, and at a new head commit | leaves each gate open, and comments once on each bead a gate holds back for each head commit it finds, giving the commit's short sha and a link to it. A force-push is told like any other push. There is no filter for who pushed, so a seat's own pushes arrive too. Several pushes between two looks are one comment, for the head the look finds |
-| a draft whose checks have neither failed nor all passed, with no review, no conflict, no comment and no new head | nothing |
+| a draft whose checks have neither failed nor all passed, with no review, no conflict, no comment, no inline comment and no new head | nothing |
 
 A gate tells only what happened after it was made, since whoever made it could
 already see the rest. A review dates from when it was submitted, a comment from
-when it was made, failing checks from when the first check to fail finished,
-passing checks from when the last check finished,
-and a new head from when its commit was committed, so the head a pull request had
-when its gate was made is not told.
+when it was made, an inline comment from when GitHub submitted its review,
+failing checks from when the first check to fail finished, passing checks from
+when the last check finished, and a new head from when its commit was
+committed, so the head a pull request had when its gate was made is not told.
 GitHub does not say when a conflict began, so a conflict dates from the later of
 the head commit and the base branch's latest commit. A conflict that stood
 before the gate is still told once the base moves on. A close without a merge
@@ -1128,6 +1129,7 @@ dunwich/arkham#18 has passing checks: arkham told ark-7mw
 dunwich/arkham#18 was reviewed: arkham told ark-7mw
 dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
+dunwich/arkham#18 was commented on inline: arkham told ark-7mw
 dunwich/arkham#18 has a new head: arkham told ark-7mw
 kadath: its gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place

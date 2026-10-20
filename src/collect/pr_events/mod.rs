@@ -21,6 +21,7 @@ mod checks_passed;
 mod closed_unmerged;
 mod commented;
 mod conflicting;
+mod inline_commented;
 mod merged;
 mod new_head;
 mod ready_for_review;
@@ -92,6 +93,7 @@ pub const EVENTS: &[Event] = &[
     reviewed::EVENT,
     conflicting::EVENT,
     commented::EVENT,
+    inline_commented::EVENT,
     new_head::EVENT,
 ];
 
