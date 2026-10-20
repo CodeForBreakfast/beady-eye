@@ -19,6 +19,7 @@ use crate::model::gate::Until;
 mod approved;
 mod behind;
 mod checks_failed;
+mod checks_passed;
 mod closed_unmerged;
 mod commented;
 mod conflicting;
@@ -111,6 +112,10 @@ fn head_and_base_since(observed: &Observed) -> Result<Option<DateTime<Utc>>, ser
         .map(|(head, base)| head.max(base)))
 }
 
+/// The checks on the pull request's head commit, selected alike by every
+/// event that reads them so that [`fields`] asks them once.
+const HEAD_CHECKS: &str = "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}}";
+
 /// Every event `bdi gates` acts on.
 pub const EVENTS: &[Event] = &[
     ready_for_review::EVENT,
@@ -118,6 +123,7 @@ pub const EVENTS: &[Event] = &[
     closed_unmerged::EVENT,
     approved::EVENT,
     checks_failed::EVENT,
+    checks_passed::EVENT,
     reviewed::EVENT,
     conflicting::EVENT,
     behind::EVENT,
