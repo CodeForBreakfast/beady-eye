@@ -287,8 +287,8 @@ impl<'a> DependencyListing<'a> {
 }
 
 /// Every bead the named beads depend on, each named bead included, by
-/// blocking edges alone, keyed `(project, id)` so each is held once and in
-/// order. Each comes with the tree and the place in it where it was first
+/// blocking edges alone, keyed `(project, id)` so each is held once. Each
+/// comes with the tree and the place in it where it was first
 /// reached, whose links down are its dependencies.
 fn dependency_trees<'a>(
     snapshot: &'a Snapshot,

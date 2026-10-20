@@ -92,7 +92,7 @@ struct Cli {
     /// id means the one project being read. A bead under a project the
     /// directory left out reads that project too. Under --json, a project
     /// with a bead named in it writes only the trees those beads are in.
-    /// Under --beads, only the beads each named bead depends on are written.
+    /// Under --beads, only each named bead's dependency tree is written.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
 
