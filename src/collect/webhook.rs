@@ -1249,6 +1249,223 @@ mod tests {
         );
     }
 
+    /// What a signed `event` delivery of `body` says happened.
+    fn said_of(event: &str, body: &str) -> Option<Said> {
+        match heard_as(event, body) {
+            Heard::Settle(delivery) => delivery.said,
+            other => panic!("{event} settles nothing: {other:?}"),
+        }
+    }
+
+    const ARK: &str =
+        r#""repository":{"full_name":"example/ark","html_url":"https://github.com/example/ark"}"#;
+
+    fn acted(event: &'static str, action: &str, by: &str, url: &str) -> Option<Said> {
+        Some(Said::Acted {
+            event,
+            action: action.to_string(),
+            by: by.to_string(),
+            url: url.to_string(),
+        })
+    }
+
+    /// Settling already closes a gate on a merge and tells its beads of a
+    /// close without one.
+    #[test]
+    fn a_pull_request_closing_says_nothing_of_its_own_and_is_still_settled() {
+        let body = format!(
+            r#"{{"action":"closed","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7"}},{ARK},"sender":{{"login":"alice"}}}}"#
+        );
+        assert_eq!(said_of("pull_request", &body), None);
+        assert_eq!(
+            said_of("pull_request", &body.replace("closed", "reopened")),
+            acted(
+                "pull_request",
+                "reopened",
+                "alice",
+                "https://github.com/example/ark/pull/7"
+            )
+        );
+    }
+
+    fn review(action: &str, state: &str, user: &str) -> String {
+        format!(
+            r#"{{"action":"{action}","review":{{"state":"{state}","html_url":"https://github.com/example/ark/pull/7#pullrequestreview-21","user":{user}}},"pull_request":{{"number":7}},{ARK},"sender":{{"login":"bob"}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_review_submitted_is_said_as_reviewed_in_its_state_and_anything_else_done_to_one_as_acted()
+    {
+        let url = "https://github.com/example/ark/pull/7#pullrequestreview-21";
+        let reviewed = |state: &str| {
+            Some(Said::Reviewed {
+                by: "carol".to_string(),
+                state: state.to_string(),
+                url: url.to_string(),
+            })
+        };
+        let carol = r#"{"login":"carol"}"#;
+        for state in ["approved", "changes_requested", "commented"] {
+            assert_eq!(
+                said_of("pull_request_review", &review("submitted", state, carol)),
+                reviewed(state)
+            );
+        }
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("submitted", "APPROVED", carol)
+            ),
+            reviewed("approved")
+        );
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("dismissed", "dismissed", carol)
+            ),
+            acted("pull_request_review", "dismissed", "bob", url)
+        );
+        assert_eq!(
+            said_of("pull_request_review", &review("edited", "approved", carol)),
+            acted("pull_request_review", "edited", "bob", url)
+        );
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("submitted", "approved", "null")
+            ),
+            Some(Said::Reviewed {
+                by: "ghost".to_string(),
+                state: "approved".to_string(),
+                url: url.to_string(),
+            })
+        );
+    }
+
+    fn issue_comment_on_7(action: &str, user: &str) -> String {
+        format!(
+            r#"{{"action":"{action}","issue":{{"number":7,"pull_request":{{}}}},"comment":{{"html_url":"https://github.com/example/ark/pull/7#issuecomment-41","user":{user}}},{ARK},"sender":{{"login":"dave"}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_comment_made_is_said_as_commented_and_anything_else_done_to_one_as_acted() {
+        let url = "https://github.com/example/ark/pull/7#issuecomment-41";
+        assert_eq!(
+            said_of(
+                "issue_comment",
+                &issue_comment_on_7("created", r#"{"login":"erin"}"#)
+            ),
+            Some(Said::Commented {
+                by: "erin".to_string(),
+                url: url.to_string(),
+            })
+        );
+        assert_eq!(
+            said_of("issue_comment", &issue_comment_on_7("created", "null")),
+            Some(Said::Commented {
+                by: "ghost".to_string(),
+                url: url.to_string(),
+            })
+        );
+        for action in ["edited", "deleted"] {
+            assert_eq!(
+                said_of(
+                    "issue_comment",
+                    &issue_comment_on_7(action, r#"{"login":"erin"}"#)
+                ),
+                acted("issue_comment", action, "dave", url)
+            );
+        }
+    }
+
+    fn check_suite_of(action: &str, conclusion: &str) -> String {
+        format!(
+            r#"{{"action":"{action}","check_suite":{{"head_sha":"{SHA}","conclusion":{conclusion}}},{ARK},"sender":{{"login":"frank"}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_check_suite_that_failed_is_said_as_failed_checks_and_any_other_as_acted() {
+        let failed = Some(Said::ChecksFailed {
+            sha: SHA.to_string(),
+        });
+        let commit = format!("https://github.com/example/ark/commit/{SHA}");
+        for conclusion in [
+            "failure",
+            "timed_out",
+            "cancelled",
+            "action_required",
+            "startup_failure",
+        ] {
+            assert_eq!(
+                said_of(
+                    "check_suite",
+                    &check_suite_of("completed", &format!(r#""{conclusion}""#))
+                ),
+                failed,
+                "{conclusion}"
+            );
+        }
+        for conclusion in ["success", "neutral", "skipped", "stale"] {
+            assert_eq!(
+                said_of(
+                    "check_suite",
+                    &check_suite_of("completed", &format!(r#""{conclusion}""#))
+                ),
+                acted(
+                    "check_suite",
+                    &format!("completed {conclusion}"),
+                    "frank",
+                    &commit
+                ),
+                "{conclusion}"
+            );
+        }
+        assert_eq!(
+            said_of("check_suite", &check_suite_of("requested", "null")),
+            acted("check_suite", "requested", "frank", &commit)
+        );
+    }
+
+    #[test]
+    fn a_status_that_failed_is_said_as_failed_checks_and_any_other_as_acted() {
+        let status = |state: &str| {
+            format!(
+                r#"{{"state":"{state}","sha":"{SHA}","commit":{{"html_url":"https://github.com/example/ark/commit/{SHA}"}},{ARK},"sender":{{"login":"grace"}}}}"#
+            )
+        };
+        for state in ["failure", "error"] {
+            assert_eq!(
+                said_of("status", &status(state)),
+                Some(Said::ChecksFailed {
+                    sha: SHA.to_string(),
+                }),
+                "{state}"
+            );
+        }
+        for state in ["pending", "success"] {
+            assert_eq!(
+                said_of("status", &status(state)),
+                acted(
+                    "status",
+                    state,
+                    "grace",
+                    &format!("https://github.com/example/ark/commit/{SHA}")
+                ),
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_delivery_that_names_no_one_who_acted_says_nothing_and_is_still_settled() {
+        let body = issue_comment_on_7("created", r#"{"login":"erin"}"#)
+            .replace(r#","sender":{"login":"dave"}"#, "");
+        assert_eq!(said_of("issue_comment", &body), None);
+    }
+
     #[test]
     fn a_secret_is_read_without_the_whitespace_around_it_and_an_empty_one_is_none() {
         let read = Secret::new("  swordfish\n").expect("a secret");
