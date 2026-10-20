@@ -1838,14 +1838,21 @@ answers it with megabytes. So a moved tracker that can say what changed is
 read as the change.
 
 **The probe says the commit the tracker stood at,** beside the table hashes,
-and a read keeps it with the beads it found. When the next probe has moved,
-one `bd sql` asks Dolt's `dolt_diff` for every bead whose row may differ
-between that commit and the working set. A row moves when its own `issues`
-row, a label, a comment or a dependency does, and a dependency moves the row
-at both ends, because the far end counts its dependents. `leases` is
-dolt-ignored, so its diff names every live claim, whose lease the row carries.
-bd's own auto-export asks the same diff, in `ChangedIssueIDs`, and no bd
-command exposes it.
+and a read keeps it with the beads it found. One `bd sql` asks Dolt's
+`dolt_diff` for every bead whose row may differ between a commit and the
+working set. A row moves when its own `issues` row, a label, a comment or a
+dependency does, and a dependency moves the row at both ends, because the far
+end counts its dependents. `leases` is dolt-ignored, so its diff names every
+live claim, whose lease the row carries. bd's own auto-export asks the same
+diff, in `ChangedIssueIDs`, and no bd command exposes it.
+
+Each read asks the diff from the commit its probe names, and keeps the beads
+it names as the ones apart from that commit. When the next probe has moved,
+the diff is asked again from the commit the standing read kept. A diff says
+nothing of a change made in the working set and undone before it was
+committed, such as a label added and removed under bd's batch auto-commit,
+nor of a lease let go, since `leases` is never committed. So the beads apart
+from either commit are listed again as well.
 
 `bdi` then lists only those beads, with `list --id` and the flags the whole
 listing takes, so a bead the whole listing leaves out is left out here too.
@@ -1885,13 +1892,18 @@ printed:
 
 | change | 0.32.1 | this read |
 |---|---|---|
-| a title edited | 6 commands, 12.7 MB | 7 commands, 131 KB |
-| a comment added | 6 commands, 12.7 MB | 7 commands, 131 KB |
-| a dependency added | 6 commands, 12.7 MB | 7 commands, 137 KB |
+| a title edited | 6 commands, 12.7 MB | 8 commands, 134 KB |
+| a comment added | 6 commands, 12.7 MB | 8 commands, 134 KB |
+| a dependency added | 6 commands, 12.7 MB | 8 commands, 137 KB |
+| a label added uncommitted | 6 commands, 12.7 MB | 8 commands, 134 KB |
+| that label removed uncommitted | 6 commands, 12.7 MB | 8 commands, 134 KB |
+| a bead claimed | 6 commands, 12.7 MB | 8 commands, 133 KB |
+| that bead unclaimed | 6 commands, 12.7 MB | 8 commands, 134 KB |
 
-Of the 131 KB, 125 KB was `ready`, whose 400 open beads were all ready. After
-the three changes, the beads the watcher held matched a fresh `list --all`
-byte for byte.
+Of the 134 KB, 125 KB was `ready`, whose 400 open beads were all ready. After
+the seven changes, the beads the watcher held matched a fresh `list --all`
+byte for byte. A read that diffed only from the standing commit did not: it
+kept the removed label.
 
 ### Telling `bdi` a project changed
 

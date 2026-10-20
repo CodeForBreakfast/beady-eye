@@ -746,6 +746,16 @@ impl Reader<'_> {
         }
     }
 
+    /// Every bead Dolt's diff names between `commit` and the working set, or
+    /// `None` where the diff fails.
+    fn named_by_diff(&self, commit: &str) -> Option<BTreeSet<String>> {
+        let out = self
+            .asked(&["sql", "--json", &changed_since(commit)?])
+            .ok()?;
+        let rows: Vec<ChangedId> = serde_json::from_str(&out).ok()?;
+        Some(rows.into_iter().filter_map(|row| row.id).collect())
+    }
+
     /// Every open gh:pr gate `wanted` holds of, each with the beads it holds
     /// back.
     fn pr_gates(&self, wanted: impl Fn(&PrGate) -> bool) -> Result<Vec<PrGate>, RunFailure> {
@@ -825,11 +835,8 @@ impl Tracker for Reader<'_> {
     /// accounts for. Any other table moving, or the diff failing, is a
     /// tracker read in full: degrade, never disappear.
     fn changed_since(&self, commit: &str, fingerprint: &str) -> Option<BTreeSet<String>> {
-        let probed = self.probed.lock().unwrap();
-        let (then, now) = (
-            tables_of(fingerprint),
-            tables_of(&probed.as_ref()?.fingerprint),
-        );
+        let probed = self.probed.lock().unwrap().as_ref()?.fingerprint.clone();
+        let (then, now) = (tables_of(fingerprint), tables_of(&probed));
         let moved = now
             .keys()
             .chain(then.keys())
@@ -837,11 +844,11 @@ impl Tracker for Reader<'_> {
         if !moved.into_iter().all(|table| ACCOUNTED_FOR.contains(table)) {
             return None;
         }
-        let out = self
-            .asked(&["sql", "--json", &changed_since(commit)?])
-            .ok()?;
-        let rows: Vec<ChangedId> = serde_json::from_str(&out).ok()?;
-        Some(rows.into_iter().filter_map(|row| row.id).collect())
+        self.named_by_diff(commit)
+    }
+
+    fn uncommitted(&self) -> Option<BTreeSet<String>> {
+        self.named_by_diff(&self.commit()?)
     }
 
     /// One listing of `ids` asked as the whole tracker's listing is, so the
@@ -2546,6 +2553,26 @@ mod tests {
         assert_eq!(
             changed,
             Some(BTreeSet::from(["p-1".to_string(), "p-2".to_string()]))
+        );
+    }
+
+    /// What differs from the commit is the diff from the commit the probe
+    /// stood at, whatever moved since.
+    #[test]
+    fn what_is_uncommitted_is_every_bead_the_diff_from_the_probed_commit_names() {
+        let runner = FakeRunner::default()
+            .with(
+                &spelled(PROBE_CALL),
+                &probed(&[("config", "b"), ("issues", "b")]),
+            )
+            .with(&spelled(DIFF_CALL), r#"[{"id":"p-1"}]"#);
+        let tracker = opened(&runner);
+        assert_eq!(tracker.uncommitted(), None, "nothing has been probed");
+        tracker.fingerprint();
+
+        assert_eq!(
+            tracker.uncommitted(),
+            Some(BTreeSet::from(["p-1".to_string()]))
         );
     }
 

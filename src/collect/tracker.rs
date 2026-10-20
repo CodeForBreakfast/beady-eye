@@ -50,6 +50,13 @@ pub trait Tracker: Sync {
         None
     }
 
+    /// Every bead whose rows in the working set differ from those of the
+    /// commit `commit` answers with, wisps aside. `None` where the tracker
+    /// cannot say.
+    fn uncommitted(&self) -> Option<BTreeSet<String>> {
+        None
+    }
+
     /// Of the beads `all` answers with, each of `ids` the tracker holds, and
     /// every wisp.
     fn among(&self, ids: &BTreeSet<String>) -> Result<Vec<Arc<Bead>>, RunFailure> {
@@ -175,6 +182,10 @@ impl<T: Tracker + ?Sized> Tracker for &T {
         (**self).changed_since(commit, fingerprint)
     }
 
+    fn uncommitted(&self) -> Option<BTreeSet<String>> {
+        (**self).uncommitted()
+    }
+
     fn among(&self, ids: &BTreeSet<String>) -> Result<Vec<Arc<Bead>>, RunFailure> {
         (**self).among(ids)
     }
@@ -209,6 +220,8 @@ pub mod testing {
         Blocked,
         /// What changed since a commit.
         Changed,
+        /// What differs from the commit the tracker stands at.
+        Uncommitted,
         /// Some beads and every wisp, rather than every bead.
         Among,
         /// The journal, after the `seq` given.
@@ -232,6 +245,9 @@ pub mod testing {
         /// The beads that differ since the last commit, where the tracker
         /// can say.
         changed: Option<BTreeSet<String>>,
+        /// The beads that differ from the commit it stands at, where the
+        /// tracker can say.
+        uncommitted: Option<BTreeSet<String>>,
         asked: Mutex<Vec<Asked>>,
     }
 
@@ -251,6 +267,7 @@ pub mod testing {
                 as_of: None,
                 commit: None,
                 changed: None,
+                uncommitted: None,
                 asked: Mutex::new(Vec::new()),
             }
         }
@@ -307,9 +324,17 @@ pub mod testing {
             self
         }
 
-        /// The same tracker, standing at `commit`.
+        /// The same tracker, standing at `commit` with nothing uncommitted.
         pub fn at_commit(mut self, commit: &str) -> Self {
             self.commit = Some(commit.to_string());
+            self.uncommitted.get_or_insert_default();
+            self
+        }
+
+        /// The same tracker, saying `ids` differ from the commit it stands
+        /// at.
+        pub fn with_uncommitted(mut self, ids: &[&str]) -> Self {
+            self.uncommitted = Some(ids.iter().map(|id| id.to_string()).collect());
             self
         }
 
@@ -344,6 +369,7 @@ pub mod testing {
                 Asked::Blocked => self.blocked = Err(failure),
                 Asked::Events(_) => self.journal = Mutex::new(Some(Err(failure))),
                 Asked::Changed => self.changed = None,
+                Asked::Uncommitted => self.uncommitted = None,
                 Asked::Among => self.all = Err(failure),
             }
             self
@@ -389,6 +415,11 @@ pub mod testing {
         fn changed_since(&self, _commit: &str, _fingerprint: &str) -> Option<BTreeSet<String>> {
             self.note(Asked::Changed);
             self.changed.clone()
+        }
+
+        fn uncommitted(&self) -> Option<BTreeSet<String>> {
+            self.note(Asked::Uncommitted);
+            self.uncommitted.clone()
         }
 
         fn among(&self, ids: &BTreeSet<String>) -> Result<Vec<Arc<Bead>>, RunFailure> {

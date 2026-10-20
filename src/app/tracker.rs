@@ -92,7 +92,7 @@ impl From<RootUnread> for TrackerState {
 pub(super) struct ReadAt {
     project: Project,
     fingerprint: String,
-    commit: Option<String>,
+    stood_at: Option<StoodAt>,
     named: BTreeSet<String>,
     roots: BTreeSet<String>,
     draws_trees: bool,
@@ -121,14 +121,25 @@ impl ReadAt {
     }
 
     /// Every bead the tracker holds now, as this read with what changed since
-    /// it read again, where the tracker can say what changed.
-    fn moved_on(&self, tracker: &dyn Tracker, project: &Project) -> Option<Vec<Arc<Bead>>> {
+    /// it read again, where the tracker can say what changed. A bead apart
+    /// from either commit is read again too, since a diff between the commits
+    /// and the working set says nothing of a change made and undone there.
+    fn moved_on(
+        &self,
+        tracker: &dyn Tracker,
+        project: &Project,
+        now: &StoodAt,
+    ) -> Option<Vec<Arc<Bead>>> {
         if self.project != *project {
             return None;
         }
-        let changed = tracker
-            .changed_since(self.commit.as_deref()?, &self.fingerprint)
-            .filter(|changed| changed.len() <= MOST_CHANGED)?;
+        let then = self.stood_at.as_ref()?;
+        let mut changed = tracker.changed_since(&then.commit, &self.fingerprint)?;
+        changed.extend(then.uncommitted.iter().cloned());
+        changed.extend(now.uncommitted.iter().cloned());
+        if changed.len() > MOST_CHANGED {
+            return None;
+        }
         let mut beads: Vec<Arc<Bead>> = self
             .beads
             .iter()
@@ -138,6 +149,14 @@ impl ReadAt {
         beads.extend(tracker.among(&changed).ok()?);
         Some(beads)
     }
+}
+
+/// The commit a tracker stood at, and every bead whose rows in the working set
+/// differed from it.
+#[derive(Clone)]
+struct StoodAt {
+    commit: String,
+    uncommitted: BTreeSet<String>,
 }
 
 /// The most changed beads read by id rather than with the whole tracker.
@@ -232,12 +251,19 @@ pub(super) fn refresh_project(
         }
     }
 
-    let commit = probed.as_ref().and_then(|_| tracker.commit());
+    let stood_at = probed.as_ref().and_then(|_| {
+        Some(StoodAt {
+            commit: tracker.commit()?,
+            uncommitted: tracker.uncommitted()?,
+        })
+    });
     let journal = tracker.events(since);
-    let laid_over = standing.filter(|_| probed.is_some());
+    let laid_over = standing.filter(|_| probed.is_some()).zip(stood_at.as_ref());
     let work = read_project(
         tracker.as_ref(),
-        || match laid_over.and_then(|standing| standing.moved_on(tracker.as_ref(), project)) {
+        || match laid_over
+            .and_then(|(standing, now)| standing.moved_on(tracker.as_ref(), project, now))
+        {
             Some(beads) => Ok(beads),
             None => tracker.all(),
         },
@@ -252,7 +278,7 @@ pub(super) fn refresh_project(
         Box::new(ReadAt {
             project: project.clone(),
             fingerprint,
-            commit,
+            stood_at,
             named,
             roots,
             draws_trees,
@@ -1568,6 +1594,7 @@ dunwich = ["dun-c3"]
                 Asked::Ready,
                 Asked::Blocked,
                 Asked::Changed,
+                Asked::Uncommitted,
                 Asked::Among
             ],
             "the whole tracker was not asked for"
@@ -1596,6 +1623,51 @@ dunwich = ["dun-c3"]
         );
     }
 
+    /// A bead that differed from its commit when it was read, or differs from
+    /// the commit the tracker now stands at, is read again though the diff
+    /// from the standing read's commit no longer names it: a change undone
+    /// before it was committed, or a lease let go, leaves no diff behind.
+    #[test]
+    fn a_bead_apart_from_its_commit_is_read_again_once_the_tracker_moves() {
+        let cases = [
+            (
+                "apart when read",
+                dunwich_tracker()
+                    .at_commit("c1")
+                    .with_uncommitted(&["dun-7.1"]),
+                dunwich_holding(DUNWICH_MOVED)
+                    .moved()
+                    .at_commit("c1")
+                    .changing(&[]),
+            ),
+            (
+                "apart now",
+                dunwich_tracker().at_commit("c1"),
+                dunwich_holding(DUNWICH_MOVED)
+                    .moved()
+                    .at_commit("c2")
+                    .changing(&[])
+                    .with_uncommitted(&["dun-7.1"]),
+            ),
+        ];
+        for (why, before, after) in cases {
+            let standing = standing_after(&dunwich_with(before));
+            let trackers = dunwich_with(after);
+
+            let work = read_over(&trackers, &standing);
+
+            assert_eq!(
+                titles(&work)["dun-7.1"],
+                "the dish as nobody said it changed",
+                "{why}"
+            );
+            assert!(
+                !trackers.tracker("dunwich").asked().contains(&Asked::All),
+                "{why}"
+            );
+        }
+    }
+
     /// Whatever stops the tracker saying what changed has it read in full.
     #[test]
     fn a_tracker_that_cannot_say_what_changed_is_read_in_full() {
@@ -1611,6 +1683,22 @@ dunwich = ["dun-c3"]
                 "the tracker could not say",
                 dunwich_tracker().at_commit("c1"),
                 dunwich_tracker().moved().at_commit("c2"),
+            ),
+            (
+                "the tracker could not say what differs from its commit",
+                dunwich_tracker().at_commit("c1"),
+                dunwich_tracker()
+                    .moved()
+                    .at_commit("c2")
+                    .changing(&[])
+                    .failing(Asked::Uncommitted, RunFailure::parse("bd", "a torn line")),
+            ),
+            (
+                "the standing read could not say what differed from its commit",
+                dunwich_tracker()
+                    .at_commit("c1")
+                    .failing(Asked::Uncommitted, RunFailure::parse("bd", "a torn line")),
+                dunwich_tracker().moved().at_commit("c2").changing(&[]),
             ),
             (
                 "too many changed",
