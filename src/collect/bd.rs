@@ -588,8 +588,9 @@ impl Reader<'_> {
     /// general executor, bd's own help for it warns that direct database
     /// access bypasses the storage layer, and `--readonly` does not veto it —
     /// measured against this project's own tracker on 2026-09-01. What holds
-    /// there instead is `TABLE_HASHES`, a constant nothing composes, reached
-    /// from one method that takes no argument.
+    /// there instead is that `bdi` writes two statements and no others:
+    /// `TABLE_HASHES`, a constant, and `changed_since`, which composes in a
+    /// commit hash and refuses anything but letters and digits.
     fn asked(&self, subcommand: &[&str]) -> Result<String, RunFailure> {
         self.run(&["--readonly"], subcommand)
             .map_err(|failure| failure.reading(subcommand[0]))
@@ -825,7 +826,10 @@ impl Tracker for Reader<'_> {
     /// tracker read in full: degrade, never disappear.
     fn changed_since(&self, commit: &str, fingerprint: &str) -> Option<BTreeSet<String>> {
         let probed = self.probed.lock().unwrap();
-        let (then, now) = (tables_of(fingerprint), tables_of(&probed.as_ref()?.fingerprint));
+        let (then, now) = (
+            tables_of(fingerprint),
+            tables_of(&probed.as_ref()?.fingerprint),
+        );
         let moved = now
             .keys()
             .chain(then.keys())
@@ -833,7 +837,9 @@ impl Tracker for Reader<'_> {
         if !moved.into_iter().all(|table| ACCOUNTED_FOR.contains(table)) {
             return None;
         }
-        let out = self.asked(&["sql", "--json", &changed_since(commit)?]).ok()?;
+        let out = self
+            .asked(&["sql", "--json", &changed_since(commit)?])
+            .ok()?;
         let rows: Vec<ChangedId> = serde_json::from_str(&out).ok()?;
         Some(rows.into_iter().filter_map(|row| row.id).collect())
     }
@@ -894,10 +900,7 @@ impl Tracker for Reader<'_> {
     /// for them by the same rule when asked by type, so gates are asked for
     /// beside it.
     fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
-        let (work, gates) = together(
-            || self.readied(&[]),
-            || self.readied(&["--type", "gate"]),
-        );
+        let (work, gates) = together(|| self.readied(&[]), || self.readied(&["--type", "gate"]));
         let mut ready = BTreeSet::new();
         for out in [work?, gates?] {
             ready.extend(rows(&out, "ready")?.into_iter().map(|bead| bead.id));
@@ -949,7 +952,7 @@ fn records(out: &str) -> Result<Vec<Value>, RunFailure> {
         .collect()
 }
 
-/// The whole of the SQL `bdi` writes.
+/// The probe, and with `changed_since` the whole of the SQL `bdi` writes.
 ///
 /// `database()` is the one bd is already connected to. Views are left out
 /// because they hold nothing of their own: bd's `ready_issues` and
@@ -1010,8 +1013,9 @@ const ACCOUNTED_FOR: [&str; 17] = [
 /// one it points at counts its dependents. `leases` is dolt-ignored, so its
 /// diff names every live claim, whose lease the row carries.
 fn changed_since(commit: &str) -> Option<String> {
-    let is_a_hash =
-        !commit.is_empty() && commit.len() <= 64 && commit.bytes().all(|c| c.is_ascii_alphanumeric());
+    let is_a_hash = !commit.is_empty()
+        && commit.len() <= 64
+        && commit.bytes().all(|c| c.is_ascii_alphanumeric());
     if !is_a_hash {
         return None;
     }
@@ -1876,8 +1880,8 @@ mod tests {
     const WISPS: &str = include_str!("../../tests/fixtures/bd_wisps.json");
 
     /// The whole invocation the probe makes, spelled out rather than built
-    /// from the constant it asserts about: this is the one place `bdi` writes
-    /// SQL, and a change to that statement should have to be made twice.
+    /// from the constant it asserts about: this is one of the two statements
+    /// `bdi` writes, and a change to it should have to be made twice.
     const PROBE_CALL: &str =
         "sql --json SELECT table_name AS name, dolt_hashof_table(table_name) AS h, \
          dolt_hashof('HEAD') AS head \
@@ -2489,6 +2493,166 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// The diff from the commit a read stood at, spelled out rather than
+    /// built from the function it asserts about, as `PROBE_CALL` is.
+    const DIFF_CALL: &str = "sql --json \
+         SELECT COALESCE(to_id, from_id) AS id FROM dolt_diff('c1', 'WORKING', 'issues') \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM dolt_diff('c1', 'WORKING', 'labels') \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM dolt_diff('c1', 'WORKING', 'comments') \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM dolt_diff('c1', 'WORKING', 'dependencies') \
+         UNION SELECT COALESCE(to_depends_on_issue_id, from_depends_on_issue_id) FROM dolt_diff('c1', 'WORKING', 'dependencies') \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM dolt_diff('c1', 'WORKING', 'leases')";
+
+    /// A probe's answer from a tracker at commit `c1` whose tables hash as
+    /// `tables` say.
+    fn probed(tables: &[(&str, &str)]) -> String {
+        let rows: Vec<String> = tables
+            .iter()
+            .map(|(name, h)| format!(r#"{{"name":"{name}","h":"{h}","head":"c1"}}"#))
+            .collect();
+        format!("[{}]", rows.join(","))
+    }
+
+    #[test]
+    fn the_probe_says_the_commit_the_tracker_stood_at() {
+        let runner = FakeRunner::default().with(&spelled(PROBE_CALL), &probed(&[("issues", "a")]));
+        let tracker = opened(&runner);
+
+        assert_eq!(tracker.commit(), None, "nothing has been probed yet");
+        tracker.fingerprint();
+
+        assert_eq!(tracker.commit().as_deref(), Some("c1"));
+    }
+
+    /// The diff names a bead at each end of a dependency, and a dependency on
+    /// something outside the tracker names nothing at its far end.
+    #[test]
+    fn what_changed_is_every_bead_the_diff_names() {
+        let runner = FakeRunner::default()
+            .with(
+                &spelled(PROBE_CALL),
+                &probed(&[("issues", "b"), ("labels", "b")]),
+            )
+            .with(
+                &spelled(DIFF_CALL),
+                r#"[{"id":"p-1"},{"id":"p-2"},{"id":null}]"#,
+            );
+        let tracker = opened(&runner);
+        tracker.fingerprint();
+
+        let changed = tracker.changed_since("c1", "issues=a,labels=a");
+
+        assert_eq!(
+            changed,
+            Some(BTreeSet::from(["p-1".to_string(), "p-2".to_string()]))
+        );
+    }
+
+    /// Each of these leaves the tracker to be read in full rather than the
+    /// diff to be asked.
+    #[test]
+    fn a_tracker_the_diff_cannot_speak_for_says_nothing_changed_by_it() {
+        let runner = FakeRunner::default().with(
+            &spelled(PROBE_CALL),
+            &probed(&[("config", "b"), ("issues", "b")]),
+        );
+        let tracker = opened(&runner);
+        assert_eq!(
+            tracker.changed_since("c1", "config=b,issues=a"),
+            None,
+            "nothing has been probed"
+        );
+        tracker.fingerprint();
+
+        assert_eq!(
+            tracker.changed_since("c1", "config=a,issues=a"),
+            None,
+            "config moved, which can change how every row reads"
+        );
+        assert_eq!(
+            tracker.changed_since("c1' OR 'x", "config=b,issues=a"),
+            None,
+            "a commit that is not a hash is never composed into SQL"
+        );
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| !call.argv.contains("dolt_diff")),
+            "the diff was asked"
+        );
+    }
+
+    #[test]
+    fn a_diff_that_fails_says_nothing_changed_by_it() {
+        let runner = FakeRunner::default()
+            .with(&spelled(PROBE_CALL), &probed(&[("issues", "b")]))
+            .failing(&spelled(DIFF_CALL), did_not_answer_the_probe());
+        let tracker = opened(&runner);
+        tracker.fingerprint();
+
+        assert_eq!(tracker.changed_since("c1", "issues=a"), None);
+    }
+
+    /// The changed beads are asked for with the whole listing's flags, so a
+    /// bead the whole listing leaves out is left out here too.
+    #[test]
+    fn the_changed_beads_are_listed_as_the_whole_tracker_is_beside_every_wisp() {
+        let runner = FakeRunner::default()
+            .with(
+                &spelled("list --id p-1,p-2 --all --include-gates --limit 0 --json"),
+                r#"[{"id":"p-1","title":"a","status":"open"}]"#,
+            )
+            .with(&spelled(WISP_CALL), WISPS);
+
+        let beads = opened(&runner)
+            .among(&BTreeSet::from(["p-1".to_string(), "p-2".to_string()]))
+            .expect("the tracker answered");
+
+        assert_eq!(beads[0].id, "p-1");
+        assert_eq!(beads.len(), 1 + rows(WISPS, "query").unwrap().len());
+    }
+
+    #[test]
+    fn nothing_changed_lists_the_wisps_alone() {
+        let runner = FakeRunner::default().with(&spelled(WISP_CALL), WISPS);
+
+        opened(&runner)
+            .among(&BTreeSet::new())
+            .expect("the tracker answered");
+
+        assert_eq!(runner.calls().len(), 1, "{:?}", runner.calls());
+    }
+
+    /// Only the ids are read from `bd ready`, so a bd that knows `--brief`
+    /// leaves the text out, and one that does not is asked for whole rows.
+    #[test]
+    fn a_bd_without_a_brief_ready_is_asked_for_whole_rows() {
+        let unknown_flag = || RunFailure {
+            kind: FailureKind::UnknownFlag,
+            program: "bd".to_string(),
+            detail: "bd does not know a flag bdi uses".to_string(),
+            unreadable: None,
+        };
+        let runner = FakeRunner::default()
+            .failing(&spelled("ready --brief --limit 0 --json"), unknown_flag())
+            .failing(
+                &spelled("ready --type gate --brief --limit 0 --json"),
+                unknown_flag(),
+            )
+            .with(
+                &spelled("ready --limit 0 --json"),
+                r#"[{"id":"p-1.1","title":"a","status":"open"}]"#,
+            )
+            .with(&spelled("ready --type gate --limit 0 --json"), "[]");
+
+        let ready = opened(&runner)
+            .ready()
+            .expect("bd answered without the flag");
+
+        assert_eq!(ready, BTreeSet::from(["p-1.1".to_string()]));
     }
 
     #[test]

@@ -356,8 +356,8 @@ run reads it as everything and the screen has nothing to say about a scope.
 Never reading the rest matters because a collection is most of what a run
 costs, and the cost follows the number of projects rather than the size of
 any one tracker. A
-project whose tracker has moved is read in full: four `bd` invocations
-whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
+project whose tracker has moved and cannot say what changed is read in full: four `bd`
+invocations whatever the tracker holds — `ready`, `blocked`, `list --all`, `query
 ephemeral=true --all` — all of them after the environment its tracker is
 read in is settled, which is a process of its own only where the project
 named a credential command, or is entered by one its config named or its
@@ -1749,7 +1749,8 @@ the wisps, which live in `dolt_ignore`d tables and never move the committed
 head. A project whose fingerprint is where the last successful read left it
 is done there, and its freshness is as good as if the cascade had run: a
 skipped read is a successful read, and the project line says so. A project
-whose fingerprint has moved is read in full.
+whose fingerprint has moved is read again, and *Reading only what changed*
+below says how little of it that can be.
 
 **A read made once asks for no fingerprint.** `--json` and `--beads` read each
 tracker a single time and exit, so nothing would ever be compared with the
@@ -1821,9 +1822,76 @@ time the message lands, and an unmoved fingerprint means the write was a no-op
 or the producer was wrong.
 
 `bd sql` is the one subcommand `--readonly` does not veto, so the guard the
-flag gives the rest does not reach it. What stands in its place is `bdi`'s own
-string literal — a constant nothing composes, reached from one function that
-takes no argument.
+flag gives the rest does not reach it. What stands in its place is that `bdi`
+writes two statements and no others: the probe, a constant nothing composes,
+and the diff below, which composes in one value, a commit hash, and refuses
+any hash that is not letters and digits.
+
+### Reading only what changed
+
+At today's tracker sizes, what loads the server is the size of an answer
+rather than the number of calls. `list --all` returns every bead with its
+text, closed ones included, and a tracker that has been worked for a year
+answers it with megabytes. Reading that once per change cost the shared
+server more than every other reader together. So a moved tracker that can say
+what changed is read as the change.
+
+**The probe says the commit the tracker stood at,** beside the table hashes,
+and a read keeps it with the beads it found. When the next probe has moved,
+one `bd sql` asks Dolt's `dolt_diff` for every bead whose row may differ
+between that commit and the working set. A row moves when its own `issues`
+row, a label, a comment or a dependency does, and a dependency moves the row
+at both ends, because the far end counts its dependents. `leases` is
+dolt-ignored, so its diff names every live claim, whose lease the row carries.
+bd's own auto-export asks the same diff, in `ChangedIssueIDs`, and no bd
+command exposes it.
+
+`bdi` then lists only those beads, with `list --id` and the flags the whole
+listing takes, so a bead the whole listing leaves out is left out here too.
+Their rows replace the read's, and a named bead the listing no longer holds is
+gone. Wisps are read whole every time, because their tables are dolt-ignored:
+a diff from a commit names every wisp there is and never one that was
+deleted. `ready` and `blocked` are asked as before, and `ready` with `--brief`,
+since only its ids are read. Both are sized to the open work rather than to
+the change.
+
+**Anything the diff cannot speak for is a read in full,** as before:
+
+- a project with no read standing, or one taken under a different project
+  entry
+- a tracker that answers no probe, which an embedded store does not
+- a move in a table outside those the diff reads, the wisps' and those that
+  hold nothing a row prints. `config`, `custom_statuses` and `custom_types`
+  can change how every row reads
+- a diff that fails, as it does once `bd compact` or `bd flatten` has
+  rewritten the commit it starts from
+- more than a thousand changed beads, which would not fit one command line
+  comfortably
+
+The diff names bd's tables and columns, which is the price of reading only
+what changed, and the fall back is what bounds it. A bd whose schema renames
+them fails the diff, and every refresh is then a read in full.
+
+**What it leaves stale.** A wisp's dependency on a bead outside the wisps
+moves that bead's `dependent_count` without naming it, since the wisp tables
+are not diffed. `bdi` draws no count, so only a watcher's consumer reading
+the row whole would see it, and only until something else moves the bead.
+
+Measured 2026-10-20 with bd 1.3.0 against a throwaway `dolt sql-server`
+holding an invented tracker of 4,000 beads, nine in ten closed, whose
+`list --all` answered 12.1 MB. One `bdi watch` was told of each change by a
+producer's line, and every bd command it ran was logged with the bytes it
+printed:
+
+| change | 0.32.1 | this read |
+|---|---|---|
+| a title edited | 6 commands, 12.7 MB | 7 commands, 131 KB |
+| a comment added | 6 commands, 12.7 MB | 7 commands, 131 KB |
+| a dependency added | 6 commands, 12.7 MB | 7 commands, 137 KB |
+
+Of the 131 KB, 125 KB was `ready`, whose 400 open beads were all ready. After
+the three changes, the beads the watcher held matched a fresh `list --all`
+byte for byte.
 
 ### Telling `bdi` a project changed
 
@@ -2116,9 +2184,10 @@ that alone, so a source can be replaced without anything that watches or
 delivers changing.
 
 **The first source reads trackers as a view does.** It polls, probes and takes
-producers' lines as *Refresh* describes, and reads in full a project whose
-probe has moved. So a change reaches a consumer within one poll of the project,
-`refresh_seconds`, or as soon as a producer reports it. Two changes to a bead
+producers' lines as *Refresh* describes, and reads again a project whose
+probe has moved, as little of it as *Reading only what changed* allows. So a
+change reaches a consumer within one poll of the project, `refresh_seconds`,
+or as soon as a producer reports it. Two changes to a bead
 between one read and the next arrive as one bead line: a bead closed and
 reopened inside one poll is never sent closed. The source keeps each row as bd
 printed it and not as `bdi` parsed it, so a field `bdi` never reads still

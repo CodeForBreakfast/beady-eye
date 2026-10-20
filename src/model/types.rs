@@ -141,7 +141,9 @@ impl Bead {
 
     /// Whether this is a wisp, which bd keeps apart from its other beads.
     pub fn is_wisp(&self) -> bool {
-        self.values.get("ephemeral").is_some_and(|value| value == "true")
+        self.values
+            .get("ephemeral")
+            .is_some_and(|value| value == "true")
     }
 
     /// The keys whose text a field of `Bead` holds, which `values` therefore

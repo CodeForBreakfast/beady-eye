@@ -282,10 +282,9 @@ fn read_project(
     draws_trees: bool,
     now: DateTime<Utc>,
 ) -> Result<ProjectWork, RunFailure> {
-    let (beads, (ready, blocked_by)) = together(
-        every_bead,
-        || together(|| tracker.ready(), || tracker.blocked()),
-    );
+    let (beads, (ready, blocked_by)) = together(every_bead, || {
+        together(|| tracker.ready(), || tracker.blocked())
+    });
     let beads = beads?;
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
@@ -743,8 +742,16 @@ dunwich = ["dun-4"]
         let tracker = dunwich_tracker().also(beads(MAST_TREE)).also(beads(lost));
 
         let before = nestings_on_this_thread();
-        let work = read_project(&tracker, || tracker.all(), &cfg.projects[0], &cfg, &[], true, now())
-            .expect("the tracker answers every call");
+        let work = read_project(
+            &tracker,
+            || tracker.all(),
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            now(),
+        )
+        .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
         assert_eq!(roots, vec!["dun-3", "dun-4", "dun-7"]);
@@ -1113,8 +1120,16 @@ dunwich = ["dun-c3"]
         .expect("the config parses");
         let tracker = dunwich_holding(CHAIN_OF_PARENTLESS);
 
-        let work = read_project(&tracker, || tracker.all(), &cfg.projects[0], &cfg, &[], true, now())
-            .expect("the tracker answers every call");
+        let work = read_project(
+            &tracker,
+            || tracker.all(),
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            now(),
+        )
+        .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
         assert_eq!(roots, vec!["dun-c1", "dun-c3"]);
@@ -1564,9 +1579,7 @@ dunwich = ["dun-c3"]
     #[test]
     fn a_changed_bead_or_a_wisp_the_tracker_no_longer_holds_is_gone() {
         let standing = standing_after(&dunwich_with(
-            dunwich_tracker()
-                .also(beads(DUNWICH_WISP))
-                .at_commit("c1"),
+            dunwich_tracker().also(beads(DUNWICH_WISP)).at_commit("c1"),
         ));
         let trackers = dunwich_with(
             Fake::holding(beads(DUNWICH_TREE).into_iter().take(2).collect())
@@ -1589,7 +1602,11 @@ dunwich = ["dun-c3"]
         let too_many: Vec<String> = (0..=MOST_CHANGED).map(|n| format!("dun-x{n}")).collect();
         let too_many: Vec<&str> = too_many.iter().map(String::as_str).collect();
         let cases = [
-            ("no commit stood", dunwich_tracker(), dunwich_tracker().moved().changing(&[])),
+            (
+                "no commit stood",
+                dunwich_tracker(),
+                dunwich_tracker().moved().changing(&[]),
+            ),
             (
                 "the tracker could not say",
                 dunwich_tracker().at_commit("c1"),
@@ -1598,7 +1615,10 @@ dunwich = ["dun-c3"]
             (
                 "too many changed",
                 dunwich_tracker().at_commit("c1"),
-                dunwich_tracker().moved().at_commit("c2").changing(&too_many),
+                dunwich_tracker()
+                    .moved()
+                    .at_commit("c2")
+                    .changing(&too_many),
             ),
         ];
         for (why, before, after) in cases {
