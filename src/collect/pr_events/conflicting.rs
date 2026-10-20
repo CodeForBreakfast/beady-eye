@@ -1,20 +1,14 @@
 //! A pull request whose head conflicts with its base, which the beads its
 //! gates hold back are told.
 
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use super::{Event, Outcome, Telling, HEAD_COMMIT};
+use super::{head_and_base_since, Event, Outcome, Telling, BASE_COMMIT, HEAD_COMMIT};
 use crate::collect::gates::PullRequest;
 use crate::collect::github::{Observed, State};
 
 pub const EVENT: Event = Event {
-    fields: &[
-        "mergeable",
-        "headRefOid",
-        HEAD_COMMIT,
-        "baseRef{target{...on Commit{committedDate}}}",
-    ],
+    fields: &["mergeable", "headRefOid", HEAD_COMMIT, BASE_COMMIT],
     happening: "conflicts with its base",
     outcome: conflicting,
 };
@@ -28,32 +22,12 @@ fn conflicting(
     struct Fields {
         mergeable: Option<String>,
         head_ref_oid: Option<String>,
-        head_ref: Option<Ref>,
-        base_ref: Option<Ref>,
     }
-    #[derive(Deserialize)]
-    struct Ref {
-        target: Target,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Target {
-        committed_date: Option<DateTime<Utc>>,
-    }
-    let committed = |branch: Option<Ref>| branch.and_then(|branch| branch.target.committed_date);
     let Fields {
         mergeable,
         head_ref_oid,
-        head_ref,
-        base_ref,
     } = Fields::deserialize(&observed.fields)?;
-    // GitHub says nothing of when a conflict began. The two commits it is
-    // between have both stood since the later of them was made, and the
-    // conflict with them, so that is when it happened. It may have stood
-    // longer against an older base, which tells a gate made in between.
-    let happened = committed(head_ref)
-        .zip(committed(base_ref))
-        .map(|(head, base)| head.max(base));
+    let happened = head_and_base_since(observed)?;
     Ok(match (observed.state, mergeable.as_deref(), head_ref_oid) {
         (State::Open, Some("CONFLICTING"), Some(oid)) => Some(Outcome::Tell(vec![Telling {
             text: format!(
@@ -68,6 +42,8 @@ fn conflicting(
 
 #[cfg(test)]
 mod tests {
+    use chrono::{DateTime, Utc};
+
     use super::*;
     use crate::collect::pr_events::testing::{once, tellings, when};
 

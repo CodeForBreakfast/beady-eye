@@ -1074,10 +1074,11 @@ on, and acts on what GitHub says:
 | open or a draft, and every check on its head commit has passed | leaves each gate open, and comments once on each bead a gate holds back for that commit, so each new head that passes is told again |
 | open or a draft, and reviewed | leaves each gate open, and comments on each bead a gate holds back once for each review submitted, approving, requesting changes or commenting, naming the reviewer and the state. A dismissed review is not told, and neither is an inline comment made on its own, which is told as an inline comment below. It reads the latest five reviews |
 | open or a draft, and GitHub says its head commit conflicts with its base | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a rebase that still conflicts is told again. A pull request GitHub has not yet worked out is not told |
+| open or a draft, and GitHub says its head commit is behind its base | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a head that takes its base in and falls behind again is told again, and the base moving on under a head already told is not. GitHub says a head is behind only where its base requires branches to be up to date before they merge, so a repository that does not require it is never told |
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
 | open or a draft, and commented on inline | leaves each gate open, and comments on each bead a gate holds back once for each inline comment made on its own, a reply in a review thread among them, naming the comment's author, saying whether it replied, and linking it. It never quotes the comment. GitHub records such a comment as a review that comments, has no body and holds that one comment, so it reads the latest five reviews. An inline comment made as part of a larger review is told as that review. There is no author filter, so a seat's own inline comments arrive too |
 | open or a draft, and at a new head commit | leaves each gate open, and comments once on each bead a gate holds back for each head commit it finds, giving the commit's short sha and a link to it. A force-push is told like any other push. There is no filter for who pushed, so a seat's own pushes arrive too. Several pushes between two looks are one comment, for the head the look finds |
-| a draft whose checks have neither failed nor all passed, with no review, no conflict, no comment, no inline comment and no new head | nothing |
+| a draft whose checks have neither failed nor all passed, with no review, no conflict, no behind head, no comment, no inline comment and no new head | nothing |
 
 A gate tells only what happened after it was made, since whoever made it could
 already see the rest. A review dates from when it was submitted, a comment from
@@ -1085,10 +1086,10 @@ when it was made, an inline comment from when GitHub submitted its review,
 failing checks from when the first check to fail finished, passing checks from
 when the last check finished, and a new head from when its commit was
 committed, so the head a pull request had when its gate was made is not told.
-GitHub does not say when a conflict began, so a conflict dates from the later of
-the head commit and the base branch's latest commit. A conflict that stood
-before the gate is still told once the base moves on. A close without a merge
-is told however old the gate is.
+GitHub does not say when a conflict began or when a head fell behind, so each
+dates from the later of the head commit and the base branch's latest commit.
+A conflict or a behind head that stood before the gate is still told once the
+base moves on. A close without a merge is told however old the gate is.
 
 It never creates a gate. Whoever opens the pull request creates one with `bd`,
 as [A pull request a bead waits on](#a-pull-request-a-bead-waits-on) shows.
@@ -1102,7 +1103,7 @@ repository:
 
 | permission | what `bdi gates` reads with it | without it |
 |---|---|---|
-| *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
+| *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, whether its head is behind its base, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
 | *Contents* | the merge commit, the head commit and the repository's releases | no merge is settled, no failing or passing checks are told, and no gh:release gate is settled |
 | *Issues* | whether an issue is open or closed | no gh:issue gate is settled |
 | *Actions* | whether a workflow run has finished, and how it ended | no gh:run gate is settled |
@@ -1128,6 +1129,7 @@ dunwich/arkham#18 has failing checks: arkham told ark-7mw
 dunwich/arkham#18 has passing checks: arkham told ark-7mw
 dunwich/arkham#18 was reviewed: arkham told ark-7mw
 dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
+dunwich/arkham#24 is behind its base: arkham told ark-5kd
 dunwich/arkham#18 was commented on: arkham told ark-7mw
 dunwich/arkham#18 was commented on inline: arkham told ark-7mw
 dunwich/arkham#18 has a new head: arkham told ark-7mw
