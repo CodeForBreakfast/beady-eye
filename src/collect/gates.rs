@@ -1773,22 +1773,32 @@ mod tests {
         awaited
     }
 
-    /// #7 open with failing checks, a review, a conflict and a comment, each
-    /// of them `at`.
+    /// #7 open with failing checks, a review, a conflict, a comment and a new
+    /// head, each of them `at`.
     fn everything_at(at: &str) -> String {
         format!(
             r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,
             "commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"nodes":[{{"conclusion":"FAILURE","completedAt":"{at}"}}]}}}}}}}}]}},
             "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}}]}},
-            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
+            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"abbreviatedOid":"a1b2c3d","url":"https://forge.invalid/example/ark/commit/a1b2c3","committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
             "comments":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-12","createdAt":"{at}","author":{{"login":"bob"}}}}]}}}}"#
+        )
+    }
+
+    fn head_telling(bead: &str) -> String {
+        written(
+            "arkham",
+            &format!(
+                "comments add {bead} Pull request example/ark#7 has a new head, a1b2c3d. https://forge.invalid/example/ark/commit/a1b2c3"
+            ),
         )
     }
 
     /// Whoever made a gate could already see what its pull request had done,
     /// so a bdi that newly tells it would wake every seat for old news.
     #[test]
-    fn a_gate_made_after_failing_checks_a_review_a_conflict_and_a_comment_tells_none_of_them() {
+    fn a_gate_made_after_failing_checks_a_review_a_conflict_a_comment_and_a_new_head_tells_none_of_them(
+    ) {
         let runner = captured(FakeRunner::default(), "arkham").with(
             &viewed(7),
             &answer(7, &everything_at("2026-10-06T08:24:48Z")),
@@ -1805,13 +1815,15 @@ mod tests {
     }
 
     #[test]
-    fn a_gate_made_before_failing_checks_a_review_a_conflict_and_a_comment_tells_each_once() {
+    fn a_gate_made_before_failing_checks_a_review_a_conflict_a_comment_and_a_new_head_tells_each_once(
+    ) {
         let tellings = |bead| {
             [
                 checks_failed_telling("arkham", bead, "a1b2c3"),
                 review_telling(bead, "alice", "commented", 11),
                 conflict_telling("arkham", bead, "a1b2c3"),
                 comment_telling(bead, "bob", 12),
+                head_telling(bead),
             ]
         };
         let mut runner = captured(FakeRunner::default(), "arkham")
@@ -1842,9 +1854,9 @@ mod tests {
         sweep();
         let again = sweep();
 
-        let [a, b, c, d] = tellings("ark-2ud");
-        let [e, f, g, h] = tellings("ark-45c");
-        assert_eq!(writes(&runner), [a, e, b, f, c, g, d, h]);
+        let [a, b, c, d, e] = tellings("ark-2ud");
+        let [f, g, h, i, j] = tellings("ark-45c");
+        assert_eq!(writes(&runner), [a, f, b, g, c, h, d, i, e, j]);
         assert_eq!(again, [Settled::NothingNew { unseen: vec![] }]);
     }
 
