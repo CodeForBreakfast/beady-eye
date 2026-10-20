@@ -1008,8 +1008,7 @@ const ACCOUNTED_FOR: [&str; 17] = [
 ///
 /// The one SQL `bdi` composes, and `commit` is the one value composed into
 /// it: Dolt's `dolt_diff()` takes no bind parameters, so a commit is let in
-/// only as letters and digits, the check bd itself makes before it composes
-/// the same diff. A dependency moves the row at both its ends, because the
+/// only as letters and digits. A dependency moves the row at both its ends, because the
 /// one it points at counts its dependents. `leases` is dolt-ignored, so its
 /// diff names every live claim, whose lease the row carries.
 fn changed_since(commit: &str) -> Option<String> {

@@ -1832,9 +1832,8 @@ any hash that is not letters and digits.
 At today's tracker sizes, what loads the server is the size of an answer
 rather than the number of calls. `list --all` returns every bead with its
 text, closed ones included, and a tracker that has been worked for a year
-answers it with megabytes. Reading that once per change cost the shared
-server more than every other reader together. So a moved tracker that can say
-what changed is read as the change.
+answers it with megabytes. So a moved tracker that can say what changed is
+read as the change.
 
 **The probe says the commit the tracker stood at,** beside the table hashes,
 and a read keeps it with the beads it found. When the next probe has moved,
@@ -1868,9 +1867,8 @@ the change.
 - more than a thousand changed beads, which would not fit one command line
   comfortably
 
-The diff names bd's tables and columns, which is the price of reading only
-what changed, and the fall back is what bounds it. A bd whose schema renames
-them fails the diff, and every refresh is then a read in full.
+The diff names bd's tables and columns. A bd whose schema renames them fails
+the diff, and every refresh is then a read in full.
 
 **What it leaves stale.** A wisp's dependency on a bead outside the wisps
 moves that bead's `dependent_count` without naming it, since the wisp tables
