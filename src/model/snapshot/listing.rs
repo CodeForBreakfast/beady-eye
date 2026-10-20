@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::model::badges::Badged;
 use crate::model::join::{AgentRef, BeadKey};
-use crate::model::tree::numeric_id_order;
+use crate::model::tree::{numeric_id_order, OrphanedDependency};
 use crate::model::types::Status;
 
 use super::{AgentProvider, FailedProject, Node, Snapshot, TrackerState};
@@ -40,6 +40,7 @@ struct Listed<'a> {
     priority: u8,
     ready: bool,
     blocked_by: &'a [String],
+    orphaned_dependencies: &'a [OrphanedDependency],
     agent: Option<&'a AgentRef>,
     badges: &'a [Badged],
     labels: &'a [String],
@@ -67,6 +68,7 @@ impl<'a> From<&'a Node> for Listed<'a> {
             priority: node.priority,
             ready: node.ready,
             blocked_by: &node.blocked_by,
+            orphaned_dependencies: &node.orphaned_dependencies,
             agent: node.agent.as_ref(),
             badges: &node.badges,
             labels: &node.labels,

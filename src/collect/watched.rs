@@ -1418,8 +1418,9 @@ path = "/srv/work/dunwich"
 
             assert_eq!(
                 readiness_of(&own),
-                Some((false, vec!["fer-1".to_string()])),
-                "a blocker in a project the run did not read may be unfinished"
+                Some((false, Vec::new())),
+                "a blocker in a project the run did not read may be unfinished, \
+                 and is not read rather than open"
             );
             assert_eq!(
                 readiness_of(&Through::watcher_at(Some(&at), ["dunwich"], &unasked)),
