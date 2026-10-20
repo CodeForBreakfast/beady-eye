@@ -356,6 +356,15 @@ impl Node {
         }
     }
 
+    /// The bead this one hangs beneath by its parent-child edge, if any.
+    pub fn parent_key(&self) -> Option<BeadKey> {
+        let parent = self.parent.as_ref()?;
+        Some(BeadKey {
+            project: parent.project.as_ref().unwrap_or(&self.project).clone(),
+            id: parent.id.clone(),
+        })
+    }
+
     /// What the bead says of itself, where it says anything.
     pub fn description(&self) -> Option<String> {
         self.row.text("description")
