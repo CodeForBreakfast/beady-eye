@@ -139,6 +139,11 @@ impl Bead {
         self.lease_expires_at.is_some_and(|expires| now < expires)
     }
 
+    /// Whether this is a wisp, which bd keeps apart from its other beads.
+    pub fn is_wisp(&self) -> bool {
+        self.values.get("ephemeral").is_some_and(|value| value == "true")
+    }
+
     /// The keys whose text a field of `Bead` holds, which `values` therefore
     /// does not.
     pub const TEXT_FIELDS: [&str; 8] = [

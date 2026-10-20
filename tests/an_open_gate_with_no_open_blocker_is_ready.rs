@@ -59,7 +59,7 @@ fn an_open_gate_with_no_open_blocker_is_ready_in_the_listing_and_on_its_row() {
     let home = a_home_naming_one_project("ready-gate");
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(GH_PR_GATES);
-    tracker.answers_with("ready --type gate --limit 0 --json", READY_GATES);
+    tracker.answers_with("ready --type gate --brief --limit 0 --json", READY_GATES);
 
     let listing = one_shot(&home, &tracker, &["--beads"]);
     let forest = one_shot(&home, &tracker, &["--json", "--all"]);

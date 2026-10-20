@@ -421,6 +421,7 @@ impl Cli<'_> {
             without_a_probe: &self.without_a_probe,
             journal: self.reading_journals && project.events_journal,
             unfinished_work: self.unfinished_work,
+            probed: Mutex::default(),
         })
     }
 
@@ -550,6 +551,15 @@ struct Reader<'r> {
     /// Whether this tracker's events journal is read.
     journal: bool,
     unfinished_work: bool,
+    /// What the probe last answered, for `changed_since` to compare with.
+    probed: Mutex<Option<Probed>>,
+}
+
+/// The probe's answer: the commit the tracker stood at, and the fingerprint
+/// its tables' hashes fold into.
+struct Probed {
+    head: String,
+    fingerprint: String,
 }
 
 impl Reader<'_> {
@@ -626,14 +636,19 @@ impl Reader<'_> {
         let out = self.asked(&["sql", "--json", TABLE_HASHES])?;
         let rows: Vec<TableHash> =
             serde_json::from_str(&out).map_err(|e| RunFailure::parse("bd", e).reading("sql"))?;
-        if rows.is_empty() {
+        let Some(first) = rows.first() else {
             return Err(RunFailure::parse("bd", "the answer holds no row").reading("sql"));
-        }
-        Ok(rows
+        };
+        let fingerprint = rows
             .iter()
             .map(|row| format!("{}={}", row.name, row.h))
             .collect::<Vec<_>>()
-            .join(","))
+            .join(",");
+        *self.probed.lock().unwrap() = Some(Probed {
+            head: first.head.clone(),
+            fingerprint: fingerprint.clone(),
+        });
+        Ok(fingerprint)
     }
 
     /// A tracker's wisps, closed ones included.
@@ -714,6 +729,22 @@ impl Reader<'_> {
         Ok(beads)
     }
 
+    /// `bd ready` under `filter`, without the free text only the ids are read
+    /// from. A bd older than `ready --brief` is asked for the whole rows.
+    fn readied(&self, filter: &[&str]) -> Result<String, RunFailure> {
+        let ask = |brief: &[&str]| {
+            let mut asked = vec!["ready"];
+            asked.extend_from_slice(filter);
+            asked.extend_from_slice(brief);
+            asked.extend_from_slice(&["--limit", "0", "--json"]);
+            self.asked(&asked)
+        };
+        match ask(&["--brief"]) {
+            Err(refused) if refused.kind == FailureKind::UnknownFlag => ask(&[]),
+            answer => answer,
+        }
+    }
+
     /// Every open gh:pr gate `wanted` holds of, each with the beads it holds
     /// back.
     fn pr_gates(&self, wanted: impl Fn(&PrGate) -> bool) -> Result<Vec<PrGate>, RunFailure> {
@@ -784,6 +815,57 @@ impl Tracker for Reader<'_> {
         }
     }
 
+    fn commit(&self) -> Option<String> {
+        Some(self.probed.lock().unwrap().as_ref()?.head.clone())
+    }
+
+    /// The beads Dolt's diff names between `commit` and the working set,
+    /// where every table that moved since `fingerprint` is one the diff
+    /// accounts for. Any other table moving, or the diff failing, is a
+    /// tracker read in full: degrade, never disappear.
+    fn changed_since(&self, commit: &str, fingerprint: &str) -> Option<BTreeSet<String>> {
+        let probed = self.probed.lock().unwrap();
+        let (then, now) = (tables_of(fingerprint), tables_of(&probed.as_ref()?.fingerprint));
+        let moved = now
+            .keys()
+            .chain(then.keys())
+            .filter(|table| now.get(*table) != then.get(*table));
+        if !moved.into_iter().all(|table| ACCOUNTED_FOR.contains(table)) {
+            return None;
+        }
+        let out = self.asked(&["sql", "--json", &changed_since(commit)?]).ok()?;
+        let rows: Vec<ChangedId> = serde_json::from_str(&out).ok()?;
+        Some(rows.into_iter().filter_map(|row| row.id).collect())
+    }
+
+    /// One listing of `ids` asked as the whole tracker's listing is, so the
+    /// rows are the ones it would have answered with, beside every wisp.
+    fn among(&self, ids: &BTreeSet<String>) -> Result<Vec<Arc<Bead>>, RunFailure> {
+        let ids = ids.iter().map(String::as_str).collect::<Vec<_>>().join(",");
+        let (listed, wisps) = together(
+            || {
+                if ids.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let listed = self.asked(&[
+                    "list",
+                    "--id",
+                    &ids,
+                    "--all",
+                    "--include-gates",
+                    "--limit",
+                    "0",
+                    "--json",
+                ])?;
+                rows(&listed, "list")
+            },
+            || self.wisps(),
+        );
+        let mut beads = listed?;
+        beads.extend(rows(&wisps?, "query")?);
+        Ok(beads.into_iter().map(Arc::new).collect())
+    }
+
     /// One call per project rather than one per root, because a tree is
     /// drawn from dependency edges and `bd dep tree` cannot carry them: it
     /// walks dependents and dedupes, so what comes back is a spanning tree —
@@ -813,8 +895,8 @@ impl Tracker for Reader<'_> {
     /// beside it.
     fn ready(&self) -> Result<BTreeSet<String>, RunFailure> {
         let (work, gates) = together(
-            || self.asked(&["ready", "--limit", "0", "--json"]),
-            || self.asked(&["ready", "--type", "gate", "--limit", "0", "--json"]),
+            || self.readied(&[]),
+            || self.readied(&["--type", "gate"]),
         );
         let mut ready = BTreeSet::new();
         for out in [work?, gates?] {
@@ -872,7 +954,8 @@ fn records(out: &str) -> Result<Vec<Value>, RunFailure> {
 /// `database()` is the one bd is already connected to. Views are left out
 /// because they hold nothing of their own: bd's `ready_issues` and
 /// `blocked_issues` are drawn from tables this already hashes.
-const TABLE_HASHES: &str = "SELECT table_name AS name, dolt_hashof_table(table_name) AS h \
+const TABLE_HASHES: &str = "SELECT table_name AS name, dolt_hashof_table(table_name) AS h, \
+     dolt_hashof('HEAD') AS head \
      FROM information_schema.tables WHERE table_schema = database() \
      AND table_type = 'BASE TABLE' AND table_name <> 'leases' ORDER BY table_name";
 
@@ -881,6 +964,79 @@ const TABLE_HASHES: &str = "SELECT table_name AS name, dolt_hashof_table(table_n
 struct TableHash {
     name: String,
     h: String,
+    head: String,
+}
+
+/// Each table's hash, read back out of the fingerprint they fold into.
+fn tables_of(fingerprint: &str) -> BTreeMap<&str, &str> {
+    fingerprint
+        .split(',')
+        .filter_map(|table| table.split_once('='))
+        .collect()
+}
+
+/// The tables whose moves `changed_since` accounts for. The diff reads the
+/// first four; the wisp tables are read whole on every read; the rest hold
+/// nothing a row prints. A table outside this, such as `config` or
+/// `custom_statuses`, can change how every row reads, so its move is a read
+/// in full.
+const ACCOUNTED_FOR: [&str; 17] = [
+    "issues",
+    "labels",
+    "comments",
+    "dependencies",
+    "wisps",
+    "wisp_labels",
+    "wisp_comments",
+    "wisp_dependencies",
+    "wisp_events",
+    "wisp_child_counters",
+    "events",
+    "bd_events_journal",
+    "bd_events_seq",
+    "interactions",
+    "provenance_events",
+    "issue_counter",
+    "child_counters",
+];
+
+/// The SQL naming every bead whose row may differ between `commit` and the
+/// working set, or `None` for a commit that is not a Dolt hash.
+///
+/// The one SQL `bdi` composes, and `commit` is the one value composed into
+/// it: Dolt's `dolt_diff()` takes no bind parameters, so a commit is let in
+/// only as letters and digits, the check bd itself makes before it composes
+/// the same diff. A dependency moves the row at both its ends, because the
+/// one it points at counts its dependents. `leases` is dolt-ignored, so its
+/// diff names every live claim, whose lease the row carries.
+fn changed_since(commit: &str) -> Option<String> {
+    let is_a_hash =
+        !commit.is_empty() && commit.len() <= 64 && commit.bytes().all(|c| c.is_ascii_alphanumeric());
+    if !is_a_hash {
+        return None;
+    }
+    let diff = |table: &str| format!("dolt_diff('{commit}', 'WORKING', '{table}')");
+    Some(format!(
+        "SELECT COALESCE(to_id, from_id) AS id FROM {} \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM {} \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM {} \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM {} \
+         UNION SELECT COALESCE(to_depends_on_issue_id, from_depends_on_issue_id) FROM {} \
+         UNION SELECT COALESCE(to_issue_id, from_issue_id) FROM {}",
+        diff("issues"),
+        diff("labels"),
+        diff("comments"),
+        diff("dependencies"),
+        diff("dependencies"),
+        diff("leases"),
+    ))
+}
+
+/// One row `changed_since` answers with. A dependency on something outside
+/// the tracker names no bead at its far end.
+#[derive(Deserialize)]
+struct ChangedId {
+    id: Option<String>,
 }
 
 /// The `bd query` expression that selects wisps and nothing else.
@@ -1580,6 +1736,7 @@ mod tests {
             without_a_probe: Box::leak(Box::default()),
             journal: false,
             unfinished_work: false,
+            probed: Mutex::default(),
         }
     }
 
@@ -1663,8 +1820,8 @@ mod tests {
     #[test]
     fn a_project_configuring_nothing_is_read_on_the_ambient_credential() {
         let runner = FakeRunner::default()
-            .with(&spelled("ready --limit 0 --json"), "[]")
-            .with(&spelled("ready --type gate --limit 0 --json"), "[]");
+            .with(&spelled("ready --brief --limit 0 --json"), "[]")
+            .with(&spelled("ready --type gate --brief --limit 0 --json"), "[]");
 
         let cli = launched_with(&runner, Some("hunter2"));
         let tracker = cli
@@ -1673,7 +1830,7 @@ mod tests {
         tracker.ready().expect("the tracker answers");
 
         assert_eq!(
-            runner.call(&spelled("ready --limit 0 --json")).env,
+            runner.call(&spelled("ready --brief --limit 0 --json")).env,
             credentialled()
         );
     }
@@ -1722,7 +1879,8 @@ mod tests {
     /// from the constant it asserts about: this is the one place `bdi` writes
     /// SQL, and a change to that statement should have to be made twice.
     const PROBE_CALL: &str =
-        "sql --json SELECT table_name AS name, dolt_hashof_table(table_name) AS h \
+        "sql --json SELECT table_name AS name, dolt_hashof_table(table_name) AS h, \
+         dolt_hashof('HEAD') AS head \
          FROM information_schema.tables WHERE table_schema = database() \
          AND table_type = 'BASE TABLE' AND table_name <> 'leases' ORDER BY table_name";
 
@@ -1732,7 +1890,7 @@ mod tests {
         let rows: Vec<String> = (0..count)
             .map(|at| {
                 let h = if Some(at) == moved { "b" } else { "a" }.repeat(32);
-                format!(r#"{{"name":"table_{at:02}","h":"{h}"}}"#)
+                format!(r#"{{"name":"table_{at:02}","h":"{h}","head":"c1"}}"#)
             })
             .collect();
         format!("[{}]", rows.join(","))
@@ -2338,8 +2496,8 @@ mod tests {
         let out = r#"[{"id":"p-1.1","title":"a","status":"open"},
                       {"id":"p-1.3","title":"b","status":"open"}]"#;
         let runner = FakeRunner::default()
-            .with(&spelled("ready --limit 0 --json"), out)
-            .with(&spelled("ready --type gate --limit 0 --json"), "[]");
+            .with(&spelled("ready --brief --limit 0 --json"), out)
+            .with(&spelled("ready --type gate --brief --limit 0 --json"), "[]");
 
         let got = opened(&runner).ready().unwrap();
 
@@ -2357,11 +2515,11 @@ mod tests {
     fn a_gate_bd_lists_when_asked_for_gates_is_ready() {
         let runner = FakeRunner::default()
             .with(
-                &spelled("ready --limit 0 --json"),
+                &spelled("ready --brief --limit 0 --json"),
                 r#"[{"id":"p-1.1","title":"a","status":"open"}]"#,
             )
             .with(
-                &spelled("ready --type gate --limit 0 --json"),
+                &spelled("ready --type gate --brief --limit 0 --json"),
                 r#"[{"id":"p-wg1","title":"Gate: gh:pr","status":"open","issue_type":"gate"}]"#,
             );
 

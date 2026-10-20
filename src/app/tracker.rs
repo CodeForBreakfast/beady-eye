@@ -85,14 +85,19 @@ impl From<RootUnread> for TrackerState {
 /// renews it without moving the fingerprint, and a lease that ran out is a
 /// claim no longer live. So a read carries the soonest instant at which it
 /// stops being able to speak for the tracker.
+///
+/// The commit the tracker stood at and the beads the read found are kept as
+/// well, so that a read once the tracker moves asks only for what changed.
 #[derive(Clone)]
 pub(super) struct ReadAt {
     project: Project,
     fingerprint: String,
+    commit: Option<String>,
     named: BTreeSet<String>,
     roots: BTreeSet<String>,
     draws_trees: bool,
     speaks_until: Option<DateTime<Utc>>,
+    beads: Vec<Arc<Bead>>,
 }
 
 impl ReadAt {
@@ -114,7 +119,33 @@ impl ReadAt {
             && self.draws_trees == draws_trees
             && self.speaks_until.is_none_or(|until| now < until)
     }
+
+    /// Every bead the tracker holds now, as this read with what changed since
+    /// it read again, where the tracker can say what changed.
+    fn moved_on(&self, tracker: &dyn Tracker, project: &Project) -> Option<Vec<Arc<Bead>>> {
+        if self.project != *project {
+            return None;
+        }
+        let changed = tracker
+            .changed_since(self.commit.as_deref()?, &self.fingerprint)
+            .filter(|changed| changed.len() <= MOST_CHANGED)?;
+        let mut beads: Vec<Arc<Bead>> = self
+            .beads
+            .iter()
+            .filter(|bead| !changed.contains(&bead.id) && !bead.is_wisp())
+            .cloned()
+            .collect();
+        beads.extend(tracker.among(&changed).ok()?);
+        Some(beads)
+    }
 }
+
+/// The most changed beads read by id rather than with the whole tracker.
+///
+/// ponytail: a fixed count, chosen so their ids fit easily on one command
+/// line. Size it from the standing read if a bulk write ever makes the
+/// difference matter.
+const MOST_CHANGED: usize = 1000;
 
 /// The soonest instant after `read_at` at which this tracker would answer
 /// differently with nothing written, or `None` where it holds nothing back.
@@ -201,17 +232,32 @@ pub(super) fn refresh_project(
         }
     }
 
+    let commit = probed.as_ref().and_then(|_| tracker.commit());
     let journal = tracker.events(since);
-    let work = read_project(tracker.as_ref(), project, cfg, panes, draws_trees, now)?;
+    let laid_over = standing.filter(|_| probed.is_some());
+    let work = read_project(
+        tracker.as_ref(),
+        || match laid_over.and_then(|standing| standing.moved_on(tracker.as_ref(), project)) {
+            Some(beads) => Ok(beads),
+            None => tracker.all(),
+        },
+        project,
+        cfg,
+        panes,
+        draws_trees,
+        now,
+    )?;
     let journal_answered = !matches!(journal, Some(Err(_)));
     let at = probed.filter(|_| journal_answered).map(|fingerprint| {
         Box::new(ReadAt {
             project: project.clone(),
             fingerprint,
+            commit,
             named,
             roots,
             draws_trees,
             speaks_until: work.speaks_until,
+            beads: work.beads.clone(),
         })
     });
     Ok(Refresh::Read {
@@ -229,6 +275,7 @@ pub(super) fn refresh_project(
 /// afterwards is that root's.
 fn read_project(
     tracker: &dyn Tracker,
+    every_bead: impl FnOnce() -> Result<Vec<Arc<Bead>>, RunFailure>,
     project: &Project,
     cfg: &Config,
     panes: &[Pane],
@@ -236,7 +283,7 @@ fn read_project(
     now: DateTime<Utc>,
 ) -> Result<ProjectWork, RunFailure> {
     let (beads, (ready, blocked_by)) = together(
-        || tracker.all(),
+        every_bead,
         || together(|| tracker.ready(), || tracker.blocked()),
     );
     let beads = beads?;
@@ -696,7 +743,7 @@ dunwich = ["dun-4"]
         let tracker = dunwich_tracker().also(beads(MAST_TREE)).also(beads(lost));
 
         let before = nestings_on_this_thread();
-        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], true, now())
+        let work = read_project(&tracker, || tracker.all(), &cfg.projects[0], &cfg, &[], true, now())
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
@@ -1066,7 +1113,7 @@ dunwich = ["dun-c3"]
         .expect("the config parses");
         let tracker = dunwich_holding(CHAIN_OF_PARENTLESS);
 
-        let work = read_project(&tracker, &cfg.projects[0], &cfg, &[], true, now())
+        let work = read_project(&tracker, || tracker.all(), &cfg.projects[0], &cfg, &[], true, now())
             .expect("the tracker answers every call");
 
         let roots: Vec<&str> = work.roots.iter().map(|(root, _)| root.as_str()).collect();
@@ -1401,6 +1448,169 @@ dunwich = ["dun-c3"]
             vec![Asked::All, Asked::Ready, Asked::Blocked],
             "a parent the listing already carries is not asked for again"
         );
+    }
+
+    /// Dunwich's tree after a write: the feeder cable retitled, a third task
+    /// filed, and the dish retitled too, which the tracker's diff does not
+    /// name so that a read laid over the standing one keeps the old title.
+    const DUNWICH_MOVED: &str = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"dun-7.1","title":"the dish as nobody said it changed","status":"in_progress",
+       "parent":"dun-7","dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task","metadata":{"agent_pane":"w:p1"}},
+      {"id":"dun-7.2","title":"bury the feeder cable","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task"},
+      {"id":"dun-7.3","title":"paint the mast","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// One wisp under the epic, which bd keeps apart from its other beads.
+    const DUNWICH_WISP: &str = r#"[
+      {"id":"dun-wisp-1","title":"check the dish","status":"open","ephemeral":true,
+       "priority":2,"issue_type":"task"}
+    ]"#;
+
+    /// The read a refresh of `tracker` leaves standing, for the next refresh
+    /// to be compared against.
+    fn standing_after(trackers: &Fakes) -> ReadAt {
+        let cfg = one_project();
+        let Refresh::Read { at, .. } = refresh_project(
+            trackers,
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            None,
+            true,
+            0,
+            now(),
+        )
+        .expect("the tracker answers every call") else {
+            panic!("a project nothing has read is read in full")
+        };
+        *at.expect("a probed read stands")
+    }
+
+    /// What a refresh of `trackers` reads over `standing`.
+    fn read_over(trackers: &Fakes, standing: &ReadAt) -> ProjectWork {
+        let cfg = one_project();
+        let Refresh::Read { work, .. } = refresh_project(
+            trackers,
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            Some(standing),
+            true,
+            0,
+            now(),
+        )
+        .expect("the tracker answers every call") else {
+            panic!("a moved tracker is read")
+        };
+        *work
+    }
+
+    fn titles(work: &ProjectWork) -> BTreeMap<&str, &str> {
+        work.beads
+            .iter()
+            .map(|bead| (bead.id.as_str(), bead.title.as_str()))
+            .collect()
+    }
+
+    /// A moved tracker that can say which beads changed since the standing
+    /// read is asked for those beads alone, and the rest stand as read.
+    #[test]
+    fn a_moved_tracker_is_asked_only_for_the_beads_that_changed() {
+        let standing = standing_after(&dunwich_with(dunwich_tracker().at_commit("c1")));
+        let trackers = dunwich_with(
+            dunwich_holding(DUNWICH_MOVED)
+                .moved()
+                .at_commit("c2")
+                .changing(&["dun-7.2", "dun-7.3"]),
+        );
+
+        let work = read_over(&trackers, &standing);
+
+        assert_eq!(
+            titles(&work),
+            BTreeMap::from([
+                ("dun-7", "lift the ground station"),
+                ("dun-7.1", "re-point the dish"),
+                ("dun-7.2", "bury the feeder cable"),
+                ("dun-7.3", "paint the mast"),
+            ])
+        );
+        let mut asked = trackers.tracker("dunwich").asked();
+        asked.sort();
+        assert_eq!(
+            asked,
+            vec![
+                Asked::Fingerprint,
+                Asked::Ready,
+                Asked::Blocked,
+                Asked::Changed,
+                Asked::Among
+            ],
+            "the whole tracker was not asked for"
+        );
+    }
+
+    /// A changed bead the tracker no longer holds was deleted, and a wisp
+    /// stands only as long as the tracker still answers with it.
+    #[test]
+    fn a_changed_bead_or_a_wisp_the_tracker_no_longer_holds_is_gone() {
+        let standing = standing_after(&dunwich_with(
+            dunwich_tracker()
+                .also(beads(DUNWICH_WISP))
+                .at_commit("c1"),
+        ));
+        let trackers = dunwich_with(
+            Fake::holding(beads(DUNWICH_TREE).into_iter().take(2).collect())
+                .moved()
+                .at_commit("c2")
+                .changing(&["dun-7.2"]),
+        );
+
+        let work = read_over(&trackers, &standing);
+
+        assert_eq!(
+            titles(&work).into_keys().collect::<Vec<_>>(),
+            vec!["dun-7", "dun-7.1"]
+        );
+    }
+
+    /// Whatever stops the tracker saying what changed has it read in full.
+    #[test]
+    fn a_tracker_that_cannot_say_what_changed_is_read_in_full() {
+        let too_many: Vec<String> = (0..=MOST_CHANGED).map(|n| format!("dun-x{n}")).collect();
+        let too_many: Vec<&str> = too_many.iter().map(String::as_str).collect();
+        let cases = [
+            ("no commit stood", dunwich_tracker(), dunwich_tracker().moved().changing(&[])),
+            (
+                "the tracker could not say",
+                dunwich_tracker().at_commit("c1"),
+                dunwich_tracker().moved().at_commit("c2"),
+            ),
+            (
+                "too many changed",
+                dunwich_tracker().at_commit("c1"),
+                dunwich_tracker().moved().at_commit("c2").changing(&too_many),
+            ),
+        ];
+        for (why, before, after) in cases {
+            let standing = standing_after(&dunwich_with(before));
+            let trackers = dunwich_with(after);
+
+            read_over(&trackers, &standing);
+
+            let asked = trackers.tracker("dunwich").asked();
+            assert!(asked.contains(&Asked::All), "{why}: {asked:?}");
+            assert!(!asked.contains(&Asked::Among), "{why}: {asked:?}");
+        }
     }
 
     /// Kept, the fingerprint would skip every later read while nothing else
