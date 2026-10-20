@@ -988,7 +988,10 @@ Only a `blocks` edge crosses: a blocker hangs beneath the bead waiting on it,
 whereas a parent in another project would put this project's bead inside
 that project's trees. The bead window reads the edge the other way too: a
 bead's `blocks` also lists each bead of another read project that waits on it,
-found by the same rule, though no tree hangs that bead beneath it.
+found by the same rule, though no tree hangs that bead beneath it. A parent
+or an edge that never blocks is found by the same rule as well, so the bead
+window and `--beads` name it as the other project's bead, though no tree is
+drawn by it.
 
 **A blocker no answer holds is drawn where it would hang, saying why.** A
 tracker's beads carry its prefix, the id up to its first `-` as bd reads one,
@@ -2912,6 +2915,11 @@ choosing what to start rather than drawing a tree:
       "badges": [],
       "labels": ["human"],
       "parent": { "project": "summit-works", "id": "smt-4kd3p" },
+      "dependencies": [
+        { "project": "summit-works", "id": "smt-4kd3p", "type": "parent-child", "status": "in_progress" },
+        { "project": "summit-works", "id": "smt-4kd3p.13", "type": "blocks", "status": "open" },
+        { "project": null, "id": "mdw-9", "type": "blocks", "status": null }
+      ],
       "description": "Guard the key in the parser, the store, or both?"
     }
   ],
@@ -2942,6 +2950,14 @@ has `null`. bdi gives no label a meaning, so a reader wanting the beads
 labelled `human` asks for them with `--label human`. `parent` is the bead
 this one hangs beneath by its parent-child edge, keyed
 `{ "project", "id" }`, and `null` for a bead that hangs beneath none.
+`dependencies` is every edge the bead has, the parent's first and the rest in
+the order its row lists them. Each gives its `type` as bd names it, and the
+other bead's `project`, `id` and `status`. It holds what `blocked_by` leaves out, a blocker already
+finished and an edge that never blocks, so a reader can check the bead's whole
+graph. An edge of any type to another project's bead carries that project and
+the bead's status there, found as *Across projects* finds a blocker.
+Where no tracker the run read held the other bead, `project` and `status` are
+`null`, and `orphaned_dependencies` says why.
 `--brief` leaves `description` out of every bead, as `bd ready --brief`
 leaves out its free text, so a reader that never reads it gets a smaller
 document.

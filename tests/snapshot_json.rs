@@ -1898,3 +1898,60 @@ fn a_listed_bead_waiting_on_a_project_the_run_left_out_names_its_blocker_not_rea
         json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }
+
+/// A reader checking the graph needs every edge and not only what blocks:
+/// the parent, a blocker already closed, an edge that never blocks, a
+/// blocker and an edge that never blocks in another project, and one no
+/// tracker held, which has no project or status to give. A parent in another
+/// project is that project's bead too.
+#[test]
+fn a_listed_bead_lists_every_edge_it_has_with_its_type_and_the_other_beads_status() {
+    let arkham = r#"[
+      {"id":"ark-4","title":"light the beacon","status":"open","issue_type":"epic"},
+      {"id":"ark-3","title":"haul the oil","status":"closed","closed_at":"2026-08-20T09:00:00Z"},
+      {"id":"ark-6","title":"log the keepers","status":"open"},
+      {"id":"ark-5","title":"trim the wick","status":"open","parent":"ark-4",
+       "dependencies":[{"depends_on_id":"ark-4","type":"parent-child"},
+                       {"depends_on_id":"ark-3","type":"blocks"},
+                       {"depends_on_id":"ark-6","type":"related"},
+                       {"depends_on_id":"dun-2e7","type":"blocks"},
+                       {"depends_on_id":"dun-2e7.1","type":"related"},
+                       {"depends_on_id":"ark-404","type":"blocks"}]},
+      {"id":"ark-7","title":"paint the lamp room","status":"open","parent":"dun-2e7",
+       "dependencies":[{"depends_on_id":"dun-2e7","type":"parent-child"}]}
+    ]"#;
+    let trackers = Fakes::default()
+        .with("arkham", Fake::holding(beads(arkham)))
+        .with("dunwich", Fake::holding(beads(WAITED_ON)));
+
+    let listed = listing_over(
+        &Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses"),
+        &panes(),
+        &trackers,
+    );
+
+    assert_eq!(
+        listed_once(&listed, "arkham", "ark-5")["dependencies"],
+        json!([
+            {"project": "arkham", "id": "ark-4", "type": "parent-child", "status": "open"},
+            {"project": "arkham", "id": "ark-3", "type": "blocks", "status": "closed"},
+            {"project": "arkham", "id": "ark-6", "type": "related", "status": "open"},
+            {"project": "dunwich", "id": "dun-2e7", "type": "blocks", "status": "in_progress"},
+            {"project": "dunwich", "id": "dun-2e7.1", "type": "related", "status": "open"},
+            {"project": null, "id": "ark-404", "type": "blocks", "status": null}
+        ])
+    );
+    let adopted = listed_once(&listed, "arkham", "ark-7");
+    assert_eq!(
+        adopted["dependencies"],
+        json!([{"project": "dunwich", "id": "dun-2e7", "type": "parent-child", "status": "in_progress"}])
+    );
+    assert_eq!(
+        adopted["parent"],
+        json!({"project": "dunwich", "id": "dun-2e7"})
+    );
+    assert_eq!(
+        listed_once(&listed, "arkham", "ark-4")["dependencies"],
+        json!([])
+    );
+}

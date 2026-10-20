@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use crate::config::{Badge, Config};
 use crate::model::anomaly;
 use crate::model::badges;
-use crate::model::edges::{Related, Relations};
+use crate::model::edges::{Elsewhere, Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
@@ -33,6 +33,10 @@ pub struct Said<'a> {
     /// which no answer from this project names. Nothing where no other
     /// project was read.
     pub waiting: Option<&'a BTreeMap<String, Vec<Related>>>,
+    /// The bead in another project each id this project's beads name by an
+    /// edge stands for, where this project's answer lacks it. Nothing where
+    /// no other project was read.
+    pub elsewhere: Option<&'a BTreeMap<String, Elsewhere>>,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -48,6 +52,7 @@ pub fn said_by<'a>(
             readiness,
             relations,
             waiting: None,
+            elsewhere: None,
         },
     )])
 }
@@ -93,7 +98,9 @@ pub fn build_tree(
                 .and_then(|said| said.relations.get(&bead.id))
                 .cloned()
                 .unwrap_or_default();
-            held_elsewhere(&mut tied.depends_on, assembled, at, project);
+            if let Some(elsewhere) = said.and_then(|said| said.elsewhere) {
+                held_elsewhere(&mut tied, elsewhere);
+            }
             if let Some(waiting) = said
                 .and_then(|said| said.waiting)
                 .and_then(|waiting| waiting.get(&bead.id))
@@ -207,23 +214,20 @@ fn blockers_elsewhere<'a>(
     held.chain(unheld).filter(move |_| waiting)
 }
 
-/// Name each bead the one at `at` depends on that its own project's answer
-/// does not hold as the bead the tree hangs beneath it from another project.
+/// Name each bead a bead is tied to that its own project's answer does not
+/// hold as the bead in another project the id stands for.
 ///
-/// A project's relations are read from its answer alone, and the tree is
+/// A project's relations are read from its answer alone, and `elsewhere` is
 /// what read every answer together to find the other project's bead.
-fn held_elsewhere(depends_on: &mut [Related], assembled: &Assembled, at: usize, project: &str) {
-    let own = |at: usize| assembled.external.get(&at).map_or(project, String::as_str);
-    for related in depends_on
+fn held_elsewhere(tied: &mut Relations, elsewhere: &BTreeMap<String, Elsewhere>) {
+    for related in tied
+        .parent
         .iter_mut()
+        .chain(&mut tied.depends_on)
         .filter(|related| related.status.is_none())
     {
-        let reached = assembled.children[at]
-            .iter()
-            .find(|link| assembled.beads[link.bead].id == related.id);
-        if let Some(link) = reached {
-            let bead = &assembled.beads[link.bead];
-            related.project = Some(own(link.bead).to_string());
+        if let Some(Elsewhere { project, bead }) = elsewhere.get(&related.id) {
+            related.project = Some(project.clone());
             related.status = Some(bead.status.clone());
             related.title = Some(bead.title.clone());
         }

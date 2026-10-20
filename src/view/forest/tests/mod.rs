@@ -1470,10 +1470,12 @@ fn harbour_and_dunwich_ready(
         ("harbour", crate::model::edges::relations(&harbour)),
         ("dunwich", crate::model::edges::relations(&dunwich)),
     ];
-    let waiting = crate::model::edges::waiting_across(&[
+    let answers = [
         ("harbour", harbour.as_slice()),
         ("dunwich", dunwich.as_slice()),
-    ]);
+    ];
+    let waiting = crate::model::edges::waiting_across(&answers);
+    let elsewhere = crate::model::edges::held_across(&answers);
     let said = relations
         .iter()
         .map(|(project, relations)| {
@@ -1483,6 +1485,7 @@ fn harbour_and_dunwich_ready(
                     readiness: &readiness,
                     relations,
                     waiting: waiting.get(*project),
+                    elsewhere: elsewhere.get(*project),
                 },
             )
         })
