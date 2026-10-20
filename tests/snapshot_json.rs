@@ -1447,19 +1447,24 @@ fn a_bead_whose_blocker_in_another_project_is_pinned_is_as_ready_as_bd_says() {
 }
 
 /// Dunwich's tracker refused its credential, so its bead may be the blocker
-/// and may be open. A bead whose blocker nothing could check is not ready.
+/// and may be open. A bead whose blocker nothing could check is not ready,
+/// and the blocker is reported as not read rather than as open.
 #[test]
-fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_is_blocked_by_it() {
+fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_is_not_ready_and_not_blocked_by_it() {
     let dunwich = Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
     let beacon = the_beacon(&arkham_calling_the_beacon_ready_beside(dunwich));
 
     assert_eq!(beacon["ready"], false);
-    assert_eq!(beacon["blocked_by"], json!(["dun-2e7"]));
+    assert_eq!(beacon["blocked_by"], json!([]));
+    assert_eq!(
+        beacon["orphaned_dependencies"],
+        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
+    );
 }
 
 /// A project the run left out is not read either, so the same holds.
 #[test]
-fn a_bead_waiting_on_one_in_a_project_the_run_left_out_is_blocked_by_it() {
+fn a_bead_waiting_on_one_in_a_project_the_run_left_out_is_not_ready_and_not_blocked_by_it() {
     let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
         .expect("the config parses")
         .scoped_to(&["arkham".to_string()])
@@ -1470,7 +1475,11 @@ fn a_bead_waiting_on_one_in_a_project_the_run_left_out_is_blocked_by_it() {
     );
 
     assert_eq!(beacon["ready"], false);
-    assert_eq!(beacon["blocked_by"], json!(["dun-2e7"]));
+    assert_eq!(beacon["blocked_by"], json!([]));
+    assert_eq!(
+        beacon["orphaned_dependencies"],
+        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
+    );
 }
 
 /// Dunwich answered and holds no `dun-2e7`. bd holds a dependency on a bead
@@ -1861,5 +1870,30 @@ fn the_listing_names_the_roots_that_drew_nothing() {
     assert_eq!(
         listed["unread_trees"],
         json!([{"project": "dunwich", "root": "dun-404", "tracker": "root-not-found"}])
+    );
+}
+
+/// A run scoped to arkham leaves dunwich unread, so nothing it read says
+/// whether the bead's blocker is open. The bead is not ready, and the listing
+/// names the blocker as not read rather than among what blocks it.
+#[test]
+fn a_listed_bead_waiting_on_a_project_the_run_left_out_names_its_blocker_not_read() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
+        .expect("the config parses")
+        .scoped_to(&["arkham".to_string()])
+        .expect("arkham is configured");
+
+    let listed = listing_over(
+        &cfg,
+        &panes(),
+        &arkham_calling_the_beacon_ready_beside(Fake::holding(beads(WAITED_ON))),
+    );
+
+    let beacon = listed_once(&listed, "arkham", "ark-43o");
+    assert_eq!(beacon["ready"], false);
+    assert_eq!(beacon["blocked_by"], json!([]));
+    assert_eq!(
+        beacon["orphaned_dependencies"],
+        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }

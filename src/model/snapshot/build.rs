@@ -111,6 +111,12 @@ pub fn build_tree(
             let ready =
                 readiness.is_some_and(|r| r.ready.contains(&bead.id)) && unseen_by_bd.is_empty();
             blocked_by.extend(unseen_by_bd);
+            let orphaned = assembled.orphaned.get(&at).cloned().unwrap_or_default();
+            blocked_by.retain(|id| {
+                !orphaned
+                    .iter()
+                    .any(|orphan| orphan.id == *id && orphan.why.is_unread())
+            });
             Node {
                 project: own.to_string(),
                 id: bead.id.clone(),
@@ -135,7 +141,7 @@ pub fn build_tree(
                     now,
                 ),
                 agent,
-                orphaned_dependencies: assembled.orphaned.get(&at).cloned().unwrap_or_default(),
+                orphaned_dependencies: orphaned,
                 row: bead.row.clone(),
                 created_by: bead.created_by.clone(),
                 assignee: bead.assignee.clone(),

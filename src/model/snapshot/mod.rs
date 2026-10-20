@@ -294,6 +294,9 @@ pub struct Node {
     /// Open, with every dependency satisfied. From `bd ready`, which is the
     /// only thing that knows.
     pub ready: bool,
+    /// The beads this one waits on that some answer read as unfinished. A
+    /// blocker in a project that was not read is in `orphaned_dependencies`
+    /// instead, and still keeps the bead from being ready.
     pub blocked_by: Vec<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub closed_at: Option<DateTime<Utc>>,

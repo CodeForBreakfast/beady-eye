@@ -1032,10 +1032,12 @@ answer.
 
 **A blocker no answer holds counts where it may be unfinished work.** Where
 the blocker may be in a project that gave no answer, or several projects hold
-a bead by its id and one of those beads is not finished, the bead is not ready,
-and `blocked_by` names the blocker: nothing `bdi` read can say the bead is
-free to start. Where the projects carrying its prefix answered and hold no
-such bead, or no configured project carries it, bd's answer stands. bd holds a
+a bead by its id and one of those beads is not finished, the bead is not ready:
+nothing `bdi` read can say the bead is free to start. Where several hold it,
+`blocked_by` names the blocker. Where its project gave no answer, nothing read
+says the blocker is open, so `blocked_by` leaves it out and the bead's
+orphaned dependencies report it as not read. Where the projects carrying its
+prefix answered and hold no such bead, or no configured project carries it, bd's answer stands. bd holds a
 dependency on a bead that does not exist as blocking nothing, and no later
 read would find one.
 
@@ -2825,7 +2827,8 @@ choosing what to start rather than drawing a tree:
       "issue_type": "task",
       "priority": 2,
       "ready": false,
-      "blocked_by": ["smt-4kd3p.13", "mdw-9"],
+      "blocked_by": ["smt-4kd3p.13"],
+      "orphaned_dependencies": [ { "id": "mdw-9", "reason": "not-read", "projects": ["meadow"] } ],
       "agent": null,
       "badges": [],
       "labels": ["human"],
@@ -2851,8 +2854,10 @@ cannot disagree. `ready` and `blocked_by` are bd's answer with the blockers
 in other projects added, as *Across projects* says. So for a project with no
 dependency on another project's bead, the beads with `ready` true are what
 `bd ready` names. A blocked bead is listed too, because what blocks it is
-what says which work is next. `labels` and `description` are as bd reported
-them: a bead with no labels has an empty array, and one with no description
+what says which work is next. `orphaned_dependencies` names each blocker no
+answer held and why, as the tree's node does, so a blocker in a project the
+run did not read is reported as not read. `labels` and `description` are as
+bd reported them: a bead with no labels has an empty array, and one with no description
 has `null`. bdi gives no label a meaning, so a reader wanting the beads
 labelled `human` filters for them. `created_at` is the bead's created
 date, `null` where the row has none. `metadata` is the bead's whole metadata
@@ -2919,7 +2924,8 @@ for the example. Every unfinished bead in the tree is in exactly one list.
   `defer_until` giving the date a deferral runs to. `unmet_dependencies` lists
   each dependency the bead still waits on, finished ones left out, keyed on
   its own project and with its status, and with the three gate fields where
-  it is a gate.
+  it is a gate. A dependency no tracker the run read could answer for is in
+  the bead's `orphaned_dependencies` instead.
 
 `metadata` is on every entry, so whatever key `join.pane_key` names is there
 for a reader checking seats inside the tree. Each list is sorted by project

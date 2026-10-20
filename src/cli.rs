@@ -117,7 +117,8 @@ struct Cli {
     json: bool,
 
     /// Emit each unfinished bead once as JSON: whether it is ready, what
-    /// blocks it in its own project or another, the agent on it, and its
+    /// blocks it in its own project or another, which blockers no project it
+    /// read holds and why, the agent on it, and its
     /// labels, description, created date and metadata. Beads with no live agent in their tree are
     /// listed too. With --ready, list only the beads the ready list draws, as
     /// in_progress and ready, in the order it draws them. With a bead named,

@@ -5,7 +5,8 @@
 
 use beady_eye::collect::bd::parse_beads;
 use beady_eye::collect::herdr::Herdr;
-use beady_eye::collect::tracker::testing::{Fake, Fakes};
+use beady_eye::collect::run::FailureKind;
+use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
 use beady_eye::model::snapshot::{DependencyListing, Filter};
 use chrono::{DateTime, Utc};
@@ -13,7 +14,7 @@ use serde_json::{json, Value};
 
 mod canned;
 
-use canned::Canned;
+use canned::{refused, Canned};
 
 const ARKHAM_AND_DUNWICH: &str = r#"
 [[projects]]
@@ -75,10 +76,10 @@ fn now() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-/// The two trackers, each answering ready what bd would. bd counts a bead
-/// being worked as ready, and cannot see that ark-5 waits on dun-1, so it
-/// answers both ready.
-fn trackers() -> Fakes {
+/// Arkham's tracker beside `dunwich`, each answering ready what bd would.
+/// bd counts a bead being worked as ready, and cannot see that ark-5 waits
+/// on dun-1, so it answers both ready.
+fn trackers_beside(dunwich: Fake) -> Fakes {
     Fakes::default()
         .with(
             "arkham",
@@ -87,23 +88,29 @@ fn trackers() -> Fakes {
                 .blocked("ark-1", &["ark-2", "ark-3", "ark-4", "ark-5", "ark-7"])
                 .blocked("ark-4", &["ark-6"]),
         )
-        .with(
-            "dunwich",
-            Fake::holding(parse_beads(DUNWICH).expect("the rows parse"))
-                .ready(["dun-2"])
-                .blocked("dun-1", &["dun-2"]),
-        )
+        .with("dunwich", dunwich)
+}
+
+fn dunwich() -> Fake {
+    Fake::holding(parse_beads(DUNWICH).expect("the rows parse"))
+        .ready(["dun-2"])
+        .blocked("dun-1", &["dun-2"])
 }
 
 /// The document a run naming `named` writes.
 fn tree_of(named: &[&str]) -> Value {
+    tree_over(named, trackers_beside(dunwich()))
+}
+
+/// The document a run naming `named` writes over `trackers`.
+fn tree_over(named: &[&str], trackers: Fakes) -> Value {
     let named: Vec<String> = named.iter().map(|bead| bead.to_string()).collect();
     let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
         .expect("the config parses")
         .with_roots_named_on_the_command_line(&named)
         .expect("every bead names a project being read");
     let nobody = Canned::default().herdr_holding(r#"{"result":{"agents":[]}}"#);
-    let snapshot = beady_eye::app::run(&cfg, &Herdr::new(&nobody), &trackers(), Filter::All, now());
+    let snapshot = beady_eye::app::run(&cfg, &Herdr::new(&nobody), &trackers, Filter::All, now());
     serde_json::to_value(DependencyListing::of(&snapshot, &cfg.roots.named_beads()))
         .expect("the document serialises")
 }
@@ -237,6 +244,24 @@ fn each_bead_carries_the_pane_its_metadata_names() {
     assert_eq!(
         entry(&document, "waiting", "ark-3")["metadata"]["agent_pane"],
         "w:p4"
+    );
+}
+
+/// Dunwich's tracker refused its credential, so nothing says whether the oil
+/// is delivered. The lamps wait on it as a blocker not read, rather than as
+/// an unmet dependency.
+#[test]
+fn a_waiting_bead_names_a_blocker_in_a_tracker_that_could_not_be_read() {
+    let document = tree_over(
+        &["arkham:ark-1"],
+        trackers_beside(dunwich().failing(Asked::All, refused(FailureKind::Auth))),
+    );
+
+    let lamps = entry(&document, "waiting", "ark-5");
+    assert_eq!(lamps["unmet_dependencies"], json!([]));
+    assert_eq!(
+        lamps["orphaned_dependencies"],
+        json!([{"id": "dun-1", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }
 

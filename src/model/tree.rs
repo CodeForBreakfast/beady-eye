@@ -157,6 +157,17 @@ pub enum Unreachable {
     Unconfigured,
 }
 
+impl Unreachable {
+    /// Whether the bead is missing because a project that may hold it was
+    /// not read, so nothing read says whether it is finished.
+    pub fn is_unread(&self) -> bool {
+        matches!(
+            self,
+            Unreachable::NotRead { .. } | Unreachable::HeldByUnread { .. }
+        )
+    }
+}
+
 /// The prefix a tracker gives the ids of its beads, read as bd reads it.
 pub(crate) fn prefix_of(id: &str) -> &str {
     id.find('-').map_or("", |dash| &id[..=dash])
