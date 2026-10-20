@@ -1071,19 +1071,20 @@ on, and acts on what GitHub says:
 | open and ready for review | closes each gate waiting on it with `awaits=ready_for_review` in its metadata, and leaves the rest open |
 | open and approved | closes each gate waiting on it with `awaits=approved` in its metadata, and leaves the rest open |
 | open or a draft, and its head commit has failing checks | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a fix that fails again is told again |
+| open or a draft, and every check on its head commit has passed | leaves each gate open, and comments once on each bead a gate holds back for that commit, so each new head that passes is told again |
 | open or a draft, and reviewed | leaves each gate open, and comments on each bead a gate holds back once for each review submitted, approving, requesting changes or commenting, naming the reviewer and the state. A dismissed review is not told, and neither is an inline comment made on its own, which is told as an inline comment below. It reads the latest five reviews |
 | open or a draft, and GitHub says its head commit conflicts with its base | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a rebase that still conflicts is told again. A pull request GitHub has not yet worked out is not told |
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
 | open or a draft, and commented on inline | leaves each gate open, and comments on each bead a gate holds back once for each inline comment made on its own, a reply in a review thread among them, naming the comment's author, saying whether it replied, and linking it. It never quotes the comment. GitHub records such a comment as a review that comments, has no body and holds that one comment, so it reads the latest five reviews. An inline comment made as part of a larger review is told as that review. There is no author filter, so a seat's own inline comments arrive too |
 | open or a draft, and at a new head commit | leaves each gate open, and comments once on each bead a gate holds back for each head commit it finds, giving the commit's short sha and a link to it. A force-push is told like any other push. There is no filter for who pushed, so a seat's own pushes arrive too. Several pushes between two looks are one comment, for the head the look finds |
-| a draft with no failing checks, no review, no conflict, no comment, no inline comment and no new head | nothing |
+| a draft whose checks have neither failed nor all passed, with no review, no conflict, no comment, no inline comment and no new head | nothing |
 
 A gate tells only what happened after it was made, since whoever made it could
 already see the rest. A review dates from when it was submitted, a comment from
 when it was made, an inline comment from when GitHub submitted its review,
-failing checks from when the first check to fail finished, and a new head from
-when its commit was committed, so the head a pull request had when its gate was
-made is not told.
+failing checks from when the first check to fail finished, passing checks from
+when the last check finished, and a new head from when its commit was
+committed, so the head a pull request had when its gate was made is not told.
 GitHub does not say when a conflict began, so a conflict dates from the later of
 the head commit and the base branch's latest commit. A conflict that stood
 before the gate is still told once the base moves on. A close without a merge
@@ -1102,10 +1103,10 @@ repository:
 | permission | what `bdi gates` reads with it | without it |
 |---|---|---|
 | *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
-| *Contents* | the merge commit, the head commit and the repository's releases | no merge is settled, no failing checks are told, and no gh:release gate is settled |
+| *Contents* | the merge commit, the head commit and the repository's releases | no merge is settled, no failing or passing checks are told, and no gh:release gate is settled |
 | *Issues* | whether an issue is open or closed | no gh:issue gate is settled |
 | *Actions* | whether a workflow run has finished, and how it ended | no gh:run gate is settled |
-| *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing checks are told |
+| *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing or passing checks are told |
 
 A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
 
@@ -1124,6 +1125,7 @@ dunwich/arkham#12 merged: arkham closed gate ark-0i5
 dunwich/arkham#7 closed unmerged: arkham told ark-2ud
 dunwich/arkham#15 is ready for review: arkham closed gate ark-eb1
 dunwich/arkham#18 has failing checks: arkham told ark-7mw
+dunwich/arkham#18 has passing checks: arkham told ark-7mw
 dunwich/arkham#18 was reviewed: arkham told ark-7mw
 dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
@@ -1333,7 +1335,7 @@ the look's words, so the bead is told once:
 | `check_suite` concluded as a failure, a timeout, a cancellation, an action required or a startup failure, or `status` in `failure` or `error` | failing checks on the head commit, as a look tells them |
 | `pull_request` synchronize | the new head, as a look tells it |
 | `pull_request` closed | nothing more, because the settling closes the gate on a merge, or tells a close without one |
-| anything else from these six events, such as a label, a dismissed review or checks that passed | who acted, the event and its action, and a link to what they acted on |
+| anything else from these six events, such as a label, a dismissed review, or a check suite or status that passed | who acted, the event and its action, and a link to what they acted on. One suite or status passing does not mean every check on the commit has, so the look the delivery prompts tells passing checks once they all have |
 
 A bead told by that last row reads like this:
 

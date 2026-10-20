@@ -17,6 +17,7 @@ use crate::model::gate::Until;
 
 mod approved;
 mod checks_failed;
+mod checks_passed;
 mod closed_unmerged;
 mod commented;
 mod conflicting;
@@ -77,6 +78,10 @@ impl Telling {
 /// it so that [`fields`] asks it once.
 const HEAD_COMMIT: &str = "headRef{target{...on Commit{committedDate oid url}}}";
 
+/// The checks on the pull request's head commit, selected alike by every
+/// event that reads them so that [`fields`] asks them once.
+const HEAD_CHECKS: &str = "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}}";
+
 /// Every event `bdi gates` acts on.
 pub const EVENTS: &[Event] = &[
     ready_for_review::EVENT,
@@ -84,6 +89,7 @@ pub const EVENTS: &[Event] = &[
     closed_unmerged::EVENT,
     approved::EVENT,
     checks_failed::EVENT,
+    checks_passed::EVENT,
     reviewed::EVENT,
     conflicting::EVENT,
     commented::EVENT,

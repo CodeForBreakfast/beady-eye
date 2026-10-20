@@ -384,7 +384,7 @@ so the bead it held back becomes ready. A gate with `awaits=ready_for_review` in
 its metadata closes sooner, once the pull request leaves draft, and so does
 one with `awaits=approved`, once GitHub's review decision is approved. A close
 without a merge leaves the gate open and comments once on that bead, so whoever
-waits on it hears. So do failing checks on the pull request's head commit, a
+waits on it hears. So do failing or passing checks on the pull request's head commit, a
 conflict between that commit and its base, each review submitted, and each
 comment on the pull request's conversation, once for each commit, review or
 comment. Then it looks again a minute later, until it is stopped. Run it under whatever supervises your processes, as you would the watcher.

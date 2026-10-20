@@ -4,12 +4,12 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use super::{Event, Outcome, Telling};
+use super::{Event, Outcome, Telling, HEAD_CHECKS};
 use crate::collect::gates::PullRequest;
 use crate::collect::github::{Observed, State};
 
 pub const EVENT: Event = Event {
-    fields: &["commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}}"],
+    fields: &[HEAD_CHECKS],
     happening: "has failing checks",
     outcome: checks_failed,
 };
