@@ -23,7 +23,7 @@ use crate::collect::changes;
 use crate::collect::environment::EnvironmentCache;
 use crate::collect::gates::{Done, Told};
 use crate::collect::run::RealRunner;
-use crate::collect::webhook::{self, Heard, Named, Secret};
+use crate::collect::webhook::{self, Delivery, Heard, Named, Secret};
 use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
 use crate::view::phrase;
@@ -157,7 +157,9 @@ pub(super) fn settle(
                     hear(&mut kept, &heard, Instant::now());
                     kept.changed(&trackers, &cfg.gates)
                 }
-                Ok(Woken::Delivered(named)) if Instant::now() < rate_limited_until => {
+                Ok(Woken::Delivered(Delivery { named, .. }))
+                    if Instant::now() < rate_limited_until =>
+                {
                     println!(
                         "{}",
                         spelled_out(&format!(
@@ -167,15 +169,26 @@ pub(super) fn settle(
                     );
                     continue;
                 }
-                Ok(Woken::Delivered(named)) => {
+                Ok(Woken::Delivered(Delivery { named, said })) => {
                     hear(&mut kept, &heard, Instant::now());
+                    let said = said.as_ref();
                     match named {
-                        Named::PullRequest(pull_request) => {
-                            kept.delivered(&trackers, &RealRunner, &cfg.gates, pull_request, &told)
-                        }
-                        Named::Commit(commit) => {
-                            kept.delivered_commit(&trackers, &RealRunner, &cfg.gates, commit, &told)
-                        }
+                        Named::PullRequest(pull_request) => kept.delivered(
+                            &trackers,
+                            &RealRunner,
+                            &cfg.gates,
+                            pull_request,
+                            said,
+                            &told,
+                        ),
+                        Named::Commit(commit) => kept.delivered_commit(
+                            &trackers,
+                            &RealRunner,
+                            &cfg.gates,
+                            commit,
+                            said,
+                            &told,
+                        ),
                     }
                 }
                 Err(_) => continue,
@@ -205,14 +218,14 @@ pub(super) fn settle(
 /// What wakes the loop between looks.
 enum Woken {
     /// A delivery from GitHub named something to settle.
-    Delivered(Named),
+    Delivered(Delivery),
     /// A producer said a tracker changed.
     Changed,
 }
 
-impl From<Named> for Woken {
-    fn from(named: Named) -> Self {
-        Woken::Delivered(named)
+impl From<Delivery> for Woken {
+    fn from(delivery: Delivery) -> Self {
+        Woken::Delivered(delivery)
     }
 }
 
@@ -363,11 +376,7 @@ fn refused(heard: &Heard) -> Option<&'static str> {
         Heard::Unmeasured => {
             Some("a delivery was refused: it does not give its Content-Length up front")
         }
-        Heard::Healthy
-        | Heard::Settle(_)
-        | Heard::SettleCommit(_)
-        | Heard::Ignored
-        | Heard::Unknown => None,
+        Heard::Healthy | Heard::Settle(_) | Heard::Ignored | Heard::Unknown => None,
     }
 }
 
@@ -779,9 +788,12 @@ mod tests {
             Some("a delivery was refused: it does not give its Content-Length up front")
         );
         assert_eq!(
-            refused(&Heard::Settle(PullRequest {
-                repo: "example/ark".to_string(),
-                number: 7,
+            refused(&Heard::Settle(Delivery {
+                named: Named::PullRequest(PullRequest {
+                    repo: "example/ark".to_string(),
+                    number: 7,
+                }),
+                said: None,
             })),
             None
         );

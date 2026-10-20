@@ -1,6 +1,6 @@
-//! GitHub's webhook deliveries, taken over HTTP. A delivery is only a
-//! trigger: one signed with the shared secret and about a pull request names
-//! the pull request to settle, and nothing else in it is read.
+//! GitHub's webhook deliveries, taken over HTTP. One signed with the shared
+//! secret and about a pull request names the pull request to settle, and
+//! what happened there, read only from fields GitHub writes itself.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -11,7 +11,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, KeyInit, Mac};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use sha2::Sha256;
 
@@ -101,15 +103,53 @@ pub enum Named {
     Commit(Commit),
 }
 
+/// A signed delivery: what it names to settle, and what it says happened
+/// there, where it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delivery {
+    pub named: Named,
+    pub said: Option<Said>,
+}
+
+/// What a delivery says happened, as GitHub's own fields say it, so never a
+/// body, title, label or commit message anyone wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Said {
+    /// A comment on the pull request's conversation, at `url`, made `at`.
+    Commented {
+        by: String,
+        url: String,
+        at: Option<DateTime<Utc>>,
+    },
+    /// A review submitted, in the state GitHub gives it, at `url`, submitted
+    /// `at`.
+    Reviewed {
+        by: String,
+        state: String,
+        url: String,
+        at: Option<DateTime<Utc>>,
+    },
+    /// The pull request's head moved to the commit `sha`, at `url`.
+    NewHead { sha: String, url: String },
+    /// The checks on the commit `sha` failed.
+    ChecksFailed { sha: String },
+    /// Anything else: the event and its action, who acted, and the address
+    /// of what they acted on.
+    Acted {
+        event: &'static str,
+        action: String,
+        by: String,
+        url: String,
+    },
+}
+
 /// What the listener made of one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heard {
     /// A readiness probe.
     Healthy,
-    /// A signed delivery about this pull request.
-    Settle(PullRequest),
-    /// A signed delivery about the checks on this commit.
-    SettleCommit(Commit),
+    /// A signed delivery about a pull request, or the checks on a commit.
+    Settle(Delivery),
     /// A signed delivery about something other than a pull request.
     Ignored,
     /// A delivery carrying no signature.
@@ -136,8 +176,8 @@ impl Heard {
         match self {
             Heard::Healthy if !reading => ("503 Service Unavailable", "not reading GitHub\n"),
             Heard::Healthy => ("200 OK", "ok\n"),
-            Heard::Settle(_) | Heard::SettleCommit(_) if !room => BUSY,
-            Heard::Settle(_) | Heard::SettleCommit(_) => ("202 Accepted", "settling\n"),
+            Heard::Settle(_) if !room => BUSY,
+            Heard::Settle(_) => ("202 Accepted", "settling\n"),
             Heard::Ignored => ("202 Accepted", "ignored\n"),
             Heard::Unsigned | Heard::Forged => ("401 Unauthorized", "signature refused\n"),
             Heard::NamesNoPullRequest => ("400 Bad Request", "no pull request named\n"),
@@ -165,7 +205,8 @@ pub fn delivery(
     }
     match event {
         Some("pull_request") => pull_request(body),
-        Some("pull_request_review" | "pull_request_review_comment") => pull_request_review(body),
+        Some("pull_request_review") => pull_request_review(body, reviewed(body)),
+        Some("pull_request_review_comment") => pull_request_review(body, None),
         Some("issue_comment") => issue_comment(body),
         Some("check_suite") => check_suite(body),
         Some("status") => status(body),
@@ -176,11 +217,63 @@ pub fn delivery(
 /// What a signed pull_request delivery comes to.
 fn pull_request(body: &[u8]) -> Heard {
     match serde_json::from_slice::<PullRequestEvent>(body) {
-        Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.named(),
-            number: event.number,
-        }),
+        Ok(event) => settle(
+            Named::PullRequest(PullRequest {
+                repo: event.repository.named(),
+                number: event.number,
+            }),
+            pull_request_said(body),
+        ),
         Err(_) => Heard::NamesNoPullRequest,
+    }
+}
+
+/// What a pull_request delivery says: a new head, which the sweep tells too,
+/// or anything else done to the pull request. A close says nothing of its
+/// own, since settling already closes a gate on a merge and tells its beads
+/// of a close without one.
+fn pull_request_said(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        pull_request: Pull,
+        repository: Addressed,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Pull {
+        html_url: String,
+        head: Head,
+    }
+    /// The head commit, in the repository it was pushed to, which is a
+    /// fork's own where the pull request comes from one, and gone with it.
+    #[derive(Deserialize)]
+    struct Head {
+        sha: String,
+        repo: Option<Addressed>,
+    }
+    let Saying {
+        action,
+        pull_request,
+        repository,
+        sender,
+    } = saying(body)?;
+    match action.as_str() {
+        "closed" => None,
+        "synchronize" => {
+            let Head { sha, repo } = pull_request.head;
+            let pushed_to = repo.unwrap_or(repository).html_url;
+            Some(Said::NewHead {
+                url: format!("{pushed_to}/commit/{sha}"),
+                sha,
+            })
+        }
+        _ => Some(Said::Acted {
+            event: "pull_request",
+            action,
+            by: sender.login,
+            url: pull_request.html_url,
+        }),
     }
 }
 
@@ -192,15 +285,79 @@ struct PullRequestEvent {
 }
 
 /// What a signed pull_request_review or pull_request_review_comment delivery
-/// comes to. Both name their pull request the same way.
-fn pull_request_review(body: &[u8]) -> Heard {
+/// comes to, saying `said`. Both name their pull request the same way.
+///
+/// An inline comment says nothing of its own. GitHub records each one inside
+/// a review, and the sweep tells a review's lone inline comment in place of
+/// the review. Neither delivery says whether a review holds one comment or
+/// several, so the settling they prompt tells it.
+fn pull_request_review(body: &[u8], said: Option<Said>) -> Heard {
     match serde_json::from_slice::<PullRequestReviewEvent>(body) {
-        Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.named(),
-            number: event.pull_request.number,
-        }),
+        Ok(event) => settle(
+            Named::PullRequest(PullRequest {
+                repo: event.repository.named(),
+                number: event.pull_request.number,
+            }),
+            said,
+        ),
         Err(_) => Heard::NamesNoPullRequest,
     }
+}
+
+/// What a pull_request_review delivery says: a review submitted in a state
+/// the sweep tells too, or anything else done to one. A review submitted
+/// commenting with no body is the one that holds inline comments, so it says
+/// nothing of its own.
+fn reviewed(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        review: Review,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Review {
+        state: String,
+        body: Option<String>,
+        html_url: String,
+        user: Option<Login>,
+        submitted_at: Option<DateTime<Utc>>,
+    }
+    let Saying {
+        action,
+        review,
+        sender,
+    } = saying(body)?;
+    let state = review.state.to_ascii_lowercase();
+    let blank = review
+        .body
+        .as_deref()
+        .is_none_or(|body| body.trim().is_empty());
+    if action == "submitted" && state == "commented" && blank {
+        return None;
+    }
+    Some(
+        if action == "submitted"
+            && matches!(
+                state.as_str(),
+                "approved" | "changes_requested" | "commented"
+            )
+        {
+            Said::Reviewed {
+                by: author(review.user),
+                state,
+                url: review.html_url,
+                at: review.submitted_at,
+            }
+        } else {
+            Said::Acted {
+                event: "pull_request_review",
+                action,
+                by: sender.login,
+                url: review.html_url,
+            }
+        },
+    )
 }
 
 /// The fields of a pull_request_review or pull_request_review_comment
@@ -221,12 +378,51 @@ struct PullRequestNumber {
 fn issue_comment(body: &[u8]) -> Heard {
     match serde_json::from_slice::<IssueCommentEvent>(body) {
         Ok(event) if event.issue.pull_request.is_none() => Heard::Ignored,
-        Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.named(),
-            number: event.issue.number,
-        }),
+        Ok(event) => settle(
+            Named::PullRequest(PullRequest {
+                repo: event.repository.named(),
+                number: event.issue.number,
+            }),
+            commented(body),
+        ),
         Err(_) => Heard::NamesNoPullRequest,
     }
+}
+
+/// What an issue_comment delivery says: a comment made, which the sweep
+/// tells too, or anything else done to one.
+fn commented(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        comment: Comment,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Comment {
+        html_url: String,
+        user: Option<Login>,
+        created_at: Option<DateTime<Utc>>,
+    }
+    let Saying {
+        action,
+        comment,
+        sender,
+    } = saying(body)?;
+    Some(if action == "created" {
+        Said::Commented {
+            by: author(comment.user),
+            url: comment.html_url,
+            at: comment.created_at,
+        }
+    } else {
+        Said::Acted {
+            event: "issue_comment",
+            action,
+            by: sender.login,
+            url: comment.html_url,
+        }
+    })
 }
 
 /// The fields of an issue_comment delivery that name its pull request, if it
@@ -245,10 +441,53 @@ struct Issue {
 
 /// What a signed check_suite delivery comes to.
 fn check_suite(body: &[u8]) -> Heard {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        check_suite: Concluded,
+        repository: Addressed,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Concluded {
+        head_sha: String,
+        conclusion: Option<String>,
+    }
+    let said = saying::<Saying>(body).map(
+        |Saying {
+             action,
+             check_suite:
+                 Concluded {
+                     head_sha,
+                     conclusion,
+                 },
+             repository,
+             sender,
+         }| match conclusion {
+            Some(conclusion) if is_failure(&conclusion) => Said::ChecksFailed { sha: head_sha },
+            conclusion => Said::Acted {
+                event: "check_suite",
+                action: conclusion.map_or(action.clone(), |conclusion| {
+                    format!("{action} {conclusion}")
+                }),
+                by: sender.login,
+                url: format!("{}/commit/{head_sha}", repository.html_url),
+            },
+        },
+    );
     match serde_json::from_slice::<CheckSuiteEvent>(body) {
-        Ok(event) => commit(event.repository, event.check_suite.head_sha),
+        Ok(event) => commit(event.repository, event.check_suite.head_sha, said),
         Err(_) => Heard::NamesNoPullRequest,
     }
+}
+
+/// Whether a check suite that concluded `conclusion` failed, as GitHub's
+/// rollup of a commit's checks counts it.
+fn is_failure(conclusion: &str) -> bool {
+    matches!(
+        conclusion,
+        "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure"
+    )
 }
 
 /// The fields of a check_suite delivery that name its commit.
@@ -265,8 +504,24 @@ struct Suite {
 
 /// What a signed status delivery comes to.
 fn status(body: &[u8]) -> Heard {
+    #[derive(Deserialize)]
+    struct Saying {
+        state: String,
+        sha: String,
+        commit: Addressed,
+        sender: Login,
+    }
+    let said = saying::<Saying>(body).map(|saying| match saying.state.as_str() {
+        "failure" | "error" => Said::ChecksFailed { sha: saying.sha },
+        _ => Said::Acted {
+            event: "status",
+            action: saying.state,
+            by: saying.sender.login,
+            url: saying.commit.html_url,
+        },
+    });
     match serde_json::from_slice::<StatusEvent>(body) {
-        Ok(event) => commit(event.repository, event.sha),
+        Ok(event) => commit(event.repository, event.sha, said),
         Err(_) => Heard::NamesNoPullRequest,
     }
 }
@@ -278,16 +533,47 @@ struct StatusEvent {
     repository: Repository,
 }
 
-/// The commit `sha` in `repository`, where `sha` is an object name. It goes
-/// into the path of a request to GitHub, so nothing else is taken.
-fn commit(repository: Repository, sha: String) -> Heard {
+/// The commit `sha` in `repository`, where `sha` is an object name, and what
+/// the delivery `said` of it. It goes into the path of a request to GitHub,
+/// so nothing else is taken.
+fn commit(repository: Repository, sha: String, said: Option<Said>) -> Heard {
     if sha.is_empty() || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Heard::NamesNoPullRequest;
     }
-    Heard::SettleCommit(Commit {
-        repo: repository.named(),
-        sha,
-    })
+    settle(
+        Named::Commit(Commit {
+            repo: repository.named(),
+            sha,
+        }),
+        said,
+    )
+}
+
+fn settle(named: Named, said: Option<Said>) -> Heard {
+    Heard::Settle(Delivery { named, said })
+}
+
+/// `body` read as what a delivery says, or nothing where it holds less than
+/// that. Only a delivery GitHub sent holds it all, so one cut down to what
+/// names a pull request is still settled.
+fn saying<T: DeserializeOwned>(body: &[u8]) -> Option<T> {
+    serde_json::from_slice(body).ok()
+}
+
+#[derive(Deserialize)]
+struct Login {
+    login: String,
+}
+
+/// Something GitHub gives an address of its own.
+#[derive(Deserialize)]
+struct Addressed {
+    html_url: String,
+}
+
+/// Who wrote something, as GitHub names an account that has gone.
+fn author(user: Option<Login>) -> String {
+    user.map_or_else(|| "ghost".to_string(), |user| user.login)
 }
 
 #[derive(Deserialize)]
@@ -345,7 +631,7 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
 /// [`MOST_AT_ONCE`] are being answered is told to come back later. Gives back
 /// the address taken, which names the port where `address` left it to the
 /// system.
-pub fn listen<T: From<Named> + Send + 'static>(
+pub fn listen<T: From<Delivery> + Send + 'static>(
     address: &str,
     secret: Secret,
     settle: SyncSender<T>,
@@ -393,7 +679,7 @@ impl Drop for Answering {
 
 /// Read one request from `stream` and answer it, or close it unanswered
 /// where it never arrives in full or is not HTTP.
-fn answer<T: From<Named>>(
+fn answer<T: From<Delivery>>(
     stream: TcpStream,
     secret: &Secret,
     settle: &SyncSender<T>,
@@ -407,12 +693,11 @@ fn answer<T: From<Named>>(
     let Some(said) = read(&mut stream, secret) else {
         return;
     };
-    let named = match &said {
-        Heard::Settle(pull_request) => Some(Named::PullRequest(pull_request.clone())),
-        Heard::SettleCommit(commit) => Some(Named::Commit(commit.clone())),
+    let delivered = match &said {
+        Heard::Settle(delivery) => Some(delivery.clone()),
         _ => None,
     };
-    let room = named.is_none_or(|named| settle.try_send(named.into()).is_ok());
+    let room = delivered.is_none_or(|delivery| settle.try_send(delivery.into()).is_ok());
     reply(
         &stream.stream,
         said.answer(room, reading.load(Ordering::SeqCst)),
@@ -568,6 +853,16 @@ mod tests {
         Secret::new("swordfish").expect("a secret")
     }
 
+    /// A delivery cut down too far to say what happened, settling
+    /// `pull_request`.
+    fn settles(pull_request: PullRequest) -> Heard {
+        settle(Named::PullRequest(pull_request), None)
+    }
+
+    fn settles_commit(commit: Commit) -> Heard {
+        settle(Named::Commit(commit), None)
+    }
+
     fn signature(body: &[u8]) -> String {
         let mut mac = Hmac::<Sha256>::new_from_slice(b"swordfish").expect("any key");
         mac.update(body);
@@ -596,7 +891,7 @@ mod tests {
                 Some(&signature(CLOSED_42.as_bytes())),
                 CLOSED_42.as_bytes()
             ),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -617,7 +912,7 @@ mod tests {
             )
         };
         let repo = |repo: &str| {
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: repo.to_string(),
                 number: 42,
             })
@@ -641,7 +936,7 @@ mod tests {
                 Some(&signature(body)),
                 body
             ),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -658,7 +953,7 @@ mod tests {
                 Some(&signature(body)),
                 body
             ),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "forge.invalid/example/ark".to_string(),
                 number: 42,
             })
@@ -704,14 +999,15 @@ mod tests {
     }
 
     /// A pull_request_review_comment delivery cut down the same way. An inline
-    /// comment names its pull request as a review does.
+    /// comment names its pull request as a review does, and says nothing of
+    /// its own.
     const INLINE_COMMENT_42: &str = r#"{"action":"created","comment":{"body":"looks fine"},"pull_request":{"number":42},"repository":{"full_name":"example/ark"}}"#;
 
     #[test]
     fn a_signed_pull_request_review_comment_delivery_names_the_pull_request_to_settle() {
         assert_eq!(
             heard_as("pull_request_review_comment", INLINE_COMMENT_42),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -759,7 +1055,7 @@ mod tests {
     fn a_signed_issue_comment_delivery_on_a_pull_request_names_the_pull_request_to_settle() {
         assert_eq!(
             heard_as("issue_comment", COMMENT_ON_PULL_REQUEST_42),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -772,7 +1068,7 @@ mod tests {
         let body = r#"{"issue":{"number":42,"pull_request":{}},"repository":{"full_name":"example/ark","html_url":"https://forge.invalid/example/ark"}}"#;
         assert_eq!(
             heard_as("issue_comment", body),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "forge.invalid/example/ark".to_string(),
                 number: 42,
             })
@@ -818,7 +1114,7 @@ mod tests {
     const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
 
     fn commit_of_ark() -> Heard {
-        Heard::SettleCommit(Commit {
+        settles_commit(Commit {
             repo: "example/ark".to_string(),
             sha: SHA.to_string(),
         })
@@ -856,7 +1152,7 @@ mod tests {
         );
         assert_eq!(
             heard_as("status", &body),
-            Heard::SettleCommit(Commit {
+            settles_commit(Commit {
                 repo: "forge.invalid/example/ark".to_string(),
                 sha: SHA.to_string(),
             })
@@ -1003,6 +1299,306 @@ mod tests {
         );
     }
 
+    /// What a signed `event` delivery of `body` says happened.
+    fn said_of(event: &str, body: &str) -> Option<Said> {
+        match heard_as(event, body) {
+            Heard::Settle(delivery) => delivery.said,
+            other => panic!("{event} settles nothing: {other:?}"),
+        }
+    }
+
+    const ARK: &str =
+        r#""repository":{"full_name":"example/ark","html_url":"https://github.com/example/ark"}"#;
+
+    fn acted(event: &'static str, action: &str, by: &str, url: &str) -> Option<Said> {
+        Some(Said::Acted {
+            event,
+            action: action.to_string(),
+            by: by.to_string(),
+            url: url.to_string(),
+        })
+    }
+
+    /// Settling already closes a gate on a merge and tells its beads of a
+    /// close without one.
+    #[test]
+    fn a_pull_request_closing_says_nothing_of_its_own_and_is_still_settled() {
+        let body = format!(
+            r#"{{"action":"closed","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7","head":{{"sha":"{SHA}"}}}},{ARK},"sender":{{"login":"alice"}}}}"#
+        );
+        assert_eq!(said_of("pull_request", &body), None);
+        assert_eq!(
+            said_of("pull_request", &body.replace("closed", "reopened")),
+            acted(
+                "pull_request",
+                "reopened",
+                "alice",
+                "https://github.com/example/ark/pull/7"
+            )
+        );
+    }
+
+    #[test]
+    fn a_pull_request_synchronized_is_said_as_its_new_head_and_its_commit() {
+        let body = format!(
+            r#"{{"action":"synchronize","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7","head":{{"sha":"{SHA}"}}}},{ARK},"sender":{{"login":"alice"}}}}"#
+        );
+        assert_eq!(
+            said_of("pull_request", &body),
+            Some(Said::NewHead {
+                sha: SHA.to_string(),
+                url: format!("https://github.com/example/ark/commit/{SHA}"),
+            })
+        );
+    }
+
+    /// GitHub links a fork's head commit in the fork, and the sweep tells it
+    /// by that link.
+    #[test]
+    fn a_pull_request_from_a_fork_is_said_with_its_head_in_the_fork() {
+        let body = format!(
+            r#"{{"action":"synchronize","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7","head":{{"sha":"{SHA}","repo":{{"html_url":"https://github.com/kadath/ark"}}}}}},{ARK},"sender":{{"login":"alice"}}}}"#
+        );
+        assert_eq!(
+            said_of("pull_request", &body),
+            Some(Said::NewHead {
+                sha: SHA.to_string(),
+                url: format!("https://github.com/kadath/ark/commit/{SHA}"),
+            })
+        );
+    }
+
+    fn review(action: &str, state: &str, user: &str) -> String {
+        format!(
+            r#"{{"action":"{action}","review":{{"state":"{state}","html_url":"https://github.com/example/ark/pull/7#pullrequestreview-21","user":{user}}},"pull_request":{{"number":7}},{ARK},"sender":{{"login":"bob"}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_review_submitted_is_said_as_reviewed_in_its_state_and_anything_else_done_to_one_as_acted()
+    {
+        let url = "https://github.com/example/ark/pull/7#pullrequestreview-21";
+        let reviewed = |state: &str| {
+            Some(Said::Reviewed {
+                by: "carol".to_string(),
+                state: state.to_string(),
+                url: url.to_string(),
+                at: None,
+            })
+        };
+        let carol = r#"{"login":"carol"}"#;
+        for state in ["approved", "changes_requested"] {
+            assert_eq!(
+                said_of("pull_request_review", &review("submitted", state, carol)),
+                reviewed(state)
+            );
+        }
+        let with_body = |body: &str| {
+            review("submitted", "commented", carol)
+                .replace(r#""state":"#, &format!(r#""body":{body},"state":"#))
+        };
+        assert_eq!(
+            said_of("pull_request_review", &with_body(r#""see inline""#)),
+            reviewed("commented")
+        );
+        for blank in ["null", r#""""#, r#"" \n""#] {
+            assert_eq!(
+                said_of("pull_request_review", &with_body(blank)),
+                None,
+                "a review of inline comments alone says nothing of its own, with body {blank}"
+            );
+        }
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("submitted", "commented", carol)
+            ),
+            None,
+            "nor with no body at all"
+        );
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("submitted", "APPROVED", carol)
+            ),
+            reviewed("approved")
+        );
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("dismissed", "dismissed", carol)
+            ),
+            acted("pull_request_review", "dismissed", "bob", url)
+        );
+        assert_eq!(
+            said_of("pull_request_review", &review("edited", "approved", carol)),
+            acted("pull_request_review", "edited", "bob", url)
+        );
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("submitted", "approved", "null")
+            ),
+            Some(Said::Reviewed {
+                by: "ghost".to_string(),
+                state: "approved".to_string(),
+                url: url.to_string(),
+                at: None,
+            })
+        );
+    }
+
+    /// A gate tells only what happened after it was made, so a comment or
+    /// review carries when it was made.
+    #[test]
+    fn a_comment_or_review_is_said_with_when_it_was_made() {
+        let at = |when: &str| Some(when.parse().expect("the time parses"));
+        let comment = issue_comment_on_7("created", r#"{"login":"erin"}"#).replace(
+            r#""user":"#,
+            r#""created_at":"2026-10-06T08:24:49Z","user":"#,
+        );
+        let review = review("submitted", "approved", r#"{"login":"carol"}"#).replace(
+            r#""user":"#,
+            r#""submitted_at":"2026-10-06T08:24:50Z","user":"#,
+        );
+
+        let Some(Said::Commented { at: commented, .. }) = said_of("issue_comment", &comment) else {
+            panic!("a comment made is said as one");
+        };
+        let Some(Said::Reviewed { at: reviewed, .. }) = said_of("pull_request_review", &review)
+        else {
+            panic!("a review submitted is said as one");
+        };
+
+        assert_eq!(commented, at("2026-10-06T08:24:49Z"));
+        assert_eq!(reviewed, at("2026-10-06T08:24:50Z"));
+    }
+
+    fn issue_comment_on_7(action: &str, user: &str) -> String {
+        format!(
+            r#"{{"action":"{action}","issue":{{"number":7,"pull_request":{{}}}},"comment":{{"html_url":"https://github.com/example/ark/pull/7#issuecomment-41","user":{user}}},{ARK},"sender":{{"login":"dave"}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_comment_made_is_said_as_commented_and_anything_else_done_to_one_as_acted() {
+        let url = "https://github.com/example/ark/pull/7#issuecomment-41";
+        assert_eq!(
+            said_of(
+                "issue_comment",
+                &issue_comment_on_7("created", r#"{"login":"erin"}"#)
+            ),
+            Some(Said::Commented {
+                by: "erin".to_string(),
+                url: url.to_string(),
+                at: None,
+            })
+        );
+        assert_eq!(
+            said_of("issue_comment", &issue_comment_on_7("created", "null")),
+            Some(Said::Commented {
+                by: "ghost".to_string(),
+                url: url.to_string(),
+                at: None,
+            })
+        );
+        for action in ["edited", "deleted"] {
+            assert_eq!(
+                said_of(
+                    "issue_comment",
+                    &issue_comment_on_7(action, r#"{"login":"erin"}"#)
+                ),
+                acted("issue_comment", action, "dave", url)
+            );
+        }
+    }
+
+    fn check_suite_of(action: &str, conclusion: &str) -> String {
+        format!(
+            r#"{{"action":"{action}","check_suite":{{"head_sha":"{SHA}","conclusion":{conclusion}}},{ARK},"sender":{{"login":"frank"}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_check_suite_that_failed_is_said_as_failed_checks_and_any_other_as_acted() {
+        let failed = Some(Said::ChecksFailed {
+            sha: SHA.to_string(),
+        });
+        let commit = format!("https://github.com/example/ark/commit/{SHA}");
+        for conclusion in [
+            "failure",
+            "timed_out",
+            "cancelled",
+            "action_required",
+            "startup_failure",
+        ] {
+            assert_eq!(
+                said_of(
+                    "check_suite",
+                    &check_suite_of("completed", &format!(r#""{conclusion}""#))
+                ),
+                failed,
+                "{conclusion}"
+            );
+        }
+        for conclusion in ["success", "neutral", "skipped", "stale"] {
+            assert_eq!(
+                said_of(
+                    "check_suite",
+                    &check_suite_of("completed", &format!(r#""{conclusion}""#))
+                ),
+                acted(
+                    "check_suite",
+                    &format!("completed {conclusion}"),
+                    "frank",
+                    &commit
+                ),
+                "{conclusion}"
+            );
+        }
+        assert_eq!(
+            said_of("check_suite", &check_suite_of("requested", "null")),
+            acted("check_suite", "requested", "frank", &commit)
+        );
+    }
+
+    #[test]
+    fn a_status_that_failed_is_said_as_failed_checks_and_any_other_as_acted() {
+        let status = |state: &str| {
+            format!(
+                r#"{{"state":"{state}","sha":"{SHA}","commit":{{"html_url":"https://github.com/example/ark/commit/{SHA}"}},{ARK},"sender":{{"login":"grace"}}}}"#
+            )
+        };
+        for state in ["failure", "error"] {
+            assert_eq!(
+                said_of("status", &status(state)),
+                Some(Said::ChecksFailed {
+                    sha: SHA.to_string(),
+                }),
+                "{state}"
+            );
+        }
+        for state in ["pending", "success"] {
+            assert_eq!(
+                said_of("status", &status(state)),
+                acted(
+                    "status",
+                    state,
+                    "grace",
+                    &format!("https://github.com/example/ark/commit/{SHA}")
+                ),
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_delivery_that_names_no_one_who_acted_says_nothing_and_is_still_settled() {
+        let body = issue_comment_on_7("created", r#"{"login":"erin"}"#)
+            .replace(r#","sender":{"login":"dave"}"#, "");
+        assert_eq!(said_of("issue_comment", &body), None);
+    }
+
     #[test]
     fn a_secret_is_read_without_the_whitespace_around_it_and_an_empty_one_is_none() {
         let read = Secret::new("  swordfish\n").expect("a secret");
@@ -1029,7 +1625,7 @@ mod tests {
         );
         assert_eq!(
             heard(&posted(&headers, &format!("{CLOSED_42}trailing"))),
-            Some(Heard::Settle(PullRequest {
+            Some(settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             }))
@@ -1180,7 +1776,7 @@ mod tests {
 
     #[test]
     fn a_delivery_to_settle_with_no_room_to_wait_is_told_to_come_back_and_a_refusal_is_not() {
-        let settle = Heard::Settle(PullRequest {
+        let settle = settles(PullRequest {
             repo: "example/ark".to_string(),
             number: 42,
         });
@@ -1201,7 +1797,7 @@ mod tests {
 
     #[test]
     fn a_signed_delivery_that_finds_every_place_to_wait_taken_is_answered_busy() {
-        let (full, _settling) = std::sync::mpsc::sync_channel::<Named>(0);
+        let (full, _settling) = std::sync::mpsc::sync_channel::<Delivery>(0);
         let (reader, mut sender) = connected(PATIENCE);
         sender
             .write_all(&posted(
