@@ -12,11 +12,12 @@ lying about, and each thing you let it see gives it more to do.
   bead waiting on another project's work has that work drawn beneath it,
   whichever tracker holds it. Add [herdr](https://herdr.dev), and beside every
   bead an agent has claimed sits the live pane that agent is in.
-- **It wakes whoever is waiting.** `bdi watch` keeps watch over every tracker
+- **It tells whoever is watching.** `bdi watch` keeps watch over every tracker
   at once, and tells anything connected to it the moment a bead it watches
-  changes. Add Claude Code with the beady-eye plugin, and a sleeping session
-  is woken by the bead it waits on. A script on the watcher's socket is sent
-  each bead it watches as a line of JSON, and again each time it changes.
+  changes. Add Claude Code with the beady-eye plugin, and a session is told
+  when the bead it waits on changes, whether it is idle or busy. A script on
+  the watcher's socket is sent each bead it watches as a line of JSON, and
+  again each time it changes.
 - **It settles waits on pull requests, issues and releases.** Add `gh`, and
   `bdi gates` asks GitHub where each awaited pull request stands. A merge ends
   the bead's wait. A failing check, a conflict, a review or a comment is passed
@@ -31,12 +32,12 @@ them, and the band at the foot is what the selected one's pane is saying.
 an agent claimed it, herdr has no pane for that agent, and the eye says so. It
 has seen a pane die on a Tuesday before.
 
-The waking happens while you are looking elsewhere. Anything that can write to
+All of this happens while you are looking elsewhere. Anything that can write to
 a bead can reach whoever watches that bead, and neither side needs to know the
 other. The bead is the address, and the tracker keeps the message long after
 the listener has gone. The view you just saw is one of the listeners.
 
-![A diagram in the poster's colours. Above, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds gates, the first of the writers on the left, which ships with beady-eye: bdi gates closes a gate once what it awaits says the wait is over, and comments on the bead when its pull request has news. Below it are the other writers: people with bd, other agents, and scripts and CI. Each writer has an arrow into a beads tracker, and the one from gates is a tentacle. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which wakes the session that waits; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. A second tentacle curls from the scripts back into the tracker, labelled the way back: a person answers, defers or comments, with bdi bd.](docs/images/writers-and-listeners.svg)
+![A diagram in the poster's colours. Above, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds gates, the first of the writers on the left, which ships with beady-eye: bdi gates closes a gate once what it awaits says the wait is over, and comments on the bead when its pull request has news. Below it are the other writers: people with bd, other agents, and scripts and CI. Each writer has an arrow into a beads tracker, and the one from gates is a tentacle. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which tells the session; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. A second tentacle curls from the scripts back into the tracker, labelled the way back: a person answers, defers or comments, with bdi bd.](docs/images/writers-and-listeners.svg)
 
 The tentacles are beady-eye's own reach into the tracker. `bdi gates` is one
 of the writers. It reads GitHub, the clock and other beads, and closes the
@@ -283,7 +284,7 @@ of a comment.
 "Watching".
 
 A Claude Code session can be one of those consumers. The `beady-eye` plugin
-gives it `watch`, `unwatch` and `watching` tools, and wakes it when a bead it
+gives it `watch`, `unwatch` and `watching` tools, and tells it when a bead it
 watches changes status, becomes ready, is commented on or goes. Its
 `using-beady-eye` skill tells the session how to read a change and when to
 unwatch. It needs Node
@@ -302,7 +303,7 @@ once.
 
 Claude Code delivers a plugin's messages only to a session started with its
 channel allowed. A session started any other way still has the tools, and is
-never woken:
+never told of a change:
 
 ```console
 $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
