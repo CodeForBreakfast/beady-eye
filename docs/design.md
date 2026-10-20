@@ -87,6 +87,7 @@ coin one — and say so.**
 | **run** | *coined* | several finished siblings drawn as one counted line — the code calls the line *elided* and the siblings a run. Neither project draws one. |
 | **ready list** | *coined*, after `bd ready` | the view drawn in place of the forest that lists what a reader could pick up now and what is being worked, each bead once (see *The ready list*). beads has `bd ready`, which answers one tracker's ready beads and draws no view; neither project has a view of them. |
 | unblocked | beads (`bd close --suggest-next`'s "Newly unblocked") | a bead whose last unfinished dependency has closed. The ready list says a step above a row *would be unblocked* once the beads on its way up close (see *The ready list*). |
+| **waiting** | *coined* | a bead in a dependency tree that is unfinished and is neither ready nor a ready gate: its status is not open, or a dependency of it is unfinished. beads has *blocked*, which is one status of several a waiting bead can have. |
 | **way up** | *coined* | the beads stepped through from a ready list row's bead to a line in what it unblocks. The way down turned round: it tells apart the lines of a bead reached more than once, holds the selection, and is where a loop is cut. |
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
@@ -2930,9 +2931,10 @@ choosing what to start rather than drawing a tree:
 `beads` is every unfinished bead in every tree the run read, keyed
 `{ "project", "id" }` and written once however many ways down or trees reach
 it, sorted by project and then by id. The live-agent filter does not apply,
-so it cannot be combined with `--all`, `--json` or a bead named on the command
-line, while `--project` and `--all-projects` choose the projects as they do
-for any run. Its size follows the beads listed rather than the unrolled
+so it cannot be combined with `--all` or `--json`, while `--project` and
+`--all-projects` choose the projects as they do for any run. A bead named on
+the command line makes it write that bead's dependency tree instead, as *One
+bead's dependency tree* says. Its size follows the beads listed rather than the unrolled
 forest's.
 
 Each field is the one its tree's node carries, so `--beads` and the screen
@@ -2981,6 +2983,65 @@ the machine where it runs.
 A list that is short says so. `failed_projects` is the forest's, and
 `unread_trees` names each root whose tracker gave no rows, with the `tracker`
 state its tree would carry, since the beads beneath it are missing.
+
+### One bead's dependency tree
+
+`bdi --beads <bead>` writes the readiness of that bead's dependency tree, for
+a reader coordinating the work under one top bead. The tree is the bead and
+everything it depends on, followed by blocking edges into any tracker the run
+reads. It never goes down a parent link, so an epic's children are not in its
+tree unless something in it depends on them. Several beads named write the
+trees of all of them, each bead once.
+
+```json
+{
+  "generated_at": "2026-08-30T10:22:14Z",
+  "agents": { "provider": "herdr", "state": "answering", "sessions": [ { "name": "default", "state": "answering" } ] },
+  "ready": [ { "project": "summit-works", "id": "smt-4kd3p.13", "status": "open", "ready": true } ],
+  "ready_gates": [
+    { "project": "summit-works", "id": "smt-wisp-v4p", "issue_type": "gate", "ready": true,
+      "await_type": "gh:pr", "await_id": "42", "repo": "summit/works" }
+  ],
+  "waiting": [
+    {
+      "project": "summit-works",
+      "id": "smt-4kd3p",
+      "status": "open",
+      "ready": false,
+      "unmet_dependencies": [
+        { "project": "meadow", "id": "mdw-9", "title": "lay the path", "status": "in_progress", "issue_type": "task" }
+      ]
+    }
+  ],
+  "failed_projects": [],
+  "unread_trees": []
+}
+```
+
+Each entry is written as `--beads` writes a bead, with the fields above cut
+for the example. Every unfinished bead in the tree is in exactly one list.
+
+- **`ready`** holds the open beads with `ready` true: every dependency
+  finished, in its own tracker or another, so no gate holds them either.
+- **`ready_gates`** holds the gates that are ready the same way. A gate is
+  waited for rather than started, so it is kept apart. Each gate carries its
+  `await_type`, its `await_id` and the `repo` its metadata names, each `null`
+  where the gate has none.
+- **`waiting`** holds every other bead. A bead whose `status` is not open,
+  such as one in progress, blocked or deferred, waits on that status, with
+  `defer_until` giving the date a deferral runs to. `unmet_dependencies` lists
+  each dependency the bead still waits on, finished ones left out, keyed on
+  its own project and with its status, and with the three gate fields where
+  it is a gate. A dependency no tracker the run read could answer for is in
+  the bead's `orphaned_dependencies` instead.
+
+`metadata` is on every entry, so whatever key `join.pane_key` names is there
+for a reader checking seats inside the tree. Each list is sorted by project
+and then by id, and none is cut short. `unread_trees` names a named bead
+whose tracker gave no rows or holds no such bead. `--label`, `--type`,
+`--assignee` and `--parent` narrow the three lists as they narrow the plain
+listing, and leave `unmet_dependencies` whole. `--brief` leaves
+`description` out of every entry, as it does in the plain listing.
 
 ### Facts, not the words the screen makes of them
 
@@ -3752,8 +3813,8 @@ document with `beads` replaced by `in_progress` and `ready`, holding the
 beads of the list's two sections in the order it draws them, each written as
 `--beads` writes a bead. The screen and the document take their beads from one
 function, so they cannot disagree about what is free to start. It covers every
-tree read, as the unrooted list does, since `--beads` takes no bead on the
-command line.
+tree read, as the unrooted list does. A bead named beside it is refused,
+because the dependency tree's document already gives that tree's ready beads.
 
 ### Keys
 
