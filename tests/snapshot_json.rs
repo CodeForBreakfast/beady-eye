@@ -1901,8 +1901,9 @@ fn a_listed_bead_waiting_on_a_project_the_run_left_out_names_its_blocker_not_rea
 
 /// A reader checking the graph needs every edge and not only what blocks:
 /// the parent, a blocker already closed, an edge that never blocks, a
-/// blocker in another project, and one no tracker held, which has no
-/// project or status to give.
+/// blocker and an edge that never blocks in another project, and one no
+/// tracker held, which has no project or status to give. A parent in another
+/// project is that project's bead too.
 #[test]
 fn a_listed_bead_lists_every_edge_it_has_with_its_type_and_the_other_beads_status() {
     let arkham = r#"[
@@ -1914,7 +1915,10 @@ fn a_listed_bead_lists_every_edge_it_has_with_its_type_and_the_other_beads_statu
                        {"depends_on_id":"ark-3","type":"blocks"},
                        {"depends_on_id":"ark-6","type":"related"},
                        {"depends_on_id":"dun-2e7","type":"blocks"},
-                       {"depends_on_id":"ark-404","type":"blocks"}]}
+                       {"depends_on_id":"dun-2e7.1","type":"related"},
+                       {"depends_on_id":"ark-404","type":"blocks"}]},
+      {"id":"ark-7","title":"paint the lamp room","status":"open","parent":"dun-2e7",
+       "dependencies":[{"depends_on_id":"dun-2e7","type":"parent-child"}]}
     ]"#;
     let trackers = Fakes::default()
         .with("arkham", Fake::holding(beads(arkham)))
@@ -1933,8 +1937,18 @@ fn a_listed_bead_lists_every_edge_it_has_with_its_type_and_the_other_beads_statu
             {"project": "arkham", "id": "ark-3", "type": "blocks", "status": "closed"},
             {"project": "arkham", "id": "ark-6", "type": "related", "status": "open"},
             {"project": "dunwich", "id": "dun-2e7", "type": "blocks", "status": "in_progress"},
+            {"project": "dunwich", "id": "dun-2e7.1", "type": "related", "status": "open"},
             {"project": null, "id": "ark-404", "type": "blocks", "status": null}
         ])
+    );
+    let adopted = listed_once(&listed, "arkham", "ark-7");
+    assert_eq!(
+        adopted["dependencies"],
+        json!([{"project": "dunwich", "id": "dun-2e7", "type": "parent-child", "status": "in_progress"}])
+    );
+    assert_eq!(
+        adopted["parent"],
+        json!({"project": "dunwich", "id": "dun-2e7"})
     );
     assert_eq!(
         listed_once(&listed, "arkham", "ark-4")["dependencies"],
