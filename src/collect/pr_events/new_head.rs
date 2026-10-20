@@ -42,10 +42,16 @@ fn new_head(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, se
     };
     Ok((observed.state == State::Open).then(|| {
         Outcome::Tell(vec![Telling {
-            text: format!("Pull request {pr} has a new head, {sha}. {url}"),
+            text: told(pr, &sha, &url),
             happened: committed_date,
         }])
     }))
+}
+
+/// How a new head, `abbreviated` as GitHub shortens its object name and at
+/// `url`, is told, by the sweep and by a delivery alike.
+pub(super) fn told(pr: &PullRequest, abbreviated: &str, url: &str) -> String {
+    format!("Pull request {pr} has a new head, {abbreviated}. {url}")
 }
 
 #[cfg(test)]

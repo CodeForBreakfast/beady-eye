@@ -104,6 +104,10 @@ pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
             reviewed::EVENT.happening,
             reviewed::told(by, pr, state, url),
         ),
+        Said::NewHead { sha, url } => (
+            new_head::EVENT.happening,
+            new_head::told(pr, &abbreviated(sha), url),
+        ),
         Said::ChecksFailed { sha } => {
             (checks_failed::EVENT.happening, checks_failed::told(sha, pr))
         }
@@ -124,6 +128,14 @@ pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
             happened: None,
         },
     )
+}
+
+/// `sha` as GitHub shortens an object name.
+// ponytail: GitHub shortens to seven characters unless that is ambiguous in
+// the repository, when its abbreviatedOid runs longer and a delivery and the
+// sweep each tell the head. Ask GitHub for the abbreviation if that happens.
+fn abbreviated(sha: &str) -> String {
+    sha.chars().take(7).collect()
 }
 
 /// The fields of GraphQL's `PullRequest` that `events` read between them,

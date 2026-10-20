@@ -1478,7 +1478,7 @@ mod tests {
             (
                 "pull_request",
                 format!(
-                    r#"{{"action":"labeled","number":7,"label":{{"name":"{WRITTEN}"}},"pull_request":{{"number":7,"title":"{WRITTEN}","body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7"}},{REPOSITORY},"sender":{{"login":"alice"}}}}"#
+                    r#"{{"action":"labeled","number":7,"label":{{"name":"{WRITTEN}"}},"pull_request":{{"number":7,"title":"{WRITTEN}","body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7","head":{{"ref":"{WRITTEN}","sha":"{SHA}"}}}},{REPOSITORY},"sender":{{"login":"alice"}}}}"#
                 ),
                 "alice acted on pull request example/ark#7: pull_request labeled. \
                  https://github.com/example/ark/pull/7"
@@ -1536,6 +1536,17 @@ mod tests {
                      https://github.com/example/ark/commit/{SHA}"
                 ),
                 "was acted on",
+            ),
+            (
+                "pull_request",
+                format!(
+                    r#"{{"action":"synchronize","number":7,"before":"0badc0de0badc0de0badc0de0badc0de0badc0de","after":"{SHA}","pull_request":{{"number":7,"title":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7","head":{{"ref":"{WRITTEN}","sha":"{SHA}"}}}},{REPOSITORY},"sender":{{"login":"grace"}}}}"#
+                ),
+                format!(
+                    "Pull request example/ark#7 has a new head, 5eaf00d. \
+                     https://github.com/example/ark/commit/{SHA}"
+                ),
+                "has a new head",
             ),
         ]
     }
@@ -1624,6 +1635,34 @@ mod tests {
         assert_eq!(event, "issue_comment");
         let commented = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null,"comments":{"nodes":[{"url":"https://github.com/example/ark/pull/7#issuecomment-41","author":{"login":"dave"}}]}}"#;
         let mut runner = seven_open().with(&viewed(7), &answer(7, commented));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner.with(&comment_added(bead, &text), "");
+        }
+
+        deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &body),
+            &Told::default(),
+        );
+
+        assert_eq!(
+            comments_added(&runner),
+            [
+                comment_added("ark-2ud", &text),
+                comment_added("ark-45c", &text)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_head_both_a_delivery_and_github_tell_of_is_told_once() {
+        let (event, body, text, _) = each_event().remove(6);
+        assert!(body.contains("synchronize"), "{body}");
+        let moved = format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"headRef":{{"target":{{"abbreviatedOid":"5eaf00d","url":"https://github.com/example/ark/commit/{SHA}"}}}}}}"#
+        );
+        let mut runner = seven_open().with(&viewed(7), &answer(7, &moved));
         for bead in ["ark-2ud", "ark-45c"] {
             runner = runner.with(&comment_added(bead, &text), "");
         }

@@ -122,6 +122,8 @@ pub enum Said {
         state: String,
         url: String,
     },
+    /// The pull request's head moved to the commit `sha`, at `url`.
+    NewHead { sha: String, url: String },
     /// The checks on the commit `sha` failed.
     ChecksFailed { sha: String },
     /// Anything else: the event and its action, who acted, and the address
@@ -205,32 +207,59 @@ pub fn delivery(
     }
 }
 
-/// What a signed pull_request delivery comes to. A close says nothing of its
-/// own, since settling already closes a gate on a merge and tells its beads
-/// of a close without one.
+/// What a signed pull_request delivery comes to.
 fn pull_request(body: &[u8]) -> Heard {
-    #[derive(Deserialize)]
-    struct Saying {
-        action: String,
-        pull_request: Addressed,
-        sender: Login,
-    }
     match serde_json::from_slice::<PullRequestEvent>(body) {
         Ok(event) => settle(
             Named::PullRequest(PullRequest {
                 repo: event.repository.named(),
                 number: event.number,
             }),
-            saying::<Saying>(body)
-                .filter(|saying| saying.action != "closed")
-                .map(|saying| Said::Acted {
-                    event: "pull_request",
-                    action: saying.action,
-                    by: saying.sender.login,
-                    url: saying.pull_request.html_url,
-                }),
+            pull_request_said(body),
         ),
         Err(_) => Heard::NamesNoPullRequest,
+    }
+}
+
+/// What a pull_request delivery says: a new head, which the sweep tells too,
+/// or anything else done to the pull request. A close says nothing of its
+/// own, since settling already closes a gate on a merge and tells its beads
+/// of a close without one.
+fn pull_request_said(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        pull_request: Pull,
+        repository: Addressed,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Pull {
+        html_url: String,
+        head: Head,
+    }
+    #[derive(Deserialize)]
+    struct Head {
+        sha: String,
+    }
+    let Saying {
+        action,
+        pull_request,
+        repository,
+        sender,
+    } = saying(body)?;
+    match action.as_str() {
+        "closed" => None,
+        "synchronize" => Some(Said::NewHead {
+            url: format!("{}/commit/{}", repository.html_url, pull_request.head.sha),
+            sha: pull_request.head.sha,
+        }),
+        _ => Some(Said::Acted {
+            event: "pull_request",
+            action,
+            by: sender.login,
+            url: pull_request.html_url,
+        }),
     }
 }
 
@@ -1278,7 +1307,7 @@ mod tests {
     #[test]
     fn a_pull_request_closing_says_nothing_of_its_own_and_is_still_settled() {
         let body = format!(
-            r#"{{"action":"closed","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7"}},{ARK},"sender":{{"login":"alice"}}}}"#
+            r#"{{"action":"closed","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7","head":{{"sha":"{SHA}"}}}},{ARK},"sender":{{"login":"alice"}}}}"#
         );
         assert_eq!(said_of("pull_request", &body), None);
         assert_eq!(
@@ -1289,6 +1318,20 @@ mod tests {
                 "alice",
                 "https://github.com/example/ark/pull/7"
             )
+        );
+    }
+
+    #[test]
+    fn a_pull_request_synchronized_is_said_as_its_new_head_and_its_commit() {
+        let body = format!(
+            r#"{{"action":"synchronize","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7","head":{{"sha":"{SHA}"}}}},{ARK},"sender":{{"login":"alice"}}}}"#
+        );
+        assert_eq!(
+            said_of("pull_request", &body),
+            Some(Said::NewHead {
+                sha: SHA.to_string(),
+                url: format!("https://github.com/example/ark/commit/{SHA}"),
+            })
         );
     }
 

@@ -1327,6 +1327,7 @@ the look's words, so the bead is told once:
 | `issue_comment` created on a pull request | the comment, as a look tells it |
 | `pull_request_review` submitted, approving, requesting changes or commenting | the review, as a look tells it |
 | `check_suite` concluded as a failure, a timeout, a cancellation, an action required or a startup failure, or `status` in `failure` or `error` | failing checks on the head commit, as a look tells them |
+| `pull_request` synchronize | the new head, as a look tells it |
 | `pull_request` closed | nothing more, because the settling closes the gate on a merge, or tells a close without one |
 | anything else from these six events, such as a label, a dismissed review, an inline review comment or checks that passed | who acted, the event and its action, and a link to what they acted on |
 
