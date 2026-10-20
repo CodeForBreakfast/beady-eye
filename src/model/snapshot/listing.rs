@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::model::badges::Badged;
+use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey};
 use crate::model::tree::{numeric_id_order, OrphanedDependency};
 use crate::model::types::{Edge, Status};
@@ -45,6 +46,7 @@ struct Listed<'a> {
     badges: &'a [Badged],
     labels: &'a [String],
     parent: Option<BeadKey>,
+    dependencies: Vec<Dependency<'a>>,
     /// Left out where the reader asked for none, and null where the bead
     /// says nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,6 +81,12 @@ impl<'a> Listed<'a> {
             badges: &node.badges,
             labels: &node.labels,
             parent: node.parent_key(),
+            dependencies: node
+                .parent
+                .iter()
+                .chain(&node.depends_on)
+                .map(|related| Dependency::of(related, &node.project))
+                .collect(),
             description: (!brief).then(|| node.description().filter(|said| !said.is_empty())),
             created_at: node.created_at,
             defer_until: node.defer_until,
@@ -86,6 +94,33 @@ impl<'a> Listed<'a> {
             assignee: node.assignee.as_deref(),
             lease_expires_at: node.lease_expires_at,
             metadata: &node.metadata,
+        }
+    }
+}
+
+/// One edge from a listed bead to another, as the bead's tree read it.
+#[derive(Debug, Serialize)]
+struct Dependency<'a> {
+    /// Null where no tracker the run read held the other bead, as `status`
+    /// is.
+    project: Option<&'a str>,
+    id: &'a str,
+    #[serde(rename = "type")]
+    edge: &'a Edge,
+    status: Option<&'a Status>,
+}
+
+impl<'a> Dependency<'a> {
+    /// `related` as an edge of a bead in `project`.
+    fn of(related: &'a Related, project: &'a str) -> Self {
+        Dependency {
+            project: related
+                .status
+                .as_ref()
+                .map(|_| related.project.as_deref().unwrap_or(project)),
+            id: &related.id,
+            edge: &related.edge,
+            status: related.status.as_ref(),
         }
     }
 }

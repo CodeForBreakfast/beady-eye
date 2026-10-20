@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::model::tree::held_by_one_other;
-use crate::model::types::{Bead, Edge, Status};
+use crate::model::types::{Bead, Dependency, Edge, Status};
 
 /// A bead an edge ties this one to: its id, and what the answer said of it
 /// where the answer held its row. Both absent where it did not, which is a
@@ -92,42 +92,81 @@ pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
 pub fn waiting_across(
     answers: &[(&str, &[Arc<Bead>])],
 ) -> BTreeMap<String, BTreeMap<String, Vec<Related>>> {
+    let mut waiting: BTreeMap<String, BTreeMap<String, Vec<Related>>> = BTreeMap::new();
+    for (at, bead, dependency, held_by) in crossing(answers) {
+        if dependency.edge != Edge::Blocks {
+            continue;
+        }
+        waiting
+            .entry(answers[held_by].0.to_string())
+            .or_default()
+            .entry(dependency.on.clone())
+            .or_default()
+            .push(Related {
+                id: bead.id.clone(),
+                project: Some(answers[at].0.to_string()),
+                edge: Edge::Blocks,
+                status: Some(bead.status.clone()),
+                title: Some(bead.title.clone()),
+            });
+    }
+    for waiters in waiting.values_mut().flat_map(BTreeMap::values_mut) {
+        waiters.sort_by(|a, b| (&a.project, &a.id).cmp(&(&b.project, &b.id)));
+    }
+    waiting
+}
+
+/// Another project's bead, which an id in this project's answer names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Elsewhere {
+    pub project: String,
+    pub bead: Arc<Bead>,
+}
+
+/// The beads in other projects that each project's beads name by an edge of
+/// any kind, by the naming project and then the id named. Found by the rule
+/// `waiting_across` finds a blocker by, so a parent or an edge that never
+/// blocks names the bead it would were it a blocker.
+pub fn held_across(
+    answers: &[(&str, &[Arc<Bead>])],
+) -> BTreeMap<String, BTreeMap<String, Elsewhere>> {
+    let mut held: BTreeMap<String, BTreeMap<String, Elsewhere>> = BTreeMap::new();
+    for (at, _, dependency, held_by) in crossing(answers) {
+        let (project, beads) = answers[held_by];
+        let Some(bead) = beads.iter().find(|bead| bead.id == dependency.on) else {
+            continue;
+        };
+        held.entry(answers[at].0.to_string()).or_default().insert(
+            dependency.on.clone(),
+            Elsewhere {
+                project: project.to_string(),
+                bead: Arc::clone(bead),
+            },
+        );
+    }
+    held
+}
+
+/// Each edge of a bead in answer `at` naming an id its own answer lacks and
+/// exactly one other answer holds, with that answer.
+fn crossing<'a>(
+    answers: &'a [(&str, &[Arc<Bead>])],
+) -> impl Iterator<Item = (usize, &'a Bead, &'a Dependency, usize)> + 'a {
     let mut holding: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (at, (_, beads)) in answers.iter().enumerate() {
         for bead in *beads {
             holding.entry(bead.id.as_str()).or_default().push(at);
         }
     }
-
-    let mut waiting: BTreeMap<String, BTreeMap<String, Vec<Related>>> = BTreeMap::new();
-    for (at, (project, beads)) in answers.iter().enumerate() {
-        for bead in *beads {
-            for dependency in &bead.dependencies {
-                if dependency.edge != Edge::Blocks {
-                    continue;
-                }
-                let Some(held_by) = held_by_one_other(&holding, at, &dependency.on) else {
-                    continue;
-                };
-                waiting
-                    .entry(answers[held_by].0.to_string())
-                    .or_default()
-                    .entry(dependency.on.clone())
-                    .or_default()
-                    .push(Related {
-                        id: bead.id.clone(),
-                        project: Some((*project).to_string()),
-                        edge: Edge::Blocks,
-                        status: Some(bead.status.clone()),
-                        title: Some(bead.title.clone()),
-                    });
-            }
-        }
-    }
-    for waiters in waiting.values_mut().flat_map(BTreeMap::values_mut) {
-        waiters.sort_by(|a, b| (&a.project, &a.id).cmp(&(&b.project, &b.id)));
-    }
-    waiting
+    answers
+        .iter()
+        .enumerate()
+        .flat_map(|(at, (_, beads))| beads.iter().map(move |bead| (at, &**bead)))
+        .flat_map(|(at, bead)| bead.dependencies.iter().map(move |dep| (at, bead, dep)))
+        .filter_map(move |(at, bead, dependency)| {
+            let held_by = held_by_one_other(&holding, at, &dependency.on)?;
+            Some((at, bead, dependency, held_by))
+        })
 }
 
 #[cfg(test)]
