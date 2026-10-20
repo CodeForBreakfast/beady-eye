@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -114,13 +115,19 @@ pub struct Delivery {
 /// body, title, label or commit message anyone wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Said {
-    /// A comment on the pull request's conversation, at `url`.
-    Commented { by: String, url: String },
-    /// A review submitted, in the state GitHub gives it, at `url`.
+    /// A comment on the pull request's conversation, at `url`, made `at`.
+    Commented {
+        by: String,
+        url: String,
+        at: Option<DateTime<Utc>>,
+    },
+    /// A review submitted, in the state GitHub gives it, at `url`, submitted
+    /// `at`.
     Reviewed {
         by: String,
         state: String,
         url: String,
+        at: Option<DateTime<Utc>>,
     },
     /// The pull request's head moved to the commit `sha`, at `url`.
     NewHead { sha: String, url: String },
@@ -199,7 +206,7 @@ pub fn delivery(
     match event {
         Some("pull_request") => pull_request(body),
         Some("pull_request_review") => pull_request_review(body, reviewed(body)),
-        Some("pull_request_review_comment") => pull_request_review(body, review_commented(body)),
+        Some("pull_request_review_comment") => pull_request_review(body, None),
         Some("issue_comment") => issue_comment(body),
         Some("check_suite") => check_suite(body),
         Some("status") => status(body),
@@ -238,9 +245,12 @@ fn pull_request_said(body: &[u8]) -> Option<Said> {
         html_url: String,
         head: Head,
     }
+    /// The head commit, in the repository it was pushed to, which is a
+    /// fork's own where the pull request comes from one, and gone with it.
     #[derive(Deserialize)]
     struct Head {
         sha: String,
+        repo: Option<Addressed>,
     }
     let Saying {
         action,
@@ -250,10 +260,14 @@ fn pull_request_said(body: &[u8]) -> Option<Said> {
     } = saying(body)?;
     match action.as_str() {
         "closed" => None,
-        "synchronize" => Some(Said::NewHead {
-            url: format!("{}/commit/{}", repository.html_url, pull_request.head.sha),
-            sha: pull_request.head.sha,
-        }),
+        "synchronize" => {
+            let Head { sha, repo } = pull_request.head;
+            let pushed_to = repo.unwrap_or(repository).html_url;
+            Some(Said::NewHead {
+                url: format!("{pushed_to}/commit/{sha}"),
+                sha,
+            })
+        }
         _ => Some(Said::Acted {
             event: "pull_request",
             action,
@@ -272,6 +286,11 @@ struct PullRequestEvent {
 
 /// What a signed pull_request_review or pull_request_review_comment delivery
 /// comes to, saying `said`. Both name their pull request the same way.
+///
+/// An inline comment says nothing of its own. GitHub records each one inside
+/// a review, and the sweep tells a review's lone inline comment in place of
+/// the review. Neither delivery says whether a review holds one comment or
+/// several, so the settling they prompt tells it.
 fn pull_request_review(body: &[u8], said: Option<Said>) -> Heard {
     match serde_json::from_slice::<PullRequestReviewEvent>(body) {
         Ok(event) => settle(
@@ -286,7 +305,9 @@ fn pull_request_review(body: &[u8], said: Option<Said>) -> Heard {
 }
 
 /// What a pull_request_review delivery says: a review submitted in a state
-/// the sweep tells too, or anything else done to one.
+/// the sweep tells too, or anything else done to one. A review submitted
+/// commenting with no body is the one that holds inline comments, so it says
+/// nothing of its own.
 fn reviewed(body: &[u8]) -> Option<Said> {
     #[derive(Deserialize)]
     struct Saying {
@@ -297,8 +318,10 @@ fn reviewed(body: &[u8]) -> Option<Said> {
     #[derive(Deserialize)]
     struct Review {
         state: String,
+        body: Option<String>,
         html_url: String,
         user: Option<Login>,
+        submitted_at: Option<DateTime<Utc>>,
     }
     let Saying {
         action,
@@ -306,6 +329,13 @@ fn reviewed(body: &[u8]) -> Option<Said> {
         sender,
     } = saying(body)?;
     let state = review.state.to_ascii_lowercase();
+    let blank = review
+        .body
+        .as_deref()
+        .is_none_or(|body| body.trim().is_empty());
+    if action == "submitted" && state == "commented" && blank {
+        return None;
+    }
     Some(
         if action == "submitted"
             && matches!(
@@ -317,6 +347,7 @@ fn reviewed(body: &[u8]) -> Option<Said> {
                 by: author(review.user),
                 state,
                 url: review.html_url,
+                at: review.submitted_at,
             }
         } else {
             Said::Acted {
@@ -327,23 +358,6 @@ fn reviewed(body: &[u8]) -> Option<Said> {
             }
         },
     )
-}
-
-/// What a pull_request_review_comment delivery says.
-fn review_commented(body: &[u8]) -> Option<Said> {
-    #[derive(Deserialize)]
-    struct Saying {
-        action: String,
-        comment: Addressed,
-        sender: Login,
-    }
-    let saying: Saying = saying(body)?;
-    Some(Said::Acted {
-        event: "pull_request_review_comment",
-        action: saying.action,
-        by: saying.sender.login,
-        url: saying.comment.html_url,
-    })
 }
 
 /// The fields of a pull_request_review or pull_request_review_comment
@@ -388,6 +402,7 @@ fn commented(body: &[u8]) -> Option<Said> {
     struct Comment {
         html_url: String,
         user: Option<Login>,
+        created_at: Option<DateTime<Utc>>,
     }
     let Saying {
         action,
@@ -398,6 +413,7 @@ fn commented(body: &[u8]) -> Option<Said> {
         Said::Commented {
             by: author(comment.user),
             url: comment.html_url,
+            at: comment.created_at,
         }
     } else {
         Said::Acted {
@@ -983,7 +999,8 @@ mod tests {
     }
 
     /// A pull_request_review_comment delivery cut down the same way. An inline
-    /// comment names its pull request as a review does.
+    /// comment names its pull request as a review does, and says nothing of
+    /// its own.
     const INLINE_COMMENT_42: &str = r#"{"action":"created","comment":{"body":"looks fine"},"pull_request":{"number":42},"repository":{"full_name":"example/ark"}}"#;
 
     #[test]
@@ -1335,6 +1352,22 @@ mod tests {
         );
     }
 
+    /// GitHub links a fork's head commit in the fork, and the sweep tells it
+    /// by that link.
+    #[test]
+    fn a_pull_request_from_a_fork_is_said_with_its_head_in_the_fork() {
+        let body = format!(
+            r#"{{"action":"synchronize","number":7,"pull_request":{{"html_url":"https://github.com/example/ark/pull/7","head":{{"sha":"{SHA}","repo":{{"html_url":"https://github.com/kadath/ark"}}}}}},{ARK},"sender":{{"login":"alice"}}}}"#
+        );
+        assert_eq!(
+            said_of("pull_request", &body),
+            Some(Said::NewHead {
+                sha: SHA.to_string(),
+                url: format!("https://github.com/kadath/ark/commit/{SHA}"),
+            })
+        );
+    }
+
     fn review(action: &str, state: &str, user: &str) -> String {
         format!(
             r#"{{"action":"{action}","review":{{"state":"{state}","html_url":"https://github.com/example/ark/pull/7#pullrequestreview-21","user":{user}}},"pull_request":{{"number":7}},{ARK},"sender":{{"login":"bob"}}}}"#
@@ -1350,15 +1383,39 @@ mod tests {
                 by: "carol".to_string(),
                 state: state.to_string(),
                 url: url.to_string(),
+                at: None,
             })
         };
         let carol = r#"{"login":"carol"}"#;
-        for state in ["approved", "changes_requested", "commented"] {
+        for state in ["approved", "changes_requested"] {
             assert_eq!(
                 said_of("pull_request_review", &review("submitted", state, carol)),
                 reviewed(state)
             );
         }
+        let with_body = |body: &str| {
+            review("submitted", "commented", carol)
+                .replace(r#""state":"#, &format!(r#""body":{body},"state":"#))
+        };
+        assert_eq!(
+            said_of("pull_request_review", &with_body(r#""see inline""#)),
+            reviewed("commented")
+        );
+        for blank in ["null", r#""""#, r#"" \n""#] {
+            assert_eq!(
+                said_of("pull_request_review", &with_body(blank)),
+                None,
+                "a review of inline comments alone says nothing of its own, with body {blank}"
+            );
+        }
+        assert_eq!(
+            said_of(
+                "pull_request_review",
+                &review("submitted", "commented", carol)
+            ),
+            None,
+            "nor with no body at all"
+        );
         assert_eq!(
             said_of(
                 "pull_request_review",
@@ -1386,8 +1443,35 @@ mod tests {
                 by: "ghost".to_string(),
                 state: "approved".to_string(),
                 url: url.to_string(),
+                at: None,
             })
         );
+    }
+
+    /// A gate tells only what happened after it was made, so a comment or
+    /// review carries when it was made.
+    #[test]
+    fn a_comment_or_review_is_said_with_when_it_was_made() {
+        let at = |when: &str| Some(when.parse().expect("the time parses"));
+        let comment = issue_comment_on_7("created", r#"{"login":"erin"}"#).replace(
+            r#""user":"#,
+            r#""created_at":"2026-10-06T08:24:49Z","user":"#,
+        );
+        let review = review("submitted", "approved", r#"{"login":"carol"}"#).replace(
+            r#""user":"#,
+            r#""submitted_at":"2026-10-06T08:24:50Z","user":"#,
+        );
+
+        let Some(Said::Commented { at: commented, .. }) = said_of("issue_comment", &comment) else {
+            panic!("a comment made is said as one");
+        };
+        let Some(Said::Reviewed { at: reviewed, .. }) = said_of("pull_request_review", &review)
+        else {
+            panic!("a review submitted is said as one");
+        };
+
+        assert_eq!(commented, at("2026-10-06T08:24:49Z"));
+        assert_eq!(reviewed, at("2026-10-06T08:24:50Z"));
     }
 
     fn issue_comment_on_7(action: &str, user: &str) -> String {
@@ -1407,6 +1491,7 @@ mod tests {
             Some(Said::Commented {
                 by: "erin".to_string(),
                 url: url.to_string(),
+                at: None,
             })
         );
         assert_eq!(
@@ -1414,6 +1499,7 @@ mod tests {
             Some(Said::Commented {
                 by: "ghost".to_string(),
                 url: url.to_string(),
+                at: None,
             })
         );
         for action in ["edited", "deleted"] {

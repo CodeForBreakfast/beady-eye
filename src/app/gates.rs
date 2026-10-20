@@ -1472,7 +1472,9 @@ mod tests {
     }
 
     /// One delivery of each event the hook subscribes to, about open #7, as
-    /// `(event, body, what it tells, what a line reporting it says)`.
+    /// `(event, body, what it tells, what a line reporting it says)`. An
+    /// inline comment tells nothing of its own, so
+    /// [`an_inline_comment_tells_nothing_of_its_own`] has its delivery.
     fn each_event() -> Vec<(&'static str, String, String, &'static str)> {
         vec![
             (
@@ -1494,16 +1496,6 @@ mod tests {
                  https://github.com/example/ark/pull/7#pullrequestreview-21"
                     .to_string(),
                 "was reviewed",
-            ),
-            (
-                "pull_request_review_comment",
-                format!(
-                    r#"{{"action":"created","comment":{{"body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#discussion_r31","user":{{"login":"carol"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"carol"}}}}"#
-                ),
-                "carol acted on pull request example/ark#7: pull_request_review_comment created. \
-                 https://github.com/example/ark/pull/7#discussion_r31"
-                    .to_string(),
-                "was acted on",
             ),
             (
                 "issue_comment",
@@ -1563,6 +1555,17 @@ mod tests {
             )
             .with(&read("arkham", "comments ark-2ud --json"), no_comments)
             .with(&read("arkham", "comments ark-45c --json"), no_comments)
+    }
+
+    /// The one of [`each_event`] that is `event`'s `action`.
+    fn delivery_of(event: &str, action: &str) -> (&'static str, String, String) {
+        let (event, body, text, _) = each_event()
+            .into_iter()
+            .find(|(each, body, ..)| {
+                *each == event && body.contains(&format!(r#""action":"{action}""#))
+            })
+            .expect("each_event has one");
+        (event, body, text)
     }
 
     fn comment_added(bead: &str, text: &str) -> String {
@@ -1631,8 +1634,7 @@ mod tests {
 
     #[test]
     fn a_comment_both_a_delivery_and_github_tell_of_is_told_once() {
-        let (event, body, text, _) = each_event().remove(3);
-        assert_eq!(event, "issue_comment");
+        let (event, body, text) = delivery_of("issue_comment", "created");
         let commented = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null,"comments":{"nodes":[{"url":"https://github.com/example/ark/pull/7#issuecomment-41","author":{"login":"dave"}}]}}"#;
         let mut runner = seven_open().with(&viewed(7), &answer(7, commented));
         for bead in ["ark-2ud", "ark-45c"] {
@@ -1657,10 +1659,9 @@ mod tests {
 
     #[test]
     fn a_new_head_both_a_delivery_and_github_tell_of_is_told_once() {
-        let (event, body, text, _) = each_event().remove(6);
-        assert!(body.contains("synchronize"), "{body}");
+        let (event, body, text) = delivery_of("pull_request", "synchronize");
         let moved = format!(
-            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"headRef":{{"target":{{"abbreviatedOid":"5eaf00d","url":"https://github.com/example/ark/commit/{SHA}"}}}}}}"#
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"headRef":{{"target":{{"oid":"{SHA}","url":"https://github.com/example/ark/commit/{SHA}"}}}}}}"#
         );
         let mut runner = seven_open().with(&viewed(7), &answer(7, &moved));
         for bead in ["ark-2ud", "ark-45c"] {
@@ -1683,12 +1684,70 @@ mod tests {
         );
     }
 
+    /// GitHub records an inline comment inside a review, and the look tells a
+    /// review's lone inline comment in place of the review. Neither delivery
+    /// says how many comments the review holds, so each leaves it to the look
+    /// it prompts, which here has nothing to tell.
+    #[test]
+    fn an_inline_comment_tells_nothing_of_its_own() {
+        let inline = format!(
+            r#"{{"action":"created","comment":{{"body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#discussion_r31","user":{{"login":"carol"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"carol"}}}}"#
+        );
+        let (_, approving, _) = delivery_of("pull_request_review", "submitted");
+        let bodyless = approving
+            .replace(r#""state":"approved""#, r#""state":"commented""#)
+            .replace(&format!(r#""body":"{WRITTEN}","#), r#""body":null,"#);
+        assert_ne!(bodyless, approving);
+
+        for (event, body) in [
+            ("pull_request_review_comment", inline),
+            ("pull_request_review", bodyless),
+        ] {
+            let runner = seven_open();
+            let found = deliver_signed(
+                &mut arkham(),
+                &runner,
+                &signed(event, &body),
+                &Told::default(),
+            )
+            .found;
+
+            assert_eq!(found, [], "{event}");
+            assert_eq!(asked_github(&runner), [viewed(7)], "{event} prompts a look");
+            assert_eq!(comments_added(&runner), Vec::<String>::new(), "{event}");
+        }
+    }
+
+    /// ark-eb1 was made at 2026-10-06T08:24:49Z, so whoever made it could
+    /// already see a comment made before then.
+    #[test]
+    fn a_delivery_of_a_comment_made_before_the_gate_tells_nothing() {
+        let (event, body, _) = delivery_of("issue_comment", "created");
+        let earlier = body.replace(
+            r#""user":{"login":"dave"}"#,
+            r#""created_at":"2026-10-01T00:00:00Z","user":{"login":"dave"}"#,
+        );
+        assert_ne!(earlier, body);
+        let runner = seven_open();
+
+        let found = deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &earlier),
+            &Told::default(),
+        )
+        .found;
+
+        assert_eq!(found, []);
+        assert_eq!(comments_added(&runner), Vec::<String>::new());
+    }
+
     /// ark-0i5 waits on #42 and holds back ark-qca. The runner gives no
     /// comments to read, so asking ark-qca for its comments would fail the
     /// test.
     #[test]
     fn a_delivery_about_a_pull_request_that_merged_closes_its_gate_and_tells_nothing() {
-        let (event, body, _, _) = each_event().remove(1);
+        let (event, body, _) = delivery_of("pull_request_review", "submitted");
         let body = body.replace(r#""number":7"#, r#""number":42"#);
         let runner = captured(FakeRunner::default(), "arkham")
             .with(&viewed(42), &answer(42, MERGED))

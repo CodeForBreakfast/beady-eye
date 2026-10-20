@@ -74,7 +74,7 @@ impl Telling {
 
 /// The pull request's head commit, selected alike by every event that reads
 /// it so that [`fields`] asks it once.
-const HEAD_COMMIT: &str = "headRef{target{...on Commit{committedDate abbreviatedOid url}}}";
+const HEAD_COMMIT: &str = "headRef{target{...on Commit{committedDate oid url}}}";
 
 /// Every event `bdi gates` acts on.
 pub const EVENTS: &[Event] = &[
@@ -98,19 +98,27 @@ const ACTED: &str = "was acted on";
 /// sweep tells the same thing, the delivery tells it in the sweep's words, so
 /// a bead told by both is told once.
 pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
-    let (happening, text) = match said {
-        Said::Commented { by, url } => (commented::EVENT.happening, commented::told(by, pr, url)),
-        Said::Reviewed { by, state, url } => (
+    let (happening, text, happened) = match said {
+        Said::Commented { by, url, at } => (
+            commented::EVENT.happening,
+            commented::told(by, pr, url),
+            *at,
+        ),
+        Said::Reviewed { by, state, url, at } => (
             reviewed::EVENT.happening,
             reviewed::told(by, pr, state, url),
+            *at,
         ),
         Said::NewHead { sha, url } => (
             new_head::EVENT.happening,
-            new_head::told(pr, &abbreviated(sha), url),
+            new_head::told(pr, sha, url),
+            None,
         ),
-        Said::ChecksFailed { sha } => {
-            (checks_failed::EVENT.happening, checks_failed::told(sha, pr))
-        }
+        Said::ChecksFailed { sha } => (
+            checks_failed::EVENT.happening,
+            checks_failed::told(sha, pr),
+            None,
+        ),
         Said::Acted {
             event,
             action,
@@ -119,23 +127,10 @@ pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
         } => (
             ACTED,
             format!("{by} acted on pull request {pr}: {event} {action}. {url}"),
+            None,
         ),
     };
-    (
-        happening,
-        Telling {
-            text,
-            happened: None,
-        },
-    )
-}
-
-/// `sha` as GitHub shortens an object name.
-// ponytail: GitHub shortens to seven characters unless that is ambiguous in
-// the repository, when its abbreviatedOid runs longer and a delivery and the
-// sweep each tell the head. Ask GitHub for the abbreviation if that happens.
-fn abbreviated(sha: &str) -> String {
-    sha.chars().take(7).collect()
+    (happening, Telling { text, happened })
 }
 
 /// The fields of GraphQL's `PullRequest` that `events` read between them,

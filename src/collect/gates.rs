@@ -1813,7 +1813,7 @@ mod tests {
             r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,
             "commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"nodes":[{{"conclusion":"FAILURE","completedAt":"{at}"}}]}}}}}}}}]}},
             "reviews":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","submittedAt":"{at}","author":{{"login":"alice"}}}}]}},
-            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"abbreviatedOid":"a1b2c3d","url":"https://forge.invalid/example/ark/commit/a1b2c3","committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
+            "mergeable":"CONFLICTING","headRefOid":"a1b2c3","headRef":{{"target":{{"oid":"a1b2c3d4","url":"https://forge.invalid/example/ark/commit/a1b2c3","committedDate":"{at}"}}}},"baseRef":{{"target":{{"committedDate":"{at}"}}}},
             "comments":{{"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#issuecomment-12","createdAt":"{at}","author":{{"login":"bob"}}}}]}}}}"#
         )
     }

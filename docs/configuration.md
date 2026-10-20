@@ -1325,11 +1325,12 @@ the look's words, so the bead is told once:
 | the delivery | what it tells |
 |---|---|
 | `issue_comment` created on a pull request | the comment, as a look tells it |
-| `pull_request_review` submitted, approving, requesting changes or commenting | the review, as a look tells it |
+| `pull_request_review` submitted, approving, requesting changes or commenting with a body | the review, as a look tells it |
+| `pull_request_review_comment`, or `pull_request_review` submitted commenting with no body | nothing of its own. GitHub records an inline comment inside a review, and neither delivery says how many comments the review holds, so the look the delivery prompts tells the review or its inline comment |
 | `check_suite` concluded as a failure, a timeout, a cancellation, an action required or a startup failure, or `status` in `failure` or `error` | failing checks on the head commit, as a look tells them |
 | `pull_request` synchronize | the new head, as a look tells it |
 | `pull_request` closed | nothing more, because the settling closes the gate on a merge, or tells a close without one |
-| anything else from these six events, such as a label, a dismissed review, an inline review comment or checks that passed | who acted, the event and its action, and a link to what they acted on |
+| anything else from these six events, such as a label, a dismissed review or checks that passed | who acted, the event and its action, and a link to what they acted on |
 
 A bead told by that last row reads like this:
 
@@ -1339,7 +1340,8 @@ alice acted on pull request dunwich/arkham#18: pull_request labeled. https://git
 
 Each bead told is reported on stdout as a look reports one, such as
 `dunwich/arkham#18 was acted on: arkham told ark-7mw`. A bead is told the same
-thing once, so a second delivery saying it writes nothing. `bdi gates` keeps
+thing once, so a second delivery saying it writes nothing. A comment or a
+review made before the gate is not told, as a look does not tell one. `bdi gates` keeps
 no record of deliveries. One it misses is not told, and that includes one that
 arrives while a rate limit is waited out or while GitHub does not say where the
 pull request stands. The next look tells only what a look tells, and a woken
