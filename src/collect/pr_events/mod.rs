@@ -2,7 +2,8 @@
 //! GraphQL's `PullRequest` it reads, and what it makes of them.
 //!
 //! An event either closes the gh:pr gates waiting for it, or tells the beads
-//! they hold back what happened, once for each thing it has to say. A new
+//! they hold back what happened, once for each thing it has to say. A webhook
+//! delivery tells them what it says happened, too. A new
 //! event is a module of its own here, holding its [`Event`] and its tests,
 //! and an entry in [`EVENTS`]. A gate waiting for something new is a new
 //! [`Until`] beside one.
@@ -11,6 +12,7 @@ use chrono::{DateTime, Utc};
 
 use crate::collect::gates::PullRequest;
 use crate::collect::github::Observed;
+use crate::collect::webhook::Said;
 use crate::model::gate::Until;
 
 mod approved;
@@ -80,6 +82,44 @@ pub const EVENTS: &[Event] = &[
     conflicting::EVENT,
     commented::EVENT,
 ];
+
+/// What a delivery that came with no word of its own did, as a line
+/// reporting it says.
+const ACTED: &str = "was acted on";
+
+/// What a delivery that `said` something of `pr` tells the beads its gates
+/// hold back, beside what it did, as a line reporting it says. Where the
+/// sweep tells the same thing, the delivery tells it in the sweep's words, so
+/// a bead told by both is told once.
+pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
+    let (happening, text) = match said {
+        Said::Commented { by, url } => (commented::EVENT.happening, commented::told(by, pr, url)),
+        Said::Reviewed { by, state, url } => (
+            reviewed::EVENT.happening,
+            reviewed::told(by, pr, state, url),
+        ),
+        Said::ChecksFailed { sha } => (
+            checks_failed::EVENT.happening,
+            checks_failed::told(sha, pr),
+        ),
+        Said::Acted {
+            event,
+            action,
+            by,
+            url,
+        } => (
+            ACTED,
+            format!("{by} acted on pull request {pr}: {event} {action}. {url}"),
+        ),
+    };
+    (
+        happening,
+        Telling {
+            text,
+            happened: None,
+        },
+    )
+}
 
 /// The fields of GraphQL's `PullRequest` that `events` read between them,
 /// each asked once however many events read it.

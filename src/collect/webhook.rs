@@ -1,6 +1,6 @@
-//! GitHub's webhook deliveries, taken over HTTP. A delivery is only a
-//! trigger: one signed with the shared secret and about a pull request names
-//! the pull request to settle, and nothing else in it is read.
+//! GitHub's webhook deliveries, taken over HTTP. One signed with the shared
+//! secret and about a pull request names the pull request to settle, and
+//! what happened there, read only from fields GitHub writes itself.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use hmac::{Hmac, KeyInit, Mac};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use sha2::Sha256;
 
@@ -101,15 +102,45 @@ pub enum Named {
     Commit(Commit),
 }
 
+/// A signed delivery: what it names to settle, and what it says happened
+/// there, where it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delivery {
+    pub named: Named,
+    pub said: Option<Said>,
+}
+
+/// What a delivery says happened, as GitHub's own fields say it, so never a
+/// body, title, label or commit message anyone wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Said {
+    /// A comment on the pull request's conversation, at `url`.
+    Commented { by: String, url: String },
+    /// A review submitted, in the state GitHub gives it, at `url`.
+    Reviewed {
+        by: String,
+        state: String,
+        url: String,
+    },
+    /// The checks on the commit `sha` failed.
+    ChecksFailed { sha: String },
+    /// Anything else: the event and its action, who acted, and the address
+    /// of what they acted on.
+    Acted {
+        event: &'static str,
+        action: String,
+        by: String,
+        url: String,
+    },
+}
+
 /// What the listener made of one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heard {
     /// A readiness probe.
     Healthy,
-    /// A signed delivery about this pull request.
-    Settle(PullRequest),
-    /// A signed delivery about the checks on this commit.
-    SettleCommit(Commit),
+    /// A signed delivery about a pull request, or the checks on a commit.
+    Settle(Delivery),
     /// A signed delivery about something other than a pull request.
     Ignored,
     /// A delivery carrying no signature.
@@ -136,8 +167,8 @@ impl Heard {
         match self {
             Heard::Healthy if !reading => ("503 Service Unavailable", "not reading GitHub\n"),
             Heard::Healthy => ("200 OK", "ok\n"),
-            Heard::Settle(_) | Heard::SettleCommit(_) if !room => BUSY,
-            Heard::Settle(_) | Heard::SettleCommit(_) => ("202 Accepted", "settling\n"),
+            Heard::Settle(_) if !room => BUSY,
+            Heard::Settle(_) => ("202 Accepted", "settling\n"),
             Heard::Ignored => ("202 Accepted", "ignored\n"),
             Heard::Unsigned | Heard::Forged => ("401 Unauthorized", "signature refused\n"),
             Heard::NamesNoPullRequest => ("400 Bad Request", "no pull request named\n"),
@@ -165,7 +196,8 @@ pub fn delivery(
     }
     match event {
         Some("pull_request") => pull_request(body),
-        Some("pull_request_review" | "pull_request_review_comment") => pull_request_review(body),
+        Some("pull_request_review") => pull_request_review(body, reviewed(body)),
+        Some("pull_request_review_comment") => pull_request_review(body, review_commented(body)),
         Some("issue_comment") => issue_comment(body),
         Some("check_suite") => check_suite(body),
         Some("status") => status(body),
@@ -173,13 +205,31 @@ pub fn delivery(
     }
 }
 
-/// What a signed pull_request delivery comes to.
+/// What a signed pull_request delivery comes to. A close says nothing of its
+/// own, since settling already closes a gate on a merge and tells its beads
+/// of a close without one.
 fn pull_request(body: &[u8]) -> Heard {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        pull_request: Addressed,
+        sender: Login,
+    }
     match serde_json::from_slice::<PullRequestEvent>(body) {
-        Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.named(),
-            number: event.number,
-        }),
+        Ok(event) => settle(
+            Named::PullRequest(PullRequest {
+                repo: event.repository.named(),
+                number: event.number,
+            }),
+            saying::<Saying>(body)
+                .filter(|saying| saying.action != "closed")
+                .map(|saying| Said::Acted {
+                    event: "pull_request",
+                    action: saying.action,
+                    by: saying.sender.login,
+                    url: saying.pull_request.html_url,
+                }),
+        ),
         Err(_) => Heard::NamesNoPullRequest,
     }
 }
@@ -192,15 +242,76 @@ struct PullRequestEvent {
 }
 
 /// What a signed pull_request_review or pull_request_review_comment delivery
-/// comes to. Both name their pull request the same way.
-fn pull_request_review(body: &[u8]) -> Heard {
+/// comes to, saying `said`. Both name their pull request the same way.
+fn pull_request_review(body: &[u8], said: Option<Said>) -> Heard {
     match serde_json::from_slice::<PullRequestReviewEvent>(body) {
-        Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.named(),
-            number: event.pull_request.number,
-        }),
+        Ok(event) => settle(
+            Named::PullRequest(PullRequest {
+                repo: event.repository.named(),
+                number: event.pull_request.number,
+            }),
+            said,
+        ),
         Err(_) => Heard::NamesNoPullRequest,
     }
+}
+
+/// What a pull_request_review delivery says: a review submitted in a state
+/// the sweep tells too, or anything else done to one.
+fn reviewed(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        review: Review,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Review {
+        state: String,
+        html_url: String,
+        user: Option<Login>,
+    }
+    let Saying {
+        action,
+        review,
+        sender,
+    } = saying(body)?;
+    let state = review.state.to_ascii_lowercase();
+    Some(
+        if action == "submitted"
+            && matches!(state.as_str(), "approved" | "changes_requested" | "commented")
+        {
+            Said::Reviewed {
+                by: author(review.user),
+                state,
+                url: review.html_url,
+            }
+        } else {
+            Said::Acted {
+                event: "pull_request_review",
+                action,
+                by: sender.login,
+                url: review.html_url,
+            }
+        },
+    )
+}
+
+/// What a pull_request_review_comment delivery says.
+fn review_commented(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        comment: Addressed,
+        sender: Login,
+    }
+    let saying: Saying = saying(body)?;
+    Some(Said::Acted {
+        event: "pull_request_review_comment",
+        action: saying.action,
+        by: saying.sender.login,
+        url: saying.comment.html_url,
+    })
 }
 
 /// The fields of a pull_request_review or pull_request_review_comment
@@ -221,12 +332,49 @@ struct PullRequestNumber {
 fn issue_comment(body: &[u8]) -> Heard {
     match serde_json::from_slice::<IssueCommentEvent>(body) {
         Ok(event) if event.issue.pull_request.is_none() => Heard::Ignored,
-        Ok(event) => Heard::Settle(PullRequest {
-            repo: event.repository.named(),
-            number: event.issue.number,
-        }),
+        Ok(event) => settle(
+            Named::PullRequest(PullRequest {
+                repo: event.repository.named(),
+                number: event.issue.number,
+            }),
+            commented(body),
+        ),
         Err(_) => Heard::NamesNoPullRequest,
     }
+}
+
+/// What an issue_comment delivery says: a comment made, which the sweep
+/// tells too, or anything else done to one.
+fn commented(body: &[u8]) -> Option<Said> {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        comment: Comment,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Comment {
+        html_url: String,
+        user: Option<Login>,
+    }
+    let Saying {
+        action,
+        comment,
+        sender,
+    } = saying(body)?;
+    Some(if action == "created" {
+        Said::Commented {
+            by: author(comment.user),
+            url: comment.html_url,
+        }
+    } else {
+        Said::Acted {
+            event: "issue_comment",
+            action,
+            by: sender.login,
+            url: comment.html_url,
+        }
+    })
 }
 
 /// The fields of an issue_comment delivery that name its pull request, if it
@@ -245,10 +393,52 @@ struct Issue {
 
 /// What a signed check_suite delivery comes to.
 fn check_suite(body: &[u8]) -> Heard {
+    #[derive(Deserialize)]
+    struct Saying {
+        action: String,
+        check_suite: Concluded,
+        repository: Addressed,
+        sender: Login,
+    }
+    #[derive(Deserialize)]
+    struct Concluded {
+        head_sha: String,
+        conclusion: Option<String>,
+    }
+    let said = saying::<Saying>(body).map(
+        |Saying {
+             action,
+             check_suite: Concluded {
+                 head_sha,
+                 conclusion,
+             },
+             repository,
+             sender,
+         }| match conclusion {
+            Some(conclusion) if is_failure(&conclusion) => Said::ChecksFailed { sha: head_sha },
+            conclusion => Said::Acted {
+                event: "check_suite",
+                action: conclusion.map_or(action.clone(), |conclusion| {
+                    format!("{action} {conclusion}")
+                }),
+                by: sender.login,
+                url: format!("{}/commit/{head_sha}", repository.html_url),
+            },
+        },
+    );
     match serde_json::from_slice::<CheckSuiteEvent>(body) {
-        Ok(event) => commit(event.repository, event.check_suite.head_sha),
+        Ok(event) => commit(event.repository, event.check_suite.head_sha, said),
         Err(_) => Heard::NamesNoPullRequest,
     }
+}
+
+/// Whether a check suite that concluded `conclusion` failed, as GitHub's
+/// rollup of a commit's checks counts it.
+fn is_failure(conclusion: &str) -> bool {
+    matches!(
+        conclusion,
+        "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure"
+    )
 }
 
 /// The fields of a check_suite delivery that name its commit.
@@ -265,8 +455,24 @@ struct Suite {
 
 /// What a signed status delivery comes to.
 fn status(body: &[u8]) -> Heard {
+    #[derive(Deserialize)]
+    struct Saying {
+        state: String,
+        sha: String,
+        commit: Addressed,
+        sender: Login,
+    }
+    let said = saying::<Saying>(body).map(|saying| match saying.state.as_str() {
+        "failure" | "error" => Said::ChecksFailed { sha: saying.sha },
+        _ => Said::Acted {
+            event: "status",
+            action: saying.state,
+            by: saying.sender.login,
+            url: saying.commit.html_url,
+        },
+    });
     match serde_json::from_slice::<StatusEvent>(body) {
-        Ok(event) => commit(event.repository, event.sha),
+        Ok(event) => commit(event.repository, event.sha, said),
         Err(_) => Heard::NamesNoPullRequest,
     }
 }
@@ -278,16 +484,47 @@ struct StatusEvent {
     repository: Repository,
 }
 
-/// The commit `sha` in `repository`, where `sha` is an object name. It goes
-/// into the path of a request to GitHub, so nothing else is taken.
-fn commit(repository: Repository, sha: String) -> Heard {
+/// The commit `sha` in `repository`, where `sha` is an object name, and what
+/// the delivery `said` of it. It goes into the path of a request to GitHub,
+/// so nothing else is taken.
+fn commit(repository: Repository, sha: String, said: Option<Said>) -> Heard {
     if sha.is_empty() || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Heard::NamesNoPullRequest;
     }
-    Heard::SettleCommit(Commit {
-        repo: repository.named(),
-        sha,
-    })
+    settle(
+        Named::Commit(Commit {
+            repo: repository.named(),
+            sha,
+        }),
+        said,
+    )
+}
+
+fn settle(named: Named, said: Option<Said>) -> Heard {
+    Heard::Settle(Delivery { named, said })
+}
+
+/// `body` read as what a delivery says, or nothing where it holds less than
+/// that. Only a delivery GitHub sent holds it all, so one cut down to what
+/// names a pull request is still settled.
+fn saying<T: DeserializeOwned>(body: &[u8]) -> Option<T> {
+    serde_json::from_slice(body).ok()
+}
+
+#[derive(Deserialize)]
+struct Login {
+    login: String,
+}
+
+/// Something GitHub gives an address of its own.
+#[derive(Deserialize)]
+struct Addressed {
+    html_url: String,
+}
+
+/// Who wrote something, as GitHub names an account that has gone.
+fn author(user: Option<Login>) -> String {
+    user.map_or_else(|| "ghost".to_string(), |user| user.login)
 }
 
 #[derive(Deserialize)]
@@ -345,7 +582,7 @@ fn bytes_of(hex: &str) -> Option<Vec<u8>> {
 /// [`MOST_AT_ONCE`] are being answered is told to come back later. Gives back
 /// the address taken, which names the port where `address` left it to the
 /// system.
-pub fn listen<T: From<Named> + Send + 'static>(
+pub fn listen<T: From<Delivery> + Send + 'static>(
     address: &str,
     secret: Secret,
     settle: SyncSender<T>,
@@ -393,7 +630,7 @@ impl Drop for Answering {
 
 /// Read one request from `stream` and answer it, or close it unanswered
 /// where it never arrives in full or is not HTTP.
-fn answer<T: From<Named>>(
+fn answer<T: From<Delivery>>(
     stream: TcpStream,
     secret: &Secret,
     settle: &SyncSender<T>,
@@ -407,12 +644,11 @@ fn answer<T: From<Named>>(
     let Some(said) = read(&mut stream, secret) else {
         return;
     };
-    let named = match &said {
-        Heard::Settle(pull_request) => Some(Named::PullRequest(pull_request.clone())),
-        Heard::SettleCommit(commit) => Some(Named::Commit(commit.clone())),
+    let delivered = match &said {
+        Heard::Settle(delivery) => Some(delivery.clone()),
         _ => None,
     };
-    let room = named.is_none_or(|named| settle.try_send(named.into()).is_ok());
+    let room = delivered.is_none_or(|delivery| settle.try_send(delivery.into()).is_ok());
     reply(
         &stream.stream,
         said.answer(room, reading.load(Ordering::SeqCst)),
@@ -568,6 +804,16 @@ mod tests {
         Secret::new("swordfish").expect("a secret")
     }
 
+    /// A delivery cut down too far to say what happened, settling
+    /// `pull_request`.
+    fn settles(pull_request: PullRequest) -> Heard {
+        settle(Named::PullRequest(pull_request), None)
+    }
+
+    fn settles_commit(commit: Commit) -> Heard {
+        settle(Named::Commit(commit), None)
+    }
+
     fn signature(body: &[u8]) -> String {
         let mut mac = Hmac::<Sha256>::new_from_slice(b"swordfish").expect("any key");
         mac.update(body);
@@ -596,7 +842,7 @@ mod tests {
                 Some(&signature(CLOSED_42.as_bytes())),
                 CLOSED_42.as_bytes()
             ),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -617,7 +863,7 @@ mod tests {
             )
         };
         let repo = |repo: &str| {
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: repo.to_string(),
                 number: 42,
             })
@@ -641,7 +887,7 @@ mod tests {
                 Some(&signature(body)),
                 body
             ),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -658,7 +904,7 @@ mod tests {
                 Some(&signature(body)),
                 body
             ),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "forge.invalid/example/ark".to_string(),
                 number: 42,
             })
@@ -711,7 +957,7 @@ mod tests {
     fn a_signed_pull_request_review_comment_delivery_names_the_pull_request_to_settle() {
         assert_eq!(
             heard_as("pull_request_review_comment", INLINE_COMMENT_42),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -759,7 +1005,7 @@ mod tests {
     fn a_signed_issue_comment_delivery_on_a_pull_request_names_the_pull_request_to_settle() {
         assert_eq!(
             heard_as("issue_comment", COMMENT_ON_PULL_REQUEST_42),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             })
@@ -772,7 +1018,7 @@ mod tests {
         let body = r#"{"issue":{"number":42,"pull_request":{}},"repository":{"full_name":"example/ark","html_url":"https://forge.invalid/example/ark"}}"#;
         assert_eq!(
             heard_as("issue_comment", body),
-            Heard::Settle(PullRequest {
+            settles(PullRequest {
                 repo: "forge.invalid/example/ark".to_string(),
                 number: 42,
             })
@@ -818,7 +1064,7 @@ mod tests {
     const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
 
     fn commit_of_ark() -> Heard {
-        Heard::SettleCommit(Commit {
+        settles_commit(Commit {
             repo: "example/ark".to_string(),
             sha: SHA.to_string(),
         })
@@ -856,7 +1102,7 @@ mod tests {
         );
         assert_eq!(
             heard_as("status", &body),
-            Heard::SettleCommit(Commit {
+            settles_commit(Commit {
                 repo: "forge.invalid/example/ark".to_string(),
                 sha: SHA.to_string(),
             })
@@ -1029,7 +1275,7 @@ mod tests {
         );
         assert_eq!(
             heard(&posted(&headers, &format!("{CLOSED_42}trailing"))),
-            Some(Heard::Settle(PullRequest {
+            Some(settles(PullRequest {
                 repo: "example/ark".to_string(),
                 number: 42,
             }))
@@ -1180,7 +1426,7 @@ mod tests {
 
     #[test]
     fn a_delivery_to_settle_with_no_room_to_wait_is_told_to_come_back_and_a_refusal_is_not() {
-        let settle = Heard::Settle(PullRequest {
+        let settle = settles(PullRequest {
             repo: "example/ark".to_string(),
             number: 42,
         });
@@ -1201,7 +1447,7 @@ mod tests {
 
     #[test]
     fn a_signed_delivery_that_finds_every_place_to_wait_taken_is_answered_busy() {
-        let (full, _settling) = std::sync::mpsc::sync_channel::<Named>(0);
+        let (full, _settling) = std::sync::mpsc::sync_channel::<Delivery>(0);
         let (reader, mut sender) = connected(PATIENCE);
         sender
             .write_all(&posted(

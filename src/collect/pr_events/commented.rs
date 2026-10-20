@@ -47,13 +47,18 @@ fn commented(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, s
              }| {
                 let commenter = author.map_or("ghost".to_string(), |author| author.login);
                 Telling {
-                    text: format!("{commenter} commented on pull request {pr}. {url}"),
+                    text: told(&commenter, pr, &url),
                     happened: created_at,
                 }
             },
         )
         .collect();
     Ok((observed.state == State::Open && !told.is_empty()).then_some(Outcome::Tell(told)))
+}
+
+/// How a comment is told, by the sweep and by a delivery alike.
+pub(super) fn told(commenter: &str, pr: &PullRequest, url: &str) -> String {
+    format!("{commenter} commented on pull request {pr}. {url}")
 }
 
 #[cfg(test)]

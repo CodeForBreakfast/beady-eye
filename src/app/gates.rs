@@ -29,7 +29,7 @@ use crate::collect::pr_events::EVENTS;
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::collect::upstream::{Answer, Upstream};
-use crate::collect::webhook::Commit;
+use crate::collect::webhook::{Commit, Said};
 use crate::config::{Gates, Poll, Project};
 use crate::model::gate::{self, Fault};
 use crate::model::snapshot::TrackerFailure;
@@ -514,13 +514,15 @@ impl Kept {
     /// pull request no gate kept waits on asks nothing of GitHub, and one
     /// whose repository `settles` leaves to another `bdi gates` is passed
     /// over without a word. A bead gate whose bead is in a tracker read again
-    /// is settled too.
+    /// is settled too. What the delivery `said` happened is told to each bead
+    /// a gate still open on the pull request holds back.
     pub fn delivered(
         &mut self,
         cli: &Cli,
         gh: &dyn Runner,
         settles: &Gates,
         pull_request: PullRequest,
+        said: Option<&Said>,
         told: &Told,
     ) -> Settling {
         if !settles.settles(gate::owner(&pull_request.repo)) {
@@ -534,16 +536,8 @@ impl Kept {
                 github: Read::Unasked,
             };
         };
-        let settled = gates::settle_together(
-            cli,
-            gh,
-            &self.projects,
-            EVENTS,
-            std::slice::from_ref(&awaited),
-            told,
-        )
-        .next()
-        .expect("one pull request asked about is one settled");
+        let settled =
+            gates::settle_delivered(cli, gh, &self.projects, EVENTS, &awaited, said, told);
         let settled = findings(gh, awaited.pull_request, settled);
         found.extend(settled.found);
         Settling {
@@ -562,6 +556,7 @@ impl Kept {
         gh: &dyn Runner,
         settles: &Gates,
         commit: Commit,
+        said: Option<&Said>,
         told: &Told,
     ) -> Settling {
         let Some(repository) = gate::repository(&commit.repo) else {
@@ -588,7 +583,7 @@ impl Kept {
                 repo: commit.repo.clone(),
                 number,
             };
-            let each = self.delivered(cli, gh, settles, pull_request, told);
+            let each = self.delivered(cli, gh, settles, pull_request, said, told);
             settling.found.extend(each.found);
             settling.github = settling.github.max(each.github);
             if matches!(settling.found.last(), Some(Found::RateLimited { .. })) {
@@ -1326,6 +1321,7 @@ mod tests {
             runner,
             settles,
             pr(number),
+            None,
             &Told::default(),
         )
     }
@@ -1347,6 +1343,7 @@ mod tests {
             runner,
             settles,
             commit(),
+            None,
             &Told::default(),
         )
     }

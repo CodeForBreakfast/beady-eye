@@ -89,13 +89,19 @@ fn checks_failed(
         .filter(|_| observed.state == State::Open)
         .map(|(oid, happened)| {
             Outcome::Tell(vec![Telling {
-                text: format!(
-                    "The checks on {oid}, the head of pull request {pr}, failed, so the gh:pr \
-                     gate waiting on it stays open."
-                ),
+                text: told(&oid, pr),
                 happened,
             }])
         }))
+}
+
+/// How failing checks on the head `oid` are told, by the sweep and by a
+/// delivery alike.
+pub(super) fn told(oid: &str, pr: &PullRequest) -> String {
+    format!(
+        "The checks on {oid}, the head of pull request {pr}, failed, so the gh:pr gate waiting \
+         on it stays open."
+    )
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ use crate::collect::pr_events::{self, Event, Outcome};
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
 use crate::collect::upstream::UpstreamGate;
+use crate::collect::webhook::Said;
 use crate::config::Project;
 use crate::model::gate::{self, Fault, Until};
 use crate::model::types::Bead;
@@ -219,7 +220,7 @@ fn settle(
     told: &Told,
 ) -> Settled {
     let observed = observe(gh, pr, &pr_events::fields(events));
-    settled(cli, projects, events, pr, observed, None, told)
+    settled(cli, projects, events, pr, observed, None, None, told)
 }
 
 /// The most pull requests one query asks about. The query is one argument to
@@ -244,10 +245,38 @@ pub fn settle_together<'a>(
 ) -> impl Iterator<Item = Settled> + 'a {
     awaited
         .chunks(PULL_REQUESTS_PER_QUERY)
-        .flat_map(move |asked| settle_asked_together(cli, gh, projects, events, asked, told))
+        .flat_map(move |asked| {
+            settle_asked_together(cli, gh, projects, events, asked, None, told)
+        })
 }
 
-/// Re-read every one of `asked` in one query, then settle each.
+/// Settle `awaited` as [`settle_together`] settles each pull request, and
+/// tell each bead held back by a gate still open on it what a delivery
+/// `said`, after every event has done what it asks.
+pub fn settle_delivered(
+    cli: &Cli,
+    gh: &dyn Runner,
+    projects: &[Project],
+    events: &[Event],
+    awaited: &Awaited,
+    said: Option<&Said>,
+    told: &Told,
+) -> Settled {
+    settle_asked_together(
+        cli,
+        gh,
+        projects,
+        events,
+        std::slice::from_ref(awaited),
+        said,
+        told,
+    )
+    .next()
+    .expect("one pull request asked about is one settled")
+}
+
+/// Re-read every one of `asked` in one query, then settle each, telling what
+/// a delivery `said` of them.
 ///
 /// A query naming one pull request or repository GitHub does not have fails
 /// as a whole, so then each is read on its own and the rest are still
@@ -261,6 +290,7 @@ fn settle_asked_together<'a>(
     projects: &'a [Project],
     events: &'a [Event],
     asked: &'a [Awaited],
+    said: Option<&'a Said>,
     told: &'a Told,
 ) -> impl Iterator<Item = Settled> + 'a {
     let fields = pr_events::fields(events);
@@ -288,6 +318,7 @@ fn settle_asked_together<'a>(
             &each.pull_request,
             observed,
             Some(&each.waiting),
+            said,
             told,
         )
     })
@@ -305,6 +336,9 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 /// new to them: a gate waiting for it, or a bead held back that has not been
 /// told it. Only the trackers holding those gates are then read again.
 ///
+/// What a delivery `said` is told after every event has done what it asks,
+/// so a gate a merge closed does not tell it.
+///
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. A pull request GitHub did not
 /// answer for leaves every tracker untouched, and an event whose fields
@@ -316,12 +350,17 @@ fn settled(
     pr: &PullRequest,
     observed: Result<Observed, RunFailure>,
     waiting: Option<&[Waiting]>,
+    said: Option<&Said>,
     told: &Told,
 ) -> Settled {
-    let (outcomes, unseen) = match observed {
+    let (mut outcomes, unseen) = match observed {
         Ok(observed) => outcomes(events, pr, &observed),
         Err(failure) => return Settled::Unread(failure),
     };
+    if let Some(said) = said {
+        let (happening, telling) = pr_events::delivered(said, pr);
+        outcomes.push((happening, Outcome::Tell(vec![telling])));
+    }
     let new: Vec<(&'static str, Outcome)> = outcomes
         .into_iter()
         .filter(|(_, outcome)| waiting.is_none_or(|waiting| is_new(outcome, waiting, told)))
