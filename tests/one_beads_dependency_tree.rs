@@ -51,15 +51,17 @@ const ARKHAM: &str = r#"[
   {"id":"ark-1.2","title":"label the shelves","status":"open","parent":"ark-1",
    "priority":2,"issue_type":"task",
    "dependencies":[{"depends_on_id":"ark-1","type":"parent-child"}]},
-  {"id":"ark-2","title":"air the stacks","status":"open","priority":2,"issue_type":"task"},
+  {"id":"ark-2","title":"air the stacks","status":"open","priority":2,"issue_type":"task",
+   "description":"open every window in the stacks"},
   {"id":"ark-3","title":"mend the index","status":"in_progress","priority":2,"issue_type":"task",
    "metadata":{"agent_pane":"w:p4"}},
   {"id":"ark-4","title":"bind the ledgers","status":"open","priority":2,"issue_type":"task",
+   "description":"sew each ledger into calf",
    "dependencies":[{"depends_on_id":"ark-6","type":"blocks"}]},
   {"id":"ark-5","title":"light the lamps","status":"open","priority":2,"issue_type":"task",
    "dependencies":[{"depends_on_id":"dun-1","type":"blocks"}]},
   {"id":"ark-6","title":"the ledgers' pull request has merged","status":"open","priority":2,
-   "issue_type":"gate","await_type":"gh:pr","await_id":"12",
+   "issue_type":"gate","await_type":"gh:pr","await_id":"12","description":"wait for the binding change",
    "metadata":{"repo":"miskatonic/ledgers"}},
   {"id":"ark-7","title":"order the vellum","status":"deferred","priority":3,"issue_type":"task",
    "defer_until":"2026-11-01T09:00:00Z"},
@@ -108,12 +110,12 @@ fn dunwich() -> Fake {
 
 /// The document a run naming `named` writes.
 fn tree_of(named: &[&str]) -> Value {
-    tree_over(named, trackers_beside(dunwich()), &Only::default())
+    tree_over(named, trackers_beside(dunwich()), &Only::default(), false)
 }
 
 /// The document a run naming `named` writes over `trackers`, keeping the
-/// beads `only` keeps.
-fn tree_over(named: &[&str], trackers: Fakes, only: &Only) -> Value {
+/// beads `only` keeps, without descriptions where `brief`.
+fn tree_over(named: &[&str], trackers: Fakes, only: &Only, brief: bool) -> Value {
     let named: Vec<String> = named.iter().map(|bead| bead.to_string()).collect();
     let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
         .expect("the config parses")
@@ -125,6 +127,7 @@ fn tree_over(named: &[&str], trackers: Fakes, only: &Only) -> Value {
         &snapshot,
         &cfg.roots.named_beads(),
         only,
+        brief,
     ))
     .expect("the document serialises")
 }
@@ -278,6 +281,7 @@ fn a_waiting_bead_names_a_blocker_in_a_tracker_that_could_not_be_read() {
         &["arkham:ark-1"],
         trackers_beside(dunwich().failing(Asked::All, refused(FailureKind::Auth))),
         &Only::default(),
+        false,
     );
 
     let lamps = entry(&document, "waiting", "ark-5");
@@ -297,7 +301,7 @@ fn a_trim_keeps_only_the_beads_it_matches_in_each_list() {
         issue_type: Some("task".to_string()),
         ..Only::default()
     };
-    let document = tree_over(&["arkham:ark-1"], trackers_beside(dunwich()), &tasks);
+    let document = tree_over(&["arkham:ark-1"], trackers_beside(dunwich()), &tasks, false);
 
     assert_eq!(
         keys(&document, "ready"),
@@ -318,6 +322,43 @@ fn a_trim_keeps_only_the_beads_it_matches_in_each_list() {
         entry(&document, "waiting", "ark-4")["unmet_dependencies"][0]["id"],
         "ark-6"
     );
+}
+
+/// As `bd ready --brief`: every entry in the three lists is written without
+/// its description, and with everything else it says.
+#[test]
+fn brief_leaves_each_description_out_of_the_tree() {
+    let full = tree_of(&["arkham:ark-1"]);
+    let brief = tree_over(
+        &["arkham:ark-1"],
+        trackers_beside(dunwich()),
+        &Only::default(),
+        true,
+    );
+
+    assert_eq!(
+        entry(&full, "ready", "ark-2")["description"],
+        "open every window in the stacks"
+    );
+    assert_eq!(
+        entry(&full, "ready_gates", "ark-6")["description"],
+        "wait for the binding change"
+    );
+    assert_eq!(
+        entry(&full, "waiting", "ark-4")["description"],
+        "sew each ledger into calf"
+    );
+    assert_eq!(
+        entry(&full, "ready", "ark-1.2")["parent"],
+        json!({"project": "arkham", "id": "ark-1"})
+    );
+    for list in ["ready", "ready_gates", "waiting"] {
+        let mut described = full[list].as_array().unwrap().clone();
+        for bead in &mut described {
+            bead.as_object_mut().unwrap().remove("description");
+        }
+        assert_eq!(brief[list], json!(described), "{list}");
+    }
 }
 
 /// A root the config names and the tracker lacks is no part of the tree

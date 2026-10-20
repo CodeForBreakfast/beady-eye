@@ -3024,7 +3024,8 @@ for a reader checking seats inside the tree. Each list is sorted by project
 and then by id, and none is cut short. `unread_trees` names a named bead
 whose tracker gave no rows or holds no such bead. `--label`, `--type`,
 `--assignee` and `--parent` narrow the three lists as they narrow the plain
-listing, and leave `unmet_dependencies` whole.
+listing, and leave `unmet_dependencies` whole. `--brief` leaves
+`description` out of every entry, as it does in the plain listing.
 
 ### Facts, not the words the screen makes of them
 
