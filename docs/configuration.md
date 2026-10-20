@@ -1074,11 +1074,14 @@ on, and acts on what GitHub says:
 | open or a draft, and reviewed | leaves each gate open, and comments on each bead a gate holds back once for each review submitted, approving, requesting changes or commenting, naming the reviewer and the state. A dismissed review is not told. It reads the latest five reviews |
 | open or a draft, and GitHub says its head commit conflicts with its base | leaves each gate open, and comments once on each bead a gate holds back for that commit, so a rebase that still conflicts is told again. A pull request GitHub has not yet worked out is not told |
 | open or a draft, and commented on | leaves each gate open, and comments on each bead a gate holds back once for each comment on the pull request's conversation, naming the comment's author and linking it. Comments from a review are not told here. There is no author filter, so a seat's own comments arrive too. It reads the latest five comments |
-| a draft with no failing checks, no review, no conflict and no comment | nothing |
+| open or a draft, and at a new head commit | leaves each gate open, and comments once on each bead a gate holds back for each head commit it finds, giving the commit's short sha and a link to it. A force-push is told like any other push. There is no filter for who pushed, so a seat's own pushes arrive too. Several pushes between two looks are one comment, for the head the look finds |
+| a draft with no failing checks, no review, no conflict, no comment and no new head | nothing |
 
 A gate tells only what happened after it was made, since whoever made it could
 already see the rest. A review dates from when it was submitted, a comment from
-when it was made, and failing checks from when the first check to fail finished.
+when it was made, failing checks from when the first check to fail finished,
+and a new head from when its commit was committed, so the head a pull request had
+when its gate was made is not told.
 GitHub does not say when a conflict began, so a conflict dates from the later of
 the head commit and the base branch's latest commit. A conflict that stood
 before the gate is still told once the base moves on. A close without a merge
@@ -1122,6 +1125,7 @@ dunwich/arkham#18 has failing checks: arkham told ark-7mw
 dunwich/arkham#18 was reviewed: arkham told ark-7mw
 dunwich/arkham#22 conflicts with its base: arkham told ark-3xq
 dunwich/arkham#18 was commented on: arkham told ark-7mw
+dunwich/arkham#18 has a new head: arkham told ark-7mw
 kadath: its gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
 dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token

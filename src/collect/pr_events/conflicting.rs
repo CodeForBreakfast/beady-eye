@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use super::{Event, Outcome, Telling};
+use super::{Event, Outcome, Telling, HEAD_COMMIT};
 use crate::collect::gates::PullRequest;
 use crate::collect::github::{Observed, State};
 
@@ -12,7 +12,7 @@ pub const EVENT: Event = Event {
     fields: &[
         "mergeable",
         "headRefOid",
-        "headRef{target{...on Commit{committedDate}}}",
+        HEAD_COMMIT,
         "baseRef{target{...on Commit{committedDate}}}",
     ],
     happening: "conflicts with its base",
