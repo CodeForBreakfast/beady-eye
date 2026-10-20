@@ -116,8 +116,8 @@ pub enum Heard {
     Unsigned,
     /// A delivery whose signature the secret did not make.
     Forged,
-    /// A signed pull_request, pull_request_review, issue_comment, check_suite
-    /// or status delivery whose payload names no repository and pull request or commit.
+    /// A signed pull_request, pull_request_review, pull_request_review_comment,
+    /// issue_comment, check_suite or status delivery whose payload names no repository and pull request or commit.
     NamesNoPullRequest,
     /// A body larger than any pull_request delivery.
     TooLarge,
@@ -165,7 +165,7 @@ pub fn delivery(
     }
     match event {
         Some("pull_request") => pull_request(body),
-        Some("pull_request_review") => pull_request_review(body),
+        Some("pull_request_review" | "pull_request_review_comment") => pull_request_review(body),
         Some("issue_comment") => issue_comment(body),
         Some("check_suite") => check_suite(body),
         Some("status") => status(body),
@@ -191,7 +191,8 @@ struct PullRequestEvent {
     repository: Repository,
 }
 
-/// What a signed pull_request_review delivery comes to.
+/// What a signed pull_request_review or pull_request_review_comment delivery
+/// comes to. Both name their pull request the same way.
 fn pull_request_review(body: &[u8]) -> Heard {
     match serde_json::from_slice::<PullRequestReviewEvent>(body) {
         Ok(event) => Heard::Settle(PullRequest {
@@ -202,7 +203,8 @@ fn pull_request_review(body: &[u8]) -> Heard {
     }
 }
 
-/// The fields of a pull_request_review delivery that name its pull request.
+/// The fields of a pull_request_review or pull_request_review_comment
+/// delivery that name its pull request.
 #[derive(Deserialize)]
 struct PullRequestReviewEvent {
     pull_request: PullRequestNumber,
@@ -694,6 +696,51 @@ mod tests {
             delivery(
                 &other,
                 Some("pull_request_review"),
+                Some(&signature(body)),
+                body
+            ),
+            Heard::Forged
+        );
+    }
+
+    /// A pull_request_review_comment delivery cut down the same way. An inline
+    /// comment names its pull request as a review does.
+    const INLINE_COMMENT_42: &str = r#"{"action":"created","comment":{"body":"looks fine"},"pull_request":{"number":42},"repository":{"full_name":"example/ark"}}"#;
+
+    #[test]
+    fn a_signed_pull_request_review_comment_delivery_names_the_pull_request_to_settle() {
+        assert_eq!(
+            heard_as("pull_request_review_comment", INLINE_COMMENT_42),
+            Heard::Settle(PullRequest {
+                repo: "example/ark".to_string(),
+                number: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn a_signed_pull_request_review_comment_delivery_naming_no_pull_request_says_so() {
+        assert_eq!(
+            heard_as(
+                "pull_request_review_comment",
+                r#"{"action":"created","repository":{"full_name":"example/ark"}}"#
+            ),
+            Heard::NamesNoPullRequest
+        );
+    }
+
+    #[test]
+    fn a_pull_request_review_comment_delivery_with_no_or_a_wrong_signature_is_refused() {
+        let body = INLINE_COMMENT_42.as_bytes();
+        let other = Secret::new("hunter2").expect("a secret");
+        assert_eq!(
+            delivery(&secret(), Some("pull_request_review_comment"), None, body),
+            Heard::Unsigned
+        );
+        assert_eq!(
+            delivery(
+                &other,
+                Some("pull_request_review_comment"),
                 Some(&signature(body)),
                 body
             ),
