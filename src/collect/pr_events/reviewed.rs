@@ -8,13 +8,84 @@ use super::{Event, Outcome, Telling};
 use crate::collect::gates::PullRequest;
 use crate::collect::github::{Observed, State};
 
+/// The latest reviews, selected alike by every event that reads them so
+/// that [`fields`](super::fields) asks them once.
+pub(super) const REVIEWS: &str = "reviews(last:5){nodes{url state body submittedAt author{login} \
+     comments(first:1){totalCount nodes{url replyTo{id}}}}}";
+
 pub const EVENT: Event = Event {
-    fields: &["reviews(last:5){nodes{url state submittedAt author{login}}}"],
+    fields: &[REVIEWS],
     happening: "was reviewed",
     outcome: reviewed,
 };
 
-fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, serde_json::Error> {
+/// One of the latest reviews of a pull request.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Review {
+    url: String,
+    state: String,
+    #[serde(default)]
+    body: String,
+    pub submitted_at: Option<DateTime<Utc>>,
+    author: Option<Author>,
+    #[serde(default)]
+    comments: Comments,
+}
+
+#[derive(Deserialize)]
+struct Author {
+    login: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct Comments {
+    total_count: usize,
+    nodes: Vec<InlineComment>,
+}
+
+/// An inline comment a review holds.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct InlineComment {
+    pub url: String,
+    reply_to: Option<serde_json::Value>,
+}
+
+impl InlineComment {
+    /// Whether this replies in a review thread rather than starting one.
+    pub fn is_reply(&self) -> bool {
+        self.reply_to.is_some()
+    }
+}
+
+impl Review {
+    /// Who submitted it, or "ghost", GitHub's name for an account that has
+    /// gone.
+    pub fn author(&self) -> &str {
+        self.author.as_ref().map_or("ghost", |author| &author.login)
+    }
+
+    /// The inline comment this review is no more than. GitHub reviews an
+    /// inline comment made on its own as commenting, saying nothing itself
+    /// and holding that one comment.
+    pub fn lone_inline_comment(&self) -> Option<&InlineComment> {
+        match self.comments.nodes.as_slice() {
+            [comment]
+                if self.state == "COMMENTED"
+                    && self.body.trim().is_empty()
+                    && self.comments.total_count == 1 =>
+            {
+                Some(comment)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The latest reviews of the pull request `observed`.
+pub(super) fn reviews(observed: &Observed) -> Result<Vec<Review>, serde_json::Error> {
     #[derive(Deserialize)]
     struct Fields {
         #[serde(default)]
@@ -24,38 +95,25 @@ fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, se
     struct Reviews {
         nodes: Vec<Review>,
     }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Review {
-        url: String,
-        state: String,
-        submitted_at: Option<DateTime<Utc>>,
-        author: Option<Author>,
-    }
-    #[derive(Deserialize)]
-    struct Author {
-        login: String,
-    }
-    let Fields { reviews } = Fields::deserialize(&observed.fields)?;
-    let told: Vec<Telling> = reviews
-        .nodes
+    Ok(Fields::deserialize(&observed.fields)?.reviews.nodes)
+}
+
+fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, serde_json::Error> {
+    let told: Vec<Telling> = reviews(observed)?
         .into_iter()
         .filter(|review| !matches!(review.state.as_str(), "PENDING" | "DISMISSED"))
-        .map(
-            |Review {
-                 url,
-                 state,
-                 submitted_at,
-                 author,
-             }| {
-                let reviewer = author.map_or("ghost".to_string(), |author| author.login);
-                let state = state.to_ascii_lowercase().replace('_', " ");
-                Telling {
-                    text: format!("{reviewer} reviewed pull request {pr}: {state}. {url}"),
-                    happened: submitted_at,
-                }
-            },
-        )
+        .filter(|review| review.lone_inline_comment().is_none())
+        .map(|review| {
+            let reviewer = review.author();
+            let state = review.state.to_ascii_lowercase().replace('_', " ");
+            Telling {
+                text: format!(
+                    "{reviewer} reviewed pull request {pr}: {state}. {}",
+                    review.url
+                ),
+                happened: review.submitted_at,
+            }
+        })
         .collect();
     Ok((observed.state == State::Open && !told.is_empty()).then_some(Outcome::Tell(told)))
 }
@@ -123,6 +181,26 @@ mod tests {
     fn a_dismissed_review_is_not_told() {
         let dismissed = reviews(&[review("alice", "DISMISSED", 11)]);
         assert_eq!(reviewed_on(State::Open, &dismissed), Vec::<String>::new());
+    }
+
+    /// An inline comment made on its own is told as that comment, so
+    /// telling its review as well would tell it twice.
+    #[test]
+    fn a_review_that_is_only_a_lone_inline_comment_is_not_told() {
+        let lone = r#"{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","body":"","author":{"login":"alice"},"comments":{"totalCount":1,"nodes":[{"url":"https://forge.invalid/example/ark/pull/7#discussion_r21","replyTo":null}]}}"#;
+        assert_eq!(
+            reviewed_on(State::Open, &reviews(&[lone.to_string()])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_review_with_a_body_and_an_inline_comment_is_told() {
+        let said = r#"{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"COMMENTED","body":"Looks close.","author":{"login":"alice"},"comments":{"totalCount":1,"nodes":[{"url":"https://forge.invalid/example/ark/pull/7#discussion_r21","replyTo":null}]}}"#;
+        assert_eq!(
+            reviewed_on(State::Open, &reviews(&[said.to_string()])).len(),
+            1
+        );
     }
 
     #[test]
