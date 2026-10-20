@@ -71,3 +71,40 @@ fn the_beads_listing_reads_the_projects_the_run_reads_and_names_the_ones_that_fa
     let scoped = listing(&config, &["--project", "arkham"]);
     assert_eq!(projects_failed(&scoped), ["arkham"]);
 }
+
+/// A bead named beside `--beads` writes its dependency tree's document in
+/// place of every bead, and a tracker that fails is named there as anywhere.
+#[test]
+fn a_bead_named_beside_beads_writes_its_dependency_tree() {
+    let config = a_config_naming_two_projects("beads-tree");
+
+    let tree = listing(&config, &["arkham:ark-1"]);
+
+    assert!(tree.get("beads").is_none(), "{tree}");
+    for list in ["ready", "ready_gates", "waiting"] {
+        assert_eq!(tree[list], json!([]), "{list} in {tree}");
+    }
+    assert_eq!(projects_failed(&tree), ["arkham", "kadath"]);
+}
+
+/// The tree's document already gives its ready beads, so the ready list's
+/// is a second answer to one question, and bdi refuses to pick between them.
+#[test]
+fn a_bead_named_beside_beads_and_ready_is_refused() {
+    let config = a_config_naming_two_projects("beads-tree-ready");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .arg("--config")
+        .arg(&config)
+        .args(["--beads", "--ready", "arkham:ark-1"])
+        .output()
+        .expect("bdi runs");
+
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("leave out one or the other"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

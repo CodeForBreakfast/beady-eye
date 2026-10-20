@@ -9,9 +9,9 @@ use serde::Serialize;
 use crate::model::badges::Badged;
 use crate::model::join::{AgentRef, BeadKey};
 use crate::model::tree::{numeric_id_order, OrphanedDependency};
-use crate::model::types::Status;
+use crate::model::types::{Edge, Status};
 
-use super::{AgentProvider, FailedProject, Node, Snapshot, TrackerState};
+use super::{AgentProvider, FailedProject, Node, Snapshot, TrackerState, Tree};
 
 /// A snapshot's beads with the forest taken out: every unfinished bead in
 /// every tree it read, shown or hidden, keyed `(project, id)` and written
@@ -166,6 +166,208 @@ impl<'a> ReadyListing<'a> {
             unread_trees: unread_trees(snapshot),
         }
     }
+}
+
+/// The readiness of the dependency trees of the beads a reader named: each
+/// named bead and everything it depends on, followed into other projects'
+/// trackers and never down a parent link, every unfinished bead in them
+/// written once.
+///
+/// A gate free to close is a thing to wait for rather than to start, so it
+/// is listed apart from the ready beads. Every other bead waits, and says
+/// why: its status where that is not open, and each dependency still
+/// unfinished.
+#[derive(Debug, Serialize)]
+pub struct DependencyListing<'a> {
+    generated_at: DateTime<Utc>,
+    agents: &'a AgentProvider,
+    ready: Vec<InTree<'a>>,
+    ready_gates: Vec<InTree<'a>>,
+    waiting: Vec<Waiting<'a>>,
+    failed_projects: &'a [FailedProject],
+    unread_trees: Vec<UnreadTree<'a>>,
+}
+
+/// One bead in a dependency tree, with what it awaits where it is a gate.
+#[derive(Debug, Serialize)]
+struct InTree<'a> {
+    #[serde(flatten)]
+    bead: Listed<'a>,
+    #[serde(flatten)]
+    gate: Option<Gate<'a>>,
+}
+
+/// A bead in a dependency tree that is not ready, with the dependencies it
+/// still waits on.
+#[derive(Debug, Serialize)]
+struct Waiting<'a> {
+    #[serde(flatten)]
+    bead: InTree<'a>,
+    unmet_dependencies: Vec<Unmet<'a>>,
+}
+
+/// A dependency not yet finished, keyed on its own project.
+#[derive(Debug, Serialize)]
+struct Unmet<'a> {
+    project: &'a str,
+    id: &'a str,
+    title: &'a str,
+    status: &'a Status,
+    issue_type: &'a str,
+    #[serde(flatten)]
+    gate: Option<Gate<'a>>,
+}
+
+/// What a gate waits on, as bd holds it.
+#[derive(Debug, Serialize)]
+struct Gate<'a> {
+    await_type: Option<String>,
+    await_id: Option<String>,
+    repo: Option<&'a str>,
+}
+
+impl<'a> Gate<'a> {
+    fn of(node: &'a Node) -> Option<Self> {
+        (node.issue_type == "gate").then(|| Gate {
+            await_type: node.row.text("await_type"),
+            await_id: node.row.text("await_id"),
+            repo: node.metadata.get("repo").map(String::as_str),
+        })
+    }
+}
+
+impl<'a> InTree<'a> {
+    fn of(node: &'a Node, brief: bool) -> Self {
+        InTree {
+            bead: Listed::of(node, brief),
+            gate: Gate::of(node),
+        }
+    }
+}
+
+impl<'a> DependencyListing<'a> {
+    /// Each bead in the trees is kept as `only` says, and written without
+    /// its description where `brief`. Its unmet dependencies are written
+    /// whether or not they are kept.
+    pub fn of(snapshot: &'a Snapshot, named: &[BeadKey], only: &Only, brief: bool) -> Self {
+        let mut ready = Vec::new();
+        let mut ready_gates = Vec::new();
+        let mut waiting = Vec::new();
+        let keeps = only.keeping(snapshot);
+        let mut reached: Vec<_> = dependency_trees(snapshot, named)
+            .into_values()
+            .filter(|(node, ..)| keeps(node))
+            .collect();
+        reached.sort_by(|(a, ..), (b, ..)| {
+            a.project
+                .cmp(&b.project)
+                .then_with(|| numeric_id_order(&a.id, &b.id))
+        });
+        for (node, tree, at) in reached {
+            if node.status.is_finished() {
+                continue;
+            }
+            if node.ready && node.status == Status::Open {
+                if node.issue_type == "gate" {
+                    ready_gates.push(InTree::of(node, brief));
+                } else {
+                    ready.push(InTree::of(node, brief));
+                }
+                continue;
+            }
+            let mut unmet: Vec<Unmet> = dependencies(tree, at)
+                .filter(|blocker| !blocker.status.is_finished())
+                .map(|blocker| Unmet {
+                    project: &blocker.project,
+                    id: &blocker.id,
+                    title: &blocker.title,
+                    status: &blocker.status,
+                    issue_type: &blocker.issue_type,
+                    gate: Gate::of(blocker),
+                })
+                .collect();
+            unmet.sort_by(|a, b| {
+                a.project
+                    .cmp(b.project)
+                    .then_with(|| numeric_id_order(a.id, b.id))
+            });
+            waiting.push(Waiting {
+                bead: InTree::of(node, brief),
+                unmet_dependencies: unmet,
+            });
+        }
+        DependencyListing {
+            generated_at: snapshot.generated_at,
+            agents: &snapshot.agents,
+            ready,
+            ready_gates,
+            waiting,
+            failed_projects: &snapshot.failed_projects,
+            unread_trees: unread_trees(snapshot)
+                .into_iter()
+                .filter(|tree| {
+                    named
+                        .iter()
+                        .any(|key| key.project == tree.project && key.id == tree.root)
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Every bead the named beads depend on, each named bead included, by
+/// blocking edges alone, keyed `(project, id)` so each is held once. Each
+/// comes with the tree and the place in it where it was first
+/// reached, whose links down are its dependencies.
+fn dependency_trees<'a>(
+    snapshot: &'a Snapshot,
+    named: &[BeadKey],
+) -> BTreeMap<BeadKey, (&'a Node, &'a Tree, usize)> {
+    let mut reached = BTreeMap::new();
+    for key in named {
+        let Some((tree, at)) = snapshot.collected.iter().find_map(|tree| {
+            let at = tree.beads.iter().position(|bead| bead.is(key))?;
+            Some((&**tree, at))
+        }) else {
+            continue;
+        };
+        let mut going = vec![at];
+        while let Some(at) = going.pop() {
+            let node = &tree.beads[at];
+            if reached.contains_key(&node.key()) {
+                continue;
+            }
+            reached.insert(node.key(), (node, tree, at));
+            going.extend(
+                tree.children[at]
+                    .iter()
+                    .map(|link| link.bead)
+                    .filter(|&below| waits_on(node, &tree.beads[below])),
+            );
+        }
+    }
+    reached
+}
+
+/// The beads hung beneath the one at `at` that it waits on by a blocking
+/// edge.
+fn dependencies(tree: &Tree, at: usize) -> impl Iterator<Item = &Node> {
+    let node = &tree.beads[at];
+    tree.children[at]
+        .iter()
+        .map(|link| &tree.beads[link.bead])
+        .filter(move |below| waits_on(node, below))
+}
+
+/// Whether `node` holds a blocking edge on `below`. A link in the tree
+/// carries one edge, and names a child its parent's even where the parent
+/// also waits on it, so the bead's own dependencies are what say so.
+fn waits_on(node: &Node, below: &Node) -> bool {
+    node.depends_on.iter().any(|on| {
+        on.edge == Edge::Blocks
+            && on.id == below.id
+            && on.project.as_deref().unwrap_or(&node.project) == below.project
+    })
 }
 
 /// Which beads a listing keeps, as its reader narrowed it: every one where
