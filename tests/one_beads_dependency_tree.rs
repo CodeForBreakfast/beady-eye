@@ -27,12 +27,17 @@ path = "/srv/work/dunwich"
 
 [roots.explicit]
 dunwich = ["dun-404"]
+
+[delivery]
+outside_key = "borrowed"
+outcome_label = "landed"
 "#;
 
 /// The archive's reopening waits on six beads and a closed one, and has a
 /// child of its own that nothing waits on. One of the six is another child
-/// of its own, one is open and waits on nothing, one is being worked, one waits on a pull request's
-/// gate, one waits on a bead in dunwich's tracker, and one is deferred.
+/// of its own, one is open and waits on nothing, one is being worked, one waits on the gate
+/// of another effort's pull request, one waits on a bead in dunwich's tracker, and one is
+/// deferred.
 /// The cataloguing is ready and nothing waits on it, so it is outside the
 /// tree.
 const ARKHAM: &str = r#"[
@@ -62,18 +67,128 @@ const ARKHAM: &str = r#"[
    "dependencies":[{"depends_on_id":"dun-1","type":"blocks"}]},
   {"id":"ark-6","title":"the ledgers' pull request has merged","status":"open","priority":2,
    "issue_type":"gate","await_type":"gh:pr","await_id":"12","description":"wait for the binding change",
-   "metadata":{"repo":"miskatonic/ledgers"}},
+   "metadata":{"repo":"miskatonic/ledgers","borrowed":true}},
   {"id":"ark-7","title":"order the vellum","status":"deferred","priority":3,"issue_type":"task",
    "defer_until":"2026-11-01T09:00:00Z"},
   {"id":"ark-8","title":"sweep the porch","status":"closed","priority":3,"issue_type":"task"},
   {"id":"ark-9","title":"catalogue the maps","status":"open","priority":2,"issue_type":"task"}
 ]"#;
 
+/// The east wing's opening waits on nine beads, each delivered in its own
+/// way. The doors' pull request is open. The windows wait on a molecule's
+/// outcome step, which waits on its pull request's gate. The lamps' pull
+/// request has merged, and so has the molecule the rugs waited on, whose
+/// outcome step waited on a step that is no pull request. The brass
+/// and the hall wait on another effort's pull requests, one open and one
+/// merged, whose gates are marked outside. The ceiling's pull request has
+/// merged, but it waits on the doors too. The airing waits on a timer gate.
+/// The plaque's molecule ends in a gate on a workflow run, labelled as its
+/// outcome step, and the run has passed.
+const EAST_WING: &str = r#"[
+  {"id":"ark-20","title":"open the east wing","status":"open","priority":1,"issue_type":"epic",
+   "dependencies":[
+     {"depends_on_id":"ark-21","type":"blocks"},
+     {"depends_on_id":"ark-22","type":"blocks"},
+     {"depends_on_id":"ark-23","type":"blocks"},
+     {"depends_on_id":"ark-24","type":"blocks"},
+     {"depends_on_id":"ark-25","type":"blocks"},
+     {"depends_on_id":"ark-26","type":"blocks"},
+     {"depends_on_id":"ark-27","type":"blocks"},
+     {"depends_on_id":"ark-28","type":"blocks"},
+     {"depends_on_id":"ark-29","type":"blocks"},
+     {"depends_on_id":"ark-37","type":"blocks"},
+     {"depends_on_id":"ark-38","type":"blocks"},
+     {"depends_on_id":"ark-40","type":"blocks"},
+     {"depends_on_id":"ark-41","type":"blocks"},
+     {"depends_on_id":"ark-43","type":"blocks"}]},
+  {"id":"ark-41","title":"oil the hinges","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-42","type":"blocks"}]},
+  {"id":"ark-42","title":"the hinges' pull request is approved","status":"closed","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"35",
+   "metadata":{"repo":"miskatonic/archive","awaits":"approved"}},
+  {"id":"ark-43","title":"review the joinery","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-44","type":"blocks"}]},
+  {"id":"ark-44","title":"the joinery's pull request is ready for review","status":"open",
+   "priority":2,"issue_type":"gate","await_type":"gh:pr","await_id":"36",
+   "metadata":{"repo":"miskatonic/archive","awaits":"ready_for_review"}},
+  {"id":"ark-40","title":"stoke the boiler","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"dun-3","type":"blocks"}]},
+  {"id":"ark-37","title":"dust the shelves","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-mol-1.3","type":"blocks"}]},
+  {"id":"ark-38","title":"wax the floor","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-39","type":"blocks"}]},
+  {"id":"ark-39","title":"the floor's pull request has merged","status":"closed","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"9","labels":["landed"],
+   "metadata":{"repo":"miskatonic/foundry","borrowed":true}},
+  {"id":"ark-27","title":"paint the ceiling","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-34","type":"blocks"},
+                   {"depends_on_id":"ark-21","type":"blocks"}]},
+  {"id":"ark-28","title":"air the wing","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-35","type":"blocks"}]},
+  {"id":"ark-29","title":"mount the plaque","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-36","type":"blocks"}]},
+  {"id":"ark-34","title":"the ceiling's pull request has merged","status":"closed","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"30",
+   "metadata":{"repo":"miskatonic/archive"}},
+  {"id":"ark-35","title":"a week has passed","status":"open","priority":2,
+   "issue_type":"gate","await_type":"timer"},
+  {"id":"ark-36","title":"the plaque's workflow run has passed","status":"closed","priority":2,
+   "issue_type":"gate","await_type":"gh:run","await_id":"5150","labels":["landed"],
+   "metadata":{"repo":"miskatonic/archive"}},
+  {"id":"ark-21","title":"fit the doors","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-30","type":"blocks"}]},
+  {"id":"ark-22","title":"glaze the windows","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-mol-2.2","type":"blocks"}]},
+  {"id":"ark-23","title":"hang the lamps","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-31","type":"blocks"}]},
+  {"id":"ark-24","title":"lay the rugs","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-mol-1.2","type":"blocks"}]},
+  {"id":"ark-25","title":"polish the brass","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-32","type":"blocks"}]},
+  {"id":"ark-26","title":"sweep the hall","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-33","type":"blocks"}]},
+  {"id":"ark-30","title":"the doors' pull request has merged","status":"open","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"31",
+   "metadata":{"repo":"miskatonic/archive"}},
+  {"id":"ark-31","title":"the lamps' pull request has merged","status":"closed","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"29",
+   "metadata":{"repo":"miskatonic/archive"}},
+  {"id":"ark-32","title":"the brass's pull request has merged","status":"open","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"7",
+   "metadata":{"repo":"miskatonic/foundry","borrowed":true}},
+  {"id":"ark-33","title":"the hall's pull request has merged","status":"closed","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"8",
+   "metadata":{"repo":"miskatonic/foundry","borrowed":true}},
+  {"id":"ark-mol-1","title":"deliver the rugs","status":"closed","priority":2,"issue_type":"molecule"},
+  {"id":"ark-mol-1.1","title":"the rugs' checks have passed","status":"closed","priority":2,
+   "issue_type":"task","parent":"ark-mol-1",
+   "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"}]},
+  {"id":"ark-mol-1.2","title":"the rugs are down","status":"closed","priority":2,"issue_type":"task",
+   "labels":["landed"],"parent":"ark-mol-1",
+   "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"},
+                   {"depends_on_id":"ark-mol-1.1","type":"blocks"}]},
+  {"id":"ark-mol-1.3","title":"the shelves are dusted","status":"pinned","priority":2,
+   "issue_type":"task","labels":["landed"],"parent":"ark-mol-1",
+   "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"}]},
+  {"id":"ark-mol-2","title":"deliver the windows","status":"open","priority":2,"issue_type":"molecule"},
+  {"id":"ark-mol-2.1","title":"the windows' pull request has merged","status":"open","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"33","parent":"ark-mol-2",
+   "metadata":{"repo":"miskatonic/archive"},
+   "dependencies":[{"depends_on_id":"ark-mol-2","type":"parent-child"}]},
+  {"id":"ark-mol-2.2","title":"the windows are in","status":"open","priority":2,"issue_type":"task",
+   "labels":["landed"],"parent":"ark-mol-2",
+   "dependencies":[{"depends_on_id":"ark-mol-2","type":"parent-child"},
+                   {"depends_on_id":"ark-mol-2.1","type":"blocks"}]}
+]"#;
+
 /// The oil the lamps wait on, which waits in turn on the barge.
 const DUNWICH: &str = r#"[
   {"id":"dun-1","title":"deliver the oil","status":"open","priority":2,"issue_type":"task",
    "dependencies":[{"depends_on_id":"dun-2","type":"blocks"}]},
-  {"id":"dun-2","title":"float the barge","status":"open","priority":2,"issue_type":"task"}
+  {"id":"dun-2","title":"float the barge","status":"open","priority":2,"issue_type":"task"},
+  {"id":"dun-3","title":"the coal's pull request has merged","status":"open","priority":2,
+   "issue_type":"gate","await_type":"gh:pr","await_id":"12",
+   "metadata":{"repo":"miskatonic/colliery"}}
 ]"#;
 
 fn now() -> DateTime<Utc> {
@@ -89,22 +204,60 @@ fn trackers_beside(dunwich: Fake) -> Fakes {
     Fakes::default()
         .with(
             "arkham",
-            Fake::holding(parse_beads(ARKHAM).expect("the rows parse"))
-                .ready([
-                    "ark-1.1", "ark-1.2", "ark-2", "ark-3", "ark-5", "ark-6", "ark-9",
-                ])
-                .blocked(
-                    "ark-1",
-                    &["ark-1.2", "ark-2", "ark-3", "ark-4", "ark-5", "ark-7"],
-                )
-                .blocked("ark-4", &["ark-6"]),
+            Fake::holding(
+                [ARKHAM, EAST_WING]
+                    .iter()
+                    .flat_map(|rows| parse_beads(rows).expect("the rows parse"))
+                    .collect(),
+            )
+            .ready([
+                "ark-1.1",
+                "ark-1.2",
+                "ark-2",
+                "ark-3",
+                "ark-5",
+                "ark-6",
+                "ark-9",
+                "ark-23",
+                "ark-24",
+                "ark-26",
+                "ark-29",
+                "ark-30",
+                "ark-32",
+                "ark-35",
+                "ark-37",
+                "ark-38",
+                "ark-40",
+                "ark-41",
+                "ark-44",
+                "ark-mol-2.1",
+            ])
+            .blocked(
+                "ark-1",
+                &["ark-1.2", "ark-2", "ark-3", "ark-4", "ark-5", "ark-7"],
+            )
+            .blocked("ark-4", &["ark-6"])
+            .blocked(
+                "ark-20",
+                &[
+                    "ark-21", "ark-22", "ark-23", "ark-24", "ark-25", "ark-26", "ark-27", "ark-28",
+                    "ark-29", "ark-37", "ark-38", "ark-40", "ark-41", "ark-43",
+                ],
+            )
+            .blocked("ark-43", &["ark-44"])
+            .blocked("ark-21", &["ark-30"])
+            .blocked("ark-27", &["ark-21"])
+            .blocked("ark-28", &["ark-35"])
+            .blocked("ark-22", &["ark-mol-2.2"])
+            .blocked("ark-25", &["ark-32"])
+            .blocked("ark-mol-2.2", &["ark-mol-2.1"]),
         )
         .with("dunwich", dunwich)
 }
 
 fn dunwich() -> Fake {
     Fake::holding(parse_beads(DUNWICH).expect("the rows parse"))
-        .ready(["dun-2"])
+        .ready(["dun-2", "dun-3"])
         .blocked("dun-1", &["dun-2"])
 }
 
@@ -116,8 +269,19 @@ fn tree_of(named: &[&str]) -> Value {
 /// The document a run naming `named` writes over `trackers`, keeping the
 /// beads `only` keeps, without descriptions where `brief`.
 fn tree_over(named: &[&str], trackers: Fakes, only: &Only, brief: bool) -> Value {
+    tree_configured(ARKHAM_AND_DUNWICH, named, trackers, only, brief)
+}
+
+/// The document a run under `config` naming `named` writes over `trackers`.
+fn tree_configured(
+    config: &str,
+    named: &[&str],
+    trackers: Fakes,
+    only: &Only,
+    brief: bool,
+) -> Value {
     let named: Vec<String> = named.iter().map(|bead| bead.to_string()).collect();
-    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
+    let cfg = Config::from_toml(config)
         .expect("the config parses")
         .with_roots_named_on_the_command_line(&named)
         .expect("every bead names a project being read");
@@ -128,6 +292,7 @@ fn tree_over(named: &[&str], trackers: Fakes, only: &Only, brief: bool) -> Value
         &cfg.roots.named_beads(),
         only,
         brief,
+        &cfg.delivery,
     ))
     .expect("the document serialises")
 }
@@ -165,10 +330,16 @@ fn entry<'a>(document: &'a Value, list: &str, id: &str) -> &'a Value {
 fn the_tree_is_the_bead_and_everything_it_depends_on_in_any_tracker() {
     let document = tree_of(&["arkham:ark-1"]);
 
-    let mut every: Vec<String> = ["ready", "ready_gates", "waiting"]
-        .iter()
-        .flat_map(|list| keys(&document, list))
-        .collect();
+    let mut every: Vec<String> = [
+        "ready",
+        "ready_gates",
+        "delivered",
+        "in_delivery",
+        "waiting",
+    ]
+    .iter()
+    .flat_map(|list| keys(&document, list))
+    .collect();
     every.sort();
     assert_eq!(
         every,
@@ -380,5 +551,185 @@ fn a_named_bead_the_tracker_lacks_is_reported_as_unread() {
     assert_eq!(
         document["unread_trees"],
         json!([{"project": "arkham", "root": "ark-404", "tracker": "root-not-found"}])
+    );
+}
+
+/// Every bead of the east wing's tree under `config`, with the list the
+/// document puts it in.
+fn east_wing(config: &str) -> Vec<(String, String)> {
+    let document = tree_configured(
+        config,
+        &["arkham:ark-20"],
+        trackers_beside(dunwich()),
+        &Only::default(),
+        false,
+    );
+    let mut every: Vec<(String, String)> = [
+        "ready",
+        "ready_gates",
+        "delivered",
+        "in_delivery",
+        "waiting",
+    ]
+    .iter()
+    .flat_map(|list| {
+        keys(&document, list)
+            .into_iter()
+            .map(move |key| (key, list.to_string()))
+    })
+    .collect();
+    every.sort();
+    every
+}
+
+fn listed(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(key, list)| (key.to_string(), list.to_string()))
+        .collect()
+}
+
+/// A bead held by an open pull request's gate is in delivery, and says which
+/// gate and which pull request. The gate itself is free to close, so it is a
+/// ready gate.
+#[test]
+fn a_bead_held_by_an_open_pull_request_is_in_delivery() {
+    let document = tree_of(&["arkham:ark-20"]);
+
+    let doors = entry(&document, "in_delivery", "ark-21");
+    assert_eq!(
+        doors["pull_requests"],
+        json!([{"project": "arkham", "gate": "ark-30", "repo": "miskatonic/archive", "number": "31"}])
+    );
+    assert_eq!(
+        doors["unmet_dependencies"][0]["id"], "ark-30",
+        "a bead in delivery still says what it waits on"
+    );
+    assert!(keys(&document, "ready_gates").contains(&"arkham:ark-30".to_string()));
+}
+
+/// A pull request names the project of its gate, since a gate in another
+/// tracker can share its id with one in this.
+#[test]
+fn a_pull_request_names_the_tracker_its_gate_is_in() {
+    let document = tree_of(&["arkham:ark-20"]);
+
+    assert_eq!(
+        entry(&document, "in_delivery", "ark-40")["pull_requests"],
+        json!([{"project": "dunwich", "gate": "dun-3", "repo": "miskatonic/colliery", "number": "12"}])
+    );
+}
+
+/// A bead waiting on a molecule's outcome step is in delivery through the
+/// gate that step waits on. The step is the molecule's and not the work, so
+/// it is not listed as in delivery itself.
+#[test]
+fn a_bead_waiting_on_an_outcome_step_is_in_delivery_and_the_step_is_not() {
+    let document = tree_of(&["arkham:ark-20"]);
+
+    assert_eq!(
+        entry(&document, "in_delivery", "ark-22")["pull_requests"],
+        json!([{"project": "arkham", "gate": "ark-mol-2.1", "repo": "miskatonic/archive", "number": "33"}])
+    );
+    assert!(keys(&document, "waiting").contains(&"arkham:ark-mol-2.2".to_string()));
+}
+
+/// A ready bead whose pull request has merged, or whose molecule's outcome
+/// step has closed, is already delivered. It is to close rather than to
+/// start, so it is not among the ready beads.
+#[test]
+fn a_ready_bead_whose_delivery_closed_is_delivered_and_not_ready() {
+    let document = tree_of(&["arkham:ark-20"]);
+
+    assert_eq!(
+        keys(&document, "delivered"),
+        ["arkham:ark-23", "arkham:ark-24", "arkham:ark-29"]
+    );
+    assert_eq!(
+        entry(&document, "delivered", "ark-23")["pull_requests"],
+        json!([{"project": "arkham", "gate": "ark-31", "repo": "miskatonic/archive", "number": "29"}])
+    );
+    assert_eq!(
+        entry(&document, "delivered", "ark-24")["pull_requests"],
+        json!([])
+    );
+    assert!(!keys(&document, "ready").contains(&"arkham:ark-23".to_string()));
+}
+
+/// A gate marked outside is another effort's pull request, so the brass waits
+/// on it and the hall and the floor are ready once theirs close, even where
+/// the gate is labelled an outcome. A merged pull request does not deliver
+/// the ceiling while it waits on the doors, and a timer gate is no pull
+/// request, so both wait. A pinned outcome step never closed, so the shelves
+/// are ready rather than delivered. A gate awaiting a review milestone rather
+/// than the merge delivers nothing, so the hinges are ready and the joinery's
+/// review waits.
+#[test]
+fn only_a_pull_request_of_this_effort_delivers_a_bead() {
+    assert_eq!(
+        east_wing(ARKHAM_AND_DUNWICH),
+        listed(&[
+            ("arkham:ark-20", "waiting"),
+            ("arkham:ark-21", "in_delivery"),
+            ("arkham:ark-22", "in_delivery"),
+            ("arkham:ark-23", "delivered"),
+            ("arkham:ark-24", "delivered"),
+            ("arkham:ark-25", "waiting"),
+            ("arkham:ark-26", "ready"),
+            ("arkham:ark-27", "waiting"),
+            ("arkham:ark-28", "waiting"),
+            ("arkham:ark-29", "delivered"),
+            ("arkham:ark-30", "ready_gates"),
+            ("arkham:ark-32", "ready_gates"),
+            ("arkham:ark-35", "ready_gates"),
+            ("arkham:ark-37", "ready"),
+            ("arkham:ark-38", "ready"),
+            ("arkham:ark-40", "in_delivery"),
+            ("arkham:ark-41", "ready"),
+            ("arkham:ark-43", "waiting"),
+            ("arkham:ark-44", "ready_gates"),
+            ("arkham:ark-mol-2.1", "ready_gates"),
+            ("arkham:ark-mol-2.2", "waiting"),
+            ("dunwich:dun-3", "ready_gates"),
+        ])
+    );
+}
+
+/// With no `[delivery]` section, no gate is outside and no step is an
+/// outcome. Every pull request's gate delivers, and a bead behind a step
+/// that is no gate waits on the step.
+#[test]
+fn without_a_delivery_section_every_gate_delivers_and_no_step_is_an_outcome() {
+    let unconfigured = ARKHAM_AND_DUNWICH
+        .split("[delivery]")
+        .next()
+        .expect("the config before its delivery section");
+
+    assert_eq!(
+        east_wing(unconfigured),
+        listed(&[
+            ("arkham:ark-20", "waiting"),
+            ("arkham:ark-21", "in_delivery"),
+            ("arkham:ark-22", "waiting"),
+            ("arkham:ark-23", "delivered"),
+            ("arkham:ark-24", "ready"),
+            ("arkham:ark-25", "in_delivery"),
+            ("arkham:ark-26", "delivered"),
+            ("arkham:ark-27", "waiting"),
+            ("arkham:ark-28", "waiting"),
+            ("arkham:ark-29", "ready"),
+            ("arkham:ark-30", "ready_gates"),
+            ("arkham:ark-32", "ready_gates"),
+            ("arkham:ark-35", "ready_gates"),
+            ("arkham:ark-37", "ready"),
+            ("arkham:ark-38", "delivered"),
+            ("arkham:ark-40", "in_delivery"),
+            ("arkham:ark-41", "ready"),
+            ("arkham:ark-43", "waiting"),
+            ("arkham:ark-44", "ready_gates"),
+            ("arkham:ark-mol-2.1", "ready_gates"),
+            ("arkham:ark-mol-2.2", "in_delivery"),
+            ("dunwich:dun-3", "ready_gates"),
+        ])
     );
 }

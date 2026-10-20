@@ -88,6 +88,9 @@ coin one — and say so.**
 | **ready list** | *coined*, after `bd ready` | the view drawn in place of the forest that lists what a reader could pick up now and what is being worked, each bead once (see *The ready list*). beads has `bd ready`, which answers one tracker's ready beads and draws no view; neither project has a view of them. |
 | unblocked | beads (`bd close --suggest-next`'s "Newly unblocked") | a bead whose last unfinished dependency has closed. The ready list says a step above a row *would be unblocked* once the beads on its way up close (see *The ready list*). |
 | **waiting** | *coined* | a bead in a dependency tree that is unfinished and is neither ready nor a ready gate: its status is not open, or a dependency of it is unfinished. beads has *blocked*, which is one status of several a waiting bead can have. |
+| **in delivery** | *coined* | a waiting bead whose work is in an open pull request: a `gh:pr` gate awaiting the merge that it waits on is open and not marked as another effort's, directly or through an outcome step. beads has the gate, and no word for the bead it holds. |
+| **delivered** | *coined* | a ready bead whose work has already landed: a `gh:pr` gate awaiting the merge that it waited on has closed and is not marked as another effort's, or an outcome step it waited on has closed. It is to close rather than to start. Neither project has the concept. |
+| **outcome step** | *coined* | the step of a molecule that closes once the work it delivers has landed, which the bead the molecule delivers waits on. beads has the molecule and its steps, and leaves which step is the outcome to the formula, so a setup names the label that marks one. |
 | **way up** | *coined* | the beads stepped through from a ready list row's bead to a line in what it unblocks. The way down turned round: it tells apart the lines of a bead reached more than once, holds the selection, and is where a loop is cut. |
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
@@ -3002,6 +3005,15 @@ trees of all of them, each bead once.
     { "project": "summit-works", "id": "smt-wisp-v4p", "issue_type": "gate", "ready": true,
       "await_type": "gh:pr", "await_id": "42", "repo": "summit/works" }
   ],
+  "delivered": [
+    { "project": "summit-works", "id": "smt-4kd3p.9", "status": "open", "ready": true,
+      "pull_requests": [ { "project": "summit-works", "gate": "smt-wisp-q2m", "repo": "summit/works", "number": "40" } ] }
+  ],
+  "in_delivery": [
+    { "project": "summit-works", "id": "smt-4kd3p.12", "status": "open", "ready": false,
+      "unmet_dependencies": [ { "project": "summit-works", "id": "smt-wisp-v4p", "issue_type": "gate" } ],
+      "pull_requests": [ { "project": "summit-works", "gate": "smt-wisp-v4p", "repo": "summit/works", "number": "42" } ] }
+  ],
   "waiting": [
     {
       "project": "summit-works",
@@ -3027,6 +3039,16 @@ for the example. Every unfinished bead in the tree is in exactly one list.
   waited for rather than started, so it is kept apart. Each gate carries its
   `await_type`, its `await_id` and the `repo` its metadata names, each `null`
   where the gate has none.
+- **`delivered`** holds the ready beads whose work has already landed, which
+  a reader closes rather than starts. One waited on a `gh:pr` gate that has
+  closed, or on an outcome step that has closed. A gate marked as another
+  effort's delivers nothing.
+- **`in_delivery`** holds the beads that would otherwise be waiting and wait
+  on an open `gh:pr` gate not marked as another effort's. A bead that waits
+  on an outcome step is in delivery through the gates that step waits on.
+  The step is the molecule's and not the work, so it waits rather than being
+  in delivery itself. Each entry carries `unmet_dependencies` as a waiting
+  bead does.
 - **`waiting`** holds every other bead. A bead whose `status` is not open,
   such as one in progress, blocked or deferred, waits on that status, with
   `defer_until` giving the date a deferral runs to. `unmet_dependencies` lists
@@ -3035,11 +3057,21 @@ for the example. Every unfinished bead in the tree is in exactly one list.
   it is a gate. A dependency no tracker the run read could answer for is in
   the bead's `orphaned_dependencies` instead.
 
+A delivered or in-delivery bead lists the `pull_requests` it goes through,
+each with the `project` and id of its `gate`, its `repo` and its `number`. A
+bead delivered through an outcome step with no gate beneath it lists none.
+Only a gate awaiting the merge delivers a bead. A gate whose `awaits` names a
+review milestone leaves the bead behind it ready or waiting. Which metadata
+key marks a gate as another effort's, and which label marks an outcome step,
+belong to the setup's way of working, so `[delivery]` in the config names
+them. Where it names neither, no gate is another effort's and no step is an
+outcome step.
+
 `metadata` is on every entry, so whatever key `join.pane_key` names is there
 for a reader checking seats inside the tree. Each list is sorted by project
 and then by id, and none is cut short. `unread_trees` names a named bead
 whose tracker gave no rows or holds no such bead. `--label`, `--type`,
-`--assignee` and `--parent` narrow the three lists as they narrow the plain
+`--assignee` and `--parent` narrow the five lists as they narrow the plain
 listing, and leave `unmet_dependencies` whole. `--brief` leaves
 `description` out of every entry, as it does in the plain listing.
 

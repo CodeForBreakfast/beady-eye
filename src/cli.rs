@@ -25,7 +25,7 @@ use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
-use crate::config::{Config, Poll};
+use crate::config::{Config, Delivery, Poll};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{DependencyListing, Filter, Listing, Only, ReadyListing, Snapshot};
 use crate::tui::{Hearing, Reload, CHECKED_EVERY};
@@ -434,7 +434,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 cli.ready,
                 &cfg.roots.named_beads(),
                 &only,
-                cli.brief
+                cli.brief,
+                &cfg.delivery
             )?
         );
         return Ok(ExitCode::SUCCESS);
@@ -575,16 +576,20 @@ fn read_for_each_bead(
 /// What `bdi --beads` writes: the dependency trees of the beads `named`
 /// where it names any, or else every unfinished bead, or under `--ready`
 /// the beads the ready list draws, in its order, each kept as `only` says
-/// and without its description where `brief`.
+/// and without its description where `brief`. A dependency tree says which
+/// beads are delivered or in delivery as `delivery` marks them.
 fn beads_document(
     snapshot: &Snapshot,
     ready: bool,
     named: &[BeadKey],
     only: &Only,
     brief: bool,
+    delivery: &Delivery,
 ) -> serde_json::Result<String> {
     if !named.is_empty() {
-        serde_json::to_string_pretty(&DependencyListing::of(snapshot, named, only, brief))
+        serde_json::to_string_pretty(&DependencyListing::of(
+            snapshot, named, only, brief, delivery,
+        ))
     } else if ready {
         serde_json::to_string_pretty(&ReadyListing::of(
             snapshot,
@@ -1987,7 +1992,7 @@ kadath = ["kad-11"]
 
         let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
         let written: serde_json::Value = serde_json::from_str(
-            &beads_document(&snapshot, true, &[], &Only::default(), false).unwrap(),
+            &beads_document(&snapshot, true, &[], &Only::default(), false, &cfg.delivery).unwrap(),
         )
         .unwrap();
 
@@ -2086,6 +2091,7 @@ kadath = ["kad-11"]
             &[],
             &only,
             cli.brief,
+            &cfg.delivery,
         )?)?)
     }
 

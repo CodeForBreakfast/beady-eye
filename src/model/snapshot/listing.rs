@@ -6,8 +6,10 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::config::Delivery;
 use crate::model::badges::Badged;
 use crate::model::edges::Related;
+use crate::model::gate;
 use crate::model::join::{AgentRef, BeadKey};
 use crate::model::tree::{numeric_id_order, OrphanedDependency};
 use crate::model::types::{Edge, Status};
@@ -209,15 +211,19 @@ impl<'a> ReadyListing<'a> {
 /// written once.
 ///
 /// A gate free to close is a thing to wait for rather than to start, so it
-/// is listed apart from the ready beads. Every other bead waits, and says
-/// why: its status where that is not open, and each dependency still
-/// unfinished.
+/// is listed apart from the ready beads, and so is a ready bead whose
+/// delivery has already landed, which is a thing to close. Every other bead
+/// waits, and says why: its status where that is not open, and each
+/// dependency still unfinished. A waiting bead whose pull request is open
+/// is in delivery, and listed apart from the rest.
 #[derive(Debug, Serialize)]
 pub struct DependencyListing<'a> {
     generated_at: DateTime<Utc>,
     agents: &'a AgentProvider,
     ready: Vec<InTree<'a>>,
     ready_gates: Vec<InTree<'a>>,
+    delivered: Vec<Delivering<'a, InTree<'a>>>,
+    in_delivery: Vec<Delivering<'a, Waiting<'a>>>,
     waiting: Vec<Waiting<'a>>,
     failed_projects: &'a [FailedProject],
     unread_trees: Vec<UnreadTree<'a>>,
@@ -280,13 +286,101 @@ impl<'a> InTree<'a> {
     }
 }
 
+/// A bead whose work goes through pull requests, with the gate on each.
+#[derive(Debug, Serialize)]
+struct Delivering<'a, B> {
+    #[serde(flatten)]
+    bead: B,
+    pull_requests: Vec<PullRequest<'a>>,
+}
+
+/// A pull request a `gh:pr` gate awaits.
+#[derive(Debug, Serialize)]
+struct PullRequest<'a> {
+    project: &'a str,
+    gate: &'a str,
+    repo: Option<&'a str>,
+    number: Option<String>,
+}
+
+impl<'a> PullRequest<'a> {
+    fn of(gate: &'a Node) -> Self {
+        PullRequest {
+            project: &gate.project,
+            gate: &gate.id,
+            repo: gate.metadata.get("repo").map(String::as_str),
+            number: gate.row.text("await_id"),
+        }
+    }
+}
+
+/// The pull requests the bead at `at` is delivered through: the `gh:pr`
+/// gates awaiting a merge that it waits on, and those each outcome step it
+/// waits on waits on in turn. A gate or a step counts only where its status
+/// is `wanted` and it is not marked outside. Also whether the bead waits on
+/// an outcome step that counts, since a closed one delivers a bead with no
+/// gate beneath it.
+fn delivered_through<'a>(
+    tree: &'a Tree,
+    at: usize,
+    delivery: &Delivery,
+    wanted: impl Fn(&Status) -> bool,
+) -> (Vec<PullRequest<'a>>, bool) {
+    let counts = |node: &Node| {
+        wanted(&node.status)
+            && !delivery
+                .outside_key
+                .as_ref()
+                .is_some_and(|key| node.metadata.get(key).map(String::as_str) == Some("true"))
+    };
+    let pull_request = |node: &Node| {
+        counts(node)
+            && node.row.text("await_type").as_deref() == Some(gate::PULL_REQUEST)
+            && !node.metadata.contains_key(gate::AWAITS)
+    };
+    let mut gates = Vec::new();
+    let mut through_a_step = false;
+    for below in dependency_links(tree, at) {
+        let dependency = &tree.beads[below];
+        if pull_request(dependency) {
+            gates.push(PullRequest::of(dependency));
+        } else if counts(dependency) && is_outcome_step(dependency, delivery) {
+            through_a_step = true;
+            gates.extend(
+                dependencies(tree, below)
+                    .filter(|gate| pull_request(gate))
+                    .map(PullRequest::of),
+            );
+        }
+    }
+    (gates, through_a_step)
+}
+
+/// Whether `node` is a molecule's outcome step, as the setup labels one. A
+/// gate can be one.
+fn is_outcome_step(node: &Node, delivery: &Delivery) -> bool {
+    delivery
+        .outcome_label
+        .as_ref()
+        .is_some_and(|label| node.labels.contains(label))
+}
+
 impl<'a> DependencyListing<'a> {
     /// Each bead in the trees is kept as `only` says, and written without
     /// its description where `brief`. Its unmet dependencies are written
-    /// whether or not they are kept.
-    pub fn of(snapshot: &'a Snapshot, named: &[BeadKey], only: &Only, brief: bool) -> Self {
+    /// whether or not they are kept. `delivery` says which gates and steps
+    /// deliver a bead.
+    pub fn of(
+        snapshot: &'a Snapshot,
+        named: &[BeadKey],
+        only: &Only,
+        brief: bool,
+        delivery: &Delivery,
+    ) -> Self {
         let mut ready = Vec::new();
         let mut ready_gates = Vec::new();
+        let mut delivered = Vec::new();
+        let mut in_delivery = Vec::new();
         let mut waiting = Vec::new();
         let keeps = only.keeping(snapshot);
         let mut reached: Vec<_> = dependency_trees(snapshot, named)
@@ -305,8 +399,18 @@ impl<'a> DependencyListing<'a> {
             if node.ready && node.status == Status::Open {
                 if node.issue_type == "gate" {
                     ready_gates.push(InTree::of(node, brief));
-                } else {
-                    ready.push(InTree::of(node, brief));
+                    continue;
+                }
+                match delivered_through(tree, at, delivery, Status::is_closed) {
+                    (pull_requests, through_a_step)
+                        if through_a_step || !pull_requests.is_empty() =>
+                    {
+                        delivered.push(Delivering {
+                            bead: InTree::of(node, brief),
+                            pull_requests,
+                        })
+                    }
+                    _ => ready.push(InTree::of(node, brief)),
                 }
                 continue;
             }
@@ -326,16 +430,28 @@ impl<'a> DependencyListing<'a> {
                     .cmp(b.project)
                     .then_with(|| numeric_id_order(a.id, b.id))
             });
-            waiting.push(Waiting {
+            let bead = Waiting {
                 bead: InTree::of(node, brief),
                 unmet_dependencies: unmet,
-            });
+            };
+            let (pull_requests, _) =
+                delivered_through(tree, at, delivery, |status| !status.is_finished());
+            if pull_requests.is_empty() || is_outcome_step(node, delivery) {
+                waiting.push(bead);
+            } else {
+                in_delivery.push(Delivering {
+                    bead,
+                    pull_requests,
+                });
+            }
         }
         DependencyListing {
             generated_at: snapshot.generated_at,
             agents: &snapshot.agents,
             ready,
             ready_gates,
+            delivered,
+            in_delivery,
             waiting,
             failed_projects: &snapshot.failed_projects,
             unread_trees: unread_trees(snapshot)
@@ -387,11 +503,17 @@ fn dependency_trees<'a>(
 /// The beads hung beneath the one at `at` that it waits on by a blocking
 /// edge.
 fn dependencies(tree: &Tree, at: usize) -> impl Iterator<Item = &Node> {
+    dependency_links(tree, at).map(|below| &tree.beads[below])
+}
+
+/// Where in `tree` each bead the one at `at` waits on by a blocking edge
+/// sits.
+fn dependency_links(tree: &Tree, at: usize) -> impl Iterator<Item = usize> + '_ {
     let node = &tree.beads[at];
     tree.children[at]
         .iter()
-        .map(|link| &tree.beads[link.bead])
-        .filter(move |below| waits_on(node, below))
+        .map(|link| link.bead)
+        .filter(move |&below| waits_on(node, &tree.beads[below]))
 }
 
 /// Whether `node` holds a blocking edge on `below`. A link in the tree

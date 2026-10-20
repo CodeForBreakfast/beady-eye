@@ -30,6 +30,8 @@ pub struct Config {
     #[serde(default)]
     pub join: Join,
     #[serde(default)]
+    pub delivery: Delivery,
+    #[serde(default)]
     pub changes: Changes,
     #[serde(default)]
     pub watcher: Watcher,
@@ -677,6 +679,18 @@ pub struct Join {
     pub pane_key: String,
 }
 
+/// How a setup marks the beads that deliver work through a pull request.
+/// Neither is bd's, so neither has a default.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Delivery {
+    /// The metadata key that marks a `gh:pr` gate as some other effort's
+    /// pull request, where it holds `true`.
+    pub outside_key: Option<String>,
+    /// The label that marks a molecule's outcome step.
+    pub outcome_label: Option<String>,
+}
+
 /// Where `bdi` watches for something saying a project's work has moved on.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
@@ -995,6 +1009,7 @@ impl Config {
             badges: Vec::new(),
             anomalies: Anomalies::default(),
             join: Join::default(),
+            delivery: Delivery::default(),
             changes: Changes::default(),
             watcher: Watcher::default(),
             gates: Gates::default(),

@@ -176,6 +176,9 @@ any project, without following parent links. It lists the `ready` beads, the
 `ready_gates` apart from them, and every other bead as `waiting`, with the
 `unmet_dependencies` it still waits on. So
 `bdi --beads dun-7 | jq '.ready[].id'` is what can start now towards `dun-7`.
+A bead held by an open pull request's gate is listed `in_delivery` instead,
+and a ready bead whose pull request has merged is listed `delivered`, to close
+rather than start. Each names its `pull_requests`.
 
 ## Several trackers
 

@@ -64,6 +64,10 @@ render = "⏸ in review"
 [join]
 pane_key = "agent_pane"
 
+[delivery]
+outside_key = "borrowed"
+outcome_label = "landed"
+
 [changes]
 socket = "/run/user/1000/beady-eye/changes.sock"
 covered_for_seconds = 60
@@ -712,6 +716,25 @@ link under mouse capture.
 
 `pane_key` is the metadata key that names the herdr pane an agent sits in. It
 ties an agent to its bead exactly.
+
+## `[delivery]`
+
+How your setup marks the beads that deliver work through a pull request.
+`bdi --beads <bead>` reads them to say which beads in the tree are delivered
+and which are in delivery. Neither key has a default, because neither is
+bd's.
+
+`outside_key` is the metadata key that marks a `gh:pr` gate as another
+effort's pull request, where it holds `true`. Such a gate holds a bead back
+without putting it in delivery, and its close delivers nothing. Unset, no
+gate is another effort's.
+
+`outcome_label` is the label that marks a molecule's outcome step, the step
+the bead it delivers waits on. A bead waiting on one is in delivery through
+the gates the step waits on, and is delivered once the step closes. Unset, no
+step is an outcome step, and a bead waiting on one waits on it as on any
+other bead. A formula whose outcome step is the `gh:pr` gate itself needs no
+label.
 
 ## `[changes]`
 
