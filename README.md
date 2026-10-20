@@ -160,8 +160,10 @@ exits.
 it is ready, what blocks it, the agent on it, and its labels and description.
 Unlike `bd ready`, it counts a blocker in another project, so
 `bdi --beads | jq '.beads[] | select(.ready)'` is the work that waits on
-nothing. With `--all-projects`, `select(.labels | index("human"))` picks out
-every project's beads labelled `human` in one query.
+nothing. `--label`, `--type`, `--assignee` and `--parent` trim the list as
+they trim `bd ready`, and never change whether a bead is ready. So
+`bdi --beads --all-projects --label human` is every project's beads labelled
+`human` in one query.
 
 `bdi --beads --ready` writes only the beads the ready list draws, in its
 order, as `in_progress` and `ready`. So `bdi --beads --ready | jq '.ready[].id'`
