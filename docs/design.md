@@ -2911,6 +2911,7 @@ choosing what to start rather than drawing a tree:
       "agent": null,
       "badges": [],
       "labels": ["human"],
+      "parent": { "project": "summit-works", "id": "smt-4kd3p" },
       "description": "Guard the key in the parser, the store, or both?"
     }
   ],
@@ -2938,7 +2939,12 @@ answer held and why, as the tree's node does, so a blocker in a project the
 run did not read is reported as not read. `labels` and `description` are as
 bd reported them: a bead with no labels has an empty array, and one with no description
 has `null`. bdi gives no label a meaning, so a reader wanting the beads
-labelled `human` asks for them with `--label human`.
+labelled `human` asks for them with `--label human`. `parent` is the bead
+this one hangs beneath by its parent-child edge, keyed
+`{ "project", "id" }`, and `null` for a bead that hangs beneath none.
+`--brief` leaves `description` out of every bead, as `bd ready --brief`
+leaves out its free text, so a reader that never reads it gets a smaller
+document.
 
 `--label`, `--type`, `--assignee` and `--parent` keep only the beads that
 match, each as the `bd ready` option of the same name does: every label

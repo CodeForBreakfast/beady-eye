@@ -118,7 +118,7 @@ struct Cli {
 
     /// Emit each unfinished bead once as JSON: whether it is ready, what
     /// blocks it in its own project or another, which blockers no project it
-    /// read holds and why, the agent on it, and its
+    /// read holds and why, the agent on it, and its parent,
     /// labels, description, created date and metadata. Beads with no live agent in their tree are
     /// listed too. With --ready, list only the beads the ready list draws, as
     /// in_progress and ready, in the order it draws them. With a bead named,
@@ -151,6 +151,11 @@ struct Cli {
     /// at any depth. Write it as a bead named beside bdi is written.
     #[arg(long, value_name = "BEAD-ID", requires = "each_bead")]
     parent: Option<String>,
+
+    /// Under --beads, leave each bead's description out, as bd's --brief
+    /// does.
+    #[arg(long, requires = "each_bead")]
+    brief: bool,
 
     /// Draw every tree, including those with no live agent.
     #[arg(long)]
@@ -424,7 +429,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
         let snapshot = read_for_each_bead(&cfg, &RealRunner, EnvironmentCache::here(), Utc::now());
         println!(
             "{}",
-            beads_document(&snapshot, cli.ready, &cfg.roots.named_beads(), &only)?
+            beads_document(
+                &snapshot,
+                cli.ready,
+                &cfg.roots.named_beads(),
+                &only,
+                cli.brief
+            )?
         );
         return Ok(ExitCode::SUCCESS);
     }
@@ -563,19 +574,26 @@ fn read_for_each_bead(
 
 /// What `bdi --beads` writes: the dependency trees of the beads `named`
 /// where it names any, or else every unfinished bead, or under `--ready`
-/// the beads the ready list draws, in its order, each kept as `only` says.
+/// the beads the ready list draws, in its order, each kept as `only` says
+/// and without its description where `brief`.
 fn beads_document(
     snapshot: &Snapshot,
     ready: bool,
     named: &[BeadKey],
     only: &Only,
+    brief: bool,
 ) -> serde_json::Result<String> {
     if !named.is_empty() {
-        serde_json::to_string_pretty(&DependencyListing::of(snapshot, named, only))
+        serde_json::to_string_pretty(&DependencyListing::of(snapshot, named, only, brief))
     } else if ready {
-        serde_json::to_string_pretty(&ReadyListing::of(snapshot, ready_list(snapshot), only))
+        serde_json::to_string_pretty(&ReadyListing::of(
+            snapshot,
+            ready_list(snapshot),
+            only,
+            brief,
+        ))
     } else {
-        serde_json::to_string_pretty(&Listing::of(snapshot, only))
+        serde_json::to_string_pretty(&Listing::of(snapshot, only, brief))
     }
 }
 
@@ -1916,8 +1934,8 @@ kadath = ["kad-11"]
             let listed = read_for_each_bead(&cfg, &without_text, None, noon());
 
             assert_eq!(
-                serde_json::to_value(Listing::of(&listed, &Only::default())).unwrap(),
-                serde_json::to_value(Listing::of(&everything, &Only::default())).unwrap()
+                serde_json::to_value(Listing::of(&listed, &Only::default(), false)).unwrap(),
+                serde_json::to_value(Listing::of(&everything, &Only::default(), false)).unwrap()
             );
             assert_eq!(
                 trees_without_finished_text(&listed),
@@ -1968,9 +1986,10 @@ kadath = ["kad-11"]
         };
 
         let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
-        let written: serde_json::Value =
-            serde_json::from_str(&beads_document(&snapshot, true, &[], &Only::default()).unwrap())
-                .unwrap();
+        let written: serde_json::Value = serde_json::from_str(
+            &beads_document(&snapshot, true, &[], &Only::default(), false).unwrap(),
+        )
+        .unwrap();
 
         let ids = |section: &str| -> Vec<&str> {
             written[section]
@@ -2066,6 +2085,7 @@ kadath = ["kad-11"]
             cli.ready,
             &[],
             &only,
+            cli.brief,
         )?)?)
     }
 
@@ -2166,5 +2186,67 @@ kadath = ["kad-11"]
 
         let both = celephais_trimmed_by(&["--parent", "cel-1", "--label", "human"]).unwrap();
         assert_eq!(ids_in(&both, "beads"), ["cel-1.1", "cel-1.1.1"]);
+    }
+
+    /// Each bead names the bead it hangs beneath by its project and id, so a
+    /// reader can place it in its tree, and a root names none.
+    #[test]
+    fn each_bead_names_its_parent() {
+        let written = celephais_trimmed_by(&[]).unwrap();
+        let parents: Vec<_> = written["beads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bead| (bead["id"].as_str().unwrap(), &bead["parent"]))
+            .collect();
+
+        let celephais = |id: &str| serde_json::json!({"project": "celephais", "id": id});
+        assert_eq!(
+            parents,
+            [
+                ("cel-1", &serde_json::Value::Null),
+                ("cel-1.1", &celephais("cel-1")),
+                ("cel-1.1.1", &celephais("cel-1.1")),
+                ("cel-1.2", &celephais("cel-1")),
+                ("cel-2", &serde_json::Value::Null),
+            ]
+        );
+        let ready = celephais_trimmed_by(&["--ready"]).unwrap();
+        assert_eq!(ready["ready"][0]["parent"], celephais("cel-1.1"));
+    }
+
+    /// As `bd ready --brief`: every bead is written without its
+    /// description, and with everything else it says.
+    #[test]
+    fn brief_leaves_each_description_out() {
+        for (listed, sections) in [
+            (&[][..], &["beads"][..]),
+            (&["--ready"], &["in_progress", "ready"]),
+        ] {
+            let full = celephais_trimmed_by(listed).unwrap();
+            let brief = celephais_trimmed_by(&[listed, &["--brief"]].concat()).unwrap();
+            for section in sections {
+                let mut described = full[section].as_array().unwrap().clone();
+                for bead in &mut described {
+                    bead.as_object_mut().unwrap().remove("description");
+                }
+                assert_eq!(brief[section], serde_json::json!(described), "{section}");
+            }
+            assert!(
+                full["beads"]
+                    .as_array()
+                    .into_iter()
+                    .chain(full["ready"].as_array())
+                    .flatten()
+                    .all(|bead| bead["description"].is_string()),
+                "{full}"
+            );
+        }
+    }
+
+    #[test]
+    fn brief_is_taken_only_beside_beads() {
+        assert!(Cli::try_parse_from(["bdi", "--beads", "--brief"]).is_ok());
+        assert!(Cli::try_parse_from(["bdi", "--brief"]).is_err());
     }
 }

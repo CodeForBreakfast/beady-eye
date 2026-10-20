@@ -1575,7 +1575,8 @@ fn listing_over(cfg: &Config, runner: &Canned, trackers: &Fakes) -> Value {
         Filter::LiveAgents,
         now(),
     );
-    serde_json::to_value(Listing::of(&snapshot, &Only::default())).expect("the listing serialises")
+    serde_json::to_value(Listing::of(&snapshot, &Only::default(), false))
+        .expect("the listing serialises")
 }
 
 /// The one project's listing.

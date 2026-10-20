@@ -157,7 +157,8 @@ is also what to reach for when stdout is not a terminal; `bdi | cat` says so and
 exits.
 
 `bdi --beads` writes each unfinished bead once instead of the forest: whether
-it is ready, what blocks it, the agent on it, and its labels and description.
+it is ready, what blocks it, the agent on it, its parent, and its labels and
+description. `--brief` leaves the descriptions out.
 Unlike `bd ready`, it counts a blocker in another project, so
 `bdi --beads | jq '.beads[] | select(.ready)'` is the work that waits on
 nothing. `--label`, `--type`, `--assignee` and `--parent` trim the list as

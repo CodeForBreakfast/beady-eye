@@ -44,7 +44,11 @@ struct Listed<'a> {
     agent: Option<&'a AgentRef>,
     badges: &'a [Badged],
     labels: &'a [String],
-    description: Option<String>,
+    parent: Option<BeadKey>,
+    /// Left out where the reader asked for none, and null where the bead
+    /// says nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<Option<String>>,
     created_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     defer_until: Option<DateTime<Utc>>,
@@ -57,8 +61,10 @@ struct Listed<'a> {
     metadata: &'a BTreeMap<String, String>,
 }
 
-impl<'a> From<&'a Node> for Listed<'a> {
-    fn from(node: &'a Node) -> Self {
+impl<'a> Listed<'a> {
+    /// `node` as the listing writes it, without its description where
+    /// `brief`.
+    fn of(node: &'a Node, brief: bool) -> Self {
         Listed {
             project: &node.project,
             id: &node.id,
@@ -72,7 +78,8 @@ impl<'a> From<&'a Node> for Listed<'a> {
             agent: node.agent.as_ref(),
             badges: &node.badges,
             labels: &node.labels,
-            description: node.description().filter(|said| !said.is_empty()),
+            parent: node.parent_key(),
+            description: (!brief).then(|| node.description().filter(|said| !said.is_empty())),
             created_at: node.created_at,
             defer_until: node.defer_until,
             due_at: node.due_at,
@@ -93,7 +100,7 @@ struct UnreadTree<'a> {
 }
 
 impl<'a> Listing<'a> {
-    pub fn of(snapshot: &'a Snapshot, only: &Only) -> Self {
+    pub fn of(snapshot: &'a Snapshot, only: &Only, brief: bool) -> Self {
         let mut once: BTreeMap<BeadKey, &Node> = BTreeMap::new();
         for node in snapshot.collected.iter().flat_map(|tree| &tree.beads) {
             if !node.status.is_finished() {
@@ -104,7 +111,7 @@ impl<'a> Listing<'a> {
         let mut beads: Vec<Listed> = once
             .into_values()
             .filter(|node| keeps(node))
-            .map(Listed::from)
+            .map(|node| Listed::of(node, brief))
             .collect();
         beads.sort_by(|a, b| {
             a.project
@@ -136,13 +143,18 @@ pub struct ReadyListing<'a> {
 
 impl<'a> ReadyListing<'a> {
     /// `sections` is the ready list's two sections, as the view picks them.
-    pub fn of(snapshot: &'a Snapshot, sections: [Vec<&'a Node>; 2], only: &Only) -> Self {
+    pub fn of(
+        snapshot: &'a Snapshot,
+        sections: [Vec<&'a Node>; 2],
+        only: &Only,
+        brief: bool,
+    ) -> Self {
         let keeps = only.keeping(snapshot);
         let [in_progress, ready] = sections.map(|beads| {
             beads
                 .into_iter()
                 .filter(|node| keeps(node))
-                .map(Listed::from)
+                .map(|node| Listed::of(node, brief))
                 .collect()
         });
         ReadyListing {
@@ -225,18 +237,19 @@ impl<'a> Gate<'a> {
 }
 
 impl<'a> InTree<'a> {
-    fn of(node: &'a Node) -> Self {
+    fn of(node: &'a Node, brief: bool) -> Self {
         InTree {
-            bead: Listed::from(node),
+            bead: Listed::of(node, brief),
             gate: Gate::of(node),
         }
     }
 }
 
 impl<'a> DependencyListing<'a> {
-    /// Each bead in the trees is kept as `only` says, and its unmet
-    /// dependencies are written whether or not they are kept.
-    pub fn of(snapshot: &'a Snapshot, named: &[BeadKey], only: &Only) -> Self {
+    /// Each bead in the trees is kept as `only` says, and written without
+    /// its description where `brief`. Its unmet dependencies are written
+    /// whether or not they are kept.
+    pub fn of(snapshot: &'a Snapshot, named: &[BeadKey], only: &Only, brief: bool) -> Self {
         let mut ready = Vec::new();
         let mut ready_gates = Vec::new();
         let mut waiting = Vec::new();
@@ -256,9 +269,9 @@ impl<'a> DependencyListing<'a> {
             }
             if node.ready && node.status == Status::Open {
                 if node.issue_type == "gate" {
-                    ready_gates.push(InTree::of(node));
+                    ready_gates.push(InTree::of(node, brief));
                 } else {
-                    ready.push(InTree::of(node));
+                    ready.push(InTree::of(node, brief));
                 }
                 continue;
             }
@@ -279,7 +292,7 @@ impl<'a> DependencyListing<'a> {
                     .then_with(|| numeric_id_order(a.id, b.id))
             });
             waiting.push(Waiting {
-                bead: InTree::of(node),
+                bead: InTree::of(node, brief),
                 unmet_dependencies: unmet,
             });
         }
@@ -377,16 +390,7 @@ impl Only {
             .collected
             .iter()
             .flat_map(|tree| &tree.beads)
-            .filter_map(|node| {
-                let parent = node.parent.as_ref()?;
-                Some((
-                    node.key(),
-                    BeadKey {
-                        project: parent.project.as_ref().unwrap_or(&node.project).clone(),
-                        id: parent.id.clone(),
-                    },
-                ))
-            })
+            .filter_map(|node| Some((node.key(), node.parent_key()?)))
             .collect();
         move |node: &Node| {
             self.labels.iter().all(|label| node.labels.contains(label))
