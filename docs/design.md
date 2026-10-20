@@ -111,7 +111,6 @@ coin one — and say so.**
 | gate, resolve | beads (`bd gate`) | a bead that blocks another until something outside the tracker happens, and closing one. A gh:pr gate waits on a pull request, a gh:issue gate on an issue closing, a gh:release gate on a repository publishing a release, a gh:run gate on a workflow run finishing, a timer gate on its timeout running out after it was made, and a bead gate on the bead its await id names closing, and `bdi gates` is named for these. bd accepts any gate type, and its own `bd gate check` passes over gh:issue and gh:release |
 | delivery | GitHub (webhooks) | one webhook request GitHub sends, with its event and signature in headers. `bdi gates --listen` takes a `pull_request` delivery as a trigger to settle the pull request it names, and nothing more |
 | **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has done what the gate waits for: resolve the gate on a merge, or on leaving draft for a gate with `awaits=ready_for_review`, or on approval for a gate with `awaits=approved`, and on a close without a merge, or on failing checks or a conflict with the base on the head commit, or on a submitted review, or on a comment on its conversation, comment on the beads it holds back, once each. Act on a gh:issue gate once its issue closes, on a gh:release gate once its repository publishes a release after the gate was made, on a gh:run gate once its run succeeds or is skipped, on a timer gate once its deadline passes, and on a bead gate once its bead closes, in its own tracker or another the config names, by resolving the gate. beads has `bd gate check`, which resolves a gh:pr gate on a merge alone and acts on a close through an escalation `bdi` does not make |
-| **pseudopod** | *coined* | one thing `bdi` does in the world rather than reads from it: a limb grown for one job, the way a shoggoth grows one from its own body. There are four: `bdi bd`'s `human respond`, which carries a person's answer to the bead that asked, its `defer`, which puts a bead off until a date a person chose, its `comments add`, which puts a person's comment on a bead, and `bdi gates`, which settles gates. Changing the work itself stays `bd`'s. Neither project names it: beads writes for whoever runs `bd`, and herdr writes to no tracker. |
 | **cell** | *coined* | one named thing a bead's row draws, in whichever block the row's layout puts it: a built-in — `glyph`, `id`, `title`, `badges`, `progress`, `agent`, `anomalies` — or one badge as `badge.<key>`. Notes and the fold's counts are not cells; they trail the state whatever the layout says. Neither project names the parts of a drawn row. |
 
 ### Three different things are called "blocked"
@@ -144,7 +143,7 @@ Anything workflow-specific is expressed as configuration, not code. See
 
 - **No repairs to bd.** It surfaces drift; you act. A viewer that also repairs
   state is a second writer racing whatever else manages these beads. Its
-  pseudopods write only what someone outside `bdi` has already decided: a
+  writes carry only what someone outside `bdi` has already decided: a
   person's answer, the date a person chose to put a bead off until, the comment
   a person wrote, and what GitHub says became of a pull request.
 - **No Noctalia widget.** The JSON contract is specified here; no widget ships
@@ -1378,9 +1377,9 @@ environment_command = "nix develop -c"
   does not rest on it, and reaches the same answer for less: it looks for the
   `.envrc` and runs nothing where there is none, so the pass-through is a
   property `bdi` no longer needs rather than one it relies on.
-- **Every command line `bdi` spells is a read except where a pseudopod
-  writes, and that is a property of the subcommands `collect/` composes and of
-  nothing beside them.** The first pseudopod is `bdi bd`'s `bd human respond`,
+- **Every command line `bdi` spells is a read except where `bdi bd`
+  carries a person's reply or gates settles a gate, and that is a property of
+  the subcommands `collect/` composes and of nothing beside them.** The first write is `bdi bd`'s `bd human respond`,
   which records a person's answer in the tracker of the project it names,
   without `--readonly`. The second is `bdi bd`'s `bd defer --until`, which
   puts a bead off until the date a person chose, the same way. The third is
@@ -1682,7 +1681,7 @@ measurements above were taken against throwaway embedded stores, and this one
 cannot be taken against a live tracker.
 
 So `bdi` claims what it can hold: every command line it spells is a read, bar
-the writes its four pseudopods make. It
+the writes `bdi bd` and gates make. It
 does not claim a tracker comes back
 unchanged. The pinned bd leaves its lock
 files behind even on a read it answers, and a bd older than 1.3.0 migrates
