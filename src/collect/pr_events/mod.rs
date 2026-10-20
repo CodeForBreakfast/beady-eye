@@ -9,6 +9,7 @@
 //! [`Until`] beside one.
 
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 
 use crate::collect::gates::PullRequest;
 use crate::collect::github::Observed;
@@ -16,6 +17,7 @@ use crate::collect::webhook::Said;
 use crate::model::gate::Until;
 
 mod approved;
+mod behind;
 mod checks_failed;
 mod closed_unmerged;
 mod commented;
@@ -77,6 +79,38 @@ impl Telling {
 /// it so that [`fields`] asks it once.
 const HEAD_COMMIT: &str = "headRef{target{...on Commit{committedDate oid url}}}";
 
+/// The base branch's latest commit, selected alike by every event that reads
+/// it so that [`fields`] asks it once.
+const BASE_COMMIT: &str = "baseRef{target{...on Commit{committedDate}}}";
+
+/// The later of the pull request's head commit and its base's latest commit,
+/// read from [`HEAD_COMMIT`] and [`BASE_COMMIT`]. GitHub does not say when a
+/// conflict began or a head fell behind, but either has held since both
+/// commits stood. It may have held longer against an older base, which tells
+/// a gate made in between. Nothing where either branch has gone.
+fn head_and_base_since(observed: &Observed) -> Result<Option<DateTime<Utc>>, serde_json::Error> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Fields {
+        head_ref: Option<Ref>,
+        base_ref: Option<Ref>,
+    }
+    #[derive(Deserialize)]
+    struct Ref {
+        target: Target,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Target {
+        committed_date: Option<DateTime<Utc>>,
+    }
+    let committed = |branch: Option<Ref>| branch.and_then(|branch| branch.target.committed_date);
+    let Fields { head_ref, base_ref } = Fields::deserialize(&observed.fields)?;
+    Ok(committed(head_ref)
+        .zip(committed(base_ref))
+        .map(|(head, base)| head.max(base)))
+}
+
 /// Every event `bdi gates` acts on.
 pub const EVENTS: &[Event] = &[
     ready_for_review::EVENT,
@@ -86,6 +120,7 @@ pub const EVENTS: &[Event] = &[
     checks_failed::EVENT,
     reviewed::EVENT,
     conflicting::EVENT,
+    behind::EVENT,
     commented::EVENT,
     inline_commented::EVENT,
     new_head::EVENT,

@@ -1374,6 +1374,102 @@ mod tests {
         }
     }
 
+    /// An open pull request whose head `oid` GitHub gives the merge state
+    /// `status`.
+    fn merge_state_as(status: &str, oid: &str) -> String {
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"mergeStateStatus":"{status}","headRefOid":"{oid}"}}"#
+        )
+    }
+
+    fn behind_telling(bead: &str, oid: &str) -> String {
+        written(
+            "arkham",
+            &format!(
+                "comments add {bead} The head of pull request example/ark#7, {oid}, is behind \
+                 its base, so the gh:pr gate waiting on it stays open."
+            ),
+        )
+    }
+
+    fn behind_base(bead: &str, done: Done) -> Act {
+        act(bead, "is behind its base", done)
+    }
+
+    #[test]
+    fn a_behind_head_comments_on_each_held_back_bead_once_for_each_head_commit() {
+        let told = Told::default();
+        let settle_7 = |oid: &str| {
+            let runner = captured(FakeRunner::default(), "arkham")
+                .with(&viewed(7), &answer(7, &merge_state_as("BEHIND", oid)))
+                .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+                .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+                .with(
+                    &behind_telling("ark-2ud", oid),
+                    "Comment added to ark-2ud\n",
+                )
+                .with(
+                    &behind_telling("ark-45c", oid),
+                    "Comment added to ark-45c\n",
+                );
+            let settled = settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                EVENTS,
+                &pr(7),
+                &told,
+            );
+            (acts(settled), writes(&runner))
+        };
+
+        let (first, first_writes) = settle_7("a1b2c3");
+        let (same, same_writes) = settle_7("a1b2c3");
+        let (_, behind_again) = settle_7("d4e5f6");
+
+        assert_eq!(
+            first,
+            [
+                behind_base("ark-2ud", Done::Commented),
+                behind_base("ark-45c", Done::Commented)
+            ]
+        );
+        assert_eq!(first_writes.len(), 2);
+        assert_eq!(
+            same,
+            [
+                behind_base("ark-2ud", Done::AlreadyCommented),
+                behind_base("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(same_writes, Vec::<String>::new());
+        assert_eq!(
+            behind_again,
+            [
+                behind_telling("ark-2ud", "d4e5f6"),
+                behind_telling("ark-45c", "d4e5f6")
+            ]
+        );
+    }
+
+    /// The runner panics on any call it was not given, so a tracker asked
+    /// anything at all fails the test.
+    #[test]
+    fn a_pull_request_github_does_not_say_is_behind_asks_no_tracker_anything() {
+        for status in ["CLEAN", "UNSTABLE", "BLOCKED", "UNKNOWN"] {
+            let runner = FakeRunner::default().with(
+                &queried(7..=7),
+                &answer(7, &merge_state_as(status, "a1b2c3")),
+            );
+
+            assert_eq!(
+                settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
+                [Settled::NothingNew { unseen: vec![] }],
+                "{status}"
+            );
+        }
+    }
+
     /// A gate the approval closed no longer holds anything back, so a bead
     /// only it held back is not told that it stays open.
     #[test]
