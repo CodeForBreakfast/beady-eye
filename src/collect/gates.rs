@@ -896,10 +896,11 @@ mod tests {
     /// The query about #`number` in `repo`, asking what [`EVENTS`] read.
     fn viewed_in(repo: &str, number: u64) -> String {
         let (owner, name) = repo.split_once('/').expect("the repo names its owner");
+        let fields = pr_events::fields(EVENTS);
         format!(
             "gh api graphql -f owner={owner} -f name={name} -f query=query($owner:String!,\
              $name:String!){{repository(owner:$owner,name:$name){{pr{number}:pullRequest\
-             (number:{number}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}}}}}"
+             (number:{number}){{state {fields}}}}}}}"
         )
     }
 
@@ -952,7 +953,7 @@ mod tests {
             &Cli::new(runner),
             runner,
             projects,
-            &EVENTS,
+            EVENTS,
             pr,
             &Told::default(),
         )
@@ -1198,7 +1199,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &pr(7),
                 &told,
             );
@@ -1286,7 +1287,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &pr(7),
                 &told,
             );
@@ -1524,7 +1525,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &pr(7),
                 &told,
             );
@@ -1580,7 +1581,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &awaiting,
                 &told,
             )
@@ -1695,7 +1696,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &pr(7),
                 &told,
             );
@@ -1748,7 +1749,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &awaiting,
                 &told,
             )
@@ -1831,7 +1832,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &looked,
                 &told,
             )
@@ -1870,7 +1871,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &pr(7),
                 &told,
             )
@@ -1906,7 +1907,7 @@ mod tests {
                 &Cli::new(&runner),
                 &runner,
                 &[project("arkham")],
-                &EVENTS,
+                EVENTS,
                 &pr(7),
                 &told,
             );
@@ -2459,7 +2460,7 @@ mod tests {
             &Cli::new(runner),
             runner,
             &[project("arkham")],
-            &EVENTS,
+            EVENTS,
             awaited,
             &Told::default(),
         )
@@ -2513,8 +2514,9 @@ mod tests {
 
     /// The query about each of `numbers` in example/ark.
     fn queried(numbers: RangeInclusive<u64>) -> String {
+        let fields = pr_events::fields(EVENTS);
         let asked: Vec<String> = numbers
-            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state isDraft mergeCommit{{oid}} reviewDecision commits(last:1){{nodes{{commit{{oid statusCheckRollup{{state contexts(last:100){{nodes{{...on CheckRun{{conclusion completedAt}} ...on StatusContext{{state createdAt}}}}}}}}}}}}}} reviews(last:5){{nodes{{url state submittedAt author{{login}}}}}} mergeable headRefOid headRef{{target{{...on Commit{{committedDate}}}}}} baseRef{{target{{...on Commit{{committedDate}}}}}} comments(last:5){{nodes{{url createdAt author{{login}}}}}}}}"))
+            .map(|n| format!("pr{n}:pullRequest(number:{n}){{state {fields}}}"))
             .collect();
         format!(
             "gh api graphql -f owner=example -f name=ark -f query=query($owner:String!,\
@@ -2559,7 +2561,7 @@ mod tests {
             &Cli::new(&runner),
             &runner,
             &[project("arkham")],
-            &EVENTS,
+            EVENTS,
             &awaited,
             &Told::default(),
         )
@@ -2705,7 +2707,7 @@ mod tests {
         let runner = captured(FakeRunner::default(), "arkham")
             .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
-        let events = [EVENTS.as_slice(), &[ALSO_ON_MERGE]].concat();
+        let events = [EVENTS, &[ALSO_ON_MERGE]].concat();
 
         let settled = settle(
             &Cli::new(&runner),

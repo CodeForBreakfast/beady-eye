@@ -488,11 +488,11 @@ mod tests {
         assert_eq!(spent_until(&runner, None), Ok(None));
     }
 
-    const FIELDS: &str = "isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}} reviews(last:5){nodes{url state submittedAt author{login}}} mergeable headRefOid headRef{target{...on Commit{committedDate}}} baseRef{target{...on Commit{committedDate}}} comments(last:5){nodes{url createdAt author{login}}}";
+    const FIELDS: &str = "isDraft mergeCommit{oid}";
 
     const QUERY: &str = "query=query($owner:String!,$name:String!){repository(owner:$owner,\
-                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}} reviews(last:5){nodes{url state submittedAt author{login}}} mergeable headRefOid headRef{target{...on Commit{committedDate}}} baseRef{target{...on Commit{committedDate}}} comments(last:5){nodes{url createdAt author{login}}}} \
-                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid} reviewDecision commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){nodes{...on CheckRun{conclusion completedAt} ...on StatusContext{state createdAt}}}}}}} reviews(last:5){nodes{url state submittedAt author{login}}} mergeable headRefOid headRef{target{...on Commit{committedDate}}} baseRef{target{...on Commit{committedDate}}} comments(last:5){nodes{url createdAt author{login}}}}}}";
+                         name:$name){pr7:pullRequest(number:7){state isDraft mergeCommit{oid}} \
+                         pr42:pullRequest(number:42){state isDraft mergeCommit{oid}}}}";
 
     fn observed(state: State, fields: &str) -> Observed {
         Observed {
