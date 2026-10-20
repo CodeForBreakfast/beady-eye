@@ -1133,6 +1133,13 @@ mod tests {
                           personal access token"
                         .to_string(),
                 },
+                Found::Unseen {
+                    pull_request: pr(7),
+                    happening: "has passing checks",
+                    why: "GitHub would not let gh read commits: Resource not accessible by \
+                          personal access token"
+                        .to_string(),
+                },
                 settling("arkham"),
             ]
         );

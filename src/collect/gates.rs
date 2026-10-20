@@ -1147,12 +1147,19 @@ mod tests {
         assert_eq!(writes(&runner), [telling("arkham", "ark-45c")]);
     }
 
+    /// An open pull request whose head commit `oid` has `rollup` as GitHub's
+    /// rollup of its checks, and `decision` as its review decision, both JSON
+    /// values.
+    fn head_checks_deciding(decision: &str, rollup: &str, oid: &str) -> String {
+        format!(
+            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":{decision},"commits":{{"nodes":[{{"commit":{{"oid":"{oid}","statusCheckRollup":{rollup}}}}}]}}}}"#
+        )
+    }
+
     /// An open pull request whose head commit `oid` failed its checks, with
     /// `decision` as GitHub's review decision, a JSON value.
     fn checks_failed_deciding(decision: &str, oid: &str) -> String {
-        format!(
-            r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":{decision},"commits":{{"nodes":[{{"commit":{{"oid":"{oid}","statusCheckRollup":{{"state":"FAILURE"}}}}}}]}}}}"#
-        )
+        head_checks_deciding(decision, r#"{"state":"FAILURE"}"#, oid)
     }
 
     fn checks_failed_on(oid: &str) -> String {
@@ -1261,15 +1268,84 @@ mod tests {
         );
     }
 
+    fn checks_passed_telling(project: &str, bead: &str, oid: &str) -> String {
+        written(
+            project,
+            &format!(
+                "comments add {bead} The checks on {oid}, the head of pull request \
+                 example/ark#7, passed."
+            ),
+        )
+    }
+
+    fn passing_checks(bead: &str, done: Done) -> Act {
+        act(bead, "has passing checks", done)
+    }
+
+    /// The second look finds the same head commit passing, which each bead
+    /// has already been told.
+    #[test]
+    fn passed_checks_comment_once_on_each_held_back_bead_and_leave_the_gate_open() {
+        let told = Told::default();
+        let settle_7 = || {
+            let passed = head_checks_deciding("null", r#"{"state":"SUCCESS"}"#, "a1b2c3");
+            let runner = captured(FakeRunner::default(), "arkham")
+                .with(&viewed(7), &answer(7, &passed))
+                .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+                .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+                .with(
+                    &checks_passed_telling("arkham", "ark-2ud", "a1b2c3"),
+                    "Comment added to ark-2ud\n",
+                )
+                .with(
+                    &checks_passed_telling("arkham", "ark-45c", "a1b2c3"),
+                    "Comment added to ark-45c\n",
+                );
+            let settled = settle(
+                &Cli::new(&runner),
+                &runner,
+                &[project("arkham")],
+                EVENTS,
+                &pr(7),
+                &told,
+            );
+            (acts(settled), writes(&runner))
+        };
+
+        let (first, first_writes) = settle_7();
+        let (again, again_writes) = settle_7();
+
+        assert_eq!(
+            first,
+            [
+                passing_checks("ark-2ud", Done::Commented),
+                passing_checks("ark-45c", Done::Commented)
+            ]
+        );
+        assert_eq!(
+            first_writes,
+            [
+                checks_passed_telling("arkham", "ark-2ud", "a1b2c3"),
+                checks_passed_telling("arkham", "ark-45c", "a1b2c3")
+            ]
+        );
+        assert_eq!(
+            again,
+            [
+                passing_checks("ark-2ud", Done::AlreadyCommented),
+                passing_checks("ark-45c", Done::AlreadyCommented)
+            ]
+        );
+        assert_eq!(again_writes, Vec::<String>::new());
+    }
+
     /// The runner panics on any call it was not given, so a tracker asked
     /// anything at all fails the test.
     #[test]
-    fn checks_that_have_not_failed_ask_no_tracker_anything() {
-        for rollup in ["null", r#"{"state":"SUCCESS"}"#, r#"{"state":"PENDING"}"#] {
-            let passing = format!(
-                r#"{{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviewDecision":null,"commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{rollup}}}}}]}}}}"#
-            );
-            let runner = FakeRunner::default().with(&queried(7..=7), &answer(7, &passing));
+    fn checks_that_have_neither_failed_nor_passed_ask_no_tracker_anything() {
+        for rollup in ["null", r#"{"state":"PENDING"}"#, r#"{"state":"EXPECTED"}"#] {
+            let pending = head_checks_deciding("null", rollup, "a1b2c3");
+            let runner = FakeRunner::default().with(&queried(7..=7), &answer(7, &pending));
 
             assert_eq!(
                 settled_together(&runner, &[awaited(7, Until::Merged, &["ark-2ud"])]),
@@ -2264,8 +2340,13 @@ mod tests {
         let (acts, unseen) = acted_and_unseen(settled(&runner, &[project("arkham")], &pr(42)));
 
         assert_eq!(acts, [merged("ark-0i5")]);
-        assert_eq!(happenings(&unseen), ["has failing checks"]);
-        assert!(unseen[0].why.contains("cannot read"), "{}", unseen[0].why);
+        assert_eq!(
+            happenings(&unseen),
+            ["has failing checks", "has passing checks"]
+        );
+        for unseen in &unseen {
+            assert!(unseen.why.contains("cannot read"), "{}", unseen.why);
+        }
     }
 
     /// Each of `pulls`, a number and its fields, as GitHub answers a token
@@ -2298,13 +2379,17 @@ mod tests {
     /// #42 merged, as [`MERGED`] has it, without its braces.
     const MERGED_FIELDS: &str = r#""state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}"#;
 
-    fn refused_the_checks() -> Unseen {
-        Unseen {
-            happening: "has failing checks",
-            why: "GitHub would not let gh read commits: Resource not accessible by personal \
-                  access token"
-                .to_string(),
-        }
+    /// Each event reading the checks, unseen for GitHub refusing them.
+    fn refused_the_checks() -> Vec<Unseen> {
+        ["has failing checks", "has passing checks"]
+            .into_iter()
+            .map(|happening| Unseen {
+                happening,
+                why: "GitHub would not let gh read commits: Resource not accessible by personal \
+                      access token"
+                    .to_string(),
+            })
+            .collect()
     }
 
     /// gh prints GitHub's whole answer, then exits 1 for the error in it. The
@@ -2324,7 +2409,7 @@ mod tests {
 
         assert_eq!(
             acted_and_unseen(settled),
-            (vec![merged("ark-0i5")], vec![refused_the_checks()])
+            (vec![merged("ark-0i5")], refused_the_checks())
         );
     }
 
@@ -2355,7 +2440,7 @@ mod tests {
             acted_and_unseen(settled),
             (
                 vec![act("ark-eb1", "is approved", Done::Resolved)],
-                vec![refused_the_checks()]
+                refused_the_checks()
             )
         );
     }
@@ -2384,12 +2469,12 @@ mod tests {
         assert_eq!(
             first,
             Settled::NothingNew {
-                unseen: vec![refused_the_checks()]
+                unseen: refused_the_checks()
             }
         );
         assert_eq!(
             acted_and_unseen(second),
-            (vec![merged("ark-0i5")], vec![refused_the_checks()])
+            (vec![merged("ark-0i5")], refused_the_checks())
         );
     }
 
