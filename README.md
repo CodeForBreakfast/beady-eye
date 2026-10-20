@@ -3,8 +3,10 @@
 ![A screen-printed cosmic-horror poster: a colossal eye with a red pupil hangs in a green-black sky, tentacles trailing away behind it, while a line of small robots below hauls a chain of glowing beads under its gaze.](docs/images/beady-eye-hero.png)
 
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
-tracker you point it at. `bd` is all it needs. It will also look at whatever
-else you leave lying about, and each thing you let it see gives it more to do.
+tracker you point it at. It shows you, live, what every agent is doing across
+your projects, and it tells agents and scripts when the beads they wait on
+change. `bd` is all it needs. It will also look at whatever else you leave
+lying about, and each thing you let it see gives it more to do.
 
 - **It shows you the work.** Each tracker's work is drawn as a tree, and a
   bead waiting on another project's work has that work drawn beneath it,
@@ -13,7 +15,8 @@ else you leave lying about, and each thing you let it see gives it more to do.
 - **It wakes whoever is waiting.** `bdi watch` keeps watch over every tracker
   at once, and tells anything connected to it the moment a bead it watches
   changes. Add Claude Code with the beady-eye plugin, and a sleeping session
-  is woken by the bead it waits on.
+  is woken by the bead it waits on. A script on the watcher's socket is sent
+  each bead it watches as a line of JSON, and again each time it changes.
 - **It settles waits on pull requests, issues and releases.** Add `gh`, and
   `bdi gates` asks GitHub where each awaited pull request stands. A merge ends
   the bead's wait. A failing check, a conflict, a review or a comment is passed
@@ -28,32 +31,18 @@ them, and the band at the foot is what the selected one's pane is saying.
 an agent claimed it, herdr has no pane for that agent, and the eye says so. It
 has seen a pane die on a Tuesday before.
 
-The other two jobs happen while you are looking elsewhere. When a pull request
-moves, the news finds whoever waits on it:
+The waking happens while you are looking elsewhere. Anything that can write to
+a bead can reach whoever watches that bead, and neither side needs to know the
+other. The bead is the address, and the tracker keeps the message long after
+the listener has gone. The view you just saw is one of the listeners.
 
-```text
-    a pull request merges, fails a check, or is reviewed
-                              │
-                              ▼
-    bdi gates closes the bead's wait, or comments on the bead
-                              │
-                              ▼
-    bdi watch sees the bead change in its tracker
-                              │
-               ┌──────────────┴──────────────┐
-               ▼                             ▼
-    the plugin wakes the            the view redraws
-    Claude Code session             in front of you
-    waiting on that bead
-```
+![A diagram in the poster's colours. Above, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds gates, the first of the writers on the left, which ships with beady-eye: bdi gates closes a gate once what it awaits says the wait is over, and comments on the bead when its pull request has news. Below it are the other writers: people with bd, other agents, and scripts and CI. Each writer has an arrow into a beads tracker, and the one from gates is a tentacle. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which wakes the session that waits; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. A second tentacle curls from the scripts back into the tracker, labelled the way back: a person answers, defers or comments, with bdi bd.](docs/images/writers-and-listeners.svg)
 
-Nobody polls GitHub by hand, and no agent sleeps through the answer.
-
-The eye only looks. Waking an agent is still looking, only louder. When there
-is something it must do, it grows a pseudopod for the job, the way a shoggoth
-grows a limb from its own body. `bdi gates` is one, and Pseudopods, below,
-has the rest. Changing the work itself is still `bd`'s job, and the eye finds
-this arrangement acceptable.
+The tentacles are beady-eye's own reach into the tracker. `bdi gates` is one
+of the writers. It reads GitHub, the clock and other beads, and closes the
+gates whose wait is over. `bdi bd` is the way back. Whatever showed a person
+the bead passes on their answer, deferral or comment, and `bdi bd` writes it
+to the bead. Writing back, below, has both.
 
 ## Summoning
 
@@ -100,7 +89,7 @@ $ nix run github:CodeForBreakfast/beady-eye
 From your own flake, pin a release tag and take the package or the overlay:
 
 ```nix
-inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.32.0";
+inputs.beady-eye.url = "github:CodeForBreakfast/beady-eye/v0.32.1";
 
 beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
@@ -323,10 +312,12 @@ $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
 what a bead carries, credentials, extra roots, intervals, the light theme, and
 the socket you can poke to say a tracker changed so the eye stops polling it.
 
-## Pseudopods
+## Writing back
 
-Each pseudopod does one job in a tracker the config names, with that project's
-own `bd`, and nothing else.
+beady-eye writes to a tracker in two ways.
+`bdi bd` writes what a person decided: an answer, a deferral or a comment.
+`bdi gates` writes what GitHub, the clock and other beads say about a wait.
+Each works in a tracker the config names, with that project's own `bd`.
 
 `bdi bd <project> human respond <bead> <response>` carries a person's answer
 to a bead that asked for one. It runs that project's `bd` the way the eye reads

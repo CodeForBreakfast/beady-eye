@@ -1,9 +1,9 @@
 [package]
 name = "beady-eye"
-version = "0.32.0"
+version = "0.32.1"
 edition = "2021"
 rust-version = "1.88"
-description = "One unblinking eye over all your beads trackers. Shows the trees of work and the agents on them, wakes an agent when a bead it waits on changes, and settles pull-request waits from GitHub."
+description = "Shows you, live, what every agent is doing across your projects, and tells agents and scripts when the beads they wait on change. One watcher reads every beads tracker you configure, and feeds a terminal view, Claude Code sessions and JSON for scripts."
 repository = "https://github.com/CodeForBreakfast/beady-eye"
 license = "Apache-2.0"
 readme = "README.md"

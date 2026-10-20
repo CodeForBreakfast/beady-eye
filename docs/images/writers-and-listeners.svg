@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="600" viewBox="0 0 980 600" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13">
+<title>Writers change beads in a tracker, bdi watch sees each change, and tells the Claude Code plugin, the view and scripts on its socket. One writer is gates, which ships with beady-eye and reads GitHub, the clock and other beads. From the listener side, a person answers, defers or comments with bdi bd.</title>
+<defs>
+  <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#efe2c4"/>
+  </marker>
+  <marker id="tentacle-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#5fae9b"/>
+  </marker>
+</defs>
+<rect width="100%" height="100%" rx="10" fill="#0e1d1a"/>
+
+<text x="30" y="44" font-family="Georgia, 'Times New Roman', serif" font-size="21" fill="#efe2c4">Anything that writes to a bead reaches whoever watches it</text>
+
+<!-- sources gates reads -->
+<text x="30" y="84" font-size="12" letter-spacing="2" fill="#5fae9b">SOURCES</text>
+<g fill="none" stroke="#a9b8ad" stroke-width="1.5" stroke-dasharray="4 3">
+  <rect x="30" y="96" width="250" height="48" rx="6"/>
+  <rect x="294" y="96" width="140" height="48" rx="6"/>
+  <rect x="448" y="96" width="200" height="48" rx="6"/>
+</g>
+<g fill="#efe2c4">
+  <text x="44" y="116" font-size="15">GitHub</text>
+  <text x="44" y="134" fill="#a9b8ad">pull requests, issues, releases, runs</text>
+  <text x="308" y="116" font-size="15">the clock</text>
+  <text x="308" y="134" fill="#a9b8ad">a timer's deadline</text>
+  <text x="462" y="116" font-size="15">other beads</text>
+  <text x="462" y="134" fill="#a9b8ad">in any configured tracker</text>
+</g>
+<g stroke="#efe2c4" stroke-width="1.5" fill="none" marker-end="url(#head)">
+  <path d="M155 144 L155 184"/>
+  <path d="M364 144 L270 184"/>
+  <path d="M548 144 L310 186"/>
+</g>
+
+<!-- writers -->
+<text x="30" y="176" font-size="12" letter-spacing="2" fill="#5fae9b">WRITERS</text>
+<rect x="30" y="188" width="300" height="92" rx="8" fill="#13302a" stroke="#5fae9b" stroke-width="2"/>
+<text x="44" y="210" font-size="15" fill="#efe2c4">gates</text>
+<text x="316" y="210" text-anchor="end" font-size="11" letter-spacing="2" fill="#5fae9b">SHIPS WITH BEADY-EYE</text>
+<g fill="#efe2c4">
+  <text x="44" y="230"><tspan font-family="ui-monospace, Menlo, Consolas, monospace">bdi gates</tspan> closes a gate once what it</text>
+  <text x="44" y="247">awaits says the wait is over, and comments</text>
+  <text x="44" y="264">on the bead when its pull request has news</text>
+</g>
+<g fill="none" stroke="#5fae9b" stroke-width="1.5">
+  <rect x="30" y="296" width="300" height="52" rx="6"/>
+  <rect x="30" y="366" width="300" height="52" rx="6"/>
+  <rect x="30" y="436" width="300" height="52" rx="6"/>
+</g>
+<g fill="#efe2c4">
+  <text x="44" y="318" font-size="15">people</text>
+  <text x="44" y="337" fill="#a9b8ad">with <tspan font-family="ui-monospace, Menlo, Consolas, monospace">bd</tspan></text>
+  <text x="44" y="388" font-size="15">other agents</text>
+  <text x="44" y="407" fill="#a9b8ad">claiming, commenting, closing</text>
+  <text x="44" y="458" font-size="15">scripts and CI</text>
+  <text x="44" y="477" fill="#a9b8ad">any job that can reach the tracker</text>
+</g>
+<path d="M330 234 C372 234, 400 246, 410 276" stroke="#5fae9b" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#tentacle-head)"/>
+<g stroke="#efe2c4" stroke-width="1.5" fill="none" marker-end="url(#head)">
+  <path d="M330 322 L364 334"/>
+  <path d="M330 392 L364 380"/>
+  <path d="M330 462 L364 426"/>
+</g>
+
+<!-- the way back, drawn under the boxes it passes behind -->
+<path d="M860 464 C860 545, 470 545, 458 446" stroke="#5fae9b" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#tentacle-head)"/>
+
+<!-- the tracker -->
+<rect x="368" y="280" width="174" height="160" rx="8" fill="#13302a" stroke="#efe2c4" stroke-width="1.5"/>
+<text x="455" y="310" text-anchor="middle" font-size="15" fill="#efe2c4">a beads tracker</text>
+<g fill="#5fae9b">
+  <circle cx="401" cy="360" r="7"/><circle cx="419" cy="360" r="7"/><circle cx="437" cy="360" r="7"/>
+  <circle cx="455" cy="360" r="7"/><circle cx="473" cy="360" r="7"/><circle cx="491" cy="360" r="7"/>
+  <circle cx="509" cy="360" r="7"/>
+</g>
+<text x="455" y="410" text-anchor="middle" fill="#a9b8ad">the bead is the address,</text>
+<text x="455" y="427" text-anchor="middle" fill="#a9b8ad">and it keeps the message</text>
+
+<!-- the watcher -->
+<path d="M542 360 L566 360" stroke="#efe2c4" stroke-width="1.5" fill="none" marker-end="url(#head)"/>
+<path d="M572 360 Q636 300 700 360 Q636 420 572 360 Z" fill="#efe2c4"/>
+<circle cx="636" cy="360" r="23" fill="#2f5e55"/>
+<circle cx="636" cy="360" r="10" fill="#c43a2c"/>
+<circle cx="629" cy="352" r="4" fill="#efe2c4"/>
+<text x="636" y="298" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="15" fill="#efe2c4">bdi watch</text>
+<text x="636" y="316" text-anchor="middle" fill="#a9b8ad">one per machine</text>
+
+<!-- listeners -->
+<text x="764" y="254" font-size="12" letter-spacing="2" fill="#5fae9b">LISTENERS</text>
+<g stroke="#efe2c4" stroke-width="1.5" fill="none" marker-end="url(#head)">
+  <path d="M700 360 L758 296"/>
+  <path d="M700 360 L758 366"/>
+  <path d="M700 360 L758 436"/>
+</g>
+<g fill="none" stroke="#5fae9b" stroke-width="1.5">
+  <rect x="764" y="270" width="200" height="52" rx="6"/>
+  <rect x="764" y="340" width="200" height="52" rx="6"/>
+  <rect x="764" y="410" width="200" height="52" rx="6"/>
+</g>
+<g fill="#efe2c4">
+  <text x="778" y="292" font-size="15">the Claude Code plugin</text>
+  <text x="778" y="311" fill="#a9b8ad">wakes the session that waits</text>
+  <text x="778" y="362" font-size="15">the view</text>
+  <text x="778" y="381" fill="#a9b8ad">redraws the trees of work</text>
+  <text x="778" y="432" font-size="15">scripts</text>
+  <text x="778" y="451" fill="#a9b8ad">a line of JSON per change</text>
+</g>
+
+<!-- the way back -->
+<text x="660" y="562" text-anchor="middle" fill="#5fae9b" font-size="12" letter-spacing="2">THE WAY BACK</text>
+<text x="660" y="582" text-anchor="middle" fill="#efe2c4">a person answers, defers or comments, with <tspan font-family="ui-monospace, Menlo, Consolas, monospace">bdi bd</tspan></text>
+</svg>
