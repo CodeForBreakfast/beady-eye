@@ -245,10 +245,7 @@ impl<'a> DependencyListing<'a> {
                 }
                 continue;
             }
-            let mut unmet: Vec<Unmet> = tree.children[at]
-                .iter()
-                .filter(|link| link.edge == Edge::Blocks)
-                .map(|link| &tree.beads[link.bead])
+            let mut unmet: Vec<Unmet> = dependencies(tree, at)
                 .filter(|blocker| !blocker.status.is_finished())
                 .map(|blocker| Unmet {
                     project: &blocker.project,
@@ -314,12 +311,33 @@ fn dependency_trees<'a>(
             going.extend(
                 tree.children[at]
                     .iter()
-                    .filter(|link| link.edge == Edge::Blocks)
-                    .map(|link| link.bead),
+                    .map(|link| link.bead)
+                    .filter(|&below| waits_on(node, &tree.beads[below])),
             );
         }
     }
     reached
+}
+
+/// The beads hung beneath the one at `at` that it waits on by a blocking
+/// edge.
+fn dependencies(tree: &Tree, at: usize) -> impl Iterator<Item = &Node> {
+    let node = &tree.beads[at];
+    tree.children[at]
+        .iter()
+        .map(|link| &tree.beads[link.bead])
+        .filter(move |below| waits_on(node, below))
+}
+
+/// Whether `node` holds a blocking edge on `below`. A link in the tree
+/// carries one edge, and names a child its parent's even where the parent
+/// also waits on it, so the bead's own dependencies are what say so.
+fn waits_on(node: &Node, below: &Node) -> bool {
+    node.depends_on.iter().any(|on| {
+        on.edge == Edge::Blocks
+            && on.id == below.id
+            && on.project.as_deref().unwrap_or(&node.project) == below.project
+    })
 }
 
 fn unread_trees(snapshot: &Snapshot) -> Vec<UnreadTree<'_>> {

@@ -29,9 +29,9 @@ path = "/srv/work/dunwich"
 dunwich = ["dun-404"]
 "#;
 
-/// The archive's reopening waits on five beads and a closed one, and has a
-/// child of its own that nothing waits on. One of the five is open and
-/// waits on nothing, one is being worked, one waits on a pull request's
+/// The archive's reopening waits on six beads and a closed one, and has a
+/// child of its own that nothing waits on. One of the six is another child
+/// of its own, one is open and waits on nothing, one is being worked, one waits on a pull request's
 /// gate, one waits on a bead in dunwich's tracker, and one is deferred.
 /// The cataloguing is ready and nothing waits on it, so it is outside the
 /// tree.
@@ -43,8 +43,12 @@ const ARKHAM: &str = r#"[
      {"depends_on_id":"ark-4","type":"blocks"},
      {"depends_on_id":"ark-5","type":"blocks"},
      {"depends_on_id":"ark-7","type":"blocks"},
-     {"depends_on_id":"ark-8","type":"blocks"}]},
+     {"depends_on_id":"ark-8","type":"blocks"},
+     {"depends_on_id":"ark-1.2","type":"blocks"}]},
   {"id":"ark-1.1","title":"paint the reading room","status":"open","parent":"ark-1",
+   "priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-1","type":"parent-child"}]},
+  {"id":"ark-1.2","title":"label the shelves","status":"open","parent":"ark-1",
    "priority":2,"issue_type":"task",
    "dependencies":[{"depends_on_id":"ark-1","type":"parent-child"}]},
   {"id":"ark-2","title":"air the stacks","status":"open","priority":2,"issue_type":"task"},
@@ -84,8 +88,13 @@ fn trackers_beside(dunwich: Fake) -> Fakes {
         .with(
             "arkham",
             Fake::holding(parse_beads(ARKHAM).expect("the rows parse"))
-                .ready(["ark-1.1", "ark-2", "ark-3", "ark-5", "ark-6", "ark-9"])
-                .blocked("ark-1", &["ark-2", "ark-3", "ark-4", "ark-5", "ark-7"])
+                .ready([
+                    "ark-1.1", "ark-1.2", "ark-2", "ark-3", "ark-5", "ark-6", "ark-9",
+                ])
+                .blocked(
+                    "ark-1",
+                    &["ark-1.2", "ark-2", "ark-3", "ark-4", "ark-5", "ark-7"],
+                )
                 .blocked("ark-4", &["ark-6"]),
         )
         .with("dunwich", dunwich)
@@ -140,9 +149,10 @@ fn entry<'a>(document: &'a Value, list: &str, id: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("{id} is in {list}: {document}"))
 }
 
-/// The tree reaches into dunwich and down to its barge, and never down the
-/// archive's parent link to the reading room. The cataloguing is ready but
-/// outside the tree, and the swept porch is finished.
+/// The tree reaches into dunwich and down to its barge, and never down a
+/// parent link alone, so it reaches the shelves the archive also waits on
+/// and not the reading room. The cataloguing is ready but outside the tree,
+/// and the swept porch is finished.
 #[test]
 fn the_tree_is_the_bead_and_everything_it_depends_on_in_any_tracker() {
     let document = tree_of(&["arkham:ark-1"]);
@@ -156,6 +166,7 @@ fn the_tree_is_the_bead_and_everything_it_depends_on_in_any_tracker() {
         every,
         [
             "arkham:ark-1",
+            "arkham:ark-1.2",
             "arkham:ark-2",
             "arkham:ark-3",
             "arkham:ark-4",
@@ -175,7 +186,10 @@ fn the_tree_is_the_bead_and_everything_it_depends_on_in_any_tracker() {
 fn the_ready_beads_are_open_with_every_dependency_finished_in_any_tracker() {
     let document = tree_of(&["arkham:ark-1"]);
 
-    assert_eq!(keys(&document, "ready"), ["arkham:ark-2", "dunwich:dun-2"]);
+    assert_eq!(
+        keys(&document, "ready"),
+        ["arkham:ark-1.2", "arkham:ark-2", "dunwich:dun-2"]
+    );
 }
 
 /// A gate free to close is something to wait for rather than to start, so
@@ -216,7 +230,10 @@ fn a_waiting_bead_names_each_unmet_dependency_with_its_project_and_status() {
         .iter()
         .map(|dependency| dependency["id"].as_str().unwrap())
         .collect();
-    assert_eq!(unmet, ["ark-2", "ark-3", "ark-4", "ark-5", "ark-7"]);
+    assert_eq!(
+        unmet,
+        ["ark-1.2", "ark-2", "ark-3", "ark-4", "ark-5", "ark-7"]
+    );
 }
 
 /// A bead being worked or deferred waits on its status, which it carries,
