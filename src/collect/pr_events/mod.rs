@@ -19,6 +19,7 @@ mod closed_unmerged;
 mod commented;
 mod conflicting;
 mod merged;
+mod new_head;
 mod ready_for_review;
 mod reviewed;
 
@@ -69,6 +70,10 @@ impl Telling {
     }
 }
 
+/// The pull request's head commit, selected alike by every event that reads
+/// it so that [`fields`] asks it once.
+const HEAD_COMMIT: &str = "headRef{target{...on Commit{committedDate abbreviatedOid url}}}";
+
 /// Every event `bdi gates` acts on.
 pub const EVENTS: &[Event] = &[
     ready_for_review::EVENT,
@@ -79,6 +84,7 @@ pub const EVENTS: &[Event] = &[
     reviewed::EVENT,
     conflicting::EVENT,
     commented::EVENT,
+    new_head::EVENT,
 ];
 
 /// The fields of GraphQL's `PullRequest` that `events` read between them,
