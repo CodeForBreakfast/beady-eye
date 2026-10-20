@@ -2936,7 +2936,14 @@ answer held and why, as the tree's node does, so a blocker in a project the
 run did not read is reported as not read. `labels` and `description` are as
 bd reported them: a bead with no labels has an empty array, and one with no description
 has `null`. bdi gives no label a meaning, so a reader wanting the beads
-labelled `human` filters for them. `created_at` is the bead's created
+labelled `human` asks for them with `--label human`.
+
+`--label`, `--type`, `--assignee` and `--parent` keep only the beads that
+match, each as the `bd ready` option of the same name does: every label
+named, the type, the assignee, and every bead beneath the parent at any
+depth. They choose which beads are written and never what is written of
+them, so a bead kept waits on whatever it waited on, including a blocker
+they left out. They narrow `--ready`'s two lists the same way. `created_at` is the bead's created
 date, `null` where the row has none. `metadata` is the bead's whole metadata
 object, empty where it has none, each value as the text it prints as. bdi reads
 no key's meaning, so a reader wanting one key picks it out of the object.

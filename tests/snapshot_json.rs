@@ -6,7 +6,7 @@ use beady_eye::collect::herdr::Herdr;
 use beady_eye::collect::run::{FailureKind, RunFailure};
 use beady_eye::collect::tracker::testing::{Asked, Fake, Fakes};
 use beady_eye::config::Config;
-use beady_eye::model::snapshot::{Filter, Listing};
+use beady_eye::model::snapshot::{Filter, Listing, Only};
 use beady_eye::model::types::Bead;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -1575,7 +1575,7 @@ fn listing_over(cfg: &Config, runner: &Canned, trackers: &Fakes) -> Value {
         Filter::LiveAgents,
         now(),
     );
-    serde_json::to_value(Listing::of(&snapshot)).expect("the listing serialises")
+    serde_json::to_value(Listing::of(&snapshot, &Only::default())).expect("the listing serialises")
 }
 
 /// The one project's listing.
