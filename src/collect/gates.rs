@@ -220,7 +220,8 @@ fn settle(
     told: &Told,
 ) -> Settled {
     let observed = observe(gh, pr, &pr_events::fields(events));
-    settled(cli, projects, events, pr, observed, None, None, told)
+    let read = observed.map(|observed| outcomes(events, pr, &observed, None));
+    settled(cli, projects, pr, read, None, told)
 }
 
 /// The most pull requests one query asks about. The query is one argument to
@@ -309,16 +310,9 @@ fn settle_asked_together<'a>(
         ),
     };
     asked.iter().zip(observed).map(move |(each, observed)| {
-        settled(
-            cli,
-            projects,
-            events,
-            &each.pull_request,
-            observed,
-            Some(&each.waiting),
-            said,
-            told,
-        )
+        let pr = &each.pull_request;
+        let read = observed.map(|observed| outcomes(events, pr, &observed, said));
+        settled(cli, projects, pr, read, Some(&each.waiting), told)
     })
 }
 
@@ -329,13 +323,10 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 }
 
 /// Settle every open gh:pr gate waiting on `pr` in each of `projects`, doing
-/// what each of `events` asks of what GitHub said. Where a look found the
-/// gates `waiting` on `pr`, an event's outcome is acted on only where it is
-/// new to them: a gate waiting for it, or a bead held back that has not been
-/// told it. Only the trackers holding those gates are then read again.
-///
-/// What a delivery `said` is told after every event has done what it asks,
-/// so a gate a merge closed does not tell it.
+/// what each outcome `read` of what GitHub said asks. Where a look found the
+/// gates `waiting` on `pr`, an outcome is acted on only where it is new to
+/// them: a gate waiting for it, or a bead held back that has not been told
+/// it. Only the trackers holding those gates are then read again.
 ///
 /// Correct however many times it runs: a closed gate is no longer read, and
 /// a bead already told is not told again. A pull request GitHub did not
@@ -344,21 +335,15 @@ fn observe(gh: &dyn Runner, pr: &PullRequest, fields: &str) -> Result<Observed, 
 fn settled(
     cli: &Cli,
     projects: &[Project],
-    events: &[Event],
     pr: &PullRequest,
-    observed: Result<Observed, RunFailure>,
+    read: Result<Outcomes, RunFailure>,
     waiting: Option<&[Waiting]>,
-    said: Option<&Said>,
     told: &Told,
 ) -> Settled {
-    let (mut outcomes, unseen) = match observed {
-        Ok(observed) => outcomes(events, pr, &observed),
+    let (outcomes, unseen) = match read {
+        Ok(read) => read,
         Err(failure) => return Settled::Unread(failure),
     };
-    if let Some(said) = said {
-        let (happening, telling) = pr_events::delivered(said, pr);
-        outcomes.push((happening, Outcome::Tell(vec![telling])));
-    }
     let new: Vec<(&'static str, Outcome)> = outcomes
         .into_iter()
         .filter(|(_, outcome)| waiting.is_none_or(|waiting| is_new(outcome, waiting, told)))
@@ -388,13 +373,20 @@ fn settled(
     }
 }
 
+/// What each event makes of a pull request, beside what it did, and each
+/// event GitHub's answer did not let it see.
+type Outcomes = (Vec<(&'static str, Outcome)>, Vec<Unseen>);
+
 /// What each of `events` makes of `pr`, beside what it did, as the event
-/// says it, and each event GitHub's answer did not let it see.
+/// says it, and each event GitHub's answer did not let it see. What a
+/// delivery `said` comes after every event, so a gate a merge closed does not
+/// tell it.
 fn outcomes(
     events: &[Event],
     pr: &PullRequest,
     observed: &Observed,
-) -> (Vec<(&'static str, Outcome)>, Vec<Unseen>) {
+    said: Option<&Said>,
+) -> Outcomes {
     let mut seen = Vec::new();
     let mut unseen = Vec::new();
     for event in events {
@@ -418,6 +410,10 @@ fn outcomes(
                 why,
             }),
         }
+    }
+    if let Some(said) = said {
+        let (happening, telling) = pr_events::delivered(said, pr);
+        seen.push((happening, Outcome::Tell(vec![telling])));
     }
     (seen, unseen)
 }
