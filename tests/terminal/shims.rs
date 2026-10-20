@@ -157,8 +157,8 @@ impl ShimmedTracker {
         }
         answer("query ephemeral=true --limit 0 --json", &[]);
         answer("query ephemeral=true --all --limit 0 --json", &[]);
-        answer("ready --limit 0 --json", &[]);
-        answer("ready --type gate --limit 0 --json", &[]);
+        answer("ready --brief --limit 0 --json", &[]);
+        answer("ready --type gate --brief --limit 0 --json", &[]);
         answer("blocked --json", &[]);
     }
 

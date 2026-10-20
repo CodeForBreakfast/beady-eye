@@ -46,7 +46,7 @@ fn ready_with_a_root_opens_on_that_roots_ready_list() {
     let home = a_home_naming_one_project("ready-list");
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_ARCHIVE);
-    tracker.answers_with("ready --limit 0 --json", READY);
+    tracker.answers_with("ready --brief --limit 0 --json", READY);
     let mut bdi = Driven::bdi_with_arguments(
         ROWS,
         COLS,

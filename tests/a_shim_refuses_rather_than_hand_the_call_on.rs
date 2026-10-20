@@ -315,7 +315,8 @@ const NAMES_NO_TRACKER: [&str; 2] = ["where", "--json"];
 
 /// The statement `bdi` probes the tracker with, spelled as
 /// `src/collect/bd.rs` composes it.
-const THE_PROBE: &str = "SELECT table_name AS name, dolt_hashof_table(table_name) AS h \
+const THE_PROBE: &str = "SELECT table_name AS name, dolt_hashof_table(table_name) AS h, \
+     dolt_hashof('HEAD') AS head \
      FROM information_schema.tables WHERE table_schema = database() \
      AND table_type = 'BASE TABLE' AND table_name <> 'leases' ORDER BY table_name";
 
