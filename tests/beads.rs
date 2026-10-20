@@ -2,10 +2,14 @@
 //! because the wiring is main's: the listing itself is tested beside the
 //! JSON contract, and a flag that never reached it would leave those green.
 
+mod terminal;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value};
+use terminal::a_home_naming_one_project_settled;
+use terminal::shims::ShimmedTracker;
 
 /// Both projects point at the directory holding the config, which holds no
 /// tracker, so each one bdi reads fails and says so under its own name.
@@ -85,6 +89,50 @@ fn a_bead_named_beside_beads_writes_its_dependency_tree() {
         assert_eq!(tree[list], json!([]), "{list} in {tree}");
     }
     assert_eq!(projects_failed(&tree), ["arkham", "kadath"]);
+}
+
+/// A bead waiting on a closed step that the config's `[delivery]` labels an
+/// outcome is delivered, which only that config can say.
+#[test]
+fn a_bead_named_beside_beads_is_delivered_as_the_config_says() {
+    let home = a_home_naming_one_project_settled(
+        "beads-tree-delivered",
+        "\n[delivery]\noutcome_label = \"landed\"\n",
+    );
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(
+        r#"[
+  {"id":"ark-1","title":"lay the rugs","status":"open","priority":2,"issue_type":"task",
+   "dependencies":[{"depends_on_id":"ark-2","type":"blocks"}]},
+  {"id":"ark-2","title":"the rugs are down","status":"closed","priority":2,"issue_type":"task",
+   "labels":["landed"]}
+]"#,
+    );
+    tracker.answers_with(
+        "ready --brief --limit 0 --json",
+        r#"[{"id":"ark-1","title":"lay the rugs","status":"open","issue_type":"task"}]"#,
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .args(["--beads", "arkham:ark-1"])
+        .current_dir(&home)
+        .env("HOME", &home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("BDI_PROJECT")
+        .envs(tracker.environment())
+        .output()
+        .expect("bdi runs");
+    assert!(
+        out.status.success(),
+        "bdi exited {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tree: Value = serde_json::from_slice(&out.stdout).expect("bdi --beads writes JSON");
+
+    assert_eq!(tree["ready"], json!([]), "{tree}");
+    assert_eq!(tree["delivered"][0]["id"], "ark-1", "{tree}");
 }
 
 /// The tree's document already gives its ready beads, so the ready list's

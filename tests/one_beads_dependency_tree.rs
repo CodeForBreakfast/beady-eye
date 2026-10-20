@@ -77,7 +77,8 @@ const ARKHAM: &str = r#"[
 /// The east wing's opening waits on nine beads, each delivered in its own
 /// way. The doors' pull request is open. The windows wait on a molecule's
 /// outcome step, which waits on its pull request's gate. The lamps' pull
-/// request has merged, and so has the molecule the rugs waited on. The brass
+/// request has merged, and so has the molecule the rugs waited on, whose
+/// outcome step waited on a step that is no pull request. The brass
 /// and the hall wait on another effort's pull requests, one open and one
 /// merged, whose gates are marked outside. The ceiling's pull request has
 /// merged, but it waits on the doors too. The airing waits on a timer gate.
@@ -159,9 +160,13 @@ const EAST_WING: &str = r#"[
    "issue_type":"gate","await_type":"gh:pr","await_id":"8",
    "metadata":{"repo":"miskatonic/foundry","borrowed":true}},
   {"id":"ark-mol-1","title":"deliver the rugs","status":"closed","priority":2,"issue_type":"molecule"},
+  {"id":"ark-mol-1.1","title":"the rugs' checks have passed","status":"closed","priority":2,
+   "issue_type":"task","parent":"ark-mol-1",
+   "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"}]},
   {"id":"ark-mol-1.2","title":"the rugs are down","status":"closed","priority":2,"issue_type":"task",
    "labels":["landed"],"parent":"ark-mol-1",
-   "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"}]},
+   "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"},
+                   {"depends_on_id":"ark-mol-1.1","type":"blocks"}]},
   {"id":"ark-mol-1.3","title":"the shelves are dusted","status":"pinned","priority":2,
    "issue_type":"task","labels":["landed"],"parent":"ark-mol-1",
    "dependencies":[{"depends_on_id":"ark-mol-1","type":"parent-child"}]},
