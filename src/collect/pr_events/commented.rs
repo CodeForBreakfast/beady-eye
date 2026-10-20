@@ -1,3 +1,6 @@
+//! Each comment on a pull request, which the beads its gates hold back are
+//! told.
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 

@@ -1,3 +1,6 @@
+//! A pull request whose reviews approve it, which closes the gates waiting
+//! for an approval.
+
 use serde::Deserialize;
 
 use super::{Event, Outcome};

@@ -1,3 +1,6 @@
+//! A pull request closed without being merged, which the beads its gates
+//! hold back are told.
+
 use super::{Event, Outcome, Telling};
 use crate::collect::gates::PullRequest;
 use crate::collect::github::{Observed, State};

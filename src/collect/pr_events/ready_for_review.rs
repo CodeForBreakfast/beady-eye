@@ -1,3 +1,6 @@
+//! A pull request out of draft, which closes the gates waiting for it to be
+//! ready for review.
+
 use serde::Deserialize;
 
 use super::{Event, Outcome};

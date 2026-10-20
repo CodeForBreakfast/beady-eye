@@ -1,3 +1,6 @@
+//! A pull request whose head conflicts with its base, which the beads its
+//! gates hold back are told.
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 

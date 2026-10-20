@@ -1,3 +1,5 @@
+//! A pull request that merged, which closes every gate waiting on it.
+
 use serde::Deserialize;
 
 use super::{Event, Outcome};
