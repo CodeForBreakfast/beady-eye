@@ -245,9 +245,7 @@ pub fn settle_together<'a>(
 ) -> impl Iterator<Item = Settled> + 'a {
     awaited
         .chunks(PULL_REQUESTS_PER_QUERY)
-        .flat_map(move |asked| {
-            settle_asked_together(cli, gh, projects, events, asked, None, told)
-        })
+        .flat_map(move |asked| settle_asked_together(cli, gh, projects, events, asked, None, told))
 }
 
 /// Settle `awaited` as [`settle_together`] settles each pull request, and

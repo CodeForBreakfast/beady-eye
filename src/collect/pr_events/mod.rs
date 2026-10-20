@@ -98,10 +98,9 @@ pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
             reviewed::EVENT.happening,
             reviewed::told(by, pr, state, url),
         ),
-        Said::ChecksFailed { sha } => (
-            checks_failed::EVENT.happening,
-            checks_failed::told(sha, pr),
-        ),
+        Said::ChecksFailed { sha } => {
+            (checks_failed::EVENT.happening, checks_failed::told(sha, pr))
+        }
         Said::Acted {
             event,
             action,

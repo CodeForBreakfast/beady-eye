@@ -279,7 +279,10 @@ fn reviewed(body: &[u8]) -> Option<Said> {
     let state = review.state.to_ascii_lowercase();
     Some(
         if action == "submitted"
-            && matches!(state.as_str(), "approved" | "changes_requested" | "commented")
+            && matches!(
+                state.as_str(),
+                "approved" | "changes_requested" | "commented"
+            )
         {
             Said::Reviewed {
                 by: author(review.user),
@@ -408,10 +411,11 @@ fn check_suite(body: &[u8]) -> Heard {
     let said = saying::<Saying>(body).map(
         |Saying {
              action,
-             check_suite: Concluded {
-                 head_sha,
-                 conclusion,
-             },
+             check_suite:
+                 Concluded {
+                     head_sha,
+                     conclusion,
+                 },
              repository,
              sender,
          }| match conclusion {

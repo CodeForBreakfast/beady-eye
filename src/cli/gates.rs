@@ -376,10 +376,7 @@ fn refused(heard: &Heard) -> Option<&'static str> {
         Heard::Unmeasured => {
             Some("a delivery was refused: it does not give its Content-Length up front")
         }
-        Heard::Healthy
-        | Heard::Settle(_)
-        | Heard::Ignored
-        | Heard::Unknown => None,
+        Heard::Healthy | Heard::Settle(_) | Heard::Ignored | Heard::Unknown => None,
     }
 }
 

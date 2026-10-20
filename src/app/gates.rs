@@ -1602,7 +1602,10 @@ mod tests {
             assert_eq!(again, [], "{event}");
             assert_eq!(
                 comments_added(&runner),
-                [comment_added("ark-2ud", &text), comment_added("ark-45c", &text)],
+                [
+                    comment_added("ark-2ud", &text),
+                    comment_added("ark-45c", &text)
+                ],
                 "{event}"
             );
             let quoting: Vec<String> = runner
@@ -1625,11 +1628,19 @@ mod tests {
             runner = runner.with(&comment_added(bead, &text), "");
         }
 
-        deliver_signed(&mut arkham(), &runner, &signed(event, &body), &Told::default());
+        deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &body),
+            &Told::default(),
+        );
 
         assert_eq!(
             comments_added(&runner),
-            [comment_added("ark-2ud", &text), comment_added("ark-45c", &text)]
+            [
+                comment_added("ark-2ud", &text),
+                comment_added("ark-45c", &text)
+            ]
         );
     }
 
@@ -1644,8 +1655,13 @@ mod tests {
             .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
 
-        let found =
-            deliver_signed(&mut arkham(), &runner, &signed(event, &body), &Told::default()).found;
+        let found = deliver_signed(
+            &mut arkham(),
+            &runner,
+            &signed(event, &body),
+            &Told::default(),
+        )
+        .found;
 
         assert_eq!(found, [settling("arkham")]);
         assert_eq!(comments_added(&runner), Vec::<String>::new());
