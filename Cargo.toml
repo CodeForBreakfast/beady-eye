@@ -1,6 +1,6 @@
 [package]
 name = "beady-eye"
-version = "0.35.0"
+version = "0.35.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Shows you, live, what every agent is doing across your projects, and tells agents and scripts when the beads they wait on change. One watcher reads every beads tracker you configure, and feeds a terminal view, Claude Code sessions and JSON for scripts."
