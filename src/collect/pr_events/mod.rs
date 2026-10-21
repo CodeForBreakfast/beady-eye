@@ -191,8 +191,7 @@ impl Event {
     /// under `name`.
     pub fn needs(&self, name: &str) -> bool {
         let answered_under = |field: &&str| field.split(['(', '{']).next() == Some(name);
-        self.fields.iter().any(&answered_under)
-            && !self.optional.iter().any(answered_under)
+        self.fields.iter().any(&answered_under) && !self.optional.iter().any(answered_under)
     }
 }
 
