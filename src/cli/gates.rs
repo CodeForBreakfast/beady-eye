@@ -85,9 +85,8 @@ pub(super) fn settle(
             ..project.clone()
         })
         .collect();
-    let (heard_by, from_producers) = mpsc::channel();
     let (to_settle, woken) = mpsc::sync_channel(webhook::MOST_WAITING);
-    let heard = wakes_on_change(from_producers, to_settle.clone());
+    let (heard_by, heard) = passing_on(to_settle.clone());
     let covering = changes::Reported::watching(projects.iter().map(|each| each.name.clone()));
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
@@ -229,30 +228,31 @@ impl From<Delivery> for Woken {
     }
 }
 
-/// What producers report, passed on to the loop as it was, with the loop
-/// woken once for each run of reports holding a change. A wake waits for room
-/// behind GitHub's deliveries rather than being dropped, because no other
-/// wake reads a change.
-fn wakes_on_change(
-    reported: mpsc::Receiver<changes::Heard>,
+/// What producers report, kept for the loop as it was, with the loop woken
+/// for each report of a change. A wake waits for room behind GitHub's
+/// deliveries rather than being dropped, because no other wake reads a
+/// change.
+struct Passing {
+    heard: mpsc::Sender<changes::Heard>,
     wake: mpsc::SyncSender<Woken>,
-) -> mpsc::Receiver<changes::Heard> {
+}
+
+impl changes::Report for Passing {
+    fn report(&self, heard: changes::Heard) -> bool {
+        let changed = matches!(heard, changes::Heard::Changed(_));
+        self.heard.send(heard).is_ok() && (!changed || self.wake.send(Woken::Changed).is_ok())
+    }
+}
+
+fn passing_on(wake: mpsc::SyncSender<Woken>) -> (Passing, mpsc::Receiver<changes::Heard>) {
     let (passed_on, heard) = mpsc::channel();
-    std::thread::spawn(move || {
-        while let Ok(first) = reported.recv() {
-            let mut changed = false;
-            for each in std::iter::once(first).chain(reported.try_iter()) {
-                changed |= matches!(each, changes::Heard::Changed(_));
-                if passed_on.send(each).is_err() {
-                    return;
-                }
-            }
-            if changed && wake.send(Woken::Changed).is_err() {
-                return;
-            }
-        }
-    });
-    heard
+    (
+        Passing {
+            heard: passed_on,
+            wake,
+        },
+        heard,
+    )
 }
 
 /// Take every report a producer has made since the last, `now`, so a
@@ -541,6 +541,7 @@ fn fault(fault: &Fault) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collect::changes::Report;
     use crate::collect::gates::PullRequest;
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::webhook::Commit;
@@ -804,22 +805,37 @@ mod tests {
     /// no other wake.
     #[test]
     fn a_change_reported_while_the_loop_has_wakes_waiting_still_wakes_it() {
-        let (report, reported) = mpsc::channel();
         let (wake, woken) = mpsc::sync_channel(1);
         wake.try_send(Woken::Changed).expect("room for one");
-        let heard = wakes_on_change(reported, wake);
+        let (passing, heard) = passing_on(wake);
 
-        report
-            .send(changes::Heard::Changed("arkham".to_string()))
-            .expect("passed on");
+        let reporting = std::thread::spawn(move || {
+            passing.report(changes::Heard::Changed("arkham".to_string()))
+        });
         heard.recv().expect("the report");
-        std::thread::sleep(Duration::from_millis(100));
         woken.recv().expect("the wake already waiting");
 
         assert!(matches!(
             woken.recv_timeout(Duration::from_secs(5)),
             Ok(Woken::Changed)
         ));
+        assert!(reporting.join().expect("the report finishes"));
+    }
+
+    /// The producer is answered once its report is reported, so a delivery
+    /// arriving after the answer settles against what the producer said.
+    #[test]
+    fn a_change_is_heard_and_wakes_the_loop_before_the_producer_is_answered() {
+        let (wake, woken) = mpsc::sync_channel(1);
+        let (passing, heard) = passing_on(wake);
+
+        assert!(passing.report(changes::Heard::Changed("arkham".to_string())));
+
+        assert_eq!(
+            heard.try_recv(),
+            Ok(changes::Heard::Changed("arkham".to_string()))
+        );
+        assert!(matches!(woken.try_recv(), Ok(Woken::Changed)));
     }
 
     #[test]
