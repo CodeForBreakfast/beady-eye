@@ -204,6 +204,16 @@ test('a config whose watcher section is the wrong shape is unreadable, and does 
   )
 })
 
+test('a config whose watcher socket is empty is unreadable, and does not fall back to the runtime directory', async () => {
+  const config = join(aPrivateDirectory(), 'config.toml')
+  writeFileSync(config, '[watcher]\nsocket = ""\n')
+
+  const unreadable = await whereWith(config, '/run/user/1000')
+
+  expect(unreadable).toBeInstanceOf(ConfigUnreadable)
+  expect(unreadable).toMatchObject({ config })
+})
+
 test('a config whose projects are the wrong shape is unreadable', async () => {
   const config = join(aPrivateDirectory(), 'config.toml')
   writeFileSync(config, '[[projects]]\npath = "/srv/harbour"\n')
