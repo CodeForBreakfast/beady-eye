@@ -1428,10 +1428,10 @@ environment_command = "nix develop -c"
   capture is kept on disk, readable by its user alone, because it can hold the
   tracker's password. A later run uses it only where it was captured under the
   same environment `bdi` now hands its children. Then `direnv export json`,
-  handed the kept environment, brings it up to date. It is what a shell's
-  prompt hook runs. It prints nothing where nothing direnv watches has moved,
-  and otherwise reloads the directory and prints what to set and unset, which
-  `bdi` applies as the shell would. direnv's watches cover the `.envrc`, its
+  handed the kept environment, says whether it is current. It is what a
+  shell's prompt hook runs. It prints nothing where nothing direnv watches has
+  moved, and anything it prints has the directory entered afresh. direnv's
+  watches cover the `.envrc`, its
   allow record, and whatever the `.envrc` watches, which is how an edited
   `dotenv` file or a moved flake lock is noticed. Only `direnv exec .` is
   kept. Nothing else can say when what it produced stopped being current, and
@@ -1440,15 +1440,19 @@ environment_command = "nix develop -c"
   trusted is captured afresh. The credential command is never kept and
   answers on every run.
 
-  So a read costs no load while nothing has moved, and one load when
-  something has, the same as before. nix-direnv 3.2.0 refreshes the timestamps
+  The kept capture leaves out `DIRENV_DIFF`. direnv records there what each
+  variable its `.envrc` changed held before, so a variable the `.envrc`
+  overrides carries the value `bdi` inherited, encoded but not protected.
+  Handed a capture without it, direnv measured on 2026-10-21 with direnv
+  2.37.1 still prints nothing for an unchanged directory. It can no longer
+  report a variable an edited `.envrc` stopped setting, which is why a change
+  is not applied and the directory is entered instead.
+
+  So a read costs no load while nothing has moved, and a load or two when
+  something has. nix-direnv 3.2.0 refreshes the timestamps
   on its profile links on every load, to keep them from garbage collection,
   and those links are among direnv's watches. So any process that loads the
-  directory moves it on, and the next read pays that one load. Applied to the
-  kept environment, direnv's answer was measured on 2026-10-04 with direnv
-  2.37.1 to give exactly what a fresh capture gives. That held after an edited
-  `dotenv` file, a moved watched file, a deleted `dotenv` file, and an `.envrc`
-  that stopped setting the tracker.
+  directory moves it on, and the next read pays for it.
 
 - **A project whose `.envrc` writes to stdout cannot corrupt an answer.**
   direnv's own log lines reach stderr, measured, but nothing stops a project's
