@@ -163,7 +163,7 @@ export class ConfigUnreadable extends Data.TaggedError('ConfigUnreadable')<{
 }> {}
 
 const WatcherSection = Schema.Struct({
-  watcher: Schema.optionalKey(Schema.Struct({ socket: Schema.optionalKey(Schema.String) })),
+  watcher: Schema.optionalKey(Schema.Struct({ socket: Schema.optionalKey(Schema.NonEmptyString) })),
 })
 
 const ProjectsSection = Schema.Struct({
