@@ -158,7 +158,11 @@ fn a_database_the_caller_exports_does_not_come_back_through_direnv() {
     );
 
     assert!(out.status.success(), "{}", said(&out.stderr));
-    assert_eq!(tracker.direnv_runs().len(), 1, "kadath was entered");
+    assert_eq!(
+        tracker.direnv_runs(),
+        ["exec . env -0", "status --json"],
+        "kadath was entered"
+    );
     assert_eq!(tracker.calls(), [RESPONDED]);
 }
 

@@ -14,7 +14,9 @@
 #                         what direnv inherits; where it does not,
 #                         the refusal below stands. That is what lets one
 #                         suite be both a machine that has direnv and a
-#                         machine that has not.
+#                         machine that has not. Where it is there, the
+#                         directory's `.envrc` is also one `status --json`
+#                         says is allowed.
 #
 # Plain `sh`, and POSIX, for the reason the bd shim beside this one gives.
 set -u
@@ -24,6 +26,10 @@ if [ -n "${BDI_SHIM_DIRENV_RAN:-}" ]; then
 fi
 
 if [ -n "${BDI_SHIM_DIRENV_ENV:-}" ] && [ -f "${BDI_SHIM_DIRENV_ENV}" ]; then
+  if [ "$*" = "status --json" ]; then
+    printf '{"config":{},"state":{"foundRC":{"allowed":0,"path":"%s/.envrc"},"loadedRC":null}}\n' "$PWD"
+    exit 0
+  fi
   env -0
   cat "${BDI_SHIM_DIRENV_ENV}"
   exit 0
