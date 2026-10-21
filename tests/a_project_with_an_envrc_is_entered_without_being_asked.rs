@@ -254,6 +254,65 @@ fn a_direnv_the_project_supplies_is_found_from_the_projects_own_directory() {
     std::fs::remove_dir_all(&elsewhere).expect("the directory is ours to remove");
 }
 
+/// What entering a directory produces is kept between runs, and a variable
+/// `bdi` merely inherited is not part of that: a secret the launching shell
+/// carries reaches no file under the cache.
+///
+/// The variable the directory itself sets is the control. It being found says
+/// the cache was written and read here, so the sentinel's absence is not a
+/// cache that was never written.
+#[test]
+fn a_variable_bdi_inherited_is_written_to_no_file_under_the_cache() {
+    const SENTINEL: &str = "an-inherited-secret-nobody-may-keep";
+    const SET_BY_THE_DIRECTORY: &str = "a-value-the-envrc-sets";
+    let cwd = a_project("inherited");
+    entered_by_direnv(&cwd);
+    let tracker = ShimmedTracker::beside(&cwd);
+    tracker.tracks(&cwd);
+    tracker.holds(THE_LAUNCHING_SHELLS);
+    tracker.enters_with(&[("BDI_SET_BY_THE_DIRECTORY", SET_BY_THE_DIRECTORY)]);
+    let mut environment = tracker.environment();
+    environment.push(("BDI_INHERITED_SECRET".to_string(), SENTINEL.to_string()));
+
+    let out = bdi(&cwd, &environment);
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(out.status.success(), "bdi exited {}: {said}", out.status);
+    let kept = everything_under(&cwd.join(".cache/beady-eye"));
+    assert!(
+        kept.iter()
+            .any(|(_, text)| text.contains(SET_BY_THE_DIRECTORY)),
+        "nothing under the cache holds what entering the directory produced: {kept:?}"
+    );
+    for (file, text) in &kept {
+        assert!(
+            !text.contains(SENTINEL),
+            "{} holds a variable bdi inherited",
+            file.display()
+        );
+    }
+
+    std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
+}
+
+/// Every file under `dir`, with what it holds.
+fn everything_under(dir: &Path) -> Vec<(PathBuf, String)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .map(|entry| entry.expect("the cache is ours to read").path())
+        .flat_map(|path| {
+            if path.is_dir() {
+                everything_under(&path)
+            } else {
+                let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+                vec![(path, text)]
+            }
+        })
+        .collect()
+}
+
 /// A config under the `HOME` the run is given, which is where `bdi` looks for
 /// one.
 fn configured(home: &Path, toml: &str) {
