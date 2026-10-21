@@ -5,6 +5,7 @@
 //! one its directory implies — with its credential command replacing the
 //! password in any of them. Every question asked with it is in `bd`.
 
+use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::collect::run::{found_on_path, Env, RunFailure, Runner, PATH};
 use crate::collect::tracker::OpenFailure;
@@ -275,18 +277,59 @@ fn where_it_sits(server: &Server) -> Env {
 /// file, one that will not parse, a direnv that will not answer or answers in
 /// words `bdi` cannot read. A cache that cannot be written is one the next run
 /// does not find.
+///
+/// No variable `bdi` merely inherited reaches the disk, because whatever
+/// launched it may be carrying a secret no project set. The environment it
+/// hands its children is kept as a digest, and a capture as what entering the
+/// directory changed in it. A run whose digest matches holds that environment
+/// already, so it rebuilds the capture whole.
 pub struct EnvironmentCache {
     dir: PathBuf,
     handed: Env,
 }
 
-/// One project's capture as the cache holds it, with what it was captured
-/// under.
+/// One project's capture as the cache holds it: the digest of what it was
+/// captured under, and what entering the directory set and unset there.
 #[derive(Serialize, Deserialize)]
 struct Kept {
     path: PathBuf,
-    handed: Env,
-    captured: Env,
+    handed: String,
+    set: Env,
+    unset: BTreeSet<String>,
+}
+
+impl Kept {
+    fn of(path: &Path, handed: &Env, captured: &Env) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            handed: digest_of(handed),
+            set: captured
+                .iter()
+                .filter(|(name, value)| handed.get(*name) != Some(*value))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+            unset: handed
+                .keys()
+                .filter(|name| !captured.contains_key(*name))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    fn captured_under(self, handed: &Env) -> Env {
+        let mut captured = handed.clone();
+        captured.retain(|name, _| !self.unset.contains(name));
+        captured.extend(self.set);
+        captured
+    }
+}
+
+fn digest_of(handed: &Env) -> String {
+    let encoded = serde_json::to_vec(handed).expect("a map of strings encodes");
+    Sha256::digest(encoded)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl EnvironmentCache {
@@ -316,21 +359,19 @@ impl EnvironmentCache {
         runner: &dyn Runner,
         command: &Command,
     ) -> Result<Env, RunFailure> {
+        let handed = digest_of(&self.handed);
         let recalled = self
             .recalled(path)
-            .filter(|kept| kept.path == path && kept.handed == self.handed);
-        let captured = match recalled.map(|kept| brought_up_to_date(kept.captured, path, runner)) {
+            .filter(|kept| kept.path == path && kept.handed == handed);
+        let captured = match recalled
+            .map(|kept| brought_up_to_date(kept.captured_under(&self.handed), path, runner))
+        {
             Some(Some(Current::Unchanged(captured))) => return Ok(captured),
             Some(Some(Current::Changed(captured))) => captured,
             _ => entering(path, runner, command)?,
         };
-        let kept = Kept {
-            captured,
-            path: path.to_path_buf(),
-            handed: self.handed.clone(),
-        };
-        let _ = self.keep(&kept);
-        Ok(kept.captured)
+        let _ = self.keep(&Kept::of(path, &self.handed, &captured));
+        Ok(captured)
     }
 
     fn recalled(&self, path: &Path) -> Option<Kept> {
