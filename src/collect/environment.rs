@@ -309,6 +309,7 @@ impl Kept {
             handed: digest_of(handed),
             set: captured
                 .iter()
+                .filter(|(name, _)| *name != RECORDS_WHAT_IT_OVERRODE)
                 .filter(|(name, value)| handed.get(*name) != Some(*value))
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect(),
@@ -327,6 +328,12 @@ impl Kept {
         captured
     }
 }
+
+/// direnv's record of what each variable its `.envrc` changed held before, so
+/// where the `.envrc` overrides a variable `bdi` inherited, it holds the
+/// inherited value. It is never kept: direnv, asked about an unchanged
+/// directory by a capture without it, still answers with silence.
+const RECORDS_WHAT_IT_OVERRODE: &str = "DIRENV_DIFF";
 
 fn digest_of(handed: &Env) -> String {
     let encoded = serde_json::to_vec(handed).expect("a map of strings encodes");
@@ -367,13 +374,12 @@ impl EnvironmentCache {
         let recalled = self
             .recalled(path)
             .filter(|kept| kept.path == path && kept.handed == handed);
-        let captured = match recalled
-            .map(|kept| brought_up_to_date(kept.captured_under(&self.handed), path, runner))
+        if let Some(current) = recalled
+            .and_then(|kept| brought_up_to_date(kept.captured_under(&self.handed), path, runner))
         {
-            Some(Some(Current::Unchanged(captured))) => return Ok(captured),
-            Some(Some(Current::Changed(captured))) => captured,
-            _ => entering(path, runner, command)?,
-        };
+            return Ok(current);
+        }
+        let captured = entering(path, runner, command)?;
         let _ = self.keep(&Kept::of(path, &self.handed, &captured));
         Ok(captured)
     }
@@ -405,46 +411,27 @@ impl EnvironmentCache {
     }
 }
 
-/// A kept capture as direnv, asked about it, says it stands now.
-enum Current {
-    Unchanged(Env),
-    Changed(Env),
-}
-
-/// What entering `path` produces now, from a capture kept earlier, or nothing
-/// where direnv cannot say.
+/// The kept capture where direnv, asked about it, says nothing it watches has
+/// moved, and nothing where it says anything else or cannot say.
 ///
 /// `direnv export json` is what a shell's prompt hook runs: silence where
-/// nothing it watches has moved, and otherwise the variables to set and unset,
-/// worked out by loading the directory again. Applying them is what the shell
-/// does, and it spares a second load on top of the one direnv just made.
+/// nothing has moved, and otherwise the variables to set and unset. A change
+/// is not applied here. direnv works out what the directory stopped setting
+/// from the `DIRENV_DIFF` it is handed, and the kept capture has none because
+/// that record holds the values `bdi` inherited. Without it, a variable an
+/// edited `.envrc` no longer exports would be reported nowhere and survive.
 ///
-/// direnv is handed the capture without the tracker or its credential, so it
-/// reports those afresh wherever the directory still sets them. Nor is it
-/// handed the kept `PATH`: a spawn looks its program up on the `PATH` it is
+/// direnv is handed the capture without the tracker or its credential, and
+/// without the kept `PATH`: a spawn looks its program up on the `PATH` it is
 /// given, and the kept one would find whichever direnv the project's devshell
-/// puts first rather than the one that captured. The three are dropped before
-/// direnv's answer is applied, or a variable the directory stopped setting
-/// would be carried over from the kept capture.
-fn brought_up_to_date(kept: Env, path: &Path, runner: &dyn Runner) -> Option<Current> {
+/// puts first rather than the one that captured.
+fn brought_up_to_date(kept: Env, path: &Path, runner: &dyn Runner) -> Option<Env> {
     let mut asked = lending(&kept);
     asked.remove(PATH);
     let answer = runner
         .run(DIRENV, &["export", "json"], Some(path), &asked)
         .ok()?;
-    if answer.trim().is_empty() {
-        return Some(Current::Unchanged(kept));
-    }
-    let changes: std::collections::BTreeMap<String, Option<String>> =
-        serde_json::from_str(&answer).ok()?;
-    let mut now = asked;
-    for (name, value) in changes {
-        match value {
-            Some(value) => now.insert(name, value),
-            None => now.remove(&name),
-        };
-    }
-    Some(Current::Changed(now))
+    answer.trim().is_empty().then_some(kept)
 }
 
 /// Whether direnv finds an `.envrc` from `path` and loads it.
@@ -1463,34 +1450,31 @@ mod tests {
 
     /// An edited `.envrc`, `.env.local` or flake lock is a change direnv
     /// reports, and reading with the environment from before it could mean
-    /// another bd or another credential. By the time direnv reports it, it
-    /// has already loaded the directory again, so what it reports is applied
-    /// as a shell applies it, rather than paying for a second load. What it
-    /// unset is gone, and the result is what the next run is checked against.
+    /// another bd or another credential. direnv reports what the directory
+    /// stopped setting only from the `DIRENV_DIFF` the kept capture does not
+    /// hold, so the directory is entered afresh, and what that produces is
+    /// what the next run is checked against.
     #[test]
-    fn a_change_direnv_reports_is_applied_without_entering_the_directory_again() {
+    fn a_change_direnv_reports_has_the_directory_entered_again() {
         let cache = an_empty_cache("changed");
         first_run(&cache);
-        let runner = direnv_allowing().with(
-            STILL_CURRENT,
-            r#"{
-                "BEADS_DIR": "/nowhere/a-project/.beads",
-                "BEADS_DOLT_PASSWORD": "the-edited-password",
-                "DIRENV_WATCHES": "the-files-direnv-watches-now",
-                "PATH": null
-            }"#,
-        );
+        let edited = exported(&[
+            ("BEADS_DIR", "/nowhere/a-project/.beads"),
+            ("BEADS_DOLT_PASSWORD", "the-edited-password"),
+            ("DIRENV_WATCHES", "the-files-direnv-watches-now"),
+            ("PATH", "/nix/bin:/usr/bin"),
+        ]);
+        let runner = direnv_allowing()
+            .with(
+                STILL_CURRENT,
+                r#"{"BEADS_DOLT_PASSWORD": "the-edited-password"}"#,
+            )
+            .with(&entering_the_directory(), &edited);
 
         let changed = read(&runner, &entered_with_direnv(), &cache).unwrap();
 
-        assert_eq!(
-            changed,
-            variables(&exported(&[
-                ("BEADS_DIR", "/nowhere/a-project/.beads"),
-                ("BEADS_DOLT_PASSWORD", "the-edited-password"),
-                ("DIRENV_WATCHES", "the-files-direnv-watches-now"),
-            ]))
-        );
+        assert!(entered_the_directory(&runner));
+        assert_eq!(changed, variables(&edited));
         let runner = direnv_allowing().with(STILL_CURRENT, "");
         assert_eq!(
             read(&runner, &entered_with_direnv(), &cache).unwrap(),
@@ -1499,25 +1483,69 @@ mod tests {
         );
     }
 
-    /// direnv is asked without the tracker or its credential, so it reports
-    /// them as set afresh where the directory still sets them and says
-    /// nothing where it no longer does. Silence there has to mean gone: the
-    /// kept values are the ones the directory stopped producing.
+    /// direnv's `DIRENV_DIFF` records what each variable the `.envrc` changed
+    /// held before, so where the `.envrc` overrides something `bdi` inherited
+    /// it carries that inherited value, merely encoded. The next run does not
+    /// need it: direnv, asked about a directory it finds unchanged, stays
+    /// silent without one.
     #[test]
-    fn a_tracker_the_directory_no_longer_names_is_not_carried_over_from_the_kept_one() {
-        let cache = an_empty_cache("tracker-dropped");
-        first_run(&cache);
-        let runner = direnv_allowing().with(
-            STILL_CURRENT,
-            r#"{"DIRENV_WATCHES": "the-files-direnv-watches-now"}"#,
+    fn what_direnv_records_of_the_inherited_values_it_overrode_is_not_kept() {
+        const INHERITED: &str = "an-inherited-secret-nobody-may-keep";
+        let cache = cache_in("diff", &[("HOME", "/home/someone"), ("TOKEN", INHERITED)]);
+        let _ = std::fs::remove_dir_all(&cache.dir);
+        let diff = format!(r#"{{"p":{{"TOKEN":"{INHERITED}"}},"n":{{"TOKEN":"the-envrcs"}}}}"#);
+        let entered = exported(&[
+            ("BEADS_DIR", "/nowhere/a-project/.beads"),
+            ("DIRENV_DIFF", &diff),
+            ("DIRENV_WATCHES", "the-files-direnv-watches"),
+            ("TOKEN", "the-envrcs"),
+        ]);
+        let runner = direnv_allowing().with(&entering_the_directory(), &entered);
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        let kept: Vec<String> = std::fs::read_dir(&cache.dir)
+            .unwrap()
+            .map(|file| std::fs::read_to_string(file.unwrap().path()).unwrap())
+            .collect();
+        assert!(
+            kept.iter().any(|text| text.contains("the-envrcs")),
+            "nothing was kept: {kept:?}"
         );
+        for text in &kept {
+            assert!(
+                !text.contains(INHERITED),
+                "an inherited value was kept: {text}"
+            );
+        }
+        let runner = direnv_allowing().with(STILL_CURRENT, "");
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+        assert!(!entered_the_directory(&runner));
+    }
+
+    /// A variable an edited `.envrc` stopped exporting is the one a capture
+    /// brought up to date without direnv's record would keep, so a change has
+    /// it entered afresh. That holds for the tracker and its credential too.
+    #[test]
+    fn a_variable_the_directory_no_longer_sets_is_not_carried_over_from_the_kept_one() {
+        let cache = an_empty_cache("stopped-exporting");
+        first_run(&cache);
+        let runner = direnv_allowing()
+            .with(
+                STILL_CURRENT,
+                r#"{"DIRENV_WATCHES": "the-files-direnv-watches-now"}"#,
+            )
+            .with(
+                &entering_the_directory(),
+                &exported(&[("PATH", "/nix/bin:/usr/bin")]),
+            );
 
         let changed = read(&runner, &entered_with_direnv(), &cache).unwrap();
 
-        for withheld in NEVER_INHERITED {
+        for stopped in ["BEADS_DIR", "BEADS_DOLT_PASSWORD"] {
             assert!(
-                !changed.contains_key(withheld),
-                "{withheld} survived a load that no longer set it"
+                !changed.contains_key(stopped),
+                "{stopped} survived a load that no longer set it"
             );
         }
     }
@@ -1532,6 +1560,10 @@ mod tests {
             .with(
                 STILL_CURRENT,
                 r#"{"BEADS_DIR": null, "BEADS_DOLT_PASSWORD": null, "PATH": null}"#,
+            )
+            .with(
+                &entering_the_directory(),
+                &exported(&[("PATH", "/usr/bin")]),
             )
             .with(ALLOWED_OR_NOT, &status_of_the_envrc(DENIED));
 
