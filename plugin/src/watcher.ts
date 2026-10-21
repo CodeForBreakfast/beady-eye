@@ -459,12 +459,14 @@ export const watchBead = (
   )
 
 /** What one project answered when asked about a bead: it holds the bead, the
- * bead has gone from it, the watcher has not read it yet, the watcher refused
- * to look in it, or it had not answered when the time to answer ran out. */
+ * bead has gone from it, the watcher has not read it yet, its tracker is
+ * unreachable, the watcher refused to look in it, or it had not answered when
+ * the time to answer ran out. */
 export type ProjectAnswer = Data.TaggedEnum<{
   Holds: Record<never, never>
   Gone: Record<never, never>
   NotReadYet: Record<never, never>
+  Unreachable: { readonly reason: string }
   Refused: { readonly reason: string }
   Unanswered: Record<never, never>
 }>
@@ -512,7 +514,12 @@ export const askAbout = (
       case 'refused':
         return settle(ProjectAnswer.Refused({ reason: said.reason }))
       case 'freshness':
-        return settle(state.heard.get(project) ?? ProjectAnswer.NotReadYet())
+        return settle(
+          state.heard.get(project) ??
+            (said.tracker === 'ok'
+              ? ProjectAnswer.NotReadYet()
+              : ProjectAnswer.Unreachable({ reason: said.tracker.unreachable.reason })),
+        )
       case 'bead':
         return hear(ProjectAnswer.Holds())
       case 'gone':

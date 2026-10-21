@@ -779,6 +779,14 @@ export const makeWatches: Effect.Effect<
           `The watcher refused to look in ${refused.join(', ')}, so it cannot say which project holds ${id}. Name its project.`,
         )
       }
+      const unreachable = answers.flatMap(([project, answer]) =>
+        answer._tag === 'Unreachable' ? [`${project} (${answer.reason})`] : [],
+      )
+      if (holders.length <= 1 && unreachable.length > 0) {
+        return yield* refuse(
+          `The watcher cannot reach ${unreachable.join(', ')}, so it cannot say which project holds ${id}. Name its project.`,
+        )
+      }
       if (holders.length <= 1 && unread.length > 0) {
         const them = unread.join(', ')
         return yield* refuse(
