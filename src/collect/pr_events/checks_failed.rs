@@ -44,8 +44,19 @@ fn checks_failed(
         contexts: Contexts,
     }
     #[derive(Deserialize, Default)]
+    #[serde(rename_all = "camelCase")]
     struct Contexts {
+        #[serde(default)]
+        total_count: usize,
         nodes: Vec<Context>,
+    }
+    /// The app and workflow a check run belongs to, which with its name say
+    /// which check it is.
+    #[derive(Deserialize, PartialEq)]
+    #[serde(rename_all = "camelCase")]
+    struct CheckSuite {
+        app: Option<serde_json::Value>,
+        workflow_run: Option<serde_json::Value>,
     }
     /// A check run, with a conclusion once it completes, or a commit status,
     /// with a state.
@@ -53,6 +64,7 @@ fn checks_failed(
     #[serde(rename_all = "camelCase")]
     struct Context {
         name: Option<String>,
+        check_suite: Option<CheckSuite>,
         conclusion: Option<String>,
         started_at: Option<DateTime<Utc>>,
         completed_at: Option<DateTime<Utc>>,
@@ -67,6 +79,7 @@ fn checks_failed(
                 && contexts.iter().any(|other| {
                     other.name.is_some()
                         && other.name == self.name
+                        && other.check_suite == self.check_suite
                         && other.started_at > self.started_at
                 })
         }
@@ -89,24 +102,25 @@ fn checks_failed(
     let failed = commits.nodes.into_iter().find_map(|Node { commit }| {
         let rollup = commit.status_check_rollup?;
         matches!(rollup.state.as_str(), "FAILURE" | "ERROR").then(|| {
+            let complete = rollup.contexts.total_count <= rollup.contexts.nodes.len();
             let contexts = rollup.contexts.nodes;
             let replaced: Vec<bool> = contexts
                 .iter()
                 .map(|context| context.superseded_in(&contexts))
                 .collect();
-            let any_replaced = replaced.contains(&true);
+            let replaced_in_full = replaced.contains(&true);
             let first_failure = contexts
                 .into_iter()
                 .zip(replaced)
                 .filter(|(_, replaced)| !replaced)
                 .filter_map(|(context, _)| context.failed())
                 .min();
-            (commit.oid, first_failure, any_replaced)
+            (commit.oid, first_failure, replaced_in_full && complete)
         })
     });
     Ok(failed
         .filter(|_| observed.state == State::Open)
-        .filter(|(_, first_failure, any_replaced)| first_failure.is_some() || !any_replaced)
+        .filter(|(_, first_failure, replaced_in_full)| first_failure.is_some() || !replaced_in_full)
         .map(|(oid, happened, _)| {
             Outcome::Tell(vec![Telling {
                 text: told(&oid, pr),
@@ -248,6 +262,19 @@ mod tests {
             ))
             .is_some(),
             "a re-run of another check"
+        );
+        let other_workflow = r#"{"name":"test","checkSuite":{"app":null,"workflowRun":{"workflow":{"name":"Other"}}},"conclusion":"SUCCESS","startedAt":"2026-10-06T08:02:00Z","completedAt":"2026-10-06T08:03:00Z"}"#;
+        assert!(
+            told(&format!("[{cancelled},{other_workflow}]")).is_some(),
+            "a re-run in another workflow"
+        );
+        let truncated = format!(
+            r#"{{"state":"FAILURE","contexts":{{"totalCount":101,"nodes":[{cancelled},{}]}}}}"#,
+            re_run("\"SUCCESS\"")
+        );
+        assert!(
+            told_on(State::Open, &head_commit("a1b2c3", &truncated)).is_some(),
+            "more checks than were listed"
         );
         assert!(
             told(&format!("[{},{cancelled}]", re_run("\"FAILURE\""))).is_some(),
