@@ -71,18 +71,18 @@ const A_WINDOW: Duration = Duration::from_secs(2);
 /// test is not about.
 const A_FEW: usize = 5;
 
-/// The fewest asks that mean the band took the reader's interval. Forty are
-/// due in the window, and the same interval over the same window is what
-/// `the_band_reads_its_pane_again_on_its_own_clock` sets this number from. A
-/// slower host manages fewer of the forty and none of the five, so the gap
-/// between the two bounds can only widen.
+/// The asks that mean the band took the reader's interval. The interval it
+/// replaced produces none inside this test, so any ten are the new one's.
 const OFTEN_ENOUGH: usize = 10;
 
-/// Long enough for the check to fall due and for the frame that follows it.
-/// `tui::reload::CHECKED_EVERY` is a constant rather than a config setting —
-/// a setting would have to be read out of the file it governs — so nothing
-/// here can shorten it, and this is a wait rather than a measurement.
-const A_RELOAD: Duration = Duration::from_secs(6);
+/// How long the band is given to make those asks, which is a deadline and not
+/// a measurement: a host that is slow to notice the edit or slow to answer
+/// each ask takes longer to reach the count, and only a band that never took
+/// the interval is still short of it when this runs out.
+const BEFORE_GIVING_UP: Duration = Duration::from_secs(60);
+
+/// How often the count of asks is looked at while waiting for it.
+const LOOKING_EVERY: Duration = Duration::from_millis(50);
 
 /// A `HOME` whose config names one project and carries `settings`.
 fn a_home_settled(named: &str, settings: &str) -> PathBuf {
@@ -112,6 +112,19 @@ fn asks_over_the_window(herdr: &ShimmedHerdr) -> usize {
     herdr.reads() - before
 }
 
+/// How many times the band has asked since `since` was read, once it has
+/// asked `OFTEN_ENOUGH` times or `BEFORE_GIVING_UP` has run out.
+fn asks_until_often_enough(herdr: &ShimmedHerdr, since: usize) -> usize {
+    let deadline = std::time::Instant::now() + BEFORE_GIVING_UP;
+    loop {
+        let asked = herdr.reads() - since;
+        if asked >= OFTEN_ENOUGH || std::time::Instant::now() >= deadline {
+            return asked;
+        }
+        std::thread::sleep(LOOKING_EVERY);
+    }
+}
+
 #[test]
 fn a_band_takes_the_interval_the_reader_writes_without_a_restart() {
     let home = a_home_settled("tail-interval", ASKING_ALMOST_NEVER);
@@ -134,15 +147,14 @@ fn a_band_takes_the_interval_the_reader_writes_without_a_restart() {
         bdi.timeline()
     );
 
+    let written_at = herdr.reads();
     settling(&home, ASKING_OFTEN);
-    std::thread::sleep(A_RELOAD);
-
-    let after = asks_over_the_window(&herdr);
+    let after = asks_until_often_enough(&herdr, written_at);
     assert!(
         after >= OFTEN_ENOUGH,
-        "the band asked {after} times in {A_WINDOW:?} after the reader wrote \
-         {ASKING_OFTEN:?}, which is about what it managed on the interval \
-         they replaced\n{}",
+        "the band asked {after} times in {BEFORE_GIVING_UP:?} after the reader \
+         wrote {ASKING_OFTEN:?}, which is about what it managed on the \
+         interval they replaced\n{}",
         bdi.timeline()
     );
     assert!(
