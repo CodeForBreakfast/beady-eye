@@ -2714,6 +2714,15 @@ speak the same protocol.
 project whose freshness line has said `unreachable` for a minute sends one
 message, and its first `ok` after that sends another.
 
+**A watch the watcher refuses after accepting it is told at once.** The
+watcher can refuse a bead it watched before, for instance when its project has
+left the watcher's config. The session would otherwise go on believing it
+watches the bead. It is sent one block with `watch="refused"`, the `project`
+and the `id`, saying why, and that no change to the bead will arrive until the
+watcher accepts the watch again. The same reason sent again says nothing more.
+The watch is kept, so it is told again if the watcher takes the bead back and
+refuses it later.
+
 **Watching while the watcher is down is accepted.** `watch` records the bead
 and answers that the watcher is down, and the bead is watched from when it
 comes back.
