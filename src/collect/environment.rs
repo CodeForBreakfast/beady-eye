@@ -309,6 +309,7 @@ impl Kept {
             handed: digest_of(handed),
             set: captured
                 .iter()
+                .filter(|(name, _)| *name != RECORDS_WHAT_IT_OVERRODE)
                 .filter(|(name, value)| handed.get(*name) != Some(*value))
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect(),
@@ -327,6 +328,12 @@ impl Kept {
         captured
     }
 }
+
+/// direnv's record of what each variable its `.envrc` changed held before, so
+/// where the `.envrc` overrides a variable `bdi` inherited, it holds the
+/// inherited value. It is never kept: direnv, asked about an unchanged
+/// directory by a capture without it, still answers with silence.
+const RECORDS_WHAT_IT_OVERRODE: &str = "DIRENV_DIFF";
 
 fn digest_of(handed: &Env) -> String {
     let encoded = serde_json::to_vec(handed).expect("a map of strings encodes");
@@ -1497,6 +1504,46 @@ mod tests {
             changed,
             "the run after a change was read with what came before it"
         );
+    }
+
+    /// direnv's `DIRENV_DIFF` records what each variable the `.envrc` changed
+    /// held before, so where the `.envrc` overrides something `bdi` inherited
+    /// it carries that inherited value, merely encoded. The next run does not
+    /// need it: direnv, asked about a directory it finds unchanged, stays
+    /// silent without one.
+    #[test]
+    fn what_direnv_records_of_the_inherited_values_it_overrode_is_not_kept() {
+        const INHERITED: &str = "an-inherited-secret-nobody-may-keep";
+        let cache = cache_in("diff", &[("HOME", "/home/someone"), ("TOKEN", INHERITED)]);
+        let _ = std::fs::remove_dir_all(&cache.dir);
+        let diff = format!(r#"{{"p":{{"TOKEN":"{INHERITED}"}},"n":{{"TOKEN":"the-envrcs"}}}}"#);
+        let entered = exported(&[
+            ("BEADS_DIR", "/nowhere/a-project/.beads"),
+            ("DIRENV_DIFF", &diff),
+            ("DIRENV_WATCHES", "the-files-direnv-watches"),
+            ("TOKEN", "the-envrcs"),
+        ]);
+        let runner = direnv_allowing().with(&entering_the_directory(), &entered);
+
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+
+        let kept: Vec<String> = std::fs::read_dir(&cache.dir)
+            .unwrap()
+            .map(|file| std::fs::read_to_string(file.unwrap().path()).unwrap())
+            .collect();
+        assert!(
+            kept.iter().any(|text| text.contains("the-envrcs")),
+            "nothing was kept: {kept:?}"
+        );
+        for text in &kept {
+            assert!(
+                !text.contains(INHERITED),
+                "an inherited value was kept: {text}"
+            );
+        }
+        let runner = direnv_allowing().with(STILL_CURRENT, "");
+        read(&runner, &entered_with_direnv(), &cache).unwrap();
+        assert!(!entered_the_directory(&runner));
     }
 
     /// direnv is asked without the tracker or its credential, so it reports
