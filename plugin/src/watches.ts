@@ -615,6 +615,7 @@ export const makeWatches: Effect.Effect<
           if (said !== undefined) yield* Queue.offer(news, said)
           return
         }
+        if (said?.block.is === 'refusal') yield* Queue.offer(news, said)
         yield* tellBackOnceAllAre
       })
     const hear = (heard: Heard) =>

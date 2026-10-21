@@ -1376,6 +1376,29 @@ test('a watcher down for a minute wakes the session once, naming the beads it ca
   expect((await use.nextMessage()).meta).toEqual({ watcher: 'answering' })
 })
 
+test('a watcher back after an outage that refuses a watch tells the session so before it says it is back', async () => {
+  const place = aPlace()
+  const { use, watcher } = await twoWatchedBeads(place)
+  watcher.stop()
+  await use.nextMessage()
+
+  const back = await aWatcherAt(place.at as string)
+  for (const { connection, asked } of [await back.next(), await back.next()]) {
+    connection.write(
+      asked.includes('harbour')
+        ? said(inHarbour, freshness('harbour'))
+        : said(refusedUnknownProject),
+    )
+  }
+
+  expect((await use.nextMessage()).meta).toEqual({
+    project: 'summit-works',
+    id: 'smt-4kd3p.20',
+    watch: 'refused',
+  })
+  expect((await use.nextMessage()).meta).toEqual({ watcher: 'answering' })
+})
+
 test('a watcher back after an outage wakes the session once, with what changed meanwhile', async () => {
   const place = aPlace()
   const { use, watcher } = await twoWatchedBeads(place)
