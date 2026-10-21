@@ -127,6 +127,19 @@ pub enum Heard {
     Covered(String),
 }
 
+/// Where what a writer said goes. A writer is answered only once its report
+/// has been reported, so whatever acts on the answer finds the report there.
+pub trait Report: Send + Sync + 'static {
+    /// Whether anything is left to take the report.
+    fn report(&self, heard: Heard) -> bool;
+}
+
+impl Report for Sender<Heard> {
+    fn report(&self, heard: Heard) -> bool {
+        self.send(heard).is_ok()
+    }
+}
+
 impl Heard {
     fn project(&self) -> &str {
         match self {
@@ -454,7 +467,7 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
 pub fn watch(
     at: Option<PathBuf>,
     reported: &Reported,
-    changed: Sender<Heard>,
+    changed: impl Report,
 ) -> Result<Socket, Refused> {
     let reported = reported.clone();
     serve(at, move |writer| hear(writer, &reported, &changed))
@@ -789,7 +802,7 @@ fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(channel: &UnixListener, eac
 /// A thread of its own because a producer that connects once and speaks
 /// whenever it has something to say is the shape this channel is for, and a
 /// long quiet stretch on such a connection is not a wedge to be timed out.
-fn hear(writer: UnixStream, reported: &Reported, changed: &Sender<Heard>) {
+fn hear(writer: UnixStream, reported: &Reported, changed: &impl Report) {
     let Ok(mut answering) = writer.try_clone() else {
         return;
     };
@@ -829,14 +842,14 @@ pub fn each_line(from: UnixStream, mut take: impl FnMut(Option<&str>) -> bool) {
 pub fn answered(
     message: Option<&str>,
     reported: &Reported,
-    changed: &Sender<Heard>,
+    changed: &impl Report,
 ) -> Option<String> {
     let answer = message.map_or(Answer::Malformed, |message| reported.take(message));
 
     // The name goes with the signal: what a writer said changed is what the
     // collection it triggers has to read, and no more.
     if let Answer::Watched(heard) = &answer {
-        changed.send(heard.clone()).ok()?;
+        changed.report(heard.clone()).then_some(())?;
     }
     Some(answer.to_string())
 }
