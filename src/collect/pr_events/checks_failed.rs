@@ -263,7 +263,7 @@ mod tests {
             .is_some(),
             "a re-run of another check"
         );
-        let other_workflow = r#"{"name":"test","checkSuite":{"app":null,"workflowRun":{"workflow":{"name":"Other"}}},"conclusion":"SUCCESS","startedAt":"2026-10-06T08:02:00Z","completedAt":"2026-10-06T08:03:00Z"}"#;
+        let other_workflow = r#"{"name":"test","checkSuite":{"app":null,"workflowRun":{"workflow":{"id":"W_other"}}},"conclusion":"SUCCESS","startedAt":"2026-10-06T08:02:00Z","completedAt":"2026-10-06T08:03:00Z"}"#;
         assert!(
             told(&format!("[{cancelled},{other_workflow}]")).is_some(),
             "a re-run in another workflow"
