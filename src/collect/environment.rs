@@ -863,7 +863,10 @@ mod tests {
     #[test]
     fn a_directory_whose_envrc_was_denied_fails_the_project_rather_than_reading_it_ambient() {
         let runner = FakeRunner::default()
-            .with(&entering_the_directory(), &exported(&[("PATH", "/usr/bin")]))
+            .with(
+                &entering_the_directory(),
+                &exported(&[("PATH", "/usr/bin")]),
+            )
             .with(ALLOWED_OR_NOT, &status_of_the_envrc(DENIED));
 
         let failure =
@@ -877,7 +880,10 @@ mod tests {
     #[test]
     fn a_directory_direnv_finds_no_envrc_for_fails_the_project() {
         let runner = FakeRunner::default()
-            .with(&entering_the_directory(), &exported(&[("PATH", "/usr/bin")]))
+            .with(
+                &entering_the_directory(),
+                &exported(&[("PATH", "/usr/bin")]),
+            )
             .with(
                 ALLOWED_OR_NOT,
                 r#"{"config": {}, "state": {"foundRC": null, "loadedRC": null}}"#,
