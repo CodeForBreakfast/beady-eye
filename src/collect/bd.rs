@@ -1802,6 +1802,10 @@ mod tests {
                 &entering_the_directory(),
                 "BEADS_DOLT_PASSWORD=the-projects-own-password",
             )
+            .with(
+                "direnv status --json",
+                r#"{"state": {"foundRC": {"allowed": 0}}}"#,
+            )
             .with(&spelled(TRACKER_CALL), FIXTURE)
             .with(&spelled(WISP_CALL), "[]");
         let project = Project {

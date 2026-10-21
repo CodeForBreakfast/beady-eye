@@ -164,11 +164,15 @@ pub fn tracker_env(
         .clone()
         .or_else(|| detected(&project.path))
     {
-        let captured = match cache.filter(|_| command.words() == DIRENV_ENTERING_THE_DIRECTORY) {
+        let entered_by_direnv = command.words() == DIRENV_ENTERING_THE_DIRECTORY;
+        let captured = match cache.filter(|_| entered_by_direnv) {
             Some(cache) => cache.recall_or_enter(&project.path, runner, &command),
             None => entering(&project.path, runner, &command),
         }
         .map_err(|_| OpenFailure::NoEnvironment)?;
+        if entered_by_direnv && !direnv_loads_the_envrc(&project.path, runner) {
+            return Err(OpenFailure::NoEnvironment);
+        }
         env.extend(captured);
     }
     if let Some(server) = &project.server {
@@ -443,6 +447,39 @@ fn brought_up_to_date(kept: Env, path: &Path, runner: &dyn Runner) -> Option<Cur
     Some(Current::Changed(now))
 }
 
+/// Whether direnv finds an `.envrc` from `path` and loads it.
+///
+/// A capture cannot say. An `.envrc` never allowed makes `direnv exec` exit 1,
+/// but one refused with `direnv deny` runs the command anyway and exits 0,
+/// with none of what the `.envrc` sets, and `direnv export json` brings a kept
+/// capture up to date by unsetting all of it. A directory with no `.envrc`
+/// above it is entered the same way. Each would read the tracker with
+/// whatever `bdi` was launched with. Measured on direnv 2.37.1, 2026-10-21.
+fn direnv_loads_the_envrc(path: &Path, runner: &dyn Runner) -> bool {
+    #[derive(Deserialize)]
+    struct Status {
+        state: State,
+    }
+    #[derive(Deserialize)]
+    struct State {
+        #[serde(rename = "foundRC")]
+        found: Option<Found>,
+    }
+    #[derive(Deserialize)]
+    struct Found {
+        allowed: u8,
+    }
+    /// direnv's `AllowStatus` for an `.envrc` it will load.
+    const ALLOWED: u8 = 0;
+
+    runner
+        .run(DIRENV, &["status", "--json"], Some(path), &Env::new())
+        .ok()
+        .and_then(|answer| serde_json::from_str::<Status>(&answer).ok())
+        .and_then(|status| status.state.found)
+        .is_some_and(|found| found.allowed == ALLOWED)
+}
+
 /// A kept environment can hold the tracker's password and anything else a
 /// project's `.envrc` exports, so no one else on the machine reads it.
 const PRIVATE_DIRECTORY: u32 = 0o700;
@@ -548,8 +585,9 @@ fn lending(captured: &Env) -> Env {
 /// to the ambient environment, because a mechanism that silently does nothing
 /// is indistinguishable from one that worked. Where direnv falls back for
 /// itself — a flake that will not evaluate — it exits 0 and this is not the
-/// path taken; an unallowed `.envrc` exits 1 with an empty stdout and this
-/// is. Measured on direnv 2.37.1, 2026-09-04.
+/// path taken; an `.envrc` never allowed exits 1 with an empty stdout and this
+/// is. One refused with `direnv deny` exits 0, and [`direnv_loads_the_envrc`]
+/// is what refuses it. Measured on direnv 2.37.1, 2026-09-04 and 2026-10-21.
 fn entering(path: &Path, runner: &dyn Runner, command: &Command) -> Result<Env, RunFailure> {
     let mut words = command.words().into_iter().chain(PROBE.split_whitespace());
     let program = words.next().unwrap_or_default();
@@ -674,7 +712,7 @@ mod tests {
     /// than restating what it would have produced.
     #[test]
     fn a_project_asking_for_direnv_is_read_by_entering_its_directory() {
-        let runner = FakeRunner::default().with(
+        let runner = direnv_allowing().with(
             &entering_the_directory(),
             &exported(&[
                 ("BEADS_DIR", "/nowhere/a-project/.beads"),
@@ -702,7 +740,7 @@ mod tests {
     /// the cleared environment exist to stop.
     #[test]
     fn direnv_is_given_no_tracker_and_no_credential_of_bdis_own() {
-        let runner = FakeRunner::default().with(&entering_the_directory(), &exported(&[]));
+        let runner = direnv_allowing().with(&entering_the_directory(), &exported(&[]));
 
         tracker_env(
             &runner,
@@ -724,7 +762,7 @@ mod tests {
     #[test]
     fn text_a_projects_envrc_wrote_first_does_not_lose_the_variable_behind_it() {
         let noise = "entering the arkham shell\n";
-        let runner = FakeRunner::default().with(
+        let runner = direnv_allowing().with(
             &entering_the_directory(),
             &format!(
                 "{noise}{}",
@@ -791,6 +829,85 @@ mod tests {
         }
     }
 
+    /// What `bdi` asks direnv to learn whether it may load the directory's
+    /// `.envrc`.
+    const ALLOWED_OR_NOT: &str = "direnv status --json";
+
+    /// direnv's answer to [`ALLOWED_OR_NOT`] about a project's `.envrc`, as
+    /// direnv 2.37.1 spells it: 0 allowed, 1 never allowed, 2 denied.
+    fn status_of_the_envrc(allowed: u8) -> String {
+        format!(
+            r#"{{
+              "config": {{"ConfigDir": "/home/someone/.config/direnv"}},
+              "state": {{
+                "foundRC": {{"allowed": {allowed}, "path": "/nowhere/a-project/.envrc"}},
+                "loadedRC": null
+              }}
+            }}"#
+        )
+    }
+
+    const ALLOWED: u8 = 0;
+    const DENIED: u8 = 2;
+
+    /// A direnv that will load the project's `.envrc`, which every test
+    /// entering the directory with direnv needs answered.
+    fn direnv_allowing() -> FakeRunner {
+        FakeRunner::default().with(ALLOWED_OR_NOT, &status_of_the_envrc(ALLOWED))
+    }
+
+    /// `direnv deny` leaves a directory direnv still enters: the command runs,
+    /// exits 0, and has none of what the `.envrc` would have set, which is
+    /// `bdi`'s own environment by another route. Measured on direnv 2.37.1,
+    /// 2026-10-21.
+    #[test]
+    fn a_directory_whose_envrc_was_denied_fails_the_project_rather_than_reading_it_ambient() {
+        let runner = FakeRunner::default()
+            .with(&entering_the_directory(), &exported(&[("PATH", "/usr/bin")]))
+            .with(ALLOWED_OR_NOT, &status_of_the_envrc(DENIED));
+
+        let failure =
+            tracker_env(&runner, &entered_with_direnv(), Some("hunter2"), None).unwrap_err();
+
+        assert_eq!(failure, OpenFailure::NoEnvironment);
+    }
+
+    /// A config can name direnv for a directory with no `.envrc` above it,
+    /// which direnv enters by loading nothing.
+    #[test]
+    fn a_directory_direnv_finds_no_envrc_for_fails_the_project() {
+        let runner = FakeRunner::default()
+            .with(&entering_the_directory(), &exported(&[("PATH", "/usr/bin")]))
+            .with(
+                ALLOWED_OR_NOT,
+                r#"{"config": {}, "state": {"foundRC": null, "loadedRC": null}}"#,
+            );
+
+        let failure = tracker_env(&runner, &entered_with_direnv(), None, None).unwrap_err();
+
+        assert_eq!(failure, OpenFailure::NoEnvironment);
+    }
+
+    /// A direnv that cannot say whether the `.envrc` is allowed has not said
+    /// it is.
+    #[test]
+    fn a_direnv_that_cannot_say_whether_the_envrc_is_allowed_fails_the_project() {
+        for answer in [Ok("direnv: something bdi has never seen"), Err(())] {
+            let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+            let runner = match answer {
+                Ok(text) => runner.with(ALLOWED_OR_NOT, text),
+                Err(()) => runner.failing(
+                    ALLOWED_OR_NOT,
+                    RunFailure::unstartable("direnv", "No such file or directory"),
+                ),
+            };
+
+            let failure = tracker_env(&runner, &entered_with_direnv(), None, None).unwrap_err();
+
+            assert_eq!(failure, OpenFailure::NoEnvironment, "{answer:?}");
+        }
+    }
+
     /// A project with no environment has nothing to be read, so its
     /// credential command is not run: an arbitrary command a config named is
     /// a side effect, and spending one on a read that is not going to happen
@@ -825,7 +942,7 @@ mod tests {
     /// password.
     #[test]
     fn a_credential_command_gets_the_captured_tools_but_never_the_captured_password() {
-        let runner = FakeRunner::default()
+        let runner = direnv_allowing()
             .with(
                 &entering_the_directory(),
                 &exported(&[
@@ -1149,7 +1266,7 @@ mod tests {
     /// inherit it, because nothing bdi launches inherits it any more.
     #[test]
     fn a_project_with_no_credential_command_is_handed_the_ambient_credential() {
-        let runner = FakeRunner::default().with(
+        let runner = direnv_allowing().with(
             &entering_the_directory(),
             &exported(&[("PATH", "/nix/bin")]),
         );
@@ -1168,7 +1285,7 @@ mod tests {
     /// should refuse the call rather than be told the password is "".
     #[test]
     fn a_project_with_no_credential_command_and_no_ambient_one_is_given_nothing() {
-        let runner = FakeRunner::default().with(&entering_the_directory(), &exported(&[]));
+        let runner = direnv_allowing().with(&entering_the_directory(), &exported(&[]));
 
         assert_eq!(
             tracker_env(&runner, &entered_with_direnv(), None, None).unwrap(),
@@ -1306,7 +1423,7 @@ mod tests {
     /// The first run on a machine, which has nothing kept and so enters the
     /// directory.
     fn first_run(cache: &EnvironmentCache) -> Env {
-        let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+        let runner = direnv_allowing().with(&entering_the_directory(), &entered());
         read(&runner, &entered_with_direnv(), cache).unwrap()
     }
 
@@ -1326,7 +1443,7 @@ mod tests {
     fn a_directory_direnv_says_is_unchanged_is_not_entered_on_the_next_run() {
         let cache = an_empty_cache("unchanged");
         let first = first_run(&cache);
-        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+        let runner = direnv_allowing().with(STILL_CURRENT, "");
 
         let next = read(&runner, &entered_with_direnv(), &cache).unwrap();
 
@@ -1348,7 +1465,7 @@ mod tests {
     fn a_change_direnv_reports_is_applied_without_entering_the_directory_again() {
         let cache = an_empty_cache("changed");
         first_run(&cache);
-        let runner = FakeRunner::default().with(
+        let runner = direnv_allowing().with(
             STILL_CURRENT,
             r#"{
                 "BEADS_DIR": "/nowhere/a-project/.beads",
@@ -1368,7 +1485,7 @@ mod tests {
                 ("DIRENV_WATCHES", "the-files-direnv-watches-now"),
             ]))
         );
-        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+        let runner = direnv_allowing().with(STILL_CURRENT, "");
         assert_eq!(
             read(&runner, &entered_with_direnv(), &cache).unwrap(),
             changed,
@@ -1384,7 +1501,7 @@ mod tests {
     fn a_tracker_the_directory_no_longer_names_is_not_carried_over_from_the_kept_one() {
         let cache = an_empty_cache("tracker-dropped");
         first_run(&cache);
-        let runner = FakeRunner::default().with(
+        let runner = direnv_allowing().with(
             STILL_CURRENT,
             r#"{"DIRENV_WATCHES": "the-files-direnv-watches-now"}"#,
         );
@@ -1399,13 +1516,31 @@ mod tests {
         }
     }
 
+    /// A kept environment is no way round a deny: direnv brings it up to date
+    /// by unsetting what the `.envrc` set, and exits 0.
+    #[test]
+    fn a_directory_denied_since_its_environment_was_kept_fails_the_project() {
+        let cache = an_empty_cache("denied");
+        first_run(&cache);
+        let runner = FakeRunner::default()
+            .with(
+                STILL_CURRENT,
+                r#"{"BEADS_DIR": null, "BEADS_DOLT_PASSWORD": null, "PATH": null}"#,
+            )
+            .with(ALLOWED_OR_NOT, &status_of_the_envrc(DENIED));
+
+        let failure = read(&runner, &entered_with_direnv(), &cache).unwrap_err();
+
+        assert_eq!(failure, OpenFailure::NoEnvironment);
+    }
+
     /// An answer that is neither silence nor a change bdi can read is not
     /// one to act on.
     #[test]
     fn an_answer_from_direnv_that_cannot_be_read_has_the_directory_entered() {
         let cache = an_empty_cache("unreadable-answer");
         first_run(&cache);
-        let runner = FakeRunner::default()
+        let runner = direnv_allowing()
             .with(STILL_CURRENT, "direnv: something bdi has never seen")
             .with(&entering_the_directory(), &entered());
 
@@ -1424,7 +1559,7 @@ mod tests {
             "launched-elsewhere",
             &[("HOME", "/home/someone"), ("PATH", "/opt/other/bin")],
         );
-        let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+        let runner = direnv_allowing().with(&entering_the_directory(), &entered());
 
         read(&runner, &entered_with_direnv(), &cache).unwrap();
 
@@ -1476,7 +1611,7 @@ mod tests {
     fn direnv_is_found_where_the_capture_found_it() {
         let cache = an_empty_cache("same-direnv");
         first_run(&cache);
-        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+        let runner = direnv_allowing().with(STILL_CURRENT, "");
 
         read(&runner, &entered_with_direnv(), &cache).unwrap();
 
@@ -1490,7 +1625,7 @@ mod tests {
     fn direnv_is_asked_without_the_tracker_or_its_credential() {
         let cache = an_empty_cache("withheld");
         first_run(&cache);
-        let runner = FakeRunner::default().with(STILL_CURRENT, "");
+        let runner = direnv_allowing().with(STILL_CURRENT, "");
 
         let env = read(&runner, &entered_with_direnv(), &cache).unwrap();
 
@@ -1518,7 +1653,7 @@ mod tests {
     fn a_direnv_that_cannot_say_whether_anything_moved_has_the_directory_entered() {
         let cache = an_empty_cache("unanswered");
         first_run(&cache);
-        let runner = FakeRunner::default()
+        let runner = direnv_allowing()
             .failing(
                 STILL_CURRENT,
                 RunFailure::unstartable("direnv", "No such file or directory"),
@@ -1540,7 +1675,7 @@ mod tests {
         for kept in std::fs::read_dir(&cache.dir).unwrap() {
             std::fs::write(kept.unwrap().path(), "{ not what bdi wrote").unwrap();
         }
-        let runner = FakeRunner::default().with(&entering_the_directory(), &entered());
+        let runner = direnv_allowing().with(&entering_the_directory(), &entered());
 
         read(&runner, &entered_with_direnv(), &cache).unwrap();
 
@@ -1578,11 +1713,11 @@ mod tests {
             credential_command: Some("op read the/password".to_string()),
             ..entered_with_direnv()
         };
-        let runner = FakeRunner::default()
+        let runner = direnv_allowing()
             .with(&entering_the_directory(), &entered())
             .with("sh -c op read the/password", "hunter2\n");
         read(&runner, &project, &cache).unwrap();
-        let runner = FakeRunner::default()
+        let runner = direnv_allowing()
             .with(STILL_CURRENT, "")
             .with("sh -c op read the/password", "hunter3\n");
 

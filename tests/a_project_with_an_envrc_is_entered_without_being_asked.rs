@@ -103,7 +103,7 @@ fn a_project_whose_directory_direnv_would_enter_is_read_by_entering_it() {
     assert!(out.status.success(), "bdi exited {}: {said}", out.status);
     assert_eq!(
         launching_shell.direnv_runs(),
-        vec!["exec . env -0".to_string()],
+        vec!["exec . env -0".to_string(), "status --json".to_string()],
         "a directory holding an .envrc was not entered, on a machine whose \
          PATH holds a direnv"
     );
@@ -245,7 +245,7 @@ fn a_direnv_the_project_supplies_is_found_from_the_projects_own_directory() {
     assert!(out.status.success(), "bdi exited {}: {said}", out.status);
     assert_eq!(
         tracker.direnv_runs(),
-        ["exec . env -0"],
+        ["exec . env -0", "status --json"],
         "a direnv the project's own directory supplies was not found, because \
          the search was made from wherever bdi was started rather than from \
          the directory the wrapper would have run in. The snapshot is {snapshot}"
