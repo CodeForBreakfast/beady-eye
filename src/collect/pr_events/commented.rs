@@ -11,6 +11,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &["comments(last:5){nodes{url createdAt author{login}}}"],
     happening: "was commented on",
+    optional: &[],
     outcome: commented,
 };
 

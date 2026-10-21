@@ -393,7 +393,7 @@ fn outcomes(
         let outcome = match observed
             .refused
             .iter()
-            .find(|refusal| event.reads(&refusal.field))
+            .find(|refusal| event.needs(&refusal.field))
         {
             Some(refusal) => Err(format!(
                 "GitHub would not let gh read {}: {}",
@@ -1100,6 +1100,28 @@ mod tests {
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
         assert_eq!(acts(settled), [merged("ark-0i5")]);
+        assert_eq!(writes(&runner), [reason]);
+    }
+
+    /// A token with Pull requests read and no Contents read: GitHub answers
+    /// the state, leaves the merge commit null, and names it in an error.
+    #[test]
+    fn a_merge_still_closes_the_gate_when_github_refuses_the_token_the_merge_commit() {
+        let reason = written(
+            "arkham",
+            "gate resolve ark-0i5 --reason Pull request example/ark#42 merged.",
+        );
+        let refused = r#"{"data":{"repository":{"pr42":{"state":"MERGED","isDraft":false,"mergeCommit":null}}},"errors":[{"type":"FORBIDDEN","path":["repository","pr42","mergeCommit"],"message":"Resource not accessible by personal access token"}]}"#;
+        let runner = captured(FakeRunner::default(), "arkham")
+            .failing_having_printed(&viewed(42), refused, unavailable("gh"))
+            .with(&reason, "");
+
+        let settled = settled(&runner, &[project("arkham")], &pr(42));
+
+        assert_eq!(
+            acted_and_unseen(settled),
+            (vec![merged("ark-0i5")], Vec::new())
+        );
         assert_eq!(writes(&runner), [reason]);
     }
 
@@ -2874,6 +2896,7 @@ mod tests {
     const HEAD: Event = Event {
         fields: &["headRefOid"],
         happening: "has a new head",
+        optional: &[],
         outcome: |pr, observed| {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -2987,6 +3010,7 @@ mod tests {
     const ALSO_ON_MERGE: Event = Event {
         fields: &[],
         happening: "merged again",
+        optional: &[],
         outcome: |_, observed| {
             Ok(
                 (observed.state == github::State::Merged).then(|| Outcome::Resolve {
