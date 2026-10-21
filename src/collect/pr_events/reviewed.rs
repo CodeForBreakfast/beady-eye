@@ -67,6 +67,10 @@ impl Review {
         self.author.as_ref().map_or("ghost", |author| &author.login)
     }
 
+    fn has_body(&self) -> bool {
+        !self.body.trim().is_empty()
+    }
+
     /// The inline comment this review is no more than. GitHub reviews an
     /// inline comment made on its own as commenting, saying nothing itself
     /// and holding that one comment.
@@ -74,7 +78,7 @@ impl Review {
         match self.comments.nodes.as_slice() {
             [comment]
                 if self.state == "COMMENTED"
-                    && self.body.trim().is_empty()
+                    && !self.has_body()
                     && self.comments.total_count == 1 =>
             {
                 Some(comment)
@@ -104,18 +108,33 @@ fn reviewed(pr: &PullRequest, observed: &Observed) -> Result<Option<Outcome>, se
         .filter(|review| !matches!(review.state.as_str(), "PENDING" | "DISMISSED"))
         .filter(|review| review.lone_inline_comment().is_none())
         .map(|review| Telling {
-            text: told(review.author(), pr, &review.state, &review.url),
+            text: told(pr, &review),
             happened: review.submitted_at,
         })
         .collect();
     Ok((observed.state == State::Open && !told.is_empty()).then_some(Outcome::Tell(told)))
 }
 
-/// How a review in `state`, as GitHub spells it in either case, is told, by
-/// the sweep and by a delivery alike.
-pub(super) fn told(reviewer: &str, pr: &PullRequest, state: &str, url: &str) -> String {
-    let state = state.to_ascii_lowercase().replace('_', " ");
-    format!("{reviewer} reviewed pull request {pr}: {state}. {url}")
+/// How `review` is told: its reviewer, its state, whether it has a written
+/// body and how many inline comments it holds, never what they say.
+fn told(pr: &PullRequest, review: &Review) -> String {
+    let state = review.state.to_ascii_lowercase().replace('_', " ");
+    let inline = match review.comments.total_count {
+        0 => None,
+        1 => Some("1 inline comment".to_string()),
+        many => Some(format!("{many} inline comments")),
+    };
+    let holding = match (review.has_body(), inline) {
+        (false, None) => String::new(),
+        (true, None) => ", with a written body".to_string(),
+        (false, Some(inline)) => format!(", with {inline}"),
+        (true, Some(inline)) => format!(", with a written body and {inline}"),
+    };
+    format!(
+        "{} reviewed pull request {pr}: {state}{holding}. {}",
+        review.author(),
+        review.url
+    )
 }
 
 #[cfg(test)]
@@ -200,6 +219,58 @@ mod tests {
         assert_eq!(
             reviewed_on(State::Open, &reviews(&[said.to_string()])).len(),
             1
+        );
+    }
+
+    /// A review in `state` with `body`, holding `inline` inline comments.
+    fn holding(state: &str, body: &str, inline: usize) -> String {
+        format!(
+            r#"{{"url":"https://forge.invalid/example/ark/pull/7#pullrequestreview-11","state":"{state}","body":"{body}","author":{{"login":"alice"}},"comments":{{"totalCount":{inline},"nodes":[{{"url":"https://forge.invalid/example/ark/pull/7#discussion_r21","replyTo":null}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn an_approval_holding_inline_comments_is_told_with_how_many() {
+        assert_eq!(
+            reviewed_on(State::Open, &reviews(&[holding("APPROVED", "", 2)])),
+            [
+                "alice reviewed pull request example/ark#7: approved, with 2 inline comments. \
+              https://forge.invalid/example/ark/pull/7#pullrequestreview-11"
+            ]
+        );
+        assert!(
+            reviewed_on(State::Open, &reviews(&[holding("APPROVED", "", 1)]))[0]
+                .contains("approved, with 1 inline comment.")
+        );
+    }
+
+    #[test]
+    fn an_approval_holding_a_body_only_is_told_as_having_one() {
+        let told = reviewed_on(State::Open, &reviews(&[holding("APPROVED", "Nice.", 0)]));
+        assert_eq!(
+            told,
+            [
+                "alice reviewed pull request example/ark#7: approved, with a written body. \
+              https://forge.invalid/example/ark/pull/7#pullrequestreview-11"
+            ]
+        );
+        assert!(!told[0].contains("Nice"), "{}", told[0]);
+    }
+
+    #[test]
+    fn a_review_holding_a_body_and_inline_comments_names_both() {
+        assert!(reviewed_on(
+            State::Open,
+            &reviews(&[holding("CHANGES_REQUESTED", "Two things.", 3)])
+        )[0]
+        .contains("changes requested, with a written body and 3 inline comments."));
+    }
+
+    #[test]
+    fn a_blank_body_is_not_told_as_a_written_one() {
+        assert!(
+            reviewed_on(State::Open, &reviews(&[holding("APPROVED", "\\n ", 0)]))[0]
+                .contains("approved. ")
         );
     }
 

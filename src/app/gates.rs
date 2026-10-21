@@ -1479,9 +1479,9 @@ mod tests {
     }
 
     /// One delivery of each event the hook subscribes to, about open #7, as
-    /// `(event, body, what it tells, what a line reporting it says)`. An
-    /// inline comment tells nothing of its own, so
-    /// [`an_inline_comment_tells_nothing_of_its_own`] has its delivery.
+    /// `(event, body, what it tells, what a line reporting it says)`. A
+    /// submitted review and an inline comment tell nothing of their own, so
+    /// [`a_review_or_an_inline_comment_tells_nothing_of_its_own`] has theirs.
     fn each_event() -> Vec<(&'static str, String, String, &'static str)> {
         vec![
             (
@@ -1493,16 +1493,6 @@ mod tests {
                  https://github.com/example/ark/pull/7"
                     .to_string(),
                 "was acted on",
-            ),
-            (
-                "pull_request_review",
-                format!(
-                    r#"{{"action":"submitted","review":{{"state":"approved","body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#pullrequestreview-21","user":{{"login":"bob"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"bob"}}}}"#
-                ),
-                "bob reviewed pull request example/ark#7: approved. \
-                 https://github.com/example/ark/pull/7#pullrequestreview-21"
-                    .to_string(),
-                "was reviewed",
             ),
             (
                 "issue_comment",
@@ -1548,6 +1538,13 @@ mod tests {
                 "has a new head",
             ),
         ]
+    }
+
+    /// A pull_request_review delivery of bob approving #7 with a written body.
+    fn review_submitted() -> String {
+        format!(
+            r#"{{"action":"submitted","review":{{"state":"approved","body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#pullrequestreview-21","user":{{"login":"bob"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"bob"}}}}"#
+        )
     }
 
     /// arkham's captured tracker, behind a GitHub where #7 is open, headed by
@@ -1692,15 +1689,16 @@ mod tests {
     }
 
     /// GitHub records an inline comment inside a review, and the look tells a
-    /// review's lone inline comment in place of the review. Neither delivery
-    /// says how many comments the review holds, so each leaves it to the look
-    /// it prompts, which here has nothing to tell.
+    /// review's lone inline comment in place of the review, and how many a
+    /// larger review holds. Neither delivery says how many comments the
+    /// review holds, so each leaves it to the look it prompts, which here has
+    /// nothing to tell.
     #[test]
-    fn an_inline_comment_tells_nothing_of_its_own() {
+    fn a_review_or_an_inline_comment_tells_nothing_of_its_own() {
         let inline = format!(
             r#"{{"action":"created","comment":{{"body":"{WRITTEN}","html_url":"https://github.com/example/ark/pull/7#discussion_r31","user":{{"login":"carol"}}}},"pull_request":{{"number":7,"title":"{WRITTEN}"}},{REPOSITORY},"sender":{{"login":"carol"}}}}"#
         );
-        let (_, approving, _) = delivery_of("pull_request_review", "submitted");
+        let approving = review_submitted();
         let bodyless = approving
             .replace(r#""state":"approved""#, r#""state":"commented""#)
             .replace(&format!(r#""body":"{WRITTEN}","#), r#""body":null,"#);
@@ -1709,6 +1707,7 @@ mod tests {
         for (event, body) in [
             ("pull_request_review_comment", inline),
             ("pull_request_review", bodyless),
+            ("pull_request_review", approving),
         ] {
             let runner = seven_open();
             let found = deliver_signed(
@@ -1723,6 +1722,39 @@ mod tests {
             assert_eq!(asked_github(&runner), [viewed(7)], "{event} prompts a look");
             assert_eq!(comments_added(&runner), Vec::<String>::new(), "{event}");
         }
+    }
+
+    #[test]
+    fn a_review_delivered_is_told_by_the_look_with_its_body_and_inline_comments_once() {
+        let reviewed = r#"{"state":"OPEN","isDraft":false,"mergeCommit":null,"reviews":{"nodes":[{"url":"https://github.com/example/ark/pull/7#pullrequestreview-21","state":"APPROVED","body":"WRITTEN","author":{"login":"bob"},"comments":{"totalCount":2,"nodes":[{"url":"https://github.com/example/ark/pull/7#discussion_r31","replyTo":null}]}}]}}"#
+            .replace("WRITTEN", WRITTEN);
+        let text = "bob reviewed pull request example/ark#7: approved, with a written body and \
+                    2 inline comments. https://github.com/example/ark/pull/7#pullrequestreview-21";
+        let mut runner = seven_open().with(&viewed(7), &answer(7, &reviewed));
+        for bead in ["ark-2ud", "ark-45c"] {
+            runner = runner.with(&comment_added(bead, text), "");
+        }
+        let (mut kept, told) = (arkham(), Told::default());
+        let delivery = signed("pull_request_review", &review_submitted());
+
+        let first = deliver_signed(&mut kept, &runner, &delivery, &told).found;
+        let again = deliver_signed(&mut kept, &runner, &delivery, &told).found;
+
+        assert_eq!(
+            first,
+            [
+                told_of_7("ark-2ud", "was reviewed", Done::Commented),
+                told_of_7("ark-45c", "was reviewed", Done::Commented),
+            ]
+        );
+        assert_eq!(again, []);
+        assert_eq!(
+            comments_added(&runner),
+            [
+                comment_added("ark-2ud", text),
+                comment_added("ark-45c", text)
+            ]
+        );
     }
 
     /// ark-eb1 was made at 2026-10-06T08:24:49Z, so whoever made it could
@@ -1754,8 +1786,7 @@ mod tests {
     /// test.
     #[test]
     fn a_delivery_about_a_pull_request_that_merged_closes_its_gate_and_tells_nothing() {
-        let (event, body, _) = delivery_of("pull_request_review", "submitted");
-        let body = body.replace(r#""number":7"#, r#""number":42"#);
+        let body = review_submitted().replace(r#""number":7"#, r#""number":42"#);
         let runner = captured(FakeRunner::default(), "arkham")
             .with(&viewed(42), &answer(42, MERGED))
             .with(&resolving_42("arkham"), "");
@@ -1763,7 +1794,7 @@ mod tests {
         let found = deliver_signed(
             &mut arkham(),
             &runner,
-            &signed(event, &body),
+            &signed("pull_request_review", &body),
             &Told::default(),
         )
         .found;

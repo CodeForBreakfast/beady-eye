@@ -147,11 +147,6 @@ pub fn delivered(said: &Said, pr: &PullRequest) -> (&'static str, Telling) {
             commented::told(by, pr, url),
             *at,
         ),
-        Said::Reviewed { by, state, url, at } => (
-            reviewed::EVENT.happening,
-            reviewed::told(by, pr, state, url),
-            *at,
-        ),
         Said::NewHead { sha, url } => (
             new_head::EVENT.happening,
             new_head::told(pr, sha, url),
