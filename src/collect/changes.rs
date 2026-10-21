@@ -1766,7 +1766,8 @@ mod tests {
 
         std::fs::remove_file(&at).expect("the name is ours to remove");
         let giving_up = std::time::Instant::now() + A_MOMENT;
-        while !at.exists() {
+        // The name exists from `bind` but nothing accepts until `listen`.
+        while UnixStream::connect(&at).is_err() {
             assert!(std::time::Instant::now() < giving_up, "never taken back");
             thread::sleep(A_TICK);
         }
