@@ -1518,10 +1518,10 @@ mod tests {
             (
                 "status",
                 format!(
-                    r#"{{"state":"success","sha":"{SHA}","context":"{WRITTEN}","description":"{WRITTEN}","target_url":"https://ci.invalid/{WRITTEN}","commit":{{"html_url":"https://github.com/example/ark/commit/{SHA}","commit":{{"message":"{WRITTEN}"}}}},{REPOSITORY},"sender":{{"login":"frank"}}}}"#
+                    r#"{{"state":"pending","sha":"{SHA}","context":"{WRITTEN}","description":"{WRITTEN}","target_url":"https://ci.invalid/{WRITTEN}","commit":{{"html_url":"https://github.com/example/ark/commit/{SHA}","commit":{{"message":"{WRITTEN}"}}}},{REPOSITORY},"sender":{{"login":"frank"}}}}"#
                 ),
                 format!(
-                    "frank acted on pull request example/ark#7: status success. \
+                    "frank acted on pull request example/ark#7: status pending. \
                      https://github.com/example/ark/commit/{SHA}"
                 ),
                 "was acted on",
@@ -1720,6 +1720,38 @@ mod tests {
 
             assert_eq!(found, [], "{event}");
             assert_eq!(asked_github(&runner), [viewed(7)], "{event} prompts a look");
+            assert_eq!(comments_added(&runner), Vec::<String>::new(), "{event}");
+        }
+    }
+
+    /// One suite or status passing does not mean every check on the head has,
+    /// so each leaves passing checks to the look it prompts, which here has
+    /// nothing to tell.
+    #[test]
+    fn a_check_suite_or_status_that_succeeded_tells_nothing_of_its_own() {
+        let (_, failing_suite, ..) = delivery_of("check_suite", "completed");
+        let suite = failing_suite.replace(r#""conclusion":"failure""#, r#""conclusion":"success""#);
+        let status = each_event()
+            .into_iter()
+            .find_map(|(event, body, ..)| (event == "status").then_some(body))
+            .expect("each_event has a status")
+            .replace(r#""state":"pending""#, r#""state":"success""#);
+
+        for (event, body) in [("check_suite", suite), ("status", status)] {
+            let runner = seven_open();
+            let found = deliver_signed(
+                &mut arkham(),
+                &runner,
+                &signed(event, &body),
+                &Told::default(),
+            )
+            .found;
+
+            assert_eq!(found, [], "{event}");
+            assert!(
+                asked_github(&runner).contains(&viewed(7)),
+                "{event} prompts a look"
+            );
             assert_eq!(comments_added(&runner), Vec::<String>::new(), "{event}");
         }
     }
