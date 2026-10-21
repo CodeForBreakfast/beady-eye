@@ -1334,9 +1334,10 @@ the look's words, so the bead is told once:
 | `issue_comment` created on a pull request | the comment, as a look tells it |
 | `pull_request_review_comment`, or `pull_request_review` submitted approving, requesting changes or commenting | nothing of its own. GitHub records an inline comment inside a review, and neither delivery says how many comments the review holds, so the look the delivery prompts tells the review or its inline comment |
 | `check_suite` concluded as a failure, a timeout, a cancellation, an action required or a startup failure, or `status` in `failure` or `error` | failing checks on the head commit, as a look tells them |
+| `check_suite` concluded as a success, or `status` in `success` | nothing of its own. One suite or status passing does not mean every check on the commit has, so the look the delivery prompts tells passing checks once they all have |
 | `pull_request` synchronize | the new head, as a look tells it |
 | `pull_request` closed | nothing more, because the settling closes the gate on a merge, or tells a close without one |
-| anything else from these six events, such as a label, a dismissed review, or a check suite or status that passed | who acted, the event and its action, and a link to what they acted on. One suite or status passing does not mean every check on the commit has, so the look the delivery prompts tells passing checks once they all have |
+| anything else from these six events, such as a label, a dismissed review, a skipped check suite or a pending status | who acted, the event and its action, and a link to what they acted on |
 
 A bead told by that last row reads like this:
 

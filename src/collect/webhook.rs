@@ -409,6 +409,9 @@ struct Issue {
 }
 
 /// What a signed check_suite delivery comes to.
+///
+/// A suite that succeeded says nothing of its own. The settling it prompts
+/// tells the checks passing once every check on the head has passed.
 fn check_suite(body: &[u8]) -> Heard {
     #[derive(Deserialize)]
     struct Saying {
@@ -422,7 +425,7 @@ fn check_suite(body: &[u8]) -> Heard {
         head_sha: String,
         conclusion: Option<String>,
     }
-    let said = saying::<Saying>(body).map(
+    let said = saying::<Saying>(body).and_then(
         |Saying {
              action,
              check_suite:
@@ -433,15 +436,18 @@ fn check_suite(body: &[u8]) -> Heard {
              repository,
              sender,
          }| match conclusion {
-            Some(conclusion) if is_failure(&conclusion) => Said::ChecksFailed { sha: head_sha },
-            conclusion => Said::Acted {
+            Some(conclusion) if conclusion == "success" => None,
+            Some(conclusion) if is_failure(&conclusion) => {
+                Some(Said::ChecksFailed { sha: head_sha })
+            }
+            conclusion => Some(Said::Acted {
                 event: "check_suite",
                 action: conclusion.map_or(action.clone(), |conclusion| {
                     format!("{action} {conclusion}")
                 }),
                 by: sender.login,
                 url: format!("{}/commit/{head_sha}", repository.html_url),
-            },
+            }),
         },
     );
     match serde_json::from_slice::<CheckSuiteEvent>(body) {
@@ -471,7 +477,8 @@ struct Suite {
     head_sha: String,
 }
 
-/// What a signed status delivery comes to.
+/// What a signed status delivery comes to. A status that succeeded says
+/// nothing of its own, as a check suite that succeeded does not.
 fn status(body: &[u8]) -> Heard {
     #[derive(Deserialize)]
     struct Saying {
@@ -480,14 +487,15 @@ fn status(body: &[u8]) -> Heard {
         commit: Addressed,
         sender: Login,
     }
-    let said = saying::<Saying>(body).map(|saying| match saying.state.as_str() {
-        "failure" | "error" => Said::ChecksFailed { sha: saying.sha },
-        _ => Said::Acted {
+    let said = saying::<Saying>(body).and_then(|saying| match saying.state.as_str() {
+        "success" => None,
+        "failure" | "error" => Some(Said::ChecksFailed { sha: saying.sha }),
+        _ => Some(Said::Acted {
             event: "status",
             action: saying.state,
             by: saying.sender.login,
             url: saying.commit.html_url,
-        },
+        }),
     });
     match serde_json::from_slice::<StatusEvent>(body) {
         Ok(event) => commit(event.repository, event.sha, said),
@@ -1438,7 +1446,8 @@ mod tests {
     }
 
     #[test]
-    fn a_check_suite_that_failed_is_said_as_failed_checks_and_any_other_as_acted() {
+    fn a_check_suite_that_failed_is_said_as_failed_checks_one_that_succeeded_as_nothing_and_any_other_as_acted(
+    ) {
         let failed = Some(Said::ChecksFailed {
             sha: SHA.to_string(),
         });
@@ -1459,7 +1468,11 @@ mod tests {
                 "{conclusion}"
             );
         }
-        for conclusion in ["success", "neutral", "skipped", "stale"] {
+        assert_eq!(
+            said_of("check_suite", &check_suite_of("completed", r#""success""#)),
+            None
+        );
+        for conclusion in ["neutral", "skipped", "stale"] {
             assert_eq!(
                 said_of(
                     "check_suite",
@@ -1481,7 +1494,8 @@ mod tests {
     }
 
     #[test]
-    fn a_status_that_failed_is_said_as_failed_checks_and_any_other_as_acted() {
+    fn a_status_that_failed_is_said_as_failed_checks_one_that_succeeded_as_nothing_and_a_pending_one_as_acted(
+    ) {
         let status = |state: &str| {
             format!(
                 r#"{{"state":"{state}","sha":"{SHA}","commit":{{"html_url":"https://github.com/example/ark/commit/{SHA}"}},{ARK},"sender":{{"login":"grace"}}}}"#
@@ -1496,18 +1510,16 @@ mod tests {
                 "{state}"
             );
         }
-        for state in ["pending", "success"] {
-            assert_eq!(
-                said_of("status", &status(state)),
-                acted(
-                    "status",
-                    state,
-                    "grace",
-                    &format!("https://github.com/example/ark/commit/{SHA}")
-                ),
-                "{state}"
-            );
-        }
+        assert_eq!(said_of("status", &status("success")), None);
+        assert_eq!(
+            said_of("status", &status("pending")),
+            acted(
+                "status",
+                "pending",
+                "grace",
+                &format!("https://github.com/example/ark/commit/{SHA}")
+            )
+        );
     }
 
     #[test]
