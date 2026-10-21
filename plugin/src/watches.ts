@@ -70,6 +70,7 @@ export type Block =
       readonly tracker: 'unreachable' | 'ok'
     }
   | { readonly is: 'watches'; readonly watches: 'unreadable' | 'unkept' }
+  | { readonly is: 'refusal'; readonly project: ProjectName; readonly id: BeadId }
 
 /** A message for the session, and the channel block it arrives in. */
 export interface News {
@@ -316,6 +317,12 @@ const whyTheWatcherIsDown: Record<Exclude<Down, ConfigUnreadable>, string> = {
     'it speaks a protocol this plugin does not know, so the plugin and the watcher need releases that speak the same one',
 }
 
+/** Why the watcher will not watch `bead`, given the reason it sent. */
+const whyRefused = (bead: Bead, reason: string) =>
+  reason === 'unknown-project'
+    ? `The watcher does not read a project ${bead.project}.`
+    : `The watcher refused to watch ${named(bead)}: ${reason}.`
+
 const listed = (beads: readonly Bead[]) => beads.map((bead) => `- ${named(bead)}`)
 
 const watcherDown = (why: Down, beads: readonly Bead[]): Omit<News, 'told'> => ({
@@ -349,6 +356,15 @@ const trackerUnreachable = (
     'This session will be told when it can.',
   ].join('\n'),
   block: { is: 'tracker', project, tracker: 'unreachable' },
+})
+
+const watchRefused = (bead: Bead, reason: string): Omit<News, 'told'> => ({
+  content: [
+    `The watcher has stopped watching ${named(bead)}.`,
+    whyRefused(bead, reason),
+    'No change to the bead will reach this session until the watcher accepts the watch again. Unwatch it, or watch it again once the watcher can.',
+  ].join('\n'),
+  block: { is: 'refusal', project: bead.project, id: bead.id },
 })
 
 const trackerBack = (project: ProjectName): Omit<News, 'told'> => ({
@@ -394,10 +410,7 @@ const watchable = ({ bead, known: { standing } }: Watch): Effect.Effect<void, Re
     Match.discriminatorsExhaustive('is')({
       bead: () => Effect.void,
       gone: () => refuse(`${bead.project} holds no bead ${bead.id}.`),
-      refused: ({ reason }) =>
-        reason === 'unknown-project'
-          ? refuse(`The watcher does not read a project ${bead.project}.`)
-          : refuse(`The watcher refused to watch ${named(bead)}: ${reason}.`),
+      refused: ({ reason }) => refuse(whyRefused(bead, reason)),
       unheard: () => Effect.void,
     }),
   )
@@ -460,13 +473,20 @@ export const makeWatches: Effect.Effect<
   const takeIn = (batch: Batch, bead: Bead, known: Known): Effect.Effect<News | undefined> =>
     Effect.gen(function* () {
       const before = heardOf(known.standing)
-      known.standing = standingIn(batch, bead, known.standing)
+      const was = known.standing
+      known.standing = standingIn(batch, bead, was)
       const after = heardOf(known.standing)
       const keep = keepTold(known, after)
       const watch = watches.get(keyOf(bead))
       if (watch === undefined || !isAccepted(watch)) {
         known.told = after
         return
+      }
+      if (batch.is === 'refused') {
+        const again = was.is === 'refused' && was.reason === batch.refused.reason
+        return again
+          ? undefined
+          : { ...watchRefused(bead, batch.refused.reason), told: Effect.void }
       }
       const said =
         before === undefined || after === undefined
@@ -595,6 +615,7 @@ export const makeWatches: Effect.Effect<
           if (said !== undefined) yield* Queue.offer(news, said)
           return
         }
+        if (said?.block.is === 'refusal') yield* Queue.offer(news, said)
         yield* tellBackOnceAllAre
       })
     const hear = (heard: Heard) =>
