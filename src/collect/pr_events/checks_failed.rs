@@ -52,12 +52,25 @@ fn checks_failed(
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Context {
+        name: Option<String>,
         conclusion: Option<String>,
+        started_at: Option<DateTime<Utc>>,
         completed_at: Option<DateTime<Utc>>,
         state: Option<String>,
         created_at: Option<DateTime<Utc>>,
     }
     impl Context {
+        /// Whether a later run of the same check has replaced this one, which
+        /// was cancelled.
+        fn superseded_in(&self, contexts: &[Context]) -> bool {
+            self.conclusion.as_deref() == Some("CANCELLED")
+                && contexts.iter().any(|other| {
+                    other.name.is_some()
+                        && other.name == self.name
+                        && other.started_at > self.started_at
+                })
+        }
+
         /// When this failed, or nothing where it has not.
         fn failed(self) -> Option<DateTime<Utc>> {
             let failed = match (self.conclusion, self.state) {
@@ -76,18 +89,25 @@ fn checks_failed(
     let failed = commits.nodes.into_iter().find_map(|Node { commit }| {
         let rollup = commit.status_check_rollup?;
         matches!(rollup.state.as_str(), "FAILURE" | "ERROR").then(|| {
-            let first_failure = rollup
-                .contexts
-                .nodes
+            let contexts = rollup.contexts.nodes;
+            let replaced: Vec<bool> = contexts
+                .iter()
+                .map(|context| context.superseded_in(&contexts))
+                .collect();
+            let any_replaced = replaced.contains(&true);
+            let first_failure = contexts
                 .into_iter()
-                .filter_map(Context::failed)
+                .zip(replaced)
+                .filter(|(_, replaced)| !replaced)
+                .filter_map(|(context, _)| context.failed())
                 .min();
-            (commit.oid, first_failure)
+            (commit.oid, first_failure, any_replaced)
         })
     });
     Ok(failed
         .filter(|_| observed.state == State::Open)
-        .map(|(oid, happened)| {
+        .filter(|(_, first_failure, any_replaced)| first_failure.is_some() || !any_replaced)
+        .map(|(oid, happened, _)| {
             Outcome::Tell(vec![Telling {
                 text: told(&oid, pr),
                 happened,
@@ -198,6 +218,41 @@ mod tests {
 
         assert_eq!(checks_failed_at(check_runs), when("2026-10-06T08:20:00Z"));
         assert_eq!(checks_failed_at(statuses), when("2026-10-06T08:25:00Z"));
+    }
+
+    /// A push or a title edit cancels the runs under way, and the re-run
+    /// that follows says how the checks went.
+    #[test]
+    fn a_cancelled_run_with_a_later_re_run_is_not_a_failure() {
+        let rollup =
+            |contexts: &str| format!(r#"{{"state":"FAILURE","contexts":{{"nodes":{contexts}}}}}"#);
+        let told = |contexts: &str| told_on(State::Open, &head_commit("a1b2c3", &rollup(contexts)));
+        let cancelled = r#"{"name":"test","conclusion":"CANCELLED","startedAt":"2026-10-06T08:00:00Z","completedAt":"2026-10-06T08:01:00Z"}"#;
+        let re_run = |conclusion: &str| {
+            format!(
+                r#"{{"name":"test","conclusion":{conclusion},"startedAt":"2026-10-06T08:02:00Z","completedAt":"2026-10-06T08:03:00Z"}}"#
+            )
+        };
+
+        for conclusion in ["\"SUCCESS\"", "null"] {
+            assert_eq!(
+                told(&format!("[{cancelled},{}]", re_run(conclusion))),
+                None,
+                "{conclusion}"
+            );
+        }
+        assert!(told(&format!("[{cancelled}]")).is_some(), "no re-run");
+        assert!(
+            told(&format!(
+                r#"[{cancelled},{{"name":"lint","conclusion":"SUCCESS","startedAt":"2026-10-06T08:02:00Z"}}]"#
+            ))
+            .is_some(),
+            "a re-run of another check"
+        );
+        assert!(
+            told(&format!("[{},{cancelled}]", re_run("\"FAILURE\""))).is_some(),
+            "a failed re-run"
+        );
     }
 
     /// GitHub lists the latest hundred checks, so the one that failed may not
