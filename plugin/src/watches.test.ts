@@ -1041,12 +1041,61 @@ test('a bead first heard of after it was watched is kept as what the session was
   expect(await after.nextMessage()).toEqual(started)
 })
 
+const refusedUnknownProject = {
+  line: 'refused',
+  asked: 'watch summit-works smt-4kd3p.20',
+  reason: 'unknown-project',
+}
+
+const refusalNews = (why: string) => ({
+  content: [
+    `The watcher has stopped watching ${watched}.`,
+    why,
+    'No change to the bead will reach this session until the watcher accepts the watch again. Unwatch it, or watch it again once the watcher can.',
+  ].join('\n'),
+  meta: { project: 'summit-works', id: 'smt-4kd3p.20', watch: 'refused' },
+})
+
+test('a watcher refusing a watch it had accepted wakes the session, once, saying why', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(refusedUnknownProject))
+  const refused = await use.nextMessage()
+  connection.write(said(refusedUnknownProject))
+  connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(refused).toEqual(refusalNews('The watcher does not read a project summit-works.'))
+  expect(await use.nextMessage()).toEqual(started)
+})
+
+test('a watcher refusing a watch it had accepted for another reason says that reason', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said({ ...refusedUnknownProject, reason: 'malformed' }))
+
+  expect(await use.nextMessage()).toEqual(
+    refusalNews(`The watcher refused to watch ${watched}: malformed.`),
+  )
+})
+
+test('a watch refused again after the watcher took it back wakes the session again', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(refusedUnknownProject))
+  await use.nextMessage()
+  connection.write(said(theBead(), freshness('summit-works')))
+  connection.write(said(refusedUnknownProject))
+
+  expect(await use.nextMessage()).toEqual(
+    refusalNews('The watcher does not read a project summit-works.'),
+  )
+})
+
 test('a bead whose project the watcher refused for a while is compared with what the session was told', async () => {
   const { use, connection } = await aWatchedBead()
 
-  connection.write(
-    said({ line: 'refused', asked: 'watch summit-works smt-4kd3p.20', reason: 'unknown-project' }),
-  )
+  connection.write(said(refusedUnknownProject))
+  await use.nextMessage()
   connection.write(said(startedLine, freshness('summit-works')))
 
   expect(await use.nextMessage()).toEqual(started)

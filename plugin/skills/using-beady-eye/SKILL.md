@@ -73,6 +73,11 @@ A `watches="unkept"` block names beads that are still watched but would not
 be watched again after the plugin restarts. The next `watch` or `unwatch` that
 is kept keeps them.
 
+A `watch="refused"` block, with a `project` and an `id`, means the watcher has
+stopped watching that bead, for instance because its project left the watcher's
+config. No change to it will arrive. Stop waiting on it, or `watch` it again once
+the watcher can.
+
 ## Unwatching
 
 A watch outlives the bead closing and the session restarting, so nothing ends it
