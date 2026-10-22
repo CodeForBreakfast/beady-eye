@@ -3538,7 +3538,9 @@ carry. In this order:
   as `bd show` prints them
 - `ready`, or `blocked by:` and the blockers, as `bd ready` and `bd list` say
   them; a bead that is neither, such as a deferred or closed one, gets no row
-- the created, updated, started and closed dates, as `bd show` prints them
+- the created, updated, started and closed dates, as `bd show` prints them,
+  and on a row of its own the date the bead is deferred until, which turns over
+  on the clock with nothing written
 - the agent, with its state and its join caveat, as the forest's agent cell
   says them
 - each anomaly, on a row of its own

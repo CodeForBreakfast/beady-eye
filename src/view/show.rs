@@ -43,6 +43,7 @@ const CREATED: &str = "created";
 const UPDATED: &str = "updated";
 const STARTED: &str = "started";
 const CLOSED: &str = "closed";
+const DEFER_UNTIL: &str = "defer until";
 const DATE: &str = "%Y-%m-%d";
 
 /// How `bd show` separates one label from the next.
@@ -614,20 +615,25 @@ fn title_of(title: &str, room: usize, window: usize) -> Vec<Vec<Span<'static>>> 
 /// offers, so the row was cut and lost the last date's end. A row is left
 /// out where the half it says has no date to say.
 ///
+/// The date the bead is deferred until has a row of its own, because it
+/// turns over on the clock with nothing written, and a reader has no other
+/// way to see it coming.
+///
 /// `bd show` prints no closed date outside `--long`, and this says one: the
 /// head is the row unfolded rather than a transcript, and when a closed bead
 /// closed is what a reader opening it came for.
 fn dates(node: &Node) -> Vec<String> {
-    let half = |pairs: [(&str, Option<chrono::DateTime<chrono::Utc>>); 2]| {
+    let half = |pairs: &[(&str, Option<chrono::DateTime<chrono::Utc>>)]| {
         let said: Vec<String> = pairs
-            .into_iter()
-            .filter_map(|(word, when)| when.map(|when| format!("{word} {}", when.format(DATE))))
+            .iter()
+            .filter_map(|&(word, when)| when.map(|when| format!("{word} {}", when.format(DATE))))
             .collect();
         (!said.is_empty()).then(|| said.join(" · "))
     };
     [
-        half([(CREATED, node.created_at), (UPDATED, node.updated_at)]),
-        half([(STARTED, node.started_at), (CLOSED, node.closed_at)]),
+        half(&[(CREATED, node.created_at), (UPDATED, node.updated_at)]),
+        half(&[(STARTED, node.started_at), (CLOSED, node.closed_at)]),
+        half(&[(DEFER_UNTIL, node.defer_until)]),
     ]
     .into_iter()
     .flatten()
@@ -1046,6 +1052,31 @@ mod tests {
         assert!(
             rows.iter().all(|row| !row.contains('…')),
             "a date row was cut: {rows:#?}"
+        );
+    }
+
+    /// A deferral turns over on the clock with nothing written, so the head
+    /// says the date a bead is put off until, on a row of its own, and says
+    /// nothing for a bead with none.
+    #[test]
+    fn the_head_says_the_date_a_bead_is_deferred_until() {
+        let deferred = Node {
+            status: Status::Deferred,
+            defer_until: when("2026-10-30"),
+            ..a_bead()
+        };
+
+        let rows = drawn(&deferred, &mut Show::default(), 90, 40);
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("defer until 2026-10-30")),
+            "{rows:#?}"
+        );
+
+        let rows = drawn(&a_bead(), &mut Show::default(), 90, 40);
+        assert!(
+            rows.iter().all(|row| !row.contains("defer until")),
+            "{rows:#?}"
         );
     }
 
