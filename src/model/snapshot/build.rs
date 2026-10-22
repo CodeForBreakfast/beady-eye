@@ -1649,4 +1649,34 @@ path = "/tmp/bdi-ground/dunwich"
             Some("writing the parser and its tests")
         );
     }
+
+    #[test]
+    fn a_snapshot_of_a_long_nesting_whose_every_bead_is_blocked_by_its_root_serialises() {
+        const DEPTH: usize = 6000;
+        let mut beads = vec![in_flight("dun-1", None, &[], false)];
+        for at in 0..DEPTH {
+            let parent = if at == 0 {
+                "dun-1".to_string()
+            } else {
+                format!("dun-1.{}", at - 1)
+            };
+            beads.push(in_flight(
+                &format!("dun-1.{at}"),
+                Some(&parent),
+                &["dun-1"],
+                false,
+            ));
+        }
+        let t = tree_under("dun-1", &beads, &[]);
+
+        let json = serde_json::to_value(&t).expect("the tree serialises");
+
+        let deepest = json["nodes"]
+            .as_array()
+            .expect("the tree has nodes")
+            .iter()
+            .find(|row| row["id"] == format!("dun-1.{}", DEPTH - 1))
+            .expect("the deepest bead is drawn");
+        assert_eq!(deepest["depth"], DEPTH);
+    }
 }

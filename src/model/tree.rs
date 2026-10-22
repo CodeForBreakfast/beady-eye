@@ -1012,38 +1012,34 @@ pub fn beneath(children: &[Vec<Link>], at: usize, above: &[usize]) -> Vec<usize>
 /// whole of it is what is wanted.
 pub fn unroll(children: &[Vec<Link>]) -> Vec<Placed> {
     let mut rows = Vec::new();
-    if !children.is_empty() {
-        unroll_from(0, 0, None, children, &mut Vec::new(), &mut rows);
+    if children.is_empty() {
+        return rows;
+    }
+    rows.push(Placed {
+        bead: 0,
+        depth: 0,
+        edge: None,
+    });
+    // The way down to the bead being unrolled, each with the links beneath
+    // it still to unroll. A stack of its own rather than the call stack,
+    // which a tracker nested deep enough would overflow.
+    let mut above = vec![0];
+    let mut going = vec![links_from(children, 0, &[]).into_iter()];
+    while let Some(links) = going.last_mut() {
+        let Some(link) = links.next() else {
+            going.pop();
+            above.pop();
+            continue;
+        };
+        rows.push(Placed {
+            bead: link.bead,
+            depth: u16::try_from(going.len()).expect("a tree no deeper than a row can say"),
+            edge: Some(link.edge.clone()),
+        });
+        going.push(links_from(children, link.bead, &above).into_iter());
+        above.push(link.bead);
     }
     rows
-}
-
-fn unroll_from(
-    at: usize,
-    depth: u16,
-    edge: Option<Edge>,
-    children: &[Vec<Link>],
-    above: &mut Vec<usize>,
-    out: &mut Vec<Placed>,
-) {
-    out.push(Placed {
-        bead: at,
-        depth,
-        edge,
-    });
-    let links = links_from(children, at, above);
-    above.push(at);
-    for link in links {
-        unroll_from(
-            link.bead,
-            depth + 1,
-            Some(link.edge.clone()),
-            children,
-            above,
-            out,
-        );
-    }
-    above.pop();
 }
 
 #[cfg(test)]
