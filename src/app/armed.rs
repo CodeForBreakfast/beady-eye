@@ -78,6 +78,8 @@ pub struct Armed {
     /// When something last vouched for its rows: a read of it coming back,
     /// or a word from something covering it.
     vouched_at: Option<DateTime<Utc>>,
+    /// Whether the last read that came back could not reach its tracker.
+    unanswered: bool,
 }
 
 impl Armed {
@@ -97,6 +99,7 @@ impl Armed {
             speaks_until: None,
             covered_for: None,
             vouched_at: None,
+            unanswered: false,
         }
     }
 
@@ -144,7 +147,11 @@ impl Armed {
             (Cover::HasStoodThePollDown, Cover::StandsThePollDown) => Cover::HasStoodThePollDown,
             (_, named) => named,
         };
-        let named = Armed { cover, ..named };
+        let named = Armed {
+            cover,
+            unanswered: self.unanswered,
+            ..named
+        };
         let at = if named.every().is_some() {
             self.at
         } else {
@@ -199,9 +206,20 @@ impl Armed {
 
     /// This project has been read, whatever was asked for.
     pub(super) fn was_read(&mut self, at: DateTime<Utc>, speaks_until: Option<DateTime<Utc>>) {
+        self.unanswered = false;
         self.speaks_until = speaks_until;
         self.at = self.due_from(at);
         self.vouched_at = Some(at);
+    }
+
+    /// The read that came back could not reach this project's tracker, so it
+    /// keeps its poll until a read does, even where a producer has stood the
+    /// poll down. A producer vouches that nothing in the tracker has moved, which
+    /// says nothing of a read that never reached it, and only the next
+    /// change in the tracker would otherwise ask again.
+    pub(super) fn went_unanswered(&mut self, at: DateTime<Utc>) {
+        self.unanswered = true;
+        self.at = self.due_from(at);
     }
 
     /// Something outside says it covers this project and nothing in it has
@@ -212,7 +230,7 @@ impl Armed {
     /// read stops speaking, which passes with nothing written. Any other
     /// poll is the reader's and is left as it was.
     pub(super) fn covered(&mut self, at: DateTime<Utc>) {
-        if self.cover.covered() {
+        if self.cover.covered() && !self.unanswered {
             self.at = self.at.and(self.speaks_until);
         }
         self.vouched_at = Some(at);
@@ -245,7 +263,8 @@ impl Armed {
     /// How long after a read this project asks for another, now that any
     /// producer covering it has had its say.
     fn every(&self) -> Option<Duration> {
-        self.every.filter(|_| self.cover.keeps_the_poll())
+        self.every
+            .filter(|_| self.cover.keeps_the_poll() || self.unanswered)
     }
 
     fn lapses_at(&self) -> Option<DateTime<Utc>> {
@@ -818,6 +837,53 @@ mod tests {
 
         assert_eq!(armed.asks_in(at(150)), None);
         assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// A producer vouches for the tracker, not for a read that never reached
+    /// it, so a covered project whose read went unanswered polls until one is
+    /// answered, and then stands the poll down again.
+    #[test]
+    fn a_covered_project_whose_read_went_unanswered_polls_until_one_is_answered() {
+        let mut armed = polling_until_covered();
+        armed.came_back(&arkham(), at(100), None);
+        armed.covered(at(110));
+
+        armed.came_back(&arkham(), at(150), None);
+        armed.went_unanswered(at(150));
+
+        assert_eq!(armed.asks(at(179)), None);
+        assert_eq!(armed.asks(at(180)), Some(arkham()));
+
+        armed.came_back(&arkham(), at(190), None);
+
+        assert_eq!(armed.asks(at(1_000_000)), None);
+    }
+
+    /// The word that would stand the poll down can arrive after the read
+    /// that went unanswered, and it leaves the poll standing all the same.
+    #[test]
+    fn a_word_heard_after_an_unanswered_read_leaves_the_poll_standing() {
+        let mut armed = polling_until_covered();
+        armed.came_back(&arkham(), at(100), None);
+        armed.went_unanswered(at(100));
+
+        armed.covered(at(110));
+
+        assert_eq!(armed.asks(at(130)), Some(arkham()));
+    }
+
+    /// Saving the config is not a read, so it leaves the poll standing too.
+    #[test]
+    fn a_config_the_reader_writes_keeps_polling_a_project_whose_read_went_unanswered() {
+        let mut standing = polling_until_covered();
+        standing.came_back(&arkham(), at(100), None);
+        standing.covered(at(110));
+        standing.came_back(&arkham(), at(150), None);
+        standing.went_unanswered(at(150));
+
+        let mut named = standing.still_due(polling_until_covered());
+
+        assert_eq!(named.asks(at(180)), Some(arkham()));
     }
 
     /// A producer that goes quiet is shown as having gone, and is not polled
