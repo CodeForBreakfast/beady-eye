@@ -878,6 +878,13 @@ entry configures, and a cell named twice, in one list or across two.
 Notes and the counts on a shut line are not cells: they trail the state
 whatever the row says.
 
+`open_id` names what an open bead's id is drawn in, and takes any colour a
+badge's `colour` takes. `bd` sends no colour for open, so the default,
+`"status"`, leaves the id in the row's own tone. A tracker that is mostly
+open then reads as rows of one tone, and `open_id = "identity"` draws those
+ids in `bd show`'s blue instead. Every other status keeps `bd`'s colour on its
+id whatever this says.
+
 ## Telling `bdi` a project changed
 
 `bdi` polls, and most polls find nothing moved. A poll first asks the tracker

@@ -483,8 +483,8 @@ pub enum DrawnOn {
     Blocked,
 }
 
-/// A colour a badge may be drawn in: a slot of `bdi`'s own palette, or a
-/// colour the reader wrote.
+/// A colour a badge or an open bead's id may be drawn in: a slot of `bdi`'s
+/// own palette, or a colour the reader wrote.
 ///
 /// Parsed here and resolved in `view::palette`, so the name a config may write
 /// is this module's and the colour behind it is the palette's.
@@ -1663,6 +1663,7 @@ path = "/home/user/dev/cinder"
                 ],
                 title: vec![Cell::Title, Cell::Badges],
                 state: vec![Cell::Agent, Cell::Anomalies, Cell::Progress],
+                open_id: Colour::Status,
             },
             "a list left out is the default's, and one written is read as written"
         );
@@ -1677,6 +1678,17 @@ path = "/home/user/dev/cinder"
 
         assert_eq!(cfg.row.title, Vec::<Cell>::new());
         assert_eq!(cfg.row.identity, Layout::default().identity);
+    }
+
+    /// An open bead's id is drawn in `status` unless the row names a colour
+    /// for it, and it may name any colour a badge may.
+    #[test]
+    fn a_row_names_the_colour_of_an_open_beads_id() {
+        let cfg = Config::from_toml(&format!("{ONE_PROJECT}\n[row]\nopen_id = \"identity\"\n"))
+            .expect("parses");
+
+        assert_eq!(cfg.row.open_id, Colour::Slot(Slot::Identity));
+        assert_eq!(Layout::default().open_id, Colour::Status);
     }
 
     #[test]

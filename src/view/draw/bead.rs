@@ -190,7 +190,11 @@ impl Walk<'_> {
                 ));
             }
             Cell::Id => {
-                walked.cell(Span::styled(row.id.clone(), status_style(&row.status)));
+                let style = match row.status {
+                    Status::Open => colour_style(self.layout.open_id, &row.status),
+                    _ => status_style(&row.status),
+                };
+                walked.cell(Span::styled(row.id.clone(), style));
             }
             Cell::Title => {
                 walked.cell(Span::raw(row.title.clone()));
@@ -340,6 +344,15 @@ impl Walked {
     }
 }
 
+/// What a colour a config named is drawn in, on a bead of `status`.
+fn colour_style(colour: Colour, status: &Status) -> Style {
+    match colour {
+        Colour::Status => status_style(status),
+        Colour::Slot(slot) => palette::slot(slot),
+        Colour::Absolute(colour) => palette::absolute(colour),
+    }
+}
+
 /// Where the badge takes a reader, where the emitter will write a sequence
 /// saying so.
 ///
@@ -361,12 +374,9 @@ pub(in crate::view) fn opens_at(badge: &Badged) -> Option<&str> {
 /// left with a style of nothing, which is what lets the row's own tone reach
 /// it the way it reaches the title beside it.
 pub(in crate::view) fn badge_style(badge: &Badged, status: &Status) -> Style {
-    let coloured = match badge.colour {
-        Some(Colour::Status) => status_style(status),
-        Some(Colour::Slot(slot)) => palette::slot(slot),
-        Some(Colour::Absolute(colour)) => palette::absolute(colour),
-        None => Style::new(),
-    };
+    let coloured = badge
+        .colour
+        .map_or_else(Style::new, |colour| colour_style(colour, status));
     if opens_at(badge).is_some() {
         coloured.patch(palette::LINK)
     } else {
@@ -386,7 +396,7 @@ mod tests {
     use crate::model::badges::Undrawn;
     use crate::view::fitted::hyperlink;
 
-    use crate::config::DrawnOn;
+    use crate::config::{DrawnOn, Slot};
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::join::AgentRef;
@@ -1008,6 +1018,7 @@ mod tests {
             identity: vec![Cell::Glyph, Cell::Badge("delivery_pr".into()), Cell::Id],
             title: vec![Cell::Title, Cell::Badges],
             state: vec![Cell::Agent, Cell::Progress, Cell::Anomalies],
+            ..Layout::default()
         };
 
         let drawn = Painted::of(bead_line(&epic, BRANCH, &ids(3), &layout), 80, 1).rows();
@@ -1806,5 +1817,51 @@ mod tests {
             .find(|run| run.said.contains(".2"))
             .expect("the id is drawn");
         assert_eq!(id.style.fg, Some(Color::Reset), "{painted:?}");
+    }
+
+    /// A reader who wants an open row broken up names a colour for its id,
+    /// and the id alone takes it: the glyph and the title keep the row's tone.
+    #[test]
+    fn an_open_beads_id_takes_the_colour_the_row_config_names_for_it() {
+        let node = node("smt-4kd3p.2", "a bead", Status::Open);
+        let layout = Layout {
+            open_id: Colour::Slot(Slot::Identity),
+            ..Layout::default()
+        };
+
+        let painted = Painted::of(bead_line(&row(&node), BRANCH, &ids(3), &layout), 60, 1).row(0);
+
+        let id = painted
+            .iter()
+            .find(|run| run.said.contains(".2"))
+            .expect("the id is drawn");
+        let title = painted
+            .iter()
+            .find(|run| run.said.contains("a bead"))
+            .expect("the title is drawn");
+        assert_eq!(id.style.fg, palette::IDENTITY.fg, "{painted:?}");
+        assert_eq!(title.style.fg, Some(Color::Reset), "{painted:?}");
+    }
+
+    /// Every other status already has `bd`'s colour on its id, and the key
+    /// is about the one that has none.
+    #[test]
+    fn the_colour_named_for_an_open_id_leaves_every_other_status_alone() {
+        let layout = Layout {
+            open_id: Colour::Slot(Slot::Identity),
+            ..Layout::default()
+        };
+        for status in [Status::InProgress, Status::Blocked, Status::Closed] {
+            let node = node("smt-4kd3p.2", "a bead", status.clone());
+
+            let painted =
+                Painted::of(bead_line(&row(&node), BRANCH, &ids(3), &layout), 60, 1).row(0);
+
+            let id = painted
+                .iter()
+                .find(|run| run.said.contains(".2"))
+                .expect("the id is drawn");
+            assert_eq!(id.style.fg, status_style(&status).fg, "{painted:?}");
+        }
     }
 }
