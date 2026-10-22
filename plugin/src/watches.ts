@@ -80,6 +80,9 @@ export interface News {
   readonly block: Block
   /** Keep what the message told, once the session has been sent it. */
   readonly told: Effect.Effect<void>
+  /** Release what the message held while it was on its way, once the session
+   * could not be sent it. */
+  readonly unsent?: Effect.Effect<void>
 }
 
 const Told = Schema.Union([
@@ -496,7 +499,8 @@ export const makeWatches: Effect.Effect<
       return undefined
     })
 
-  const tell = (said: Omit<News, 'told'>) => Queue.offer(news, { ...said, told: Effect.void })
+  const tell = (said: Omit<News, 'told'>, unsent: Effect.Effect<void> = Effect.void) =>
+    Queue.offer(news, { ...said, told: Effect.void, unsent })
 
   /** Run `check` once the watcher or a tracker has had a minute to come
    * back. */
@@ -525,6 +529,14 @@ export const makeWatches: Effect.Effect<
         why,
         untold.map(({ bead }) => bead),
       ),
+      Effect.sync(() => {
+        for (const { known, connection } of untold) {
+          const now = known.connection
+          if (now.is === 'answering' || (now.is === 'down' && now.outage === connection.outage)) {
+            known.connection = { ...now, toldDown: false }
+          }
+        }
+      }),
     )
   })
 
@@ -574,7 +586,12 @@ export const makeWatches: Effect.Effect<
             .map(({ bead }) => bead)
           if (unreachable.get(project) !== outage || beads.length === 0) return Effect.void
           outage.told = true
-          return tell(trackerUnreachable(project, why, beads))
+          return tell(
+            trackerUnreachable(project, why, beads),
+            Effect.sync(() => {
+              outage.told = false
+            }),
+          )
         }),
       )
     })
