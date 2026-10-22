@@ -791,7 +791,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn each_connection_is_told_for_itself() {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let first = connected(&mut hold, 4);
