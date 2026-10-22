@@ -63,6 +63,7 @@ export type Block =
       readonly status: string
       readonly ready: boolean
     }
+  | { readonly is: 'gone'; readonly project: ProjectName; readonly id: BeadId }
   | { readonly is: 'watcher'; readonly watcher: 'down' | 'answering' }
   | {
       readonly is: 'tracker'
@@ -288,13 +289,10 @@ const newsOf = (
       `${named(bead)}, ${quoted(title)}, has changed.`,
       ...changes.map((change) => `- ${change}`),
     ].join('\n'),
-    block: {
-      is: 'bead',
-      project: bead.project,
-      id: bead.id,
-      status: now.is === 'bead' ? now.status : 'gone',
-      ready: now.is === 'bead' && now.ready,
-    },
+    block:
+      now.is === 'bead'
+        ? { is: 'bead', project: bead.project, id: bead.id, status: now.status, ready: now.ready }
+        : { is: 'gone', project: bead.project, id: bead.id },
   }
 }
 

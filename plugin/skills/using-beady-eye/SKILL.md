@@ -41,7 +41,9 @@ smt-4kd3p.20 in summit-works, "the daily wallpaper timer calls dms", has changed
 ```
 
 1. **Read the attributes first.** `status` and `ready` say where the bead
-   stands now, so a close or a bead turning ready reads without the text.
+   stands now, so a close or a bead turning ready reads without the text. A
+   bead that left its tracker has `gone="true"` and neither of those, so it is
+   never confused with a bead whose own status is `gone`.
 2. **Read the lines for why.** Each line is one change since the session was
    last told. One message covers everything one write did, so an answer that
    comments and closes arrives once.

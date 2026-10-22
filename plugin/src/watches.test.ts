@@ -924,9 +924,21 @@ test('a bead going from its tracker wakes the session', async () => {
     meta: {
       project: 'summit-works',
       id: 'smt-4kd3p.20',
-      status: 'gone',
-      ready: 'false',
+      gone: 'true',
     },
+  })
+})
+
+test('a bead whose own status is gone arrives with that status, not as one gone from its tracker', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(theBead({ row: { status: 'gone' } }), freshness('summit-works')))
+
+  expect((await use.nextMessage()).meta).toEqual({
+    project: 'summit-works',
+    id: 'smt-4kd3p.20',
+    status: 'gone',
+    ready: 'false',
   })
 })
 
