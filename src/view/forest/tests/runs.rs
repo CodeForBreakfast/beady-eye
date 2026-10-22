@@ -434,3 +434,29 @@ fn a_closed_branch_opened_over_its_work_stops_counting_it() {
 
     assert_eq!(row_of(&forest, "sdg-4.1").notes, Vec::<String>::new());
 }
+
+/// Expanding a subtree names nothing beneath its line, so the run inside
+/// it is drawn lazily, and its members are drawn when the reader reaches
+/// into it.
+#[test]
+fn a_run_inside_an_expanded_subtree_is_drawn_with_its_members() {
+    let mut forest = flatten(depot());
+    forest.apply(Action::ExpandSubtree);
+
+    assert_eq!(
+        sketch(&forest),
+        [
+            "▾ dunwich",
+            "  └── ◐ dep-1 re-lay the sidings",
+            "      ├── ○ .1 grade the bed",
+            "      └── … 6 more",
+            "          ├── ✓ .2 lift the old rail",
+            "          │   └── … 3 more",
+            "          │       ├── ✓ .1 cut the fishplates",
+            "          │       ├── ✓ .2 stack the chairs",
+            "          │       └── ✓ .3 draw the spikes",
+            "          ├── ✓ .3 clear the ballast",
+            "          └── ✓ .4 burn the sleepers",
+        ]
+    );
+}

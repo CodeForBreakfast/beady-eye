@@ -4271,6 +4271,8 @@ and a second line"
         packages = {
           default = beady-eye;
           beady-eye = beady-eye;
+          beady-eye-deps = artifacts.release;
+          beady-eye-dev-deps = artifacts.dev;
           await-ci-verdict = awaitCiVerdict;
           conventional-subject = conventionalSubject;
           next-candidate = nextCandidate;
