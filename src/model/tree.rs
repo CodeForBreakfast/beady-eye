@@ -751,6 +751,7 @@ impl<'a> Across<'a> {
                     projects: vec![project.to_string()],
                 };
             }
+            return Unreachable::Unconfigured;
         }
         let named = |answers: &mut dyn Iterator<Item = usize>| {
             answers.map(|at| self.projects[at].to_string()).collect()
@@ -2184,6 +2185,28 @@ mod tests {
                     projects: projects(&["pier"])
                 }
             )]
+        );
+    }
+
+    /// A project the config does not name is not asked, whoever else holds
+    /// the id.
+    #[test]
+    fn a_blocker_written_with_a_project_nobody_configured_is_unconfigured() {
+        let answers = [
+            answer(
+                "arkham",
+                &[bead("ark-1", "open", &[dep("pier:sh-1", "blocks")])],
+            ),
+            answer("dunwich", &[bead("sh-1", "open", &[])]),
+            answer("innsmouth", &[bead("sh-1", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned("sh-1", Unreachable::Unconfigured)]
         );
     }
 
