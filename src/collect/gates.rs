@@ -207,23 +207,6 @@ fn told(project: &str, bead: &str, text: &str) -> (String, String, String) {
     )
 }
 
-/// Re-read `pr` from GitHub, then settle it as [`settled`] does, acting on
-/// everything `events` say it has done, since no look said which gates wait
-/// on it.
-#[cfg(test)]
-fn settle(
-    cli: &Cli,
-    gh: &dyn Runner,
-    projects: &[Project],
-    events: &[Event],
-    pr: &PullRequest,
-    told: &Told,
-) -> Settled {
-    let observed = observe(gh, pr, &pr_events::fields(events));
-    let read = observed.map(|observed| outcomes(events, pr, &observed, None));
-    settled(cli, projects, pr, read, None, told)
-}
-
 /// The most pull requests one query asks about. The query is one argument to
 /// `gh`, and an argument has a length limit of its own on Linux.
 const PULL_REQUESTS_PER_QUERY: usize = 100;
@@ -982,13 +965,48 @@ mod tests {
     }
 
     fn settled(runner: &FakeRunner, projects: &[Project], pr: &PullRequest) -> Settled {
-        settle(
+        settle_by_look(runner, projects, EVENTS, pr, &Told::default())
+    }
+
+    /// `pr` settled as a look settles it: the open gates are read, and those
+    /// waiting on `pr` are what settling acts on.
+    fn settle_by_look(
+        runner: &FakeRunner,
+        projects: &[Project],
+        events: &[Event],
+        pr: &PullRequest,
+        told: &Told,
+    ) -> Settled {
+        let waiting = projects
+            .iter()
+            .filter_map(|project| Some((project, read(runner, project).ok()?)))
+            .flat_map(|(project, open)| {
+                open.pull_requests
+                    .into_iter()
+                    .filter_map(|gate| {
+                        let wait = gate.awaits.ok()?;
+                        wait.pull_request.is(pr).then(|| Waiting {
+                            project: project.name.clone(),
+                            until: wait.until,
+                            blocks: gate.blocks,
+                            made: gate.made,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let awaited = Awaited {
+            pull_request: pr.clone(),
+            waiting,
+        };
+        settle_delivered(
             &Cli::new(runner),
             runner,
             projects,
-            EVENTS,
-            pr,
-            &Told::default(),
+            events,
+            &awaited,
+            None,
+            told,
         )
     }
 
@@ -1057,15 +1075,21 @@ mod tests {
 
         settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(dep_lists_read(&runner), [held_back_by("arkham", "ark-0i5")]);
+        assert_eq!(
+            dep_lists_read_by_settling(&runner),
+            [held_back_by("arkham", "ark-0i5")]
+        );
     }
 
-    fn dep_lists_read(runner: &FakeRunner) -> Vec<String> {
+    /// The beads each gate holds back are read once for every gate in the
+    /// look, so what comes after is what settling asked.
+    fn dep_lists_read_by_settling(runner: &FakeRunner) -> Vec<String> {
         runner
             .calls()
             .into_iter()
             .map(|call| call.argv)
             .filter(|argv| argv.contains(" dep list "))
+            .skip(HELD_BACK.len())
             .collect()
     }
 
@@ -1077,7 +1101,7 @@ mod tests {
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(acts(settled), []);
+        assert_eq!(settled, Settled::NothingNew { unseen: vec![] });
         assert_eq!(writes(&runner), Vec::<String>::new());
     }
 
@@ -1257,15 +1281,8 @@ mod tests {
                     &checks_failed_telling("arkham", "ark-45c", oid),
                     "Comment added to ark-45c\n",
                 );
-            let settled = settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
-            (acts(settled), writes(&runner))
+            let settled = settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
+            (settled, writes(&runner))
         };
 
         let (_, first) = settle_7("a1b2c3");
@@ -1273,13 +1290,7 @@ mod tests {
         let (_, fixed) = settle_7("d4e5f6");
 
         assert_eq!(first.len(), 2);
-        assert_eq!(
-            same,
-            [
-                failing_checks("ark-2ud", Done::AlreadyCommented),
-                failing_checks("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(same, Settled::NothingNew { unseen: vec![] });
         assert_eq!(same_writes, Vec::<String>::new());
         assert_eq!(
             fixed,
@@ -1323,22 +1334,15 @@ mod tests {
                     &checks_passed_telling("arkham", "ark-45c", "a1b2c3"),
                     "Comment added to ark-45c\n",
                 );
-            let settled = settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
-            (acts(settled), writes(&runner))
+            let settled = settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
+            (settled, writes(&runner))
         };
 
         let (first, first_writes) = settle_7();
         let (again, again_writes) = settle_7();
 
         assert_eq!(
-            first,
+            acts(first),
             [
                 passing_checks("ark-2ud", Done::Commented),
                 passing_checks("ark-45c", Done::Commented)
@@ -1351,13 +1355,7 @@ mod tests {
                 checks_passed_telling("arkham", "ark-45c", "a1b2c3")
             ]
         );
-        assert_eq!(
-            again,
-            [
-                passing_checks("ark-2ud", Done::AlreadyCommented),
-                passing_checks("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(again, Settled::NothingNew { unseen: vec![] });
         assert_eq!(again_writes, Vec::<String>::new());
     }
 
@@ -1414,15 +1412,8 @@ mod tests {
                     &conflict_telling("arkham", "ark-45c", oid),
                     "Comment added to ark-45c\n",
                 );
-            let settled = settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
-            (acts(settled), writes(&runner))
+            let settled = settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
+            (settled, writes(&runner))
         };
 
         let (first, first_writes) = settle_7("a1b2c3");
@@ -1430,20 +1421,14 @@ mod tests {
         let (_, rebased) = settle_7("d4e5f6");
 
         assert_eq!(
-            first,
+            acts(first),
             [
                 conflicting_with_base("ark-2ud", Done::Commented),
                 conflicting_with_base("ark-45c", Done::Commented)
             ]
         );
         assert_eq!(first_writes.len(), 2);
-        assert_eq!(
-            same,
-            [
-                conflicting_with_base("ark-2ud", Done::AlreadyCommented),
-                conflicting_with_base("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(same, Settled::NothingNew { unseen: vec![] });
         assert_eq!(same_writes, Vec::<String>::new());
         assert_eq!(
             rebased,
@@ -1510,15 +1495,8 @@ mod tests {
                     &behind_telling("ark-45c", oid),
                     "Comment added to ark-45c\n",
                 );
-            let settled = settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
-            (acts(settled), writes(&runner))
+            let settled = settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
+            (settled, writes(&runner))
         };
 
         let (first, first_writes) = settle_7("a1b2c3");
@@ -1526,20 +1504,14 @@ mod tests {
         let (_, behind_again) = settle_7("d4e5f6");
 
         assert_eq!(
-            first,
+            acts(first),
             [
                 behind_base("ark-2ud", Done::Commented),
                 behind_base("ark-45c", Done::Commented)
             ]
         );
         assert_eq!(first_writes.len(), 2);
-        assert_eq!(
-            same,
-            [
-                behind_base("ark-2ud", Done::AlreadyCommented),
-                behind_base("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(same, Settled::NothingNew { unseen: vec![] });
         assert_eq!(same_writes, Vec::<String>::new());
         assert_eq!(
             behind_again,
@@ -1748,15 +1720,8 @@ mod tests {
                     );
                 }
             }
-            let settled = settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
-            (acts(settled), writes(&runner))
+            let settled = settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
+            (settled, writes(&runner))
         };
         let first_review = ("alice", "COMMENTED", 11);
 
@@ -1765,13 +1730,7 @@ mod tests {
         let (_, later) = settle_7(&[first_review, ("alice", "APPROVED", 12)]);
 
         assert_eq!(first.len(), 2);
-        assert_eq!(
-            same,
-            [
-                reviewed("ark-2ud", Done::AlreadyCommented),
-                reviewed("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(same, Settled::NothingNew { unseen: vec![] });
         assert_eq!(same_writes, Vec::<String>::new());
         assert_eq!(
             later,
@@ -1990,15 +1949,8 @@ mod tests {
                     );
                 }
             }
-            let settled = settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
-            (acts(settled), writes(&runner))
+            let settled = settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
+            (settled, writes(&runner))
         };
         let first_comment = ("alice", 11);
 
@@ -2007,13 +1959,7 @@ mod tests {
         let (_, later) = settle_7(&[first_comment, ("alice", 12)]);
 
         assert_eq!(first.len(), 2);
-        assert_eq!(
-            same,
-            [
-                commented("ark-2ud", Done::AlreadyCommented),
-                commented("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(same, Settled::NothingNew { unseen: vec![] });
         assert_eq!(same_writes, Vec::<String>::new());
         assert_eq!(
             later,
@@ -2108,7 +2054,7 @@ mod tests {
         assert_eq!(runner.calls().len(), 1, "only GitHub was asked");
 
         let delivered = settled(&runner, &[project("arkham")], &pr(7));
-        assert_eq!(acts(delivered), []);
+        assert_eq!(delivered, Settled::NothingNew { unseen: vec![] });
         assert_eq!(writes(&runner), Vec::<String>::new());
     }
 
@@ -2176,27 +2122,12 @@ mod tests {
             .with(&comments_on("arkham", "ark-45c"), TOLD)
             .with(&telling("arkham", "ark-2ud"), "");
         let told = Told::default();
-        let settle_7 = || {
-            settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            )
-        };
+        let settle_7 = || settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
 
         settle_7();
         let again = settle_7();
 
-        assert_eq!(
-            acts(again),
-            [
-                closed("ark-2ud", Done::AlreadyCommented),
-                closed("ark-45c", Done::AlreadyCommented)
-            ]
-        );
+        assert_eq!(again, Settled::NothingNew { unseen: vec![] });
         assert_eq!(comments_read(&runner), 2);
         assert_eq!(writes(&runner), [telling("arkham", "ark-2ud")]);
     }
@@ -2213,14 +2144,7 @@ mod tests {
         let told = Told::default();
 
         for _ in 0..2 {
-            settle(
-                &Cli::new(&runner),
-                &runner,
-                &[project("arkham")],
-                EVENTS,
-                &pr(7),
-                &told,
-            );
+            settle_by_look(&runner, &[project("arkham")], EVENTS, &pr(7), &told);
         }
 
         let asked_2ud = runner
@@ -2272,7 +2196,7 @@ mod tests {
         );
         assert_eq!(writes(&runner), [resolving]);
         assert_eq!(
-            dep_lists_read(&runner),
+            dep_lists_read_by_settling(&runner),
             [held_back_by("arkham", "ark-eb1")],
             "the gate waiting for the merge is not asked what it holds back"
         );
@@ -2379,12 +2303,12 @@ mod tests {
     /// anything at all fails the test.
     #[test]
     fn a_draft_asks_no_tracker_anything_however_often_it_is_settled() {
-        let runner = FakeRunner::default().with(&viewed(42), &answer(42, DRAFT));
+        let runner = FakeRunner::default().with(&queried(42..=42), &answer(42, DRAFT));
 
         for _ in 0..2 {
             assert_eq!(
-                settled(&runner, &[project("arkham")], &pr(42)),
-                Settled::NothingNew { unseen: vec![] }
+                settled_together(&runner, &[awaited(42, Until::Merged, &["ark-qca"])]),
+                [Settled::NothingNew { unseen: vec![] }]
             );
         }
     }
@@ -2403,12 +2327,12 @@ mod tests {
     }
 
     #[test]
-    fn an_open_pull_request_settled_on_its_own_asks_the_trackers_whether_a_gate_waits_for_review() {
+    fn an_open_pull_request_only_a_merge_gate_waits_on_writes_nothing() {
         let runner = captured(FakeRunner::default(), "arkham").with(&viewed(42), &answer(42, OPEN));
 
         let settled = settled(&runner, &[project("arkham")], &pr(42));
 
-        assert_eq!(acts(settled), []);
+        assert_eq!(settled, Settled::NothingNew { unseen: vec![] });
         assert_eq!(writes(&runner), Vec::<String>::new());
     }
 
@@ -2485,11 +2409,11 @@ mod tests {
 
     #[test]
     fn a_pull_request_github_does_not_answer_for_is_reported_and_no_tracker_is_asked() {
-        let runner = FakeRunner::default().failing(&viewed(42), unavailable("gh"));
+        let runner = FakeRunner::default().failing(&queried(42..=42), unavailable("gh"));
 
         assert_eq!(
-            settled(&runner, &[project("arkham")], &pr(42)),
-            Settled::Unread(unavailable("gh"))
+            settled_together(&runner, &[awaited(42, Until::Merged, &["ark-qca"])]),
+            [Settled::Unread(unavailable("gh"))]
         );
     }
 
@@ -2733,7 +2657,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tracker_that_does_not_say_which_gates_wait_is_reported_and_the_others_are_settled() {
+    fn a_tracker_that_does_not_say_which_gates_wait_is_left_out_and_the_others_are_settled() {
         let runner = captured(FakeRunner::default(), "dunwich")
             .failing(&gate_list("arkham"), unavailable("bd"))
             .with(&viewed(42), &answer(42, MERGED))
@@ -2744,16 +2668,10 @@ mod tests {
         assert_eq!(
             settled,
             Settled::Acted {
-                projects: vec![
-                    ProjectSettled {
-                        project: "arkham".to_string(),
-                        acts: Err(OpenFailure::Refused(unavailable("bd"))),
-                    },
-                    ProjectSettled {
-                        project: "dunwich".to_string(),
-                        acts: Ok(vec![merged("ark-0i5")]),
-                    },
-                ],
+                projects: vec![ProjectSettled {
+                    project: "dunwich".to_string(),
+                    acts: Ok(vec![merged("ark-0i5")]),
+                },],
                 unseen: vec![],
             }
         );
@@ -3030,8 +2948,7 @@ mod tests {
             .with(&resolving_42("arkham"), "");
         let events = [EVENTS, &[ALSO_ON_MERGE]].concat();
 
-        let settled = settle(
-            &Cli::new(&runner),
+        let settled = settle_by_look(
             &runner,
             &[project("arkham")],
             &events,
