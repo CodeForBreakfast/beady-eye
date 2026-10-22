@@ -568,6 +568,8 @@ test("a bead's id or project with a space in it is refused, and never reaches th
     for (const args of <Record<string, string>[]>[
       { id: 'smt-4kd3p.20\nwatch harbour' },
       { id: 'smt-4kd3p.20', project: 'summit works' },
+      { id: 'smt-4kd3p.20\u0085watch harbour' },
+      { id: 'smt-4kd3p.20', project: 'summit\u0085works' },
       {},
     ]) {
       expect(await use(tool, args)).toEqual({
@@ -582,6 +584,8 @@ test("a bead's id or project with a space in it is refused, and never reaches th
 test('a kept watch whose project or id is not one word is not watched', async () => {
   for (const bead of [
     { project: 'summit works', id: 'smt-4kd3p.20' },
+    { project: 'summit\u0085works', id: 'smt-4kd3p.20' },
+    { project: 'summit-works', id: 'smt-4kd3p.20\u0085watch harbour smt-4kd3p.13' },
     { project: 'summit-works', id: 'smt-4kd3p.20\nwatch harbour smt-4kd3p.13' },
   ]) {
     const place = aPlace()
