@@ -123,7 +123,11 @@ impl Standing {
     /// whose beads have not been replaced since has nothing to catch up on.
     fn told(&self, project: &str, interest: &mut Interest, replaced: bool) -> Option<Vec<String>> {
         let mut lines = match &self.beads {
-            Some(beads) if replaced => interest.catch_up(project, beads),
+            Some(beads) if replaced || interest.awaits_a_read() => interest.catch_up_as_of(
+                project,
+                beads,
+                self.as_of.unwrap_or(DateTime::<Utc>::MIN_UTC),
+            ),
             Some(_) => Vec::new(),
             None if self.unreachable.is_some() => Vec::new(),
             None => return None,
@@ -255,7 +259,12 @@ impl Hold {
 
     /// Have `consumer` watch what `watch` names, and send it what it was not
     /// already sent of that.
-    pub fn watch(&mut self, consumer: u64, watch: &Watch) -> Result<(), Refusal> {
+    pub fn watch(
+        &mut self,
+        consumer: u64,
+        watch: &Watch,
+        at: DateTime<Utc>,
+    ) -> Result<(), Refusal> {
         let projects: Vec<&String> = match watch {
             Watch::Everything => self.projects.keys().collect(),
             Watch::Project { project, .. } | Watch::Bead { project, .. } => {
@@ -273,7 +282,7 @@ impl Hold {
         let mut lines = Vec::new();
         for project in projects {
             let interest = connection.interests.entry(project.clone()).or_default();
-            interest.widen(watch);
+            interest.widen(watch, at);
             lines.extend(
                 self.projects[project]
                     .told(project, interest, true)
@@ -374,7 +383,7 @@ pub fn serve(
     changes::each_line(connection, |message| {
         let answer = match message.map(|line| (line, watching::asked(line))) {
             Some((line, Some(asked))) => asked
-                .and_then(|watch| locked(hold).watch(consumer, &watch))
+                .and_then(|watch| locked(hold).watch(consumer, &watch, Utc::now()))
                 .err()
                 .map(|refusal| watching::refused_line(line, refusal)),
             _ => {
@@ -649,7 +658,7 @@ mod tests {
     fn a_watch_on_a_project_not_yet_read_waits_for_the_read() {
         let (mut hold, consumer, told, _theirs) = a_consumer(4);
 
-        hold.watch(consumer, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
         let before = kinds(&told);
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -661,7 +670,7 @@ mod tests {
     #[test]
     fn a_watch_is_told_how_the_watcher_reaches_the_tracker() {
         let (mut hold, consumer, told, _theirs) = a_consumer(4);
-        hold.watch(consumer, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &[]));
@@ -679,7 +688,7 @@ mod tests {
     #[test]
     fn a_tracker_that_cannot_be_reached_is_said_before_anything_is_read() {
         let (mut hold, consumer, told, _theirs) = a_consumer(4);
-        hold.watch(consumer, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.take(said("dunwich", Said::Unreachable(TrackerFailure::Auth)));
@@ -700,6 +709,7 @@ mod tests {
                 project: "ferry".to_string(),
                 id: "fer-1".to_string(),
             },
+            now(),
         );
 
         assert_eq!(refused, Err(Refusal::UnknownProject));
@@ -719,7 +729,7 @@ mod tests {
         let (mut hold, consumer, told, _theirs) = a_consumer(4);
         hold.take(read("dunwich", now(), &["dun-1"]));
 
-        hold.watch(consumer, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
         let at_once = kinds(&told);
         hold.take(read("dunwich", later(30), &["dun-1", "dun-2"]));
@@ -728,14 +738,67 @@ mod tests {
         assert_eq!(kinds(&told), [["bead", "freshness"]], "and after");
     }
 
+    fn watching_bead(id: &str) -> Watch {
+        Watch::Bead {
+            project: "dunwich".to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    /// A bead made just before the watch is not in a read taken before it, so
+    /// that read cannot say the bead is gone.
+    #[test]
+    fn a_bead_named_after_the_last_read_is_not_gone_until_a_later_read_lacks_it() {
+        let (mut hold, consumer, told, _theirs) = a_consumer(8);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+
+        hold.watch(consumer, &watching_bead("dun-2"), later(5))
+            .expect("dunwich is read");
+        let at_once = kinds(&told);
+        hold.take(said("dunwich", Said::Vouched { at: later(3) }));
+        let vouched_before = kinds(&told);
+        hold.take(said("dunwich", Said::Vouched { at: later(10) }));
+
+        assert_eq!(at_once, [["freshness"]]);
+        assert_eq!(vouched_before, [["freshness"]]);
+        assert_eq!(kinds(&told), [["gone", "freshness"]]);
+    }
+
+    #[test]
+    fn a_bead_named_after_the_last_read_is_sent_when_a_later_read_holds_it() {
+        let (mut hold, consumer, told, _theirs) = a_consumer(8);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.watch(consumer, &watching_bead("dun-2"), later(5))
+            .expect("dunwich is read");
+        let _ = kinds(&told);
+
+        hold.take(read("dunwich", later(10), &["dun-1", "dun-2"]));
+
+        assert_eq!(kinds(&told), [["bead", "freshness"]]);
+    }
+
+    #[test]
+    fn a_bead_held_then_deleted_is_gone_at_the_next_read() {
+        let (mut hold, consumer, told, _theirs) = a_consumer(8);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.watch(consumer, &watching_bead("dun-1"), later(5))
+            .expect("dunwich is read");
+        let _ = kinds(&told);
+
+        hold.take(read("dunwich", later(10), &[]));
+
+        assert_eq!(kinds(&told), [["gone", "freshness"]]);
+    }
+
+    #[test]
     #[test]
     fn each_connection_is_told_for_itself() {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let first = connected(&mut hold, 4);
         let second = connected(&mut hold, 4);
-        hold.watch(first.consumer, &watching_dunwich())
+        hold.watch(first.consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
-        hold.watch(second.consumer, &watching_dunwich())
+        hold.watch(second.consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -748,7 +811,7 @@ mod tests {
     fn a_connection_forgotten_is_told_nothing_more() {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let gone = connected(&mut hold, 4);
-        hold.watch(gone.consumer, &watching_dunwich())
+        hold.watch(gone.consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.forget(gone.consumer);
@@ -761,7 +824,7 @@ mod tests {
     fn a_connection_that_keeps_up_stays_open() {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let keeping_up = connected(&mut hold, 1);
-        hold.watch(keeping_up.consumer, &watching_dunwich())
+        hold.watch(keeping_up.consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &["dun-1"]));
@@ -780,7 +843,7 @@ mod tests {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
         let mut behind = connected(&mut hold, 1);
         hold.take(read("dunwich", now(), &["dun-1"]));
-        hold.watch(behind.consumer, &watching_dunwich())
+        hold.watch(behind.consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.take(said("dunwich", Said::Vouched { at: later(10) }));
@@ -816,7 +879,7 @@ mod tests {
         let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), true)]);
         let connection = connected(&mut hold, 8);
         hold.take(journalled(now(), &["dun-1", "dun-2"], Vec::new()));
-        hold.watch(connection.consumer, watch)
+        hold.watch(connection.consumer, watch, now())
             .expect("dunwich is read");
         connection.told.try_iter().for_each(drop);
         (hold, connection)
@@ -899,7 +962,7 @@ mod tests {
             vec![record(3, "comment", "dun-1")],
         ));
 
-        hold.watch(connection.consumer, &watching_dunwich())
+        hold.watch(connection.consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         assert_eq!(heard(&connection.told), [["bead", "freshness"]]);
@@ -908,7 +971,7 @@ mod tests {
     #[test]
     fn a_project_that_claims_no_journal_is_said_to_have_no_events() {
         let (mut hold, consumer, told, _theirs) = a_consumer(4);
-        hold.watch(consumer, &watching_dunwich())
+        hold.watch(consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
         hold.take(read("dunwich", now(), &["dun-1"]));
