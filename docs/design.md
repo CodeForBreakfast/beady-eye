@@ -2086,6 +2086,12 @@ project whose producer has gone lapses instead, and its mark says so. `^R`
 still reads it by hand. Each read of a covered project is one a report or
 `^R` asked for, and the window turns a burst of reports into one read.
 
+**A read that cannot reach the tracker keeps the poll.** A producer vouches
+that nothing in the tracker has moved, which says nothing of a read that never
+reached it. So a covered project whose last read failed polls at its interval
+until a read answers, and then stands its poll down again. Without that, one
+passing failure would be shown until the next write to that tracker.
+
 The `poll` key is how a reader overrules that. `poll = true` keeps the poll
 whatever covers the project, and a `covered` line does not put it off, so a
 poll chosen to check a producer goes on checking it. `poll = false` stops the
