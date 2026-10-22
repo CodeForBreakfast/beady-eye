@@ -301,7 +301,7 @@ mod tests {
         let (tell, heard) = mpsc::channel();
         let armed = vec![
             Armed::as_poll_says("dunwich".to_string(), Poll::UntilCovered, Duration::ZERO),
-            Armed::polling("ferry".to_string(), Some(Duration::ZERO)),
+            Armed::polling("ferry".to_string(), None),
         ];
         let mut source = ReadingTrackers::new(
             reads,
@@ -314,10 +314,11 @@ mod tests {
         }
 
         tell.send(Heard::Covered("dunwich".to_string())).unwrap();
+        drop(tell);
 
         assert!(
             (0..10).any(|_| {
-                let answer = source.next().expect("an answer");
+                let answer = source.next().expect("dunwich was read again");
                 answer.project == "dunwich" && matches!(answer.said, Said::Unreachable(_))
             }),
             "dunwich was never read again once a producer covered it"
