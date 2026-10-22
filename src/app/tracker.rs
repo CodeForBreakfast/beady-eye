@@ -294,10 +294,18 @@ pub(super) fn refresh_project(
     })
 }
 
-/// The bead with an edge that names its own project read as any unprefixed
-/// edge, which the project's own answer resolves.
-fn without_its_own_project_name(bead: Arc<Bead>, project: &Project) -> Arc<Bead> {
-    let own = |dependency: &Dependency| dependency.project.as_ref() == Some(&project.name);
+/// The bead with an edge that names its own project, and a bead that project
+/// holds, read as any unprefixed edge, which the project's own answer
+/// resolves. An edge naming a bead the project lacks keeps its project, so no
+/// other project's bead of that id stands in for it.
+fn without_its_own_project_name(
+    bead: Arc<Bead>,
+    project: &Project,
+    holds: &BTreeSet<String>,
+) -> Arc<Bead> {
+    let own = |dependency: &Dependency| {
+        dependency.project.as_ref() == Some(&project.name) && holds.contains(&dependency.on)
+    };
     if !bead.dependencies.iter().any(own) {
         return bead;
     }
@@ -325,9 +333,11 @@ fn read_project(
     let (beads, (ready, blocked_by)) = together(every_bead, || {
         together(|| tracker.ready(), || tracker.blocked())
     });
-    let beads: Vec<Arc<Bead>> = beads?
+    let beads = beads?;
+    let held: BTreeSet<String> = beads.iter().map(|bead| bead.id.clone()).collect();
+    let beads: Vec<Arc<Bead>> = beads
         .into_iter()
-        .map(|bead| without_its_own_project_name(bead, project))
+        .map(|bead| without_its_own_project_name(bead, project, &held))
         .collect();
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
@@ -1850,8 +1860,9 @@ dunwich = ["dun-7", "dun-4"]
         );
     }
 
-    /// An edge naming the project it sits in is the project's own, as an
-    /// unprefixed edge is; one naming another project keeps the name.
+    /// An edge naming the project it sits in, and a bead there, is the
+    /// project's own as an unprefixed edge is. One naming another project, or
+    /// a bead its own project lacks, keeps the name.
     #[test]
     fn an_edge_naming_its_own_project_is_read_as_an_unprefixed_edge() {
         let cfg = Config::from_toml(&format!(
@@ -1864,17 +1875,26 @@ path = "{DUNWICH}"
         .expect("the config parses");
         let rows = r#"[{"id":"dun-1","title":"t","status":"open","dependencies":[
           {"depends_on_id":"ferry:fer-1","type":"blocks"},
-          {"depends_on_id":"dunwich:dun-2","type":"blocks"}]}]"#;
+          {"depends_on_id":"dunwich:dun-2","type":"blocks"},
+          {"depends_on_id":"dunwich:dun-9","type":"blocks"}]}]"#;
         let bead = crate::collect::bd::parse_shared_beads(rows).expect("the row parses")[0].clone();
+        let held = BTreeSet::from(["dun-1".to_string(), "dun-2".to_string()]);
 
-        let read = without_its_own_project_name(bead, &cfg.projects[0]);
+        let read = without_its_own_project_name(bead, &cfg.projects[0], &held);
 
         let named: Vec<(&str, Option<&str>)> = read
             .dependencies
             .iter()
             .map(|dependency| (dependency.on.as_str(), dependency.project.as_deref()))
             .collect();
-        assert_eq!(named, vec![("fer-1", Some("ferry")), ("dun-2", None)]);
+        assert_eq!(
+            named,
+            vec![
+                ("fer-1", Some("ferry")),
+                ("dun-2", None),
+                ("dun-9", Some("dunwich"))
+            ]
+        );
     }
 
     /// The key is `(project, id)`: a root named in config belongs to one
