@@ -78,6 +78,9 @@ pub struct Interest {
     /// beads too.
     closed_too: bool,
     named: BTreeSet<String>,
+    /// The named beads no read has held or reported gone yet, each with when
+    /// it was named. A read that began before that may predate the bead.
+    undecided: BTreeMap<String, DateTime<Utc>>,
     known: BTreeMap<String, Known>,
     /// The beads the connection was told are gone and that have not been
     /// held since, so a later line does not tell it again.
@@ -98,7 +101,7 @@ struct Known {
 }
 
 impl Interest {
-    pub fn widen(&mut self, watch: &Watch) {
+    pub fn widen(&mut self, watch: &Watch, at: DateTime<Utc>) {
         match watch {
             Watch::Everything => self.whole = true,
             Watch::Project { closed_too, .. } => {
@@ -106,15 +109,36 @@ impl Interest {
                 self.closed_too |= closed_too;
             }
             Watch::Bead { id, .. } => {
-                self.named.insert(id.clone());
+                if self.named.insert(id.clone()) {
+                    self.undecided.insert(id.clone(), at);
+                }
             }
         }
         self.starting = true;
     }
 
-    /// The bead and gone lines that bring this connection up to `beads`, the
-    /// whole of what `project` holds.
+    /// Whether a named bead is still waiting on a read that began after it
+    /// was named.
+    pub fn awaits_a_read(&self) -> bool {
+        !self.undecided.is_empty()
+    }
+
+    /// `catch_up` with a read that began after every watch.
+    #[cfg(test)]
     pub fn catch_up(&mut self, project: &str, beads: &BTreeMap<String, Held>) -> Vec<String> {
+        self.catch_up_as_of(project, beads, DateTime::<Utc>::MAX_UTC)
+    }
+
+    /// The bead and gone lines that bring this connection up to `beads`, the
+    /// whole of what `project` holds as of `as_of`. A named bead that `beads`
+    /// lacks is gone only once `as_of` is after it was named, because a read
+    /// from before then may predate a bead created just ahead of the watch.
+    pub fn catch_up_as_of(
+        &mut self,
+        project: &str,
+        beads: &BTreeMap<String, Held>,
+        as_of: DateTime<Utc>,
+    ) -> Vec<String> {
         let starting = std::mem::take(&mut self.starting);
         let mut lines = Vec::new();
 
@@ -148,14 +172,14 @@ impl Interest {
             }
             held
         });
-        if starting {
-            gone.extend(
-                self.named
-                    .iter()
-                    .filter(|id| !beads.contains_key(*id) && !self.told_gone.contains(*id))
-                    .cloned(),
-            );
-        }
+        self.undecided.retain(|id, named_at| {
+            let held = beads.contains_key(id);
+            let gone_by_now = !held && *named_at <= as_of;
+            if gone_by_now && !self.told_gone.contains(id) {
+                gone.insert(id.clone());
+            }
+            !held && !gone_by_now
+        });
         lines.extend(gone.iter().map(|id| gone_line(project, id)));
         self.told_gone.retain(|id| !beads.contains_key(id));
         self.told_gone.extend(gone);
@@ -310,7 +334,7 @@ mod tests {
     fn watching(watches: &[Watch]) -> Interest {
         let mut interest = Interest::default();
         for watch in watches {
-            interest.widen(watch);
+            interest.widen(watch, DateTime::<Utc>::MIN_UTC);
         }
         interest
     }
@@ -583,7 +607,7 @@ mod tests {
         let mut interest = watching(&[bead("dun-9")]);
         interest.catch_up("dunwich", &held);
 
-        interest.widen(&bead("dun-1"));
+        interest.widen(&bead("dun-1"), DateTime::<Utc>::MIN_UTC);
         let lines = interest.catch_up("dunwich", &held);
 
         assert_eq!(said(&lines), ["bead dun-1"]);
@@ -608,9 +632,9 @@ mod tests {
         let mut interest = watching(&[project(false)]);
         interest.catch_up("dunwich", &held);
 
-        interest.widen(&bead("dun-1"));
+        interest.widen(&bead("dun-1"), DateTime::<Utc>::MIN_UTC);
         let named = interest.catch_up("dunwich", &held);
-        interest.widen(&project(true));
+        interest.widen(&project(true), DateTime::<Utc>::MIN_UTC);
         let everything = interest.catch_up("dunwich", &held);
 
         assert_eq!(said(&named), Vec::<String>::new());
