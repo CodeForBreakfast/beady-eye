@@ -67,6 +67,7 @@ impl ReadingTrackers {
             self.outstanding.came_back(),
             &watched.projects,
             &watched.speaks_until,
+            &watched.failed_projects,
             Utc::now(),
         );
         self.told.extend(watched.answers);
@@ -137,7 +138,10 @@ mod tests {
     use crate::app::{Armed, Collection};
     use crate::collect::agents::testing::Fake as Provider;
     use crate::collect::changes::Reported;
-    use crate::collect::tracker::testing::Fakes;
+    use crate::collect::run::FailureKind;
+    use crate::collect::tracker::testing::{Asked, Fakes};
+    use crate::config::Poll;
+    use std::time::Duration;
 
     /// Every project `trackers` holds, read through a collection as
     /// `bdi watch` reads them, with no window and nothing polling.
@@ -265,6 +269,60 @@ mod tests {
         drop(tell);
 
         assert_eq!(source.next(), None);
+    }
+
+    /// A producer's word that nothing in a tracker has moved says nothing
+    /// of a read that never reached it, so the watcher would otherwise hand
+    /// out that failure until the tracker next changed.
+    #[test]
+    fn a_covered_project_whose_tracker_did_not_answer_is_read_again_on_its_poll() {
+        let trackers = Arc::new(
+            Fakes::default()
+                .with(
+                    "dunwich",
+                    crate::app::fixtures::dunwich_tracker().failing(
+                        Asked::All,
+                        crate::app::fixtures::failing(FailureKind::Unavailable),
+                    ),
+                )
+                .with("ferry", crate::app::fixtures::colliding_tracker()),
+        );
+        let cfg = two_projects();
+        let mut collection = Collection::default();
+        let reads: Reads = Box::new(move |wanted, now| {
+            collection.watched(
+                &cfg,
+                &Provider::holding(Vec::new()),
+                trackers.as_ref(),
+                wanted,
+                now,
+            )
+        });
+        let (tell, heard) = mpsc::channel();
+        let armed = vec![
+            Armed::as_poll_says("dunwich".to_string(), Poll::UntilCovered, Duration::ZERO),
+            Armed::polling("ferry".to_string(), None),
+        ];
+        let mut source = ReadingTrackers::new(
+            reads,
+            heard,
+            Outstanding::waiting(TimeDelta::seconds(30), TimeDelta::zero()),
+            Reading::of(armed, Reported::default()),
+        );
+        for _ in 0..2 {
+            source.next();
+        }
+
+        tell.send(Heard::Covered("dunwich".to_string())).unwrap();
+        drop(tell);
+
+        assert!(
+            (0..10).any(|_| {
+                let answer = source.next().expect("dunwich was read again");
+                answer.project == "dunwich" && matches!(answer.said, Said::Unreachable(_))
+            }),
+            "dunwich was never read again once a producer covered it"
+        );
     }
 
     /// The hold over the source, as `bdi watch` keeps it, after the

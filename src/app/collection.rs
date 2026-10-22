@@ -215,6 +215,8 @@ pub struct Watched {
     /// When each project's read stops speaking for its tracker with nothing
     /// written, where it does.
     pub speaks_until: BTreeMap<String, DateTime<Utc>>,
+    /// Every project whose tracker could not be reached.
+    pub failed_projects: Vec<FailedProject>,
     /// What each project with something new to say says.
     pub answers: Vec<Answer>,
 }
@@ -375,6 +377,7 @@ impl Collection {
             return Watched {
                 projects: cfg.read().map(|project| project.name.clone()).collect(),
                 speaks_until: self.speaks_until(&cfg),
+                failed_projects: Vec::new(),
                 answers: self.vouched(),
             };
         }
@@ -391,6 +394,7 @@ impl Collection {
         Watched {
             projects: snapshot.projects,
             speaks_until: snapshot.speaks_until,
+            failed_projects: snapshot.failed_projects,
             answers,
         }
     }

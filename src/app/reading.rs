@@ -11,6 +11,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::collect::changes::Reported;
+use crate::model::snapshot::FailedProject;
 
 use super::armed::Armed;
 use super::Wanted;
@@ -80,6 +81,7 @@ impl Reading {
         read: Option<Wanted>,
         projects: &[String],
         speaks_until: &BTreeMap<String, DateTime<Utc>>,
+        failed: &[FailedProject],
         now: DateTime<Utc>,
     ) {
         // A project the collection read on demand was read by it as much as
@@ -90,10 +92,15 @@ impl Reading {
         };
         for project in &mut self.polling {
             let speaks_until = speaks_until.get(project.project()).copied();
-            if gained.iter().any(|named| named == project.project()) {
+            let read_on_demand = gained.iter().any(|named| named == project.project());
+            if read_on_demand {
                 project.was_read(now, speaks_until);
             } else {
                 project.came_back(&read, now, speaks_until);
+            }
+            let unanswered = failed.iter().any(|f| f.project == project.project());
+            if unanswered && (read_on_demand || read.names(project.project())) {
+                project.went_unanswered(now);
             }
         }
     }

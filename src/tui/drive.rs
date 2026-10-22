@@ -761,6 +761,7 @@ fn answered(
                 outstanding.came_back(),
                 &snapshot.projects,
                 &snapshot.speaks_until,
+                &snapshot.failed_projects,
                 Utc::now(),
             );
             if focus.is_answered() {
