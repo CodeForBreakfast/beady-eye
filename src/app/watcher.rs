@@ -105,6 +105,10 @@ pub struct Standing {
     /// The instant the source last vouched for the beads, by reading them or
     /// by saying nothing had moved.
     pub as_of: Option<DateTime<Utc>>,
+    /// When the source began the read that `beads` came from. A vouch does
+    /// not move it, because a producer's report of a change can be vouched
+    /// for before the read it asked for has finished.
+    pub read_at: Option<DateTime<Utc>>,
     /// Why the last attempt to reach the tracker failed, where it did.
     pub unreachable: Option<TrackerFailure>,
     /// How the watcher's config reaches the tracker.
@@ -126,7 +130,7 @@ impl Standing {
             Some(beads) if replaced || interest.awaits_a_read() => interest.catch_up_as_of(
                 project,
                 beads,
-                self.as_of.unwrap_or(DateTime::<Utc>::MIN_UTC),
+                self.read_at.unwrap_or(DateTime::<Utc>::MIN_UTC),
             ),
             Some(_) => Vec::new(),
             None if self.unreachable.is_some() => Vec::new(),
@@ -204,6 +208,7 @@ impl Hold {
             Said::Read { at, beads } => {
                 standing.beads = Some(beads);
                 standing.as_of = standing.as_of.max(Some(at));
+                standing.read_at = Some(at);
                 standing.unreachable = None;
             }
             Said::Vouched { at } => standing.as_of = standing.as_of.max(Some(at)),
@@ -758,9 +763,12 @@ mod tests {
         hold.take(said("dunwich", Said::Vouched { at: later(3) }));
         let vouched_before = kinds(&told);
         hold.take(said("dunwich", Said::Vouched { at: later(10) }));
+        let vouched_after = kinds(&told);
+        hold.take(read("dunwich", later(11), &["dun-1"]));
 
         assert_eq!(at_once, [["freshness"]]);
         assert_eq!(vouched_before, [["freshness"]]);
+        assert_eq!(vouched_after, [["freshness"]], "a vouch is not a read");
         assert_eq!(kinds(&told), [["gone", "freshness"]]);
     }
 
