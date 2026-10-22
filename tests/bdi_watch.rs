@@ -424,6 +424,16 @@ fn a_watch_on_one_bead_is_sent_that_bead_whatever_its_status() {
     let closed = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
     let never_held = consumer.sends("watch arkham dun-0tp.99").hears_an_answer();
 
+    the_tracker_now_holds(
+        &home,
+        &tracker,
+        &the_described_subtree_with(|rows| {
+            closing(rows, "dun-0tp.7");
+            closing(rows, "dun-0tp.8");
+        }),
+    );
+    let then_gone = consumer.hears_an_answer();
+
     stopped(watcher);
     assert_eq!(beads_in(&closed), ["dun-0tp.7"]);
     assert_eq!(closed[0]["row"]["status"], "closed");
@@ -433,10 +443,16 @@ fn a_watch_on_one_bead_is_sent_that_bead_whatever_its_status() {
         "the bead and its project's freshness: {closed:?}"
     );
     assert_eq!(
-        never_held[0],
+        never_held.len(),
+        1,
+        "only the freshness, since the read it came from may predate the bead: {never_held:?}"
+    );
+    assert_eq!(never_held[0]["line"], "freshness");
+    assert_eq!(
+        then_gone[0],
         json!({ "line": "gone", "project": "arkham", "id": "dun-0tp.99" })
     );
-    assert_eq!(never_held.len(), 2, "{never_held:?}");
+    assert_eq!(then_gone.len(), 2, "{then_gone:?}");
 }
 
 #[test]
