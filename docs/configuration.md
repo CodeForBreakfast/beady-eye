@@ -206,8 +206,9 @@ consumers watching the bead it names, ahead of the bead's new state. bd turns
 the journal on clone by clone, with `bd config set events-journal true`, and
 cannot tell a reader whether every other writer has done the same. So the key
 is your word for it, and a writer without the journal leaves a gap that
-nothing reports. Without the key the watcher sends no records, and tells
-each consumer `"events": "off"`.
+nothing reports. bdi's own writes, through `bdi bd` and `bdi gates`, keep the
+journal wherever the key is set. Without the key the watcher sends no records,
+and tells each consumer `"events": "off"`.
 
 The watcher reads the whole journal once when it starts, to find where it
 ends, and sends none of it. Where bd has pruned the journal past a record the

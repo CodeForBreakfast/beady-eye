@@ -2439,7 +2439,8 @@ for five reasons:
 **A project says in config that it keeps a journal.** `events_journal = true`
 on its `[[projects]]` entry is the setup's word that every writer to that
 tracker journals. It is a claim, as `poll = false` is, because bd cannot
-answer the question. A project without the key is sent no event lines, and its
+answer the question. `bdi` makes it true of its own writes, by running every
+bd for that tracker with `BD_EVENTS_JOURNAL=1`. A project without the key is sent no event lines, and its
 freshness line carries `"events": "off"`. One with it carries `"ok"`, or
 `{ "unreadable": <reason> }` where the journal would not answer.
 

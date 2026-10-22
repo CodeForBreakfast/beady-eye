@@ -36,6 +36,10 @@
 #                            the answers directory names it, that this
 #                            appends every call made to that tracker to. A
 #                            call naming no tracker is in none of them.
+#   BDI_SHIM_BD_JOURNALLED   file this appends every call made with
+#                            BD_EVENTS_JOURNAL set to, after the value it was
+#                            set to, so a reader can say bd was told to keep
+#                            its events journal.
 #   BDI_SHIM_BD_HANGS_WHILE  path to the flag. Touch it and every bd call from
 #                            then on waits until it goes away; write a call's
 #                            opening words into it and only the calls starting
@@ -99,6 +103,9 @@ fi
 if [ -n "${BDI_SHIM_BD_CALLED_FOR:-}" ] && [ -n "$tracker" ]; then
   mkdir -p "$BDI_SHIM_BD_CALLED_FOR"
   printf '%s\n' "$asked" >>"$BDI_SHIM_BD_CALLED_FOR/$tracker"
+fi
+if [ -n "${BDI_SHIM_BD_JOURNALLED:-}" ] && [ -n "${BD_EVENTS_JOURNAL+set}" ]; then
+  printf '%s %s\n' "$BD_EVENTS_JOURNAL" "$asked" >>"$BDI_SHIM_BD_JOURNALLED"
 fi
 
 # Held after the call has been read rather than before, so the flag can name

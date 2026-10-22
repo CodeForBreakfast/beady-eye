@@ -40,6 +40,10 @@ pub const CREDENTIAL_VAR: &str = "BEADS_DOLT_PASSWORD";
 /// no inherited value overrules it.
 pub const TRACKER_VAR: &str = "BEADS_DIR";
 
+/// The variable that tells bd to keep its events journal, which outranks the
+/// tracker's own `events-journal` setting.
+const EVENTS_JOURNAL_VAR: &str = "BD_EVENTS_JOURNAL";
+
 /// Which tracker is read and what authenticates to it are one identity, and
 /// inheriting either half reaches another project's database. So the runner
 /// tells every child both or neither, whatever program the child is: a
@@ -177,6 +181,9 @@ pub fn tracker_env(
     }
     if let Some(server) = &project.server {
         env.extend(where_it_sits(server));
+    }
+    if project.events_journal {
+        env.insert(EVENTS_JOURNAL_VAR.to_string(), "1".to_string());
     }
     if let Some(command) = &project.credential_command {
         let password = runner
