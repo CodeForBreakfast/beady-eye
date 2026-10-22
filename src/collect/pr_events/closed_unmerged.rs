@@ -8,6 +8,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &[],
     happening: "closed unmerged",
+    optional: &[],
     outcome: closed_unmerged,
 };
 

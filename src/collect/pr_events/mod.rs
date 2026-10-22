@@ -37,6 +37,9 @@ pub struct Event {
     pub fields: &'static [&'static str],
     /// What the pull request did, as a line reporting it says.
     pub happening: &'static str,
+    /// The fields among [`Event::fields`] that the event can do without. The
+    /// event is still seen where GitHub refuses one, and reads it as null.
+    pub optional: &'static [&'static str],
     /// What this event makes of the pull request, or nothing where the pull
     /// request has not done it.
     pub outcome: fn(&PullRequest, &Observed) -> Result<Option<Outcome>, serde_json::Error>,
@@ -184,11 +187,11 @@ pub fn fields(events: &[Event]) -> String {
 }
 
 impl Event {
-    /// Whether this event reads the field GraphQL answers under `name`.
-    pub fn reads(&self, name: &str) -> bool {
-        self.fields
-            .iter()
-            .any(|field| field.split(['(', '{']).next() == Some(name))
+    /// Whether this event cannot be seen without the field GraphQL answers
+    /// under `name`.
+    pub fn needs(&self, name: &str) -> bool {
+        let answered_under = |field: &&str| field.split(['(', '{']).next() == Some(name);
+        self.fields.iter().any(&answered_under) && !self.optional.iter().any(answered_under)
     }
 }
 
@@ -280,6 +283,7 @@ mod tests {
         Event {
             fields,
             happening: "did something",
+            optional: &[],
             outcome: |_, _| Ok(None),
         }
     }

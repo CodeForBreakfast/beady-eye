@@ -9,6 +9,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &["mergeCommit{oid}"],
     happening: "merged",
+    optional: &["mergeCommit{oid}"],
     outcome: merged,
 };
 

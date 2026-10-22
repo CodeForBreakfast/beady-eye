@@ -11,6 +11,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &[HEAD_COMMIT],
     happening: "has a new head",
+    optional: &[],
     outcome: new_head,
 };
 

@@ -10,6 +10,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &["mergeable", "headRefOid", HEAD_COMMIT, BASE_COMMIT],
     happening: "conflicts with its base",
+    optional: &[],
     outcome: conflicting,
 };
 

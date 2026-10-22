@@ -11,6 +11,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &["mergeStateStatus", "headRefOid", HEAD_COMMIT, BASE_COMMIT],
     happening: "is behind its base",
+    optional: &[],
     outcome: behind,
 };
 
