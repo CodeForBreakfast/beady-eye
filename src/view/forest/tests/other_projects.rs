@@ -85,7 +85,7 @@ fn the_window_on_a_bead_waiting_on_another_projects_open_bead_says_what_blocks_i
     step_onto(&mut forest, waiting);
 
     let node = crate::view::show::selected(&forest).expect("a bead is selected");
-    let page = crate::view::show::said(node, None, 80, 40, &|_| false);
+    let page = crate::view::show::said(node, &[], None, 80, 40, &|_| false);
     let said: Vec<String> = page
         .rows
         .iter()

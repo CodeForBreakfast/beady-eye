@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { NodeFileSystem } from '@effect/platform-node'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { Duration, Effect, FileSystem, Layer, Scheduler, Schema } from 'effect'
+import { Duration, Effect, FileSystem, Layer, Scheduler, Schema, Stream } from 'effect'
 import { buildServer } from './server'
 import {
   anId,
@@ -1734,4 +1734,63 @@ test('an unwatched bead takes its minute with it', async () => {
 
   expect(performance.now() - watched).toBeGreaterThanOrEqual(Duration.toMillis(quietFor))
   expect(down.meta).toEqual({ watcher: 'down' })
+})
+
+/** The next message for the session, taken as a session that was never sent it
+ * would: its `told` is not run. */
+const nextNews = async (watches: Awaited<ReturnType<typeof someWatches>>['watches']) => {
+  const [news] = await Effect.runPromise(Stream.runCollect(Stream.take(watches.news, 1)))
+  return news
+}
+
+/** A session with no server to send to, watching smt-4kd3p.20 in summit-works. */
+const aSessionWatchingBead = async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const { watches } = await someWatches(place.directory, place.at, ['summit-works'], timing)
+  await Effect.runPromise(watches.learn(session))
+  const answer = Effect.runPromise(watches.watch(anId('smt-4kd3p.20'), aProject('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(theBead(), freshness('summit-works')))
+  await answer
+  return { place, watches, watcher, connection }
+}
+
+test('a watcher outage the session could not be told of is not told as over', async () => {
+  const { place, watches, watcher } = await aSessionWatchingBead()
+
+  watcher.stop()
+  const lost = await nextNews(watches)
+  expect(lost?.block).toEqual({ is: 'watcher', watcher: 'down' })
+  await Effect.runPromise(lost?.unsent ?? Effect.void)
+  const back = await aWatcherAt(place.at as string)
+  const { connection } = await back.next()
+  connection.write(said(theBead(), freshness('summit-works')))
+  connection.write(said(startedLine, freshness('summit-works')))
+
+  expect((await nextNews(watches))?.block).toMatchObject({ is: 'bead', status: 'in_progress' })
+})
+
+test('a watcher outage the session could not be sent is told again with the next', async () => {
+  const { watches, watcher } = await aSessionWatchingBead()
+
+  watcher.stop()
+  const lost = await nextNews(watches)
+  await Effect.runPromise(lost?.unsent ?? Effect.void)
+  await Effect.runPromise(watches.watch(anId('smt-4kd3p.20'), aProject('harbour')))
+
+  expect((await nextNews(watches))?.content).toContain('- smt-4kd3p.20 in summit-works')
+})
+
+test('a tracker outage the session could not be told of is not told as over', async () => {
+  const { watches, connection } = await aSessionWatchingBead()
+
+  connection.write(said(unreachable))
+  const lost = await nextNews(watches)
+  expect(lost?.block).toMatchObject({ is: 'tracker', tracker: 'unreachable' })
+  await Effect.runPromise(lost?.unsent ?? Effect.void)
+  connection.write(said(theBead(), freshness('summit-works')))
+  connection.write(said(startedLine, freshness('summit-works')))
+
+  expect((await nextNews(watches))?.block).toMatchObject({ is: 'bead', status: 'in_progress' })
 })

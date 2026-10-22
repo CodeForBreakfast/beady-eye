@@ -602,10 +602,14 @@ impl Shown {
     /// the reader pointed at it and arrived nowhere, and a ring left sitting
     /// on it would be a move they never asked for.
     fn clicked_bead(&mut self, screen: Rect, row: u16) -> Landed {
+        let mentioned = show::selected(&self.forest)
+            .map(|node| show::mentioned(&self.forest, node))
+            .unwrap_or_default();
         let landed = show::selected(&self.forest).map(|node| {
             show::drawn_at(
                 screen,
                 node,
+                &mentioned,
                 show::fraction(&self.forest),
                 &self.show,
                 row,
@@ -860,8 +864,9 @@ impl Shown {
         let Some(node) = show::selected(&self.forest) else {
             return false;
         };
-        let related = show::related(node);
-        let from = self.show.on().and_then(|id| show::at(node, id));
+        let mentioned = show::mentioned(&self.forest, node);
+        let related = show::related(node, &mentioned);
+        let from = self.show.on().and_then(|id| show::at(node, &mentioned, id));
         let to = show::stepped(from, related.len(), |at| {
             show::followable(&self.forest, related[at])
         });
@@ -876,7 +881,8 @@ impl Shown {
     /// The bead the window's ring is on, where it is on one the forest draws.
     fn related_key(&self) -> Option<BeadKey> {
         let node = show::selected(&self.forest)?;
-        let on = show::related(node)
+        let mentioned = show::mentioned(&self.forest, node);
+        let on = show::related(node, &mentioned)
             .into_iter()
             .find(|named| Some(named.id.as_str()) == self.show.on())?;
         show::key_of(&self.forest, on)
@@ -893,12 +899,13 @@ impl Shown {
         if self.show.on().is_none() {
             return;
         }
-        let still_there = show::selected(&self.forest)
-            .map(show::related)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|named| Some(named.id.as_str()) == self.show.on())
-            .is_some_and(|named| show::followable(&self.forest, named));
+        let still_there = show::selected(&self.forest).is_some_and(|node| {
+            let mentioned = show::mentioned(&self.forest, node);
+            show::related(node, &mentioned)
+                .into_iter()
+                .find(|named| Some(named.id.as_str()) == self.show.on())
+                .is_some_and(|named| show::followable(&self.forest, named))
+        });
         if !still_there {
             self.show.go_nowhere();
         }
@@ -1082,6 +1089,7 @@ fn paint(
         Over::Bindings => key_bindings(frame, frame.area(), &bindings()),
         Over::Bead(show) => {
             if let Some(node) = show::selected(forest) {
+                let mentioned = show::mentioned(forest, node);
                 // Whether a bead this one names can be gone to is the
                 // forest's to answer, and the window asks it of each of them:
                 // the ids it answers for are drawn in blue, and the title
@@ -1090,6 +1098,7 @@ fn paint(
                     frame,
                     frame.area(),
                     node,
+                    &mentioned,
                     show::fraction(forest),
                     show,
                     &|related| show::followable(forest, related),
@@ -2853,6 +2862,49 @@ mod tests {
         assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.1")));
         assert!(shown.apply(Action::ShowBead));
         shown
+    }
+
+    /// The same grove, with `grv-1.1` saying in its description which beads
+    /// it is about: one the forest draws, and one it does not hold.
+    fn a_grove_whose_description_names_beads() -> Snapshot {
+        let mut snapshot = a_grove_that_names_its_beads();
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                if node.id == "grv-1.1" {
+                    node.row = Printed::saying("Filed as grv-1.4, not grv-77.", "");
+                }
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        snapshot
+    }
+
+    /// A bead the description names gets a row, and the ring steps to it after
+    /// the beads the window lists already, and `Enter` goes there.
+    #[test]
+    fn a_bead_the_description_names_is_listed_and_can_be_followed() {
+        let mut shown = shown(a_grove_whose_description_names_beads());
+        shown.apply(Action::ExpandOrChild);
+        assert!(shown.apply(Action::ShowBead));
+
+        let page = bead_page(&mut shown, 80, 30);
+        assert!(
+            page.iter().any(|row| row == "MENTIONS"),
+            "no section for the bead the description names: {page:#?}"
+        );
+        assert!(
+            page.iter()
+                .all(|row| !(row.starts_with('·') && row.contains("grv-77"))),
+            "a bead no tree draws got a row: {page:#?}"
+        );
+
+        for _ in 0..3 {
+            assert!(shown.apply(Action::NextRelated));
+        }
+        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1.4")));
+        assert!(shown.follow_related());
+        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.4")));
     }
 
     /// The window opens on no reference at all, so `Enter` still means what it
