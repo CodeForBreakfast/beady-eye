@@ -630,6 +630,27 @@ test("asking about a bead takes each project's answer and nothing it says after"
   )
 })
 
+test('asking about a bead takes the reason from the freshness line of a project it never read', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path)
+
+  const answer = asking(path, ['summit-works', 'harbour'])
+  const harbourUnreachable = {
+    ...freshness,
+    project: 'harbour',
+    as_of: null,
+    tracker: { unreachable: { reason: 'unavailable' } },
+  }
+  ;(await watcher.next()).connection.write(said(beadLine, freshness, harbourUnreachable))
+
+  expect(await answer).toEqual(
+    answers({
+      'summit-works': ProjectAnswer.Holds(),
+      harbour: ProjectAnswer.Unreachable({ reason: 'unavailable' }),
+    }),
+  )
+})
+
 test('asking about a bead stops waiting in time, and names the projects that did not answer', async () => {
   const path = join(aPrivateDirectory(), 'watcher.sock')
   const watcher = await aWatcherAt(path)

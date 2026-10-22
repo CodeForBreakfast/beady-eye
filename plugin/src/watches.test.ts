@@ -344,7 +344,7 @@ test("a session's watches are kept by replacing its file, never by writing into 
   ])
 })
 
-test("watch refuses to find a bead's project where the watcher has not read a project", async () => {
+test("watch refuses to find a bead's project where a project's tracker is unreachable, and says why", async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
   const use = await aServer(place)
@@ -359,7 +359,7 @@ test("watch refuses to find a bead's project where the watcher has not read a pr
   )
 
   expect(await answer).toEqual({
-    text: 'The watcher has not read harbour yet, so it cannot say which project holds smt-4kd3p.20. Name its project.',
+    text: 'The watcher cannot reach harbour (unavailable), so it cannot say which project holds smt-4kd3p.20. Name its project.',
     refused: true,
   })
 })
