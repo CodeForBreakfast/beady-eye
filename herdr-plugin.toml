@@ -1,6 +1,6 @@
 id = "codeforbreakfast.beady-eye"
 name = "beady-eye"
-version = "0.35.1"
+version = "0.35.2-rc.1"
 min_herdr_version = "0.9.1"
 platforms = ["linux", "macos"]
 description = "Shows you, live, what every agent is doing across your projects: the trees of work, with the agent beside each claimed bead. Part of beady-eye, which also tells agents and scripts when the beads they wait on change."
