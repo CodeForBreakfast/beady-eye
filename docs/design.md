@@ -2297,7 +2297,7 @@ reading through the watcher learns from it that the claim is still live.
 
 **A gone line** names a bead its tracker no longer holds, and answers a watch
 for a bead it never held. A watch on a bead the project's last read lacks is
-not answered gone until a read that began after the watch also lacks it, because
+not answered gone until a completed read that began after the watch also lacks it, because
 the last read may predate a bead made just before the watch. Until then the
 watch is answered by the freshness line alone.
 
