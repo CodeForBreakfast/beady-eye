@@ -257,7 +257,13 @@ pub fn mentioned(forest: &Forest, node: &Node) -> Vec<Related> {
         let id = token.trim_end_matches('.');
         if id == node.id
             || !shaped_like_an_id(id)
-            || listed.iter().any(|related| related.id == id)
+            || listed.iter().any(|related| {
+                related.id == id
+                    && related
+                        .project
+                        .as_ref()
+                        .is_none_or(|project| *project == node.project)
+            })
             || named.iter().any(|related| related.id == id)
         {
             continue;
