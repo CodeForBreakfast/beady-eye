@@ -18,7 +18,7 @@ use crate::model::edges::{self, Relations};
 use crate::model::join;
 use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{Assembled, Nesting};
-use crate::model::types::{Bead, Pane, Unreadable};
+use crate::model::types::{Bead, Dependency, Pane, Unreadable};
 
 /// One project's roots in id order, each either read or unreadable, what
 /// every bead in the answer is tied to, and when the answer stops speaking
@@ -294,6 +294,20 @@ pub(super) fn refresh_project(
     })
 }
 
+/// The bead with an edge that names its own project read as any unprefixed
+/// edge, which the project's own answer resolves.
+fn without_its_own_project_name(bead: Arc<Bead>, project: &Project) -> Arc<Bead> {
+    let own = |dependency: &Dependency| dependency.project.as_ref() == Some(&project.name);
+    if !bead.dependencies.iter().any(own) {
+        return bead;
+    }
+    let mut bead = Bead::clone(&bead);
+    for dependency in bead.dependencies.iter_mut().filter(|d| own(d)) {
+        dependency.project = None;
+    }
+    Arc::new(bead)
+}
+
 /// Everything one project's tracker is asked for, read at `now`.
 ///
 /// A failure before the roots are known has no root to name, so it becomes
@@ -311,7 +325,10 @@ fn read_project(
     let (beads, (ready, blocked_by)) = together(every_bead, || {
         together(|| tracker.ready(), || tracker.blocked())
     });
-    let beads = beads?;
+    let beads: Vec<Arc<Bead>> = beads?
+        .into_iter()
+        .map(|bead| without_its_own_project_name(bead, project))
+        .collect();
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -1831,6 +1848,33 @@ dunwich = ["dun-7", "dun-4"]
             vec!["dun-7", "dun-4"],
             "the root config and discovery both name is drawn once"
         );
+    }
+
+    /// An edge naming the project it sits in is the project's own, as an
+    /// unprefixed edge is; one naming another project keeps the name.
+    #[test]
+    fn an_edge_naming_its_own_project_is_read_as_an_unprefixed_edge() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+"#
+        ))
+        .expect("the config parses");
+        let rows = r#"[{"id":"dun-1","title":"t","status":"open","dependencies":[
+          {"depends_on_id":"ferry:fer-1","type":"blocks"},
+          {"depends_on_id":"dunwich:dun-2","type":"blocks"}]}]"#;
+        let bead = crate::collect::bd::parse_shared_beads(rows).expect("the row parses")[0].clone();
+
+        let read = without_its_own_project_name(bead, &cfg.projects[0]);
+
+        let named: Vec<(&str, Option<&str>)> = read
+            .dependencies
+            .iter()
+            .map(|dependency| (dependency.on.as_str(), dependency.project.as_deref()))
+            .collect();
+        assert_eq!(named, vec![("fer-1", Some("ferry")), ("dun-2", None)]);
     }
 
     /// The key is `(project, id)`: a root named in config belongs to one

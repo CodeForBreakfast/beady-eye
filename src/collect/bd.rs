@@ -200,13 +200,15 @@ struct RowDependency {
     edge: Edge,
 }
 
-/// The bead id in a dependency target. Another project's bead may be written
-/// `<project>:<id>`, and bd keeps that spelling in the edge, while the tree
-/// finds a blocker by its bare id in the answer that holds it.
-fn bare_id(target: String) -> String {
-    match target.rsplit_once(':') {
-        Some((_, id)) => id.to_string(),
-        None => target,
+/// The project and bead id in a dependency target. Another project's bead may
+/// be written `<project>:<id>` or `external:<project>:<id>`, and bd keeps that
+/// spelling in the edge, while the tree finds a blocker by its bare id in the
+/// answer of the project the edge names.
+fn named_bead(target: String) -> (Option<String>, String) {
+    let written = target.strip_prefix("external:").unwrap_or(&target);
+    match written.split_once(':') {
+        Some((project, id)) => (Some(project.to_string()), id.to_string()),
+        None => (None, target),
     }
 }
 
@@ -227,9 +229,13 @@ impl Row {
             dependencies: row
                 .dependencies
                 .into_iter()
-                .map(|dependency| Dependency {
-                    on: bare_id(dependency.depends_on_id),
-                    edge: dependency.edge,
+                .map(|dependency| {
+                    let (project, on) = named_bead(dependency.depends_on_id);
+                    Dependency {
+                        on,
+                        edge: dependency.edge,
+                        project,
+                    }
                 })
                 .collect(),
             metadata: row.metadata,
@@ -1235,14 +1241,17 @@ mod tests {
                 Dependency {
                     on: "bdi-2bb".to_string(),
                     edge: Edge::ParentChild,
+                    project: None,
                 },
                 Dependency {
                     on: "bdi-2bb.3".to_string(),
                     edge: Edge::Blocks,
+                    project: None,
                 },
                 Dependency {
                     on: "bdi-2bb.9".to_string(),
                     edge: Edge::Blocks,
+                    project: None,
                 },
             ]
         );
@@ -1275,6 +1284,7 @@ mod tests {
                 vec![Dependency {
                     on: theirs.to_string(),
                     edge: Edge::Blocks,
+                    project: None,
                 }],
                 "bd {bd}"
             );
@@ -1282,8 +1292,12 @@ mod tests {
     }
 
     #[test]
-    fn a_dependency_written_project_colon_id_is_read_as_the_bare_id() {
-        for written in ["dun:dun-2e7", "external:dun:dun-2e7", "dun-2e7"] {
+    fn a_dependency_written_project_colon_id_keeps_the_project_it_names() {
+        for (written, project) in [
+            ("dun:dun-2e7", Some("dun")),
+            ("external:dun:dun-2e7", Some("dun")),
+            ("dun-2e7", None),
+        ] {
             let json = format!(
                 r#"[{{"id":"ark-1","title":"t","status":"open","dependencies":[
                   {{"depends_on_id":"{written}","type":"blocks"}}]}}]"#
@@ -1295,6 +1309,7 @@ mod tests {
                 vec![Dependency {
                     on: "dun-2e7".to_string(),
                     edge: Edge::Blocks,
+                    project: project.map(str::to_string),
                 }],
                 "written {written}"
             );
@@ -1352,6 +1367,7 @@ mod tests {
             vec![Dependency {
                 on: "y".to_string(),
                 edge: Edge::Other("discovered-by".to_string()),
+                project: None,
             }]
         );
     }
@@ -2416,6 +2432,7 @@ mod tests {
             vec![Dependency {
                 on: "bdi-7ao.17".to_string(),
                 edge: Edge::ParentChild,
+                project: None,
             }]
         );
         assert_eq!(by_id("bdi-wisp-w3m").dependencies, vec![]);
@@ -2526,10 +2543,12 @@ mod tests {
                 Dependency {
                     on: "p-1".to_string(),
                     edge: Edge::ParentChild,
+                    project: None,
                 },
                 Dependency {
                     on: "p-1.3".to_string(),
                     edge: Edge::Blocks,
+                    project: None,
                 },
             ]
         );

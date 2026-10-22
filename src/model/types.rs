@@ -65,6 +65,8 @@ pub enum Edge {
 pub struct Dependency {
     pub on: String,
     pub edge: Edge,
+    /// The project the edge names, where it is written `<project>:<id>`.
+    pub project: Option<String>,
 }
 
 /// What is known about an answer that would not parse, beyond that it would

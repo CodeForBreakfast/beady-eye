@@ -241,7 +241,7 @@ impl<'a> Nesting<'a> {
                     Edge::Other(_) => None,
                 };
 
-                if by_id.contains_key(edge.on.as_str()) {
+                if edge.project.is_none() && by_id.contains_key(edge.on.as_str()) {
                     if let Some((over, under)) = nests {
                         children.entry(over).or_default().insert(under);
                     }
@@ -574,7 +574,8 @@ pub(crate) fn held_by_one_other(
 /// Several projects' answers read as one, so that a bead waiting on another
 /// project's bead holds it beneath itself as it would a bead of its own.
 ///
-/// A dependency names an id and no project, so it is looked for in the
+/// A dependency written `<project>:<id>` is looked for in that project's
+/// answer alone. One written as a bare id is looked for in the
 /// bead's own answer first, and only an id that answer lacks is looked for
 /// elsewhere — where it is another project's bead only if exactly one other
 /// answer holds it, because prefixes are uncoordinated and nothing the row
@@ -651,7 +652,10 @@ impl<'a> Across<'a> {
         if dependency.edge != Edge::Blocks {
             return None;
         }
-        let only = held_by_one_other(&self.holding, at, &dependency.on)?;
+        let only = match &dependency.project {
+            Some(project) => self.projects.iter().position(|read| read == project)?,
+            None => held_by_one_other(&self.holding, at, &dependency.on)?,
+        };
         let (&id, _) = self.answers[only]
             .by_id
             .get_key_value(dependency.on.as_str())?;
@@ -679,12 +683,17 @@ impl<'a> Across<'a> {
         kids
     }
 
+    /// Whether the answer of the bead waiting holds what `dependency` names,
+    /// which an edge written `<project>:<id>` leaves to that project's answer.
+    fn held_by(answer: &Nesting, dependency: &Dependency) -> bool {
+        dependency.project.is_none() && answer.by_id.contains_key(dependency.on.as_str())
+    }
+
     /// Whether the bead waits on something no answer holds for it.
     fn unheld(&self, (at, id): Held<'a>) -> bool {
         let answer = &self.answers[at];
         answer.by_id[id].dependencies.iter().any(|dependency| {
-            !answer.by_id.contains_key(dependency.on.as_str())
-                && self.elsewhere(at, dependency).is_none()
+            !Self::held_by(answer, dependency) && self.elsewhere(at, dependency).is_none()
         })
     }
 
@@ -692,20 +701,20 @@ impl<'a> Across<'a> {
     /// order, each with why.
     fn orphaned(&self, (at, id): Held<'a>) -> Vec<OrphanedDependency> {
         let answer = &self.answers[at];
-        let absent: BTreeSet<&str> = answer.by_id[id]
+        let absent: BTreeSet<(&str, Option<&str>)> = answer.by_id[id]
             .dependencies
             .iter()
             .filter(|dependency| {
                 dependency.edge == Edge::Blocks
-                    && !answer.by_id.contains_key(dependency.on.as_str())
+                    && !Self::held_by(answer, dependency)
                     && self.elsewhere(at, dependency).is_none()
             })
-            .map(|dependency| dependency.on.as_str())
+            .map(|dependency| (dependency.on.as_str(), dependency.project.as_deref()))
             .collect();
         let mut orphaned: Vec<OrphanedDependency> = absent
             .into_iter()
-            .map(|id| {
-                let why = self.unreachable(id);
+            .map(|(id, project)| {
+                let why = self.unreachable(id, project);
                 let may_block = match why {
                     Unreachable::NotRead { .. } | Unreachable::HeldByUnread { .. } => true,
                     Unreachable::HeldBySeveral { .. } => self.holding[id]
@@ -724,8 +733,25 @@ impl<'a> Across<'a> {
         orphaned
     }
 
-    /// Why no answer holds a bead by `id` for the bead waiting on it.
-    fn unreachable(&self, id: &str) -> Unreachable {
+    /// Why no answer holds a bead by `id` for the bead waiting on it, where
+    /// the edge names `project` if it names one.
+    fn unreachable(&self, id: &str, project: Option<&str>) -> Unreachable {
+        if let Some(project) = project {
+            if self.projects.contains(&project) {
+                return Unreachable::NotHeld {
+                    projects: vec![project.to_string()],
+                };
+            }
+            if self
+                .not_read
+                .iter()
+                .any(|(not_read, _)| *not_read == project)
+            {
+                return Unreachable::NotRead {
+                    projects: vec![project.to_string()],
+                };
+            }
+        }
         let named = |answers: &mut dyn Iterator<Item = usize>| {
             answers.map(|at| self.projects[at].to_string()).collect()
         };
@@ -2106,6 +2132,92 @@ mod tests {
 
         assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
         assert_eq!(a.orphaned_dependencies, vec!["ark-1".to_string()]);
+    }
+
+    /// An edge written `<project>:<id>` means that project's bead, even where
+    /// the waiting bead's own project, or a third, holds the same bare id.
+    #[test]
+    fn a_blocker_written_with_its_project_is_that_projects_bead_whatever_else_holds_the_id() {
+        let answers = [
+            answer(
+                "arkham",
+                &[
+                    bead("ark-1", "open", &[dep("innsmouth:sh-1", "blocks")]),
+                    bead("sh-1", "closed", &[]),
+                ],
+            ),
+            answer("dunwich", &[bead("sh-1", "closed", &[])]),
+            answer("innsmouth", &[bead("sh-1", "in_progress", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(
+            keyed(&a),
+            vec![("arkham", "ark-1", 0), ("innsmouth", "sh-1", 1)]
+        );
+        assert!(a.orphaned_dependencies.is_empty());
+    }
+
+    /// A project that gave no answer holds nothing to draw, and no bead of
+    /// that id elsewhere stands in for it.
+    #[test]
+    fn a_blocker_written_with_a_project_that_gave_no_answer_is_not_read_there() {
+        let answers = [answer(
+            "arkham",
+            &[
+                bead("ark-1", "open", &[dep("pier:sh-1", "blocks")]),
+                bead("sh-1", "closed", &[]),
+            ],
+        )];
+        let a = across_without(&answers, &[("pier", None)])
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "sh-1",
+                Unreachable::NotRead {
+                    projects: projects(&["pier"])
+                }
+            )]
+        );
+    }
+
+    /// The same edge, where the project it names does not hold the id, is
+    /// not rescued by another project that does.
+    #[test]
+    fn a_blocker_written_with_its_project_is_not_found_in_another() {
+        let answers = [
+            answer(
+                "arkham",
+                &[
+                    bead("ark-1", "open", &[dep("innsmouth:sh-1", "blocks")]),
+                    bead("sh-1", "closed", &[]),
+                ],
+            ),
+            answer("dunwich", &[bead("sh-1", "open", &[])]),
+            answer("innsmouth", &[bead("in-7", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(keyed(&a), vec![("arkham", "ark-1", 0)]);
+        assert_eq!(a.orphaned_dependencies, vec!["ark-1".to_string()]);
+        assert_eq!(
+            orphaned_beneath(&a, "ark-1"),
+            [orphaned(
+                "sh-1",
+                Unreachable::NotHeld {
+                    projects: projects(&["innsmouth"])
+                }
+            )],
+            "other projects holding the id do not make it held, or blocking"
+        );
     }
 
     /// Siblings from two projects take one order, as siblings from one do.

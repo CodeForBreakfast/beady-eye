@@ -22,7 +22,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
-use crate::model::edges::{self, Elsewhere, Related};
+use crate::model::edges::{self, Elsewhere, Named, Related};
 use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
@@ -230,7 +230,7 @@ struct Reached {
     waiting: BTreeMap<String, BTreeMap<String, Vec<Related>>>,
     /// The beads in other projects each project's beads name, by the naming
     /// project and then the id named.
-    elsewhere: BTreeMap<String, BTreeMap<String, Elsewhere>>,
+    elsewhere: BTreeMap<String, BTreeMap<Named, Elsewhere>>,
 }
 
 /// What a set of trees reaching across projects was assembled from.
