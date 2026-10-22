@@ -19,6 +19,7 @@ import {
 import {
   BeadId,
   ProjectName,
+  StatusWord,
   type Timing,
   WatchedProjects,
   WatcherLocation,
@@ -28,6 +29,7 @@ import { makeWatches } from './watches'
 
 export const aProject = Schema.decodeSync(ProjectName)
 export const anId = Schema.decodeSync(BeadId)
+export const aStatus = Schema.decodeSync(StatusWord)
 
 /** What each test leaves behind, for `cleanUpAfterEach` to undo. */
 export const cleanUp: (() => unknown)[] = []

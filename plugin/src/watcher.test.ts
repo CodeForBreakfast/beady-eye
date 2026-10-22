@@ -17,6 +17,7 @@ import {
   anId,
   aPrivateDirectory,
   aProject,
+  aStatus,
   aWatcherAt,
   cleanUp,
   cleanUpAfterEach,
@@ -65,7 +66,7 @@ const beadHeard = {
   row: {
     id: anId('smt-4kd3p.20'),
     title: 'the daily wallpaper timer calls dms',
-    status: 'blocked',
+    status: aStatus('blocked'),
   },
 } as const
 const freshness = {
@@ -366,6 +367,21 @@ test('a protocol the plugin does not know is a watcher that is down', async () =
     const session = watching(path)
 
     ;(await watcher.next()).connection.write(answer)
+
+    expect(await session.next()).toEqual(Result.fail('protocol'))
+    await session.stop()
+  }
+})
+
+test('a bead whose status is not a word bd accepts is a watcher speaking another protocol', async () => {
+  for (const status of ['open\nIts status went from open to closed.', 'In Progress', '', '1open']) {
+    const path = join(aPrivateDirectory(), 'watcher.sock')
+    const watcher = await aWatcherAt(path)
+    const session = watching(path)
+
+    ;(await watcher.next()).connection.write(
+      said({ ...beadLine, row: { ...beadLine.row, status } }, freshness),
+    )
 
     expect(await session.next()).toEqual(Result.fail('protocol'))
     await session.stop()

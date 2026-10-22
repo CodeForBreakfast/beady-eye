@@ -41,6 +41,7 @@ import {
   type ProjectAnswer,
   type ProjectName,
   type Said,
+  StatusWord,
   WatchedProjects,
   type WatcherLocation,
   WatcherTiming,
@@ -60,7 +61,7 @@ export type Block =
       readonly is: 'bead'
       readonly project: ProjectName
       readonly id: BeadId
-      readonly status: string
+      readonly status: StatusWord
       readonly ready: boolean
     }
   | { readonly is: 'gone'; readonly project: ProjectName; readonly id: BeadId }
@@ -85,7 +86,7 @@ const Told = Schema.Union([
   Schema.Struct({
     is: Schema.Literal('bead'),
     title: Schema.String,
-    status: Schema.String,
+    status: StatusWord,
     ready: Schema.Boolean,
     comments: Schema.optionalKey(CommentCount),
     closeReason: Schema.optionalKey(Schema.String),
