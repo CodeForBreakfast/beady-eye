@@ -11,6 +11,7 @@ import {
   Option,
   Queue,
   Result,
+  Schema,
   Stream,
 } from 'effect'
 import {
@@ -25,10 +26,12 @@ import {
 } from './test-watcher'
 import {
   askAbout,
+  BeadId,
   ConfigUnreadable,
   type Heard,
   othersMayTakeANameIn,
   ProjectAnswer,
+  ProjectName,
   pauseAfter,
   projectsNamedIn,
   type Timing,
@@ -556,10 +559,32 @@ test('a config project whose name is not one word is passed over', async () => {
   const config = join(aPrivateDirectory(), 'config.toml')
   writeFileSync(
     config,
-    '[[projects]]\nname = "summit works"\npath = "/home/mira/summit-works"\n\n[[projects]]\nname = "harbour"\npath = "/srv/harbour"\n',
+    '[[projects]]\nname = "summit works"\npath = "/home/mira/summit-works"\n\n[[projects]]\nname = "summit\\u0085works"\npath = "/home/mira/summit-works"\n\n[[projects]]\nname = "harbour"\npath = "/srv/harbour"\n',
   )
 
   expect<readonly string[]>(await run(projectsNamedIn(config))).toEqual(['harbour'])
+})
+
+/** Every character Rust's `char::is_whitespace` accepts, which is what the watcher splits a line on. */
+const whatTheWatcherSplitsOn = [
+  ...[0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680],
+  ...Array.from({ length: 0x0b }, (_, n) => 0x2000 + n),
+  ...[0x2028, 0x2029, 0x202f, 0x205f, 0x3000],
+].map((code) => String.fromCodePoint(code))
+
+test('a word holding any character the watcher splits on is refused', () => {
+  for (const space of whatTheWatcherSplitsOn) {
+    for (const word of [`smt${space}4kd3p`, `${space}smt`, `smt${space}`]) {
+      expect(Schema.is(ProjectName)(word), JSON.stringify(word)).toBe(false)
+      expect(Schema.is(BeadId)(word), JSON.stringify(word)).toBe(false)
+    }
+  }
+})
+
+test('a word the watcher would not split is read, but a byte order mark is still refused', () => {
+  expect(Schema.is(BeadId)('smt-4kd3p.20')).toBe(true)
+  expect(Schema.is(ProjectName)('summit​works')).toBe(true)
+  expect(Schema.is(BeadId)('smt﻿4kd3p')).toBe(false)
 })
 
 /** Each project's answer, keyed as `askAbout` keys it. */

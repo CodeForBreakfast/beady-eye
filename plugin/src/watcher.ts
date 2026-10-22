@@ -76,8 +76,9 @@ export class WatcherDown extends Data.TaggedError('WatcherDown')<{
 }> {}
 
 /** A word the watcher can read on one line: something, with no space in it.
- * The plugin asks `watch <project> <id>` and keys a watch on the two. */
-const aWord = Schema.String.check(Schema.isPattern(/^\S+$/))
+ * The plugin asks `watch <project> <id>` and keys a watch on the two. The
+ * watcher splits on Rust's whitespace, which counts U+0085 where `\s` does not. */
+const aWord = Schema.String.check(Schema.isPattern(/^[^\s\u0085]+$/))
 
 /** The name the bdi config gives a project. */
 export const ProjectName = aWord.pipe(Schema.brand('ProjectName'))
