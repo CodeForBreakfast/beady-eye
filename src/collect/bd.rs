@@ -200,6 +200,16 @@ struct RowDependency {
     edge: Edge,
 }
 
+/// The bead id in a dependency target. Another project's bead may be written
+/// `<project>:<id>`, and bd keeps that spelling in the edge, while the tree
+/// finds a blocker by its bare id in the answer that holds it.
+fn bare_id(target: String) -> String {
+    match target.rsplit_once(':') {
+        Some((_, id)) => id.to_string(),
+        None => target,
+    }
+}
+
 impl Row {
     /// This row as a bead, beside every value a badge could name in it.
     fn into_bead(self, values: Values, printed: Printed) -> Bead {
@@ -218,7 +228,7 @@ impl Row {
                 .dependencies
                 .into_iter()
                 .map(|dependency| Dependency {
-                    on: dependency.depends_on_id,
+                    on: bare_id(dependency.depends_on_id),
                     edge: dependency.edge,
                 })
                 .collect(),
@@ -1267,6 +1277,26 @@ mod tests {
                     edge: Edge::Blocks,
                 }],
                 "bd {bd}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dependency_written_project_colon_id_is_read_as_the_bare_id() {
+        for written in ["dun:dun-2e7", "external:dun:dun-2e7", "dun-2e7"] {
+            let json = format!(
+                r#"[{{"id":"ark-1","title":"t","status":"open","dependencies":[
+                  {{"depends_on_id":"{written}","type":"blocks"}}]}}]"#
+            );
+            let beads = parse_beads(&json).expect("the row parses");
+
+            assert_eq!(
+                beads[0].dependencies,
+                vec![Dependency {
+                    on: "dun-2e7".to_string(),
+                    edge: Edge::Blocks,
+                }],
+                "written {written}"
             );
         }
     }
