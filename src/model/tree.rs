@@ -522,37 +522,38 @@ fn reach<K: Copy + Ord>(root: K, beneath: &impl Fn(K) -> Vec<(K, Edge)>) -> Reac
         looped: false,
     };
     let mut placed: BTreeMap<K, usize> = BTreeMap::from([(root, 0)]);
-    descend(root, 0, beneath, &mut placed, &mut Vec::new(), &mut found);
-    found
-}
-
-fn descend<K: Copy + Ord>(
-    key: K,
-    at: usize,
-    beneath: &impl Fn(K) -> Vec<(K, Edge)>,
-    placed: &mut BTreeMap<K, usize>,
-    above: &mut Vec<K>,
-    found: &mut Reached<K>,
-) {
-    above.push(key);
-    for (child, edge) in beneath(key) {
-        found.looped |= above.contains(&child);
+    // The way down to the bead being walked, each with the beads beneath it
+    // still to walk. A stack of its own rather than the call stack, which a
+    // tracker nested deep enough would overflow.
+    let mut going = vec![(0, beneath(root).into_iter())];
+    let mut on_the_way_down = vec![true];
+    while let Some((at, kids)) = going.last_mut() {
+        let at = *at;
+        let Some((child, edge)) = kids.next() else {
+            on_the_way_down[at] = false;
+            going.pop();
+            continue;
+        };
         let (bead, first) = match placed.get(&child) {
-            Some(&bead) => (bead, false),
+            Some(&bead) => {
+                found.looped |= on_the_way_down[bead];
+                (bead, false)
+            }
             None => {
                 let bead = found.order.len();
                 found.order.push(child);
                 found.children.push(Vec::new());
+                on_the_way_down.push(true);
                 placed.insert(child, bead);
                 (bead, true)
             }
         };
         found.children[at].push(Link { bead, edge, first });
         if first {
-            descend(child, bead, beneath, placed, above, found);
+            going.push((bead, beneath(child).into_iter()));
         }
     }
-    above.pop();
+    found
 }
 
 /// A bead in one of several projects' answers: which answer, and its id there.
@@ -815,11 +816,10 @@ fn cuts(children: &[Vec<Link>]) -> BTreeSet<usize> {
         children,
         component: components(children),
         shared: in_links.iter().map(|&n| n > 1).collect(),
-        above: Vec::new(),
         is_above: vec![false; children.len()],
         answered: BTreeMap::new(),
     };
-    walk.from(0)
+    walk.down_from_root()
 }
 
 /// The strongly connected component each bead is in, numbered so that two
@@ -886,19 +886,57 @@ struct CutWalk<'a> {
     /// link is only ever walked from the bead above it, so remembering its
     /// answer saves nothing that bead's own answer does not.
     shared: Vec<bool>,
-    above: Vec<usize>,
     is_above: Vec<bool>,
     answered: BTreeMap<(usize, Vec<usize>), BTreeSet<usize>>,
 }
 
+/// A bead the walk is beneath: which of the beads above it it can reach,
+/// how many of its links it has walked, and where they were cut.
+struct Visit {
+    at: usize,
+    seen: Vec<usize>,
+    walked: usize,
+    cut: BTreeSet<usize>,
+}
+
 impl CutWalk<'_> {
-    fn from(&mut self, at: usize) -> BTreeSet<usize> {
+    /// Where the walk down from the root cuts its loops. The way down is a
+    /// stack of its own rather than the call stack, which a tracker nested
+    /// deep enough would overflow.
+    fn down_from_root(&mut self) -> BTreeSet<usize> {
+        let children = self.children;
+        let mut going = Vec::new();
+        if let Some(cut) = self.enter(0, &mut going) {
+            return cut;
+        }
+        while let Some(visit) = going.last_mut() {
+            if let Some(link) = children[visit.at].get(visit.walked).map(|link| link.bead) {
+                visit.walked += 1;
+                if self.is_above[link] {
+                    visit.cut.insert(link);
+                } else if let Some(cut) = self.enter(link, &mut going) {
+                    going.last_mut().expect("the bead over it").cut.extend(cut);
+                }
+                continue;
+            }
+            let cut = self.leave(going.pop().expect("the bead it walked"));
+            match going.last_mut() {
+                Some(over) => over.cut.extend(cut),
+                None => return cut,
+            }
+        }
+        unreachable!("the root is left only by returning its cuts")
+    }
+
+    /// The cuts beneath `at`, if its answer is already known for the way
+    /// down `going` took to it, or else a visit to it on top of `going`.
+    fn enter(&mut self, at: usize, going: &mut Vec<Visit>) -> Option<BTreeSet<usize>> {
         // Every bead above `at` reaches it, so `at` reaches one of them only
         // if they are in one component.
         let seen: Vec<usize> = if self.shared[at] {
-            self.above
+            going
                 .iter()
-                .copied()
+                .map(|visit| visit.at)
                 .filter(|&bead| self.component[bead] == self.component[at])
                 .collect()
         } else {
@@ -908,25 +946,26 @@ impl CutWalk<'_> {
             .then(|| self.answered.get(&(at, seen.clone())))
             .flatten()
         {
-            return cut.clone();
+            return Some(cut.clone());
         }
-
-        let mut cut = BTreeSet::new();
-        self.above.push(at);
         self.is_above[at] = true;
-        for link in self.children[at].iter().map(|link| link.bead) {
-            if self.is_above[link] {
-                cut.insert(link);
-            } else {
-                cut.extend(self.from(link));
-            }
+        going.push(Visit {
+            at,
+            seen,
+            walked: 0,
+            cut: BTreeSet::new(),
+        });
+        None
+    }
+
+    /// The cuts beneath a bead whose links have all been walked.
+    fn leave(&mut self, visit: Visit) -> BTreeSet<usize> {
+        self.is_above[visit.at] = false;
+        if self.shared[visit.at] {
+            self.answered
+                .insert((visit.at, visit.seen), visit.cut.clone());
         }
-        self.is_above[at] = false;
-        self.above.pop();
-        if self.shared[at] {
-            self.answered.insert((at, seen), cut.clone());
-        }
-        cut
+        visit.cut
     }
 }
 
