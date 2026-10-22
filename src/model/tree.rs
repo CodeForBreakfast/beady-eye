@@ -807,51 +807,127 @@ impl<'a> Across<'a> {
 /// every way down to it, which is what keeps this from being the unrolling
 /// it is asking about.
 fn cuts(children: &[Vec<Link>]) -> BTreeSet<usize> {
-    let reach: Vec<BTreeSet<usize>> = (0..children.len())
-        .map(|from| {
-            let mut reached = BTreeSet::new();
-            let mut going = vec![from];
-            while let Some(bead) = going.pop() {
-                for link in &children[bead] {
-                    if reached.insert(link.bead) {
-                        going.push(link.bead);
-                    }
-                }
-            }
-            reached
-        })
-        .collect();
-    cuts_from(0, &mut Vec::new(), children, &reach, &mut BTreeMap::new())
+    let mut in_links = vec![0usize; children.len()];
+    for link in children.iter().flatten() {
+        in_links[link.bead] += 1;
+    }
+    let mut walk = CutWalk {
+        children,
+        component: components(children),
+        shared: in_links.iter().map(|&n| n > 1).collect(),
+        above: Vec::new(),
+        is_above: vec![false; children.len()],
+        answered: BTreeMap::new(),
+    };
+    walk.from(0)
 }
 
-fn cuts_from(
-    at: usize,
-    above: &mut Vec<usize>,
-    children: &[Vec<Link>],
-    reach: &[BTreeSet<usize>],
-    answered: &mut BTreeMap<(usize, Vec<usize>), BTreeSet<usize>>,
-) -> BTreeSet<usize> {
-    let seen: Vec<usize> = above
-        .iter()
-        .copied()
-        .filter(|bead| reach[at].contains(bead))
-        .collect();
-    if let Some(cut) = answered.get(&(at, seen.clone())) {
-        return cut.clone();
-    }
-
-    let mut cut = BTreeSet::new();
-    above.push(at);
-    for link in &children[at] {
-        if above.contains(&link.bead) {
-            cut.insert(link.bead);
-        } else {
-            cut.extend(cuts_from(link.bead, above, children, reach, answered));
+/// The strongly connected component each bead is in, numbered so that two
+/// beads share a number only if each can reach the other.
+fn components(children: &[Vec<Link>]) -> Vec<usize> {
+    const UNVISITED: usize = usize::MAX;
+    let n = children.len();
+    let mut index = vec![UNVISITED; n];
+    let mut lowlink = vec![0; n];
+    let mut on_stack = vec![false; n];
+    let mut component = vec![UNVISITED; n];
+    let mut stack = Vec::new();
+    let mut counter = 0;
+    let mut found = 0;
+    for start in 0..n {
+        if index[start] != UNVISITED {
+            continue;
+        }
+        index[start] = counter;
+        lowlink[start] = counter;
+        counter += 1;
+        stack.push(start);
+        on_stack[start] = true;
+        let mut going = vec![(start, 0usize)];
+        while let Some(&(at, next)) = going.last() {
+            if let Some(link) = children[at].get(next) {
+                going.last_mut().expect("going is not empty").1 += 1;
+                let to = link.bead;
+                if index[to] == UNVISITED {
+                    index[to] = counter;
+                    lowlink[to] = counter;
+                    counter += 1;
+                    stack.push(to);
+                    on_stack[to] = true;
+                    going.push((to, 0));
+                } else if on_stack[to] {
+                    lowlink[at] = lowlink[at].min(index[to]);
+                }
+                continue;
+            }
+            going.pop();
+            if let Some(&(over, _)) = going.last() {
+                lowlink[over] = lowlink[over].min(lowlink[at]);
+            }
+            if lowlink[at] == index[at] {
+                while let Some(member) = stack.pop() {
+                    on_stack[member] = false;
+                    component[member] = found;
+                    if member == at {
+                        break;
+                    }
+                }
+                found += 1;
+            }
         }
     }
-    above.pop();
-    answered.insert((at, seen), cut.clone());
-    cut
+    component
+}
+
+struct CutWalk<'a> {
+    children: &'a [Vec<Link>],
+    component: Vec<usize>,
+    /// Whether more than one link leads to the bead. One reached by a single
+    /// link is only ever walked from the bead above it, so remembering its
+    /// answer saves nothing that bead's own answer does not.
+    shared: Vec<bool>,
+    above: Vec<usize>,
+    is_above: Vec<bool>,
+    answered: BTreeMap<(usize, Vec<usize>), BTreeSet<usize>>,
+}
+
+impl CutWalk<'_> {
+    fn from(&mut self, at: usize) -> BTreeSet<usize> {
+        // Every bead above `at` reaches it, so `at` reaches one of them only
+        // if they are in one component.
+        let seen: Vec<usize> = if self.shared[at] {
+            self.above
+                .iter()
+                .copied()
+                .filter(|&bead| self.component[bead] == self.component[at])
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(cut) = self.shared[at]
+            .then(|| self.answered.get(&(at, seen.clone())))
+            .flatten()
+        {
+            return cut.clone();
+        }
+
+        let mut cut = BTreeSet::new();
+        self.above.push(at);
+        self.is_above[at] = true;
+        for link in self.children[at].iter().map(|link| link.bead) {
+            if self.is_above[link] {
+                cut.insert(link);
+            } else {
+                cut.extend(self.from(link));
+            }
+        }
+        self.is_above[at] = false;
+        self.above.pop();
+        if self.shared[at] {
+            self.answered.insert((at, seen), cut.clone());
+        }
+        cut
+    }
 }
 
 /// The ways down from `at` that a walk takes, `above` being the beads it
@@ -2289,5 +2365,72 @@ mod tests {
                 ("arkham", "ark-1.1", 1),
             ]
         );
+    }
+
+    /// Small random trackers, each with beads nested under the root and
+    /// blocking one another any way round, answered as a walk over every way
+    /// down answers them.
+    #[test]
+    fn loops_in_random_small_trackers_are_cut_where_a_walk_over_every_way_down_cuts_them() {
+        let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for _ in 0..2000 {
+            let size = 2 + next(7) as usize;
+            let mut beads = vec![bead("r", "open", &[])];
+            for at in 0..size {
+                let mut deps = Vec::new();
+                if next(3) != 0 {
+                    deps.push(dep("r", "parent-child"));
+                } else if at > 0 {
+                    deps.push(dep(&format!("b{}", next(at as u64)), "parent-child"));
+                }
+                for _ in 0..next(4) {
+                    deps.push(dep(&format!("b{}", next(size as u64)), "blocks"));
+                }
+                beads.push(bead(&format!("b{at}"), "open", &deps));
+            }
+            let json = tracker(&beads);
+            let a = assembled(&json, ROOT);
+            let reference: Vec<&str> = every_way_down(&a.children)
+                .into_iter()
+                .map(|bead| a.beads[bead].id.as_str())
+                .collect();
+            assert_eq!(a.cycles, reference, "{json}");
+        }
+    }
+
+    /// Every bead of a long chain of nesting is blocked by the root of the
+    /// chain, so every one of them can reach every other. Assembling it must
+    /// cost what the chain's length does, not its square.
+    #[test]
+    fn a_long_nesting_whose_every_bead_is_blocked_by_its_root_is_assembled_in_bounded_time() {
+        const DEPTH: usize = 6000;
+        let mut beads = vec![bead("r", "open", &[])];
+        for at in 0..DEPTH {
+            let parent = if at == 0 {
+                "r".to_string()
+            } else {
+                format!("n{}", at - 1)
+            };
+            beads.push(bead(
+                &format!("n{at}"),
+                "open",
+                &[dep(&parent, "parent-child"), dep("r", "blocks")],
+            ));
+        }
+        let json = tracker(&beads);
+
+        let started = std::time::Instant::now();
+        let a = assembled(&json, ROOT);
+        let took = started.elapsed();
+
+        assert_eq!(a.cycles, vec!["r".to_string()]);
+        assert_eq!(a.beads.len(), DEPTH + 1);
+        assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
     }
 }

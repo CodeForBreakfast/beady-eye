@@ -88,6 +88,13 @@ export type ProjectName = typeof ProjectName.Type
 export const BeadId = aWord.pipe(Schema.brand('BeadId'))
 export type BeadId = typeof BeadId.Type
 
+/** A status as bd accepts one: lowercase, letter first, with digits, hyphens
+ * and underscores after. It is the `statusNameRegexp` in beads' types. */
+export const StatusWord = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_-]*$/)).pipe(
+  Schema.brand('StatusWord'),
+)
+export type StatusWord = typeof StatusWord.Type
+
 /** How many comments a bead has. */
 export const CommentCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
@@ -95,7 +102,7 @@ export const CommentCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Row = Schema.Struct({
   id: BeadId,
   title: Schema.String,
-  status: Schema.String,
+  status: StatusWord,
   comment_count: Schema.optional(CommentCount),
   close_reason: Schema.optional(Schema.String),
 })
