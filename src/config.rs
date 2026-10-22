@@ -181,7 +181,9 @@ pub struct Project {
     /// that `bdi watch` passes its records on.
     ///
     /// A claim, as `poll = false` is, because bd cannot tell a reader whether
-    /// the other writers keep one. Off unless the setup says so.
+    /// the other writers keep one. Off unless the setup says so. Where it is
+    /// on, every bd `bdi` runs against the tracker keeps the journal, so
+    /// `bdi`'s own writes are not the gap.
     #[serde(default)]
     pub events_journal: bool,
     /// Badges this project draws in place of the ones `[[badges]]` names, for

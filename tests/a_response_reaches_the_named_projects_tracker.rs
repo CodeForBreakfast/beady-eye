@@ -118,6 +118,40 @@ fn a_comment_is_run_against_the_named_projects_tracker() {
     assert_eq!(tracker.calls(), [commented]);
 }
 
+/// A project whose writers all keep the journal has bdi's writes kept in it
+/// too, or the watcher misses the one write a person made.
+#[test]
+fn a_response_to_a_project_keeping_the_journal_is_journalled() {
+    let home = a_home_naming_two_projects("respond-journalled", "events_journal = true\n");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("kadath", RESPONDED, CLOSED);
+
+    let out = bdi(&home, &tracker, "bd kadath human respond kad-1 -r yes");
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(tracker.journalled_calls(), [format!("1 {RESPONDED}")]);
+}
+
+/// Whether a tracker keeps the journal is its config's to say, so the
+/// caller's own setting reaches bd no more than its choice of database does.
+#[test]
+fn a_journal_the_caller_turns_on_does_not_reach_bd() {
+    let home = a_home_naming_two_projects("respond-ignores-exported-journal", "");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.answers_for("kadath", RESPONDED, CLOSED);
+
+    let out = bdi_exporting(
+        &home,
+        &tracker,
+        "bd kadath human respond kad-1 -r yes",
+        &[("BD_EVENTS_JOURNAL", "1")],
+    );
+
+    assert!(out.status.success(), "{}", said(&out.stderr));
+    assert_eq!(tracker.calls(), [RESPONDED]);
+    assert_eq!(tracker.journalled_calls(), Vec::<String>::new());
+}
+
 /// A permission rule reads the command line, and an exported variable is not
 /// on it. So a database the caller exports never reaches bd, and the response
 /// lands where kadath's own config says. Only kadath has an answer, so a
