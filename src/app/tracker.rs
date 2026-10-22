@@ -335,9 +335,9 @@ fn read_project(
     });
     let beads = beads?;
     let held: BTreeSet<String> = beads.iter().map(|bead| bead.id.clone()).collect();
-    let beads: Vec<Arc<Bead>> = beads
-        .into_iter()
-        .map(|bead| without_its_own_project_name(bead, project, &held))
+    let own: Vec<Arc<Bead>> = beads
+        .iter()
+        .map(|bead| without_its_own_project_name(bead.clone(), project, &held))
         .collect();
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
@@ -349,13 +349,13 @@ fn read_project(
 
     Ok(ProjectWork {
         readiness,
-        relations: edges::relations(&beads),
+        relations: edges::relations(&own),
         roots: if draws_trees {
-            trees(&beads, project, cfg, panes)
+            trees(&own, project, cfg, panes)
         } else {
             Vec::new()
         },
-        speaks_until: speaks_until(&beads, now),
+        speaks_until: speaks_until(&own, now),
         beads,
     })
 }
@@ -1894,6 +1894,41 @@ path = "{DUNWICH}"
                 ("dun-2", None),
                 ("dun-9", Some("dunwich"))
             ]
+        );
+    }
+
+    /// The standing read is reused by the next refresh, so it keeps each edge
+    /// as the tracker wrote it.
+    #[test]
+    fn a_read_keeps_an_edge_naming_its_own_project_as_the_tracker_wrote_it() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+"#
+        ))
+        .expect("the config parses");
+        let rows = r#"[{"id":"dun-1","title":"t","status":"open","dependencies":[
+          {"depends_on_id":"dunwich:dun-2","type":"blocks"}]},
+          {"id":"dun-2","title":"u","status":"open"}]"#;
+        let tracker = dunwich_tracker().also(beads(rows));
+
+        let work = read_project(
+            &tracker,
+            || tracker.all(),
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            now(),
+        )
+        .expect("the tracker answers every call");
+
+        let waiting = work.beads.iter().find(|bead| bead.id == "dun-1");
+        assert_eq!(
+            waiting.map(|bead| bead.dependencies[0].project.as_deref()),
+            Some(Some("dunwich"))
         );
     }
 
