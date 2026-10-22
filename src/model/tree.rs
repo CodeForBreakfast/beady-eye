@@ -437,7 +437,7 @@ fn edge_between(child: &Bead, over: &str) -> Edge {
     if child
         .dependencies
         .iter()
-        .any(|d| d.on == over && d.edge == Edge::ParentChild)
+        .any(|d| d.on == over && d.project.is_none() && d.edge == Edge::ParentChild)
     {
         Edge::ParentChild
     } else {
@@ -2159,6 +2159,27 @@ mod tests {
             vec![("arkham", "ark-1", 0), ("innsmouth", "sh-1", 1)]
         );
         assert!(a.orphaned_dependencies.is_empty());
+    }
+
+    /// A parent-child edge written to another project's bead is not the link
+    /// that hangs the waiting bead beneath a local bead of the same id.
+    #[test]
+    fn a_parent_in_another_project_does_not_make_a_local_blocker_a_parent() {
+        let answers = [
+            answer(
+                "arkham",
+                &[
+                    bead("ark-1", "open", &[dep("sh-1", "blocks")]),
+                    bead("sh-1", "open", &[dep("innsmouth:ark-1", "parent-child")]),
+                ],
+            ),
+            answer("innsmouth", &[bead("ark-1", "open", &[])]),
+        ];
+        let a = across(&answers)
+            .assemble("arkham", "ark-1")
+            .expect("the rows assemble");
+
+        assert_eq!(a.children[0][0].edge, Edge::Blocks);
     }
 
     /// A project that gave no answer holds nothing to draw, and no bead of
