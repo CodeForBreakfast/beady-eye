@@ -33,6 +33,10 @@ const PARENT: &str = "PARENT";
 const DEPENDS_ON: &str = "DEPENDS ON";
 const BLOCKS: &str = "BLOCKS";
 
+/// The section for the beads the description names. Neither `bd show` nor
+/// beads has one, so the word is coined (see `design.md`'s terminology).
+const MENTIONS: &str = "MENTIONS";
+
 /// `bd show`'s own word for the person a bead is assigned to, lowercased to
 /// sit in a row of facts rather than at the head of one.
 const ASSIGNEE: &str = "assignee";
@@ -54,6 +58,10 @@ const BETWEEN_LABELS: &str = ", ";
 const UP: char = '↑';
 const OUT: char = '→';
 const BACK: char = '←';
+
+/// What stands in the place of an arrow for a bead only the prose names:
+/// there is no edge to point along.
+const NAMED: char = '·';
 
 /// The share of the screen the window takes across: four fifths, so the
 /// forest still shows beside it and a bigger terminal gets a bigger window
@@ -215,19 +223,80 @@ pub fn stepped(
 ///
 /// Nothing where this bead no longer names it, which is a collection having
 /// rewritten what it names while the reader was reading it.
-pub fn at(node: &Node, id: &str) -> Option<usize> {
-    related(node).iter().position(|named| named.id == id)
+pub fn at(node: &Node, mentioned: &[Related], id: &str) -> Option<usize> {
+    related(node, mentioned)
+        .iter()
+        .position(|named| named.id == id)
 }
 
 /// Every bead this one names, in the order the window draws them: its
 /// parent, then what it waits on, then what waits on it, which is `bd
-/// show`'s own order and the order `said` builds its sections in.
-pub fn related(node: &Node) -> Vec<&Related> {
+/// show`'s own order and the order `said` builds its sections in, and last
+/// the beads its description names.
+pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related> {
     node.parent
         .iter()
         .chain(&node.depends_on)
         .chain(&node.blocks)
+        .chain(mentioned)
         .collect()
+}
+
+/// The beads the description names that the window does not already list, in
+/// the order it first names them.
+///
+/// A candidate is a whole token shaped like an id: a lower-case prefix, one
+/// hyphen, a base, and an optional dotted tail of digits. What decides is
+/// existence, so a candidate gets a row only where the forest draws a bead
+/// of that id in the selection's own project.
+pub fn mentioned(forest: &Forest, node: &Node) -> Vec<Related> {
+    let description = node.description().unwrap_or_default();
+    let listed = related(node, &[]);
+    let mut named: Vec<Related> = Vec::new();
+    for token in description.split(|c: char| !(c.is_ascii_alphanumeric() || "-._".contains(c))) {
+        let id = token.trim_end_matches('.');
+        if id == node.id
+            || !shaped_like_an_id(id)
+            || listed.iter().any(|related| related.id == id)
+            || named.iter().any(|related| related.id == id)
+        {
+            continue;
+        }
+        let key = BeadKey {
+            project: node.project.clone(),
+            id: id.to_string(),
+        };
+        if let Some(bead) = forest.snapshot().node(&key).filter(|_| forest.draws(&key)) {
+            named.push(Related {
+                id: bead.id.clone(),
+                project: None,
+                // A mention is no edge, and `Blocks` is the kind that
+                // `related_row` says nothing of.
+                edge: Edge::Blocks,
+                status: Some(bead.status.clone()),
+                title: Some(bead.title.clone()),
+            });
+        }
+    }
+    named
+}
+
+fn shaped_like_an_id(token: &str) -> bool {
+    let Some((prefix, rest)) = token.split_once('-') else {
+        return false;
+    };
+    let mut parts = rest.split('.');
+    let base = parts.next().unwrap_or_default();
+    let lower = |text: &str| {
+        !text.is_empty()
+            && text
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    };
+    lower(prefix)
+        && prefix.starts_with(|c: char| c.is_ascii_lowercase())
+        && lower(base)
+        && parts.all(|tail| !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// The key a bead named in a section stands for: its id, in the project it
@@ -317,6 +386,7 @@ fn window_block() -> Block<'static> {
 fn lay_out(
     area: Rect,
     node: &Node,
+    mentioned: &[Related],
     progress: Option<Progress>,
     followable: &dyn Fn(&Related) -> bool,
 ) -> Laid {
@@ -324,6 +394,7 @@ fn lay_out(
     let inner = window_block().inner(window);
     let page = said(
         node,
+        mentioned,
         progress,
         inner.width as usize,
         inner.height as usize,
@@ -367,17 +438,18 @@ pub enum Drawn<'a> {
 pub fn drawn_at<'a>(
     area: Rect,
     node: &'a Node,
+    mentioned: &'a [Related],
     progress: Option<Progress>,
     view: &Show,
     row: u16,
     followable: &dyn Fn(&Related) -> bool,
 ) -> Drawn<'a> {
-    let Laid { page, inner, .. } = lay_out(area, node, progress, followable);
+    let Laid { page, inner, .. } = lay_out(area, node, mentioned, progress, followable);
     if !(inner.y..inner.bottom()).contains(&row) {
         return Drawn::Beyond;
     }
     let at = view.from + usize::from(row - inner.y);
-    related(node)
+    related(node, mentioned)
         .into_iter()
         .zip(page.related)
         .find(|(_, drawn)| *drawn == at)
@@ -430,6 +502,7 @@ fn show_window(area: Rect) -> Rect {
 /// bead's id.
 pub fn said(
     node: &Node,
+    mentioned: &[Related],
     progress: Option<Progress>,
     width: usize,
     window: usize,
@@ -551,6 +624,7 @@ pub fn said(
         (PARENT, tied(UP, node.parent.as_slice()), true),
         (DEPENDS_ON, tied(OUT, &node.depends_on), true),
         (BLOCKS, tied(BACK, &node.blocks), true),
+        (MENTIONS, tied(NAMED, mentioned), true),
     ] {
         if body.is_empty() {
             continue;
@@ -727,6 +801,7 @@ pub fn show(
     frame: &mut Frame,
     area: Rect,
     node: &Node,
+    mentioned: &[Related],
     progress: Option<Progress>,
     view: &mut Show,
     followable: &dyn Fn(&Related) -> bool,
@@ -735,7 +810,7 @@ pub fn show(
         page,
         window,
         inner,
-    } = lay_out(area, node, progress, followable);
+    } = lay_out(area, node, mentioned, progress, followable);
     if window.is_empty() {
         return;
     }
@@ -745,7 +820,7 @@ pub fn show(
     view.fit(page.rows.len(), inner.height as usize);
     let on = view
         .on()
-        .and_then(|id| at(node, id))
+        .and_then(|id| at(node, mentioned, id))
         .and_then(|at| page.related.get(at).copied());
     if let Some(row) = on {
         view.reveal(row);
@@ -909,7 +984,7 @@ mod tests {
         followable: &dyn Fn(&Related) -> bool,
     ) -> Vec<String> {
         Painted::drawn_by(width, height, |frame| {
-            show(frame, frame.area(), node, progress, view, followable)
+            show(frame, frame.area(), node, &[], progress, view, followable)
         })
         .rows()
         .into_iter()
@@ -1350,6 +1425,7 @@ mod tests {
                     drawn_at(
                         over(WIDE, height),
                         &bead,
+                        &[],
                         None,
                         &view,
                         drawn_on(&rows, drawn_as),
@@ -1377,6 +1453,7 @@ mod tests {
                 drawn_at(
                     over(WIDE, TALL),
                     &bead,
+                    &[],
                     None,
                     &view,
                     drawn_on(&rows, drawn_as),
@@ -1402,6 +1479,7 @@ mod tests {
             drawn_at(
                 over(WIDE, TALL),
                 &bead,
+                &[],
                 None,
                 &view,
                 drawn_on(&rows, "┌dun-7.1"),
@@ -1414,6 +1492,7 @@ mod tests {
             drawn_at(
                 over(WIDE, TALL),
                 &bead,
+                &[],
                 None,
                 &view,
                 drawn_on(&rows, "└─"),
@@ -1443,6 +1522,7 @@ mod tests {
             drawn_at(
                 over_a_taller_screen,
                 &bead,
+                &[],
                 None,
                 &view,
                 under,
@@ -1473,6 +1553,7 @@ mod tests {
             drawn_at(
                 over(WIDE, short),
                 &bead,
+                &[],
                 None,
                 &view,
                 drawn_on(&after, "dun-7.4  file the licence"),
@@ -1508,6 +1589,7 @@ mod tests {
             drawn_at(
                 over(WIDE, barely_taller_than_the_sections),
                 &bead,
+                &[],
                 None,
                 &view,
                 under_the_blank_row,
@@ -1520,6 +1602,7 @@ mod tests {
             drawn_at(
                 over(WIDE, barely_taller_than_the_sections),
                 &bead,
+                &[],
                 None,
                 &view,
                 under_the_blank_row - 1,
@@ -1798,13 +1881,15 @@ mod tests {
                         frame,
                         frame.area(),
                         &bead,
+                        &[],
                         None,
                         &mut view,
                         &nothing_followable,
                     );
                 });
-                let margins = painted
-                    .margins(lay_out(over(width, height), &bead, None, &nothing_followable).window);
+                let margins = painted.margins(
+                    lay_out(over(width, height), &bead, &[], None, &nothing_followable).window,
+                );
                 read += margins.chars().count();
 
                 assert_eq!(
@@ -1848,6 +1933,7 @@ mod tests {
                 frame,
                 frame.area(),
                 node,
+                &[],
                 None,
                 &mut Show::default(),
                 followable,
@@ -2224,7 +2310,7 @@ mod tests {
     #[test]
     fn a_row_the_forest_cannot_be_gone_to_says_its_id_and_its_title_in_one_span() {
         let bead = a_bead();
-        let page = said(&bead, None, 60, 60, &nothing_followable);
+        let page = said(&bead, &[], None, 60, 60, &nothing_followable);
 
         assert_eq!(
             page.rows[page.related[0]],
@@ -2275,7 +2361,7 @@ mod tests {
     #[test]
     fn the_beads_a_bead_names_are_listed_in_the_order_the_window_draws_them() {
         assert_eq!(
-            super::related(&a_bead())
+            super::related(&a_bead(), &[])
                 .iter()
                 .map(|it| it.id.as_str())
                 .collect::<Vec<_>>(),
@@ -2289,18 +2375,18 @@ mod tests {
     #[test]
     fn the_rows_the_page_reports_are_the_beads_it_names_in_that_order() {
         let bead = a_bead();
-        let page = said(&bead, None, 60, 60, &nothing_followable);
+        let page = said(&bead, &[], None, 60, 60, &nothing_followable);
 
         assert_eq!(
             page.related.len(),
-            super::related(&bead).len(),
+            super::related(&bead, &[]).len(),
             "a row for each bead named"
         );
         // Read the row and check it says the bead of the same ordinal, rather
         // than searching the list for whichever id the row contains: `dun-7`
         // is inside `dun-7.3`, so a search finds the parent on every row and
         // an order that had drifted would still line up.
-        for (at, named) in super::related(&bead).iter().enumerate() {
+        for (at, named) in super::related(&bead, &[]).iter().enumerate() {
             let said: String = page.rows[page.related[at]]
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -2369,6 +2455,7 @@ mod tests {
                     frame,
                     frame.area(),
                     &bead,
+                    &[],
                     None,
                     view,
                     &everything_followable,
@@ -2385,6 +2472,7 @@ mod tests {
                         frame,
                         frame.area(),
                         &bead,
+                        &[],
                         None,
                         view,
                         &everything_followable,
@@ -2413,7 +2501,7 @@ mod tests {
     fn stepping_on_to_a_bead_below_the_window_brings_it_into_view() {
         let bead = a_bead();
         let mut view = Show::default();
-        let page = said(&bead, None, 58, 60, &nothing_followable);
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
         let last = *page.related.last().expect("a bead names beads");
 
         view.go_to("dun-7.4");
@@ -2422,7 +2510,7 @@ mod tests {
         assert!(
             drawn
                 .iter()
-                .any(|row| row.contains(&super::related(&bead)[2].id)),
+                .any(|row| row.contains(&super::related(&bead, &[])[2].id)),
             "the bead the window is on is off the page it drew: {drawn:#?}"
         );
         assert!(
@@ -2573,6 +2661,7 @@ mod tests {
                     frame,
                     frame.area(),
                     node,
+                    &[],
                     None,
                     &mut Show::default(),
                     &nothing_followable,

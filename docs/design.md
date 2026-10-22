@@ -108,6 +108,7 @@ coin one — and say so.**
 | **tail** | *coined* | the band under the forest showing the selected pane's last rows, in the pane's own colour, read again on a clock of its own (`[tui] tail_refresh_millis`). herdr has `agent read`, which is the read; neither project names the band or its clock. |
 | **crop** | *coined* | where the tail cuts a pane's screen, so that it shows the rows above the cut: a strategy `bdi` ships, which the reader's `[tail.crop]` names for each agent. herdr names the agent in a pane and reads its screen; neither project cuts one. |
 | **agent provider** | *coined* | whatever answers which panes are alive, in which directory and showing what, and can bring one to the front. herdr is one; tmux, zellij and wezterm could each be another. Neither project names the category, because herdr is one of these rather than one that has one. |
+| **mentions** | *coined* | the beads a bead's description names in prose, listed in the bead window under a section of that name. beads has the dependency, which is an edge a person recorded; a mention is a bead the prose names and no edge holds. |
 | **aside** | *coined* | the agent provider held off the loop: the tail asks by sending, and the answer arrives later on the channel every other event arrives on. A provider that has wedged therefore costs one waiting thread rather than a keyboard that has stopped answering. Neither project names it, because neither is the thing being kept waiting. |
 | **block** | *coined* | one of the three parts a row is fitted from: the identity, left-aligned and yielding last; the title, filling the middle and cut first; the state, right-justified and cut from its own end. Neither project has a word for it, because neither fits a row to a width. |
 | **watcher** | *coined* | `bdi watch`, the one process per machine that holds each project's beads as last read and sends them, and each change to them, to whoever watches. Neither project names it: bd's events journal records changes, and nothing in either project routes them to whoever asked. |
@@ -3550,6 +3551,18 @@ carry. In this order:
 The head is built from the cells the forest row is built from, so the two
 cannot disagree about a bead: one place decides a cell's words, and the row and
 the head are two widths of it rather than two renderings.
+
+**The beads a description names get a section of their own,** `MENTIONS`, last
+of the sections, and `Tab`, `Enter` and a click follow them as they follow the
+others. A candidate is a whole token shaped like an id: a lower-case prefix, one
+hyphen, a base, and an optional dotted tail of digits. A second hyphen refuses
+the token, so `read-ci-verdict` is not an id, and a full stop that ends a
+sentence is not part of it. What decides is existence: a candidate gets a row
+only where the forest draws a bead of that id in the selected bead's own
+project, so a hyphenated word and an id from another tracker get none. A bead
+the window already lists as parent, dependency or waiter keeps its one row
+there, and the bead itself is not listed. Only the description is read, not the
+notes, and the prose is not marked.
 
 **Every row sits one column in from each side of the border.** The floor is
 eighty-two rather than eighty so that the margin is paid for by the frame: the
