@@ -18,7 +18,7 @@ use crate::model::edges::{self, Relations};
 use crate::model::join;
 use crate::model::snapshot::{Readiness, TrackerFailure, TrackerState};
 use crate::model::tree::{Assembled, Nesting};
-use crate::model::types::{Bead, Pane, Unreadable};
+use crate::model::types::{Bead, Dependency, Pane, Unreadable};
 
 /// One project's roots in id order, each either read or unreadable, what
 /// every bead in the answer is tied to, and when the answer stops speaking
@@ -294,6 +294,30 @@ pub(super) fn refresh_project(
     })
 }
 
+/// The beads with each edge that names the project they are in, and a bead
+/// that project holds, read as any unprefixed edge, which the project's own
+/// answer resolves. An edge naming a bead the project lacks keeps its project,
+/// so no other project's bead of that id stands in for it.
+pub(super) fn with_own_edges_unprefixed(beads: &[Arc<Bead>], project: &str) -> Vec<Arc<Bead>> {
+    let held: BTreeSet<&str> = beads.iter().map(|bead| bead.id.as_str()).collect();
+    let own = |dependency: &Dependency| {
+        dependency.project.as_deref() == Some(project) && held.contains(dependency.on.as_str())
+    };
+    beads
+        .iter()
+        .map(|bead| {
+            if !bead.dependencies.iter().any(own) {
+                return Arc::clone(bead);
+            }
+            let mut bead = Bead::clone(bead);
+            for dependency in bead.dependencies.iter_mut().filter(|d| own(d)) {
+                dependency.project = None;
+            }
+            Arc::new(bead)
+        })
+        .collect()
+}
+
 /// Everything one project's tracker is asked for, read at `now`.
 ///
 /// A failure before the roots are known has no root to name, so it becomes
@@ -312,6 +336,7 @@ fn read_project(
         together(|| tracker.ready(), || tracker.blocked())
     });
     let beads = beads?;
+    let own = with_own_edges_unprefixed(&beads, &project.name);
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -322,13 +347,13 @@ fn read_project(
 
     Ok(ProjectWork {
         readiness,
-        relations: edges::relations(&beads),
+        relations: edges::relations(&own),
         roots: if draws_trees {
-            trees(&beads, project, cfg, panes)
+            trees(&own, project, cfg, panes)
         } else {
             Vec::new()
         },
-        speaks_until: speaks_until(&beads, now),
+        speaks_until: speaks_until(&own, now),
         beads,
     })
 }
@@ -1830,6 +1855,78 @@ dunwich = ["dun-7", "dun-4"]
             roots,
             vec!["dun-7", "dun-4"],
             "the root config and discovery both name is drawn once"
+        );
+    }
+
+    /// An edge naming the project it sits in, and a bead there, is the
+    /// project's own as an unprefixed edge is. One naming another project, or
+    /// a bead its own project lacks, keeps the name.
+    #[test]
+    fn an_edge_naming_its_own_project_is_read_as_an_unprefixed_edge() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+"#
+        ))
+        .expect("the config parses");
+        let rows = r#"[{"id":"dun-1","title":"t","status":"open","dependencies":[
+          {"depends_on_id":"ferry:fer-1","type":"blocks"},
+          {"depends_on_id":"dunwich:dun-2","type":"blocks"},
+          {"depends_on_id":"dunwich:dun-9","type":"blocks"}]},
+          {"id":"dun-2","title":"u","status":"open"}]"#;
+        let beads = crate::collect::bd::parse_shared_beads(rows).expect("the rows parse");
+
+        let read = with_own_edges_unprefixed(&beads, &cfg.projects[0].name);
+
+        let named: Vec<(&str, Option<&str>)> = read[0]
+            .dependencies
+            .iter()
+            .map(|dependency| (dependency.on.as_str(), dependency.project.as_deref()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                ("fer-1", Some("ferry")),
+                ("dun-2", None),
+                ("dun-9", Some("dunwich"))
+            ]
+        );
+    }
+
+    /// The standing read is reused by the next refresh, so it keeps each edge
+    /// as the tracker wrote it.
+    #[test]
+    fn a_read_keeps_an_edge_naming_its_own_project_as_the_tracker_wrote_it() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+"#
+        ))
+        .expect("the config parses");
+        let rows = r#"[{"id":"dun-1","title":"t","status":"open","dependencies":[
+          {"depends_on_id":"dunwich:dun-2","type":"blocks"}]},
+          {"id":"dun-2","title":"u","status":"open"}]"#;
+        let tracker = dunwich_tracker().also(beads(rows));
+
+        let work = read_project(
+            &tracker,
+            || tracker.all(),
+            &cfg.projects[0],
+            &cfg,
+            &[],
+            true,
+            now(),
+        )
+        .expect("the tracker answers every call");
+
+        let waiting = work.beads.iter().find(|bead| bead.id == "dun-1");
+        assert_eq!(
+            waiting.map(|bead| bead.dependencies[0].project.as_deref()),
+            Some(Some("dunwich"))
         );
     }
 

@@ -22,7 +22,7 @@ use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
-use crate::model::edges::{self, Elsewhere, Related};
+use crate::model::edges::{self, Elsewhere, Named, Related};
 use crate::model::join::{self, BeadKey, Listed, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
@@ -32,7 +32,8 @@ use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
 use super::tracker::{
-    open_failure, refresh_project, tracker_failure, ProjectWork, ReadAt, Refresh, RootUnread,
+    open_failure, refresh_project, tracker_failure, with_own_edges_unprefixed, ProjectWork, ReadAt,
+    Refresh, RootUnread,
 };
 use super::watcher::{self, Answer, BeadReadiness, Held};
 
@@ -230,7 +231,7 @@ struct Reached {
     waiting: BTreeMap<String, BTreeMap<String, Vec<Related>>>,
     /// The beads in other projects each project's beads name, by the naming
     /// project and then the id named.
-    elsewhere: BTreeMap<String, BTreeMap<String, Elsewhere>>,
+    elsewhere: BTreeMap<String, BTreeMap<Named, Elsewhere>>,
 }
 
 /// What a set of trees reaching across projects was assembled from.
@@ -1024,10 +1025,14 @@ fn assembled_across(
         return BTreeMap::new();
     }
 
+    let own_edges: Vec<(&str, Vec<Arc<Bead>>)> = answered
+        .iter()
+        .map(|(project, work)| (*project, with_own_edges_unprefixed(&work.beads, project)))
+        .collect();
     let across = Across::of(
-        answered
+        own_edges
             .iter()
-            .map(|(project, work)| (*project, Nesting::of(&work.beads))),
+            .map(|(project, beads)| (*project, Nesting::of(beads))),
         not_read.iter().copied(),
     );
     let mut trees: BTreeMap<String, BTreeMap<String, Assembled>> = BTreeMap::new();

@@ -41,11 +41,11 @@ pub struct Relations {
 /// What every bead in the answer is tied to.
 pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
     let by_id: BTreeMap<&str, &Bead> = beads.iter().map(|b| (b.id.as_str(), &**b)).collect();
-    let related = |id: &str, edge: Edge| {
-        let row = by_id.get(id);
+    let related = |id: &str, project: Option<&String>, edge: Edge| {
+        let row = by_id.get(id).filter(|_| project.is_none());
         Related {
             id: id.to_string(),
-            project: None,
+            project: project.cloned(),
             edge,
             status: row.map(|bead| bead.status.clone()),
             title: row.map(|bead| bead.title.clone()),
@@ -57,7 +57,11 @@ pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
         .map(|bead| {
             let mut ties = Relations::default();
             for dependency in &bead.dependencies {
-                let tied = related(&dependency.on, dependency.edge.clone());
+                let tied = related(
+                    &dependency.on,
+                    dependency.project.as_ref(),
+                    dependency.edge.clone(),
+                );
                 match dependency.edge {
                     Edge::ParentChild => ties.parent = Some(tied),
                     Edge::Blocks | Edge::Other(_) => ties.depends_on.push(tied),
@@ -69,11 +73,11 @@ pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
 
     for bead in by_id.values() {
         for dependency in &bead.dependencies {
-            if dependency.edge != Edge::Blocks {
+            if dependency.edge != Edge::Blocks || dependency.project.is_some() {
                 continue;
             }
             if let Some(blocker) = relations.get_mut(&dependency.on) {
-                blocker.blocks.push(related(&bead.id, Edge::Blocks));
+                blocker.blocks.push(related(&bead.id, None, Edge::Blocks));
             }
         }
     }
@@ -116,6 +120,9 @@ pub fn waiting_across(
     waiting
 }
 
+/// An id as an edge writes it, with the project it names where it names one.
+pub type Named = (Option<String>, String);
+
 /// Another project's bead, which an id in this project's answer names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Elsewhere {
@@ -129,15 +136,15 @@ pub struct Elsewhere {
 /// blocks names the bead it would were it a blocker.
 pub fn held_across(
     answers: &[(&str, &[Arc<Bead>])],
-) -> BTreeMap<String, BTreeMap<String, Elsewhere>> {
-    let mut held: BTreeMap<String, BTreeMap<String, Elsewhere>> = BTreeMap::new();
+) -> BTreeMap<String, BTreeMap<Named, Elsewhere>> {
+    let mut held: BTreeMap<String, BTreeMap<Named, Elsewhere>> = BTreeMap::new();
     for (at, _, dependency, held_by) in crossing(answers) {
         let (project, beads) = answers[held_by];
         let Some(bead) = beads.iter().find(|bead| bead.id == dependency.on) else {
             continue;
         };
         held.entry(answers[at].0.to_string()).or_default().insert(
-            dependency.on.clone(),
+            (dependency.project.clone(), dependency.on.clone()),
             Elsewhere {
                 project: project.to_string(),
                 bead: Arc::clone(bead),
@@ -164,7 +171,18 @@ fn crossing<'a>(
         .flat_map(|(at, (_, beads))| beads.iter().map(move |bead| (at, &**bead)))
         .flat_map(|(at, bead)| bead.dependencies.iter().map(move |dep| (at, bead, dep)))
         .filter_map(move |(at, bead, dependency)| {
-            let held_by = held_by_one_other(&holding, at, &dependency.on)?;
+            let held_by = match &dependency.project {
+                Some(project) => answers
+                    .iter()
+                    .position(|(read, _)| read == project)
+                    .filter(|&named| named != at)
+                    .filter(|named| {
+                        holding
+                            .get(dependency.on.as_str())
+                            .is_some_and(|holders| holders.contains(named))
+                    })?,
+                None => held_by_one_other(&holding, at, &dependency.on)?,
+            };
             Some((at, bead, dependency, held_by))
         })
 }
@@ -352,6 +370,81 @@ mod tests {
             BTreeMap::new(),
             "two answers hold a dun-7, and nothing says which is meant"
         );
+    }
+
+    /// An edge written `<project>:<id>` is that project's bead, even where
+    /// the waiter's own answer, or a third, holds the same bare id.
+    #[test]
+    fn an_edge_naming_its_project_lists_the_waiter_under_that_projects_bead() {
+        let ferry = r#"[
+          {"id":"dun-7","title":"ferry's own","status":"open"},
+          {"id":"fer-2","title":"moor the barge","status":"open",
+           "dependencies":[{"depends_on_id":"dunwich:dun-7","type":"blocks"}]}
+        ]"#;
+        let waiting = waiting_among(&[
+            ("ferry", ferry),
+            ("dunwich", DUNWICH_WAITED_ON),
+            ("harbour", DUNWICH_WAITED_ON),
+        ]);
+
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting["dunwich"]["dun-7"][0].id, "fer-2");
+    }
+
+    /// Two edges naming the same bare id in two projects are each enriched
+    /// from the project they name.
+    #[test]
+    fn edges_naming_one_bare_id_in_two_projects_are_each_held_by_the_one_they_name() {
+        let ferry = parse_shared_beads(
+            r#"[{"id":"fer-2","title":"moor the barge","status":"open","dependencies":[
+              {"depends_on_id":"dunwich:sh-1","type":"blocks"},
+              {"depends_on_id":"harbour:sh-1","type":"blocks"}]}]"#,
+        )
+        .expect("the rows parse");
+        let dunwich = parse_shared_beads(r#"[{"id":"sh-1","title":"dun's","status":"open"}]"#)
+            .expect("the rows parse");
+        let harbour =
+            parse_shared_beads(r#"[{"id":"sh-1","title":"harbour's","status":"closed"}]"#)
+                .expect("the rows parse");
+        let answers: Vec<(&str, &[Arc<Bead>])> = vec![
+            ("ferry", &ferry),
+            ("dunwich", &dunwich),
+            ("harbour", &harbour),
+        ];
+
+        let held = held_across(&answers);
+
+        let title_of = |named: &str| {
+            held["ferry"][&(Some(named.to_string()), "sh-1".to_string())]
+                .bead
+                .title
+                .clone()
+        };
+        assert_eq!(title_of("dunwich"), "dun's");
+        assert_eq!(title_of("harbour"), "harbour's");
+        let related = relations(&ferry);
+        let projects: Vec<_> = related["fer-2"]
+            .depends_on
+            .iter()
+            .map(|related| related.project.as_deref())
+            .collect();
+        assert_eq!(projects, vec![Some("dunwich"), Some("harbour")]);
+    }
+
+    /// An edge naming the project it sits in crosses nothing, whatever it
+    /// holds.
+    #[test]
+    fn an_edge_naming_its_own_project_is_not_held_elsewhere() {
+        let ferry = parse_shared_beads(
+            r#"[{"id":"fer-2","title":"moor the barge","status":"open","dependencies":[
+              {"depends_on_id":"ferry:fer-3","type":"blocks"}]},
+              {"id":"fer-3","title":"tie the rope","status":"open"}]"#,
+        )
+        .expect("the rows parse");
+        let answers: Vec<(&str, &[Arc<Bead>])> = vec![("ferry", &ferry)];
+
+        assert!(held_across(&answers).is_empty());
+        assert!(waiting_across(&answers).is_empty());
     }
 
     /// Only a blocks edge says the other bead is waited on.

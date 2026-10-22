@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use crate::config::{Badge, Config};
 use crate::model::anomaly;
 use crate::model::badges;
-use crate::model::edges::{Elsewhere, Related, Relations};
+use crate::model::edges::{Elsewhere, Named, Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
@@ -36,7 +36,7 @@ pub struct Said<'a> {
     /// The bead in another project each id this project's beads name by an
     /// edge stands for, where this project's answer lacks it. Nothing where
     /// no other project was read.
-    pub elsewhere: Option<&'a BTreeMap<String, Elsewhere>>,
+    pub elsewhere: Option<&'a BTreeMap<Named, Elsewhere>>,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -219,14 +219,16 @@ fn blockers_elsewhere<'a>(
 ///
 /// A project's relations are read from its answer alone, and `elsewhere` is
 /// what read every answer together to find the other project's bead.
-fn held_elsewhere(tied: &mut Relations, elsewhere: &BTreeMap<String, Elsewhere>) {
+fn held_elsewhere(tied: &mut Relations, elsewhere: &BTreeMap<Named, Elsewhere>) {
     for related in tied
         .parent
         .iter_mut()
         .chain(&mut tied.depends_on)
         .filter(|related| related.status.is_none())
     {
-        if let Some(Elsewhere { project, bead }) = elsewhere.get(&related.id) {
+        if let Some(Elsewhere { project, bead }) =
+            elsewhere.get(&(related.project.clone(), related.id.clone()))
+        {
             related.project = Some(project.clone());
             related.status = Some(bead.status.clone());
             related.title = Some(bead.title.clone());
