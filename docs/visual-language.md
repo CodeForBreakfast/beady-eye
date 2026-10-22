@@ -283,6 +283,15 @@ output"*. The forest leaves it plain for a stated reason too, so the row's
 brightness reaches it. Two quotations of two sources, not one meaning drawn two
 ways.
 
+That leaves an open row, which is most of a live tracker, as one unbroken run
+of the terminal's foreground: open is the status `bd` sends no colour for, and
+the row's tone is the default or the default in bold. The default keeps it so,
+because it quotes `bd`. `[row]`'s `open_id` lets a reader draw an open id in
+`IDENTITY` instead, which breaks the run without inventing a status colour.
+Its cost is that blue in the forest then marks every open bead, while in the
+bead window it marks only an id the reader can go to. It is a setting rather
+than the default so that it can be tried on a real tracker first.
+
 **The key-bindings window uses none of the palette at all.** Its rows are
 plain, its border is plain, and its only treatment is `BOLD` on the title.
 That is the most consistent surface `bdi` has, and it is consistent because it

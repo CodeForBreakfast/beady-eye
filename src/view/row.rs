@@ -8,6 +8,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+use crate::config::Colour;
 use crate::model::badges::Badged;
 use crate::model::join::AgentRef;
 use crate::model::snapshot::{Counts, Node};
@@ -151,8 +152,8 @@ impl<'de> Deserialize<'de> for Cell {
     }
 }
 
-/// Which cells a bead's row draws in each of its three blocks, and in what
-/// order.
+/// Which cells a bead's row draws in each of its three blocks, in what
+/// order, and what an open bead's id is drawn in.
 ///
 /// Notes and the fold's counts are not cells: they are the row's reports
 /// about itself and trail the state whatever the layout says. The
@@ -163,6 +164,9 @@ pub struct Layout {
     pub identity: Vec<Cell>,
     pub title: Vec<Cell>,
     pub state: Vec<Cell>,
+    /// What an open bead's id is drawn in. `bd` sends no colour for open, so
+    /// the default leaves the id in the row's tone like the rest of the row.
+    pub open_id: Colour,
 }
 
 impl Default for Layout {
@@ -172,6 +176,7 @@ impl Default for Layout {
             identity: vec![Cell::Glyph, Cell::Id],
             title: vec![Cell::Title, Cell::Badges],
             state: vec![Cell::Progress, Cell::Agent, Cell::Anomalies],
+            open_id: Colour::Status,
         }
     }
 }
