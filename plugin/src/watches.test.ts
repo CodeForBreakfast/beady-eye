@@ -459,7 +459,7 @@ test("watch refuses to find a bead's project while the bdi config cannot be read
   })
 })
 
-test("watch blames the bdi config, not the watcher, when only its project list cannot be read", async () => {
+test('watch blames the bdi config, not the watcher, when only its project list cannot be read', async () => {
   const use = await aServerReading(
     aPlace(),
     '[watcher]\nsocket = "/run/user/1000/beady-eye/watcher.sock"\n\n[[projects]]\npath = "/work/summit-works"\n',
