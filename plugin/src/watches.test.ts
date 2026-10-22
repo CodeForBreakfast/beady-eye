@@ -1245,6 +1245,35 @@ test('watching a bead twice at once watches it once, and keeps it once', async (
   expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
 })
 
+test.each(['watch first', 'learn first'])(
+  'a watch racing the restore of the same bead watches it once (%s)',
+  async (order) => {
+    const place = aPlace()
+    aKeptFile(place, JSON.stringify([{ project: 'summit-works', id: 'smt-4kd3p.20' }]))
+    const watcher = await aWatcherAt(place.at as string)
+    const { watches } = await someWatches(place.directory, place.at, [], timing)
+    const connections: unknown[] = []
+    const answering = async () => {
+      for (;;) {
+        const { connection } = await watcher.next()
+        connections.push(connection)
+        connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+      }
+    }
+    answering()
+
+    const watch = watches.watch(anId('smt-4kd3p.20'), aProject('summit-works'))
+    const learn = watches.learn(session)
+    await Effect.runPromise(
+      Effect.all(order === 'watch first' ? [watch, learn] : [learn, watch], {
+        concurrency: 'unbounded',
+      }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 3)),
+    )
+
+    expect(connections).toHaveLength(1)
+  },
+)
+
 test('watches made before the session id that its file cannot keep are told of, and stay watched', async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
