@@ -294,26 +294,28 @@ pub(super) fn refresh_project(
     })
 }
 
-/// The bead with an edge that names its own project, and a bead that project
-/// holds, read as any unprefixed edge, which the project's own answer
-/// resolves. An edge naming a bead the project lacks keeps its project, so no
-/// other project's bead of that id stands in for it.
-fn without_its_own_project_name(
-    bead: Arc<Bead>,
-    project: &Project,
-    holds: &BTreeSet<String>,
-) -> Arc<Bead> {
+/// The beads with each edge that names the project they are in, and a bead
+/// that project holds, read as any unprefixed edge, which the project's own
+/// answer resolves. An edge naming a bead the project lacks keeps its project,
+/// so no other project's bead of that id stands in for it.
+pub(super) fn with_own_edges_unprefixed(beads: &[Arc<Bead>], project: &str) -> Vec<Arc<Bead>> {
+    let held: BTreeSet<&str> = beads.iter().map(|bead| bead.id.as_str()).collect();
     let own = |dependency: &Dependency| {
-        dependency.project.as_ref() == Some(&project.name) && holds.contains(&dependency.on)
+        dependency.project.as_deref() == Some(project) && held.contains(dependency.on.as_str())
     };
-    if !bead.dependencies.iter().any(own) {
-        return bead;
-    }
-    let mut bead = Bead::clone(&bead);
-    for dependency in bead.dependencies.iter_mut().filter(|d| own(d)) {
-        dependency.project = None;
-    }
-    Arc::new(bead)
+    beads
+        .iter()
+        .map(|bead| {
+            if !bead.dependencies.iter().any(own) {
+                return Arc::clone(bead);
+            }
+            let mut bead = Bead::clone(bead);
+            for dependency in bead.dependencies.iter_mut().filter(|d| own(d)) {
+                dependency.project = None;
+            }
+            Arc::new(bead)
+        })
+        .collect()
 }
 
 /// Everything one project's tracker is asked for, read at `now`.
@@ -334,11 +336,7 @@ fn read_project(
         together(|| tracker.ready(), || tracker.blocked())
     });
     let beads = beads?;
-    let held: BTreeSet<String> = beads.iter().map(|bead| bead.id.clone()).collect();
-    let own: Vec<Arc<Bead>> = beads
-        .iter()
-        .map(|bead| without_its_own_project_name(bead.clone(), project, &held))
-        .collect();
+    let own = with_own_edges_unprefixed(&beads, &project.name);
 
     // An empty readiness set reads as "nothing here is ready", so a tracker
     // that cannot answer must not leave one behind.
@@ -1876,13 +1874,13 @@ path = "{DUNWICH}"
         let rows = r#"[{"id":"dun-1","title":"t","status":"open","dependencies":[
           {"depends_on_id":"ferry:fer-1","type":"blocks"},
           {"depends_on_id":"dunwich:dun-2","type":"blocks"},
-          {"depends_on_id":"dunwich:dun-9","type":"blocks"}]}]"#;
-        let bead = crate::collect::bd::parse_shared_beads(rows).expect("the row parses")[0].clone();
-        let held = BTreeSet::from(["dun-1".to_string(), "dun-2".to_string()]);
+          {"depends_on_id":"dunwich:dun-9","type":"blocks"}]},
+          {"id":"dun-2","title":"u","status":"open"}]"#;
+        let beads = crate::collect::bd::parse_shared_beads(rows).expect("the rows parse");
 
-        let read = without_its_own_project_name(bead, &cfg.projects[0], &held);
+        let read = with_own_edges_unprefixed(&beads, &cfg.projects[0].name);
 
-        let named: Vec<(&str, Option<&str>)> = read
+        let named: Vec<(&str, Option<&str>)> = read[0]
             .dependencies
             .iter()
             .map(|dependency| (dependency.on.as_str(), dependency.project.as_deref()))

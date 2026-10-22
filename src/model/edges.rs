@@ -175,6 +175,7 @@ fn crossing<'a>(
                 Some(project) => answers
                     .iter()
                     .position(|(read, _)| read == project)
+                    .filter(|&named| named != at)
                     .filter(|named| {
                         holding
                             .get(dependency.on.as_str())
@@ -428,6 +429,22 @@ mod tests {
             .map(|related| related.project.as_deref())
             .collect();
         assert_eq!(projects, vec![Some("dunwich"), Some("harbour")]);
+    }
+
+    /// An edge naming the project it sits in crosses nothing, whatever it
+    /// holds.
+    #[test]
+    fn an_edge_naming_its_own_project_is_not_held_elsewhere() {
+        let ferry = parse_shared_beads(
+            r#"[{"id":"fer-2","title":"moor the barge","status":"open","dependencies":[
+              {"depends_on_id":"ferry:fer-3","type":"blocks"}]},
+              {"id":"fer-3","title":"tie the rope","status":"open"}]"#,
+        )
+        .expect("the rows parse");
+        let answers: Vec<(&str, &[Arc<Bead>])> = vec![("ferry", &ferry)];
+
+        assert!(held_across(&answers).is_empty());
+        assert!(waiting_across(&answers).is_empty());
     }
 
     /// Only a blocks edge says the other bead is waited on.

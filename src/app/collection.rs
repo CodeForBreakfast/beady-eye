@@ -32,7 +32,8 @@ use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
 
 use super::tracker::{
-    open_failure, refresh_project, tracker_failure, ProjectWork, ReadAt, Refresh, RootUnread,
+    open_failure, refresh_project, tracker_failure, with_own_edges_unprefixed, ProjectWork, ReadAt,
+    Refresh, RootUnread,
 };
 use super::watcher::{self, Answer, BeadReadiness, Held};
 
@@ -1024,10 +1025,14 @@ fn assembled_across(
         return BTreeMap::new();
     }
 
+    let own_edges: Vec<(&str, Vec<Arc<Bead>>)> = answered
+        .iter()
+        .map(|(project, work)| (*project, with_own_edges_unprefixed(&work.beads, project)))
+        .collect();
     let across = Across::of(
-        answered
+        own_edges
             .iter()
-            .map(|(project, work)| (*project, Nesting::of(&work.beads))),
+            .map(|(project, beads)| (*project, Nesting::of(beads))),
         not_read.iter().copied(),
     );
     let mut trees: BTreeMap<String, BTreeMap<String, Assembled>> = BTreeMap::new();
