@@ -28,7 +28,8 @@ const handOver = (input: HookInput) => {
 
 let input: HookInput = {}
 try {
-  input = JSON.parse(await text(process.stdin))
+  const parsed: unknown = JSON.parse(await text(process.stdin))
+  if (typeof parsed === 'object' && parsed !== null) input = parsed
 } catch {
   // A call the hook cannot read goes ahead unchanged rather than failing.
 }
