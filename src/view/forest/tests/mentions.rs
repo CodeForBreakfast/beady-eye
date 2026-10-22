@@ -75,3 +75,21 @@ fn a_named_bead_can_be_followed() {
     assert!(forest.go_to(&followed));
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-3")));
 }
+
+/// The ring names a bead by its id, so a bead of another project that has
+/// the id of a mention keeps the one row, and the mention is not a second
+/// the ring would take for it.
+#[test]
+fn an_id_another_projects_row_already_has_is_listed_once() {
+    let forest = window_on("dun-1");
+    let mut node = show::selected(&forest).expect("a bead is selected").clone();
+    node.blocks.push(crate::model::edges::Related {
+        id: "dun-2".to_string(),
+        project: Some("harbour".to_string()),
+        edge: crate::model::types::Edge::Blocks,
+        status: Some(crate::model::types::Status::Open),
+        title: Some("another project's bead".to_string()),
+    });
+
+    assert_eq!(ids(&show::mentioned(&forest, &node)), ["dun-2.1", "dun-3"]);
+}

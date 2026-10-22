@@ -249,6 +249,10 @@ pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related>
 /// hyphen, a base, and an optional dotted tail of digits. What decides is
 /// existence, so a candidate gets a row only where the forest draws a bead
 /// of that id in the selection's own project.
+///
+/// The ring names a bead by its id alone, so an id the window lists already,
+/// whichever project's bead that row is, is left out rather than made two
+/// rows the ring cannot tell apart.
 pub fn mentioned(forest: &Forest, node: &Node) -> Vec<Related> {
     let description = node.description().unwrap_or_default();
     let listed = related(node, &[]);
