@@ -274,7 +274,6 @@ impl Widget for Fitted {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let area = Rect { height: 1, ..area };
         let width = area.width as usize;
 
         let links = self.links;
@@ -879,6 +878,29 @@ mod tests {
         );
 
         assert_eq!(Painted::read(&buf).rows(), blank(20, 3));
+    }
+
+    /// A band of several rows is drawn on its first. The rows beneath belong
+    /// to whoever laid the band out, and a row's style would fill them too.
+    #[test]
+    fn a_tall_band_is_drawn_on_its_first_row_only() {
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+
+        a_row().selected().render(area, &mut buf);
+
+        assert_eq!(
+            buf,
+            {
+                let mut first_row_only = Buffer::empty(area);
+                a_row()
+                    .selected()
+                    .render(Rect { height: 1, ..area }, &mut first_row_only);
+                first_row_only
+            },
+            "the band drew below its first row"
+        );
+        assert_eq!(buf[(0, 1)], ratatui::buffer::Cell::default());
     }
 
     /// A band of no columns likewise.
