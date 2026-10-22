@@ -747,8 +747,8 @@ impl<'a> Across<'a> {
                 .iter()
                 .any(|(not_read, _)| *not_read == project)
             {
-                return Unreachable::NotRead {
-                    projects: vec![project.to_string()],
+                return Unreachable::HeldByUnread {
+                    project: project.to_string(),
                 };
             }
             return Unreachable::Unconfigured;
@@ -2185,7 +2185,7 @@ mod tests {
     /// A project that gave no answer holds nothing to draw, and no bead of
     /// that id elsewhere stands in for it.
     #[test]
-    fn a_blocker_written_with_a_project_that_gave_no_answer_is_not_read_there() {
+    fn a_blocker_written_with_a_project_that_gave_no_answer_is_held_by_that_unread_project() {
         let answers = [answer(
             "arkham",
             &[
@@ -2202,8 +2202,8 @@ mod tests {
             orphaned_beneath(&a, "ark-1"),
             [orphaned(
                 "sh-1",
-                Unreachable::NotRead {
-                    projects: projects(&["pier"])
+                Unreachable::HeldByUnread {
+                    project: "pier".to_string()
                 }
             )]
         );
