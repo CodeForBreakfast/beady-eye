@@ -26,6 +26,6 @@
     "smol-toml": "1.9.1"
   },
   "overrides": {
-    "@effect/platform-node-shared": "4.0.4"
+    "@effect/platform-node-shared": "4.0.5"
   }
 }
