@@ -88,8 +88,12 @@ export const buildServer = (watches: Watches): Server => {
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }))
   server.oninitialized = () =>
     Effect.runFork(
-      Stream.runForEach(watches.news, ({ content, block, told }) =>
-        tellSession(server, content, block).pipe(Effect.andThen(told), Effect.ignore),
+      Stream.runForEach(watches.news, ({ content, block, told, unsent = Effect.void }) =>
+        tellSession(server, content, block).pipe(
+          Effect.andThen(told),
+          Effect.tapError(() => unsent),
+          Effect.ignore,
+        ),
       ),
     )
   server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
