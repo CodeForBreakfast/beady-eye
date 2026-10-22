@@ -766,10 +766,8 @@ export const makeWatches: Effect.Effect<
         Effect.result,
       )
       if (Result.isFailure(asked)) {
-        const { failure } = asked
-        const why = failure._tag === 'WatcherDown' ? failure.why : failure
         return yield* refuse(
-          `The watcher is down, so the project holding ${id} cannot be found: ${whyDown(why)}. Name its project to watch it from when the watcher answers.`,
+          `The watcher is down, so the project holding ${id} cannot be found: ${whyDown(asked.failure.why)}. Name its project to watch it from when the watcher answers.`,
         )
       }
       const answers = [...asked.success]
