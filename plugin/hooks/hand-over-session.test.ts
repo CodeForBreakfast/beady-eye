@@ -40,7 +40,7 @@ test('a session with no working directory still hands over its id', async () => 
 })
 
 test('a call with no session goes ahead unchanged', async () => {
-  for (const stdin of [JSON.stringify({ cwd: '/srv' }), 'not json']) {
+  for (const stdin of [JSON.stringify({ cwd: '/srv' }), 'not json', 'null', '42']) {
     expect(await runHook(stdin)).toEqual({
       hookSpecificOutput: { hookEventName: 'PreToolUse' },
     })
