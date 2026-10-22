@@ -35,6 +35,7 @@ mod focus;
 mod fold_keys;
 mod going_to;
 mod groups;
+mod mentions;
 mod missing_blocker;
 mod motion;
 mod other_projects;
