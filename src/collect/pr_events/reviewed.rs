@@ -16,6 +16,7 @@ pub(super) const REVIEWS: &str = "reviews(last:5){nodes{url state body submitted
 pub const EVENT: Event = Event {
     fields: &[REVIEWS],
     happening: "was reviewed",
+    optional: &[],
     outcome: reviewed,
 };
 

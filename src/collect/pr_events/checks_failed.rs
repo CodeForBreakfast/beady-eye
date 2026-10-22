@@ -11,6 +11,7 @@ use crate::collect::github::{Observed, State};
 pub const EVENT: Event = Event {
     fields: &[HEAD_CHECKS],
     happening: "has failing checks",
+    optional: &[],
     outcome: checks_failed,
 };
 

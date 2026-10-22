@@ -11,6 +11,7 @@ use crate::model::gate::Until;
 pub const EVENT: Event = Event {
     fields: &["isDraft"],
     happening: "is ready for review",
+    optional: &[],
     outcome: ready_for_review,
 };
 
