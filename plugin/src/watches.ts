@@ -219,13 +219,13 @@ const standingIn = (batch: Batch, bead: Bead, was: Standing): Standing => {
 
 /** Each comment on `bead` whose event line is among `lines`. */
 const commentsIn = (lines: readonly AnswerLine[], bead: Bead) =>
-  lines.flatMap((said) =>
+  Arr.filterMap(lines, (said) =>
     said.line === 'event' &&
     said.project === bead.project &&
     said.event.issue_id === bead.id &&
     said.event.comment !== undefined
-      ? [said.event.comment]
-      : [],
+      ? Result.succeed(said.event.comment)
+      : Result.failVoid,
   )
 
 /** Text a tracker's writer chose, on one line in quotes, so it cannot pass
