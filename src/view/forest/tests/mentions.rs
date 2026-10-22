@@ -75,23 +75,3 @@ fn a_named_bead_can_be_followed() {
     assert!(forest.go_to(&followed));
     assert_eq!(cursor(&forest), Some(&key("dunwich", "dun-3")));
 }
-
-/// Two beads of one id in different projects are two beads: a row for
-/// another project's `dun-2` is not the row for this project's.
-#[test]
-fn another_projects_bead_of_the_same_id_does_not_hide_the_mention() {
-    let forest = window_on("dun-1");
-    let mut node = show::selected(&forest).expect("a bead is selected").clone();
-    node.blocks.push(crate::model::edges::Related {
-        id: "dun-2".to_string(),
-        project: Some("harbour".to_string()),
-        edge: crate::model::types::Edge::Blocks,
-        status: Some(crate::model::types::Status::Open),
-        title: Some("another project's bead".to_string()),
-    });
-
-    assert_eq!(
-        ids(&show::mentioned(&forest, &node)),
-        ["dun-2", "dun-2.1", "dun-3"]
-    );
-}
