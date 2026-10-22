@@ -454,7 +454,21 @@ test("watch refuses to find a bead's project while the bdi config cannot be read
   const use = await aServerReading(aPlace(), notToml)
 
   expect(await use('watch', { id: 'smt-4kd3p.20' })).toEqual({
-    text: `The watcher is down, so the project holding smt-4kd3p.20 cannot be found: the bdi config at ${use.config} cannot be read: ${whyNotToml}. Name its project to watch it from when the watcher answers.`,
+    text: `The project holding smt-4kd3p.20 cannot be found, because the bdi config at ${use.config} cannot be read: ${whyNotToml}. Name its project.`,
+    refused: true,
+  })
+})
+
+test('watch blames the bdi config, not the watcher, when only its project list cannot be read', async () => {
+  const use = await aServerReading(
+    aPlace(),
+    '[watcher]\nsocket = "/run/user/1000/beady-eye/watcher.sock"\n\n[[projects]]\npath = "/work/summit-works"\n',
+  )
+
+  const answer = await use('watch', { id: 'smt-4kd3p.20' })
+
+  expect(answer).toEqual({
+    text: `The project holding smt-4kd3p.20 cannot be found, because the bdi config at ${use.config} cannot be read: Missing key at ["projects"][0]["name"]. Name its project.`,
     refused: true,
   })
 })
