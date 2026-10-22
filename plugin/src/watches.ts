@@ -756,9 +756,15 @@ export const makeWatches: Effect.Effect<
   /** The project of the one bead the watcher has with `id`. */
   const projectHolding = (id: BeadId): Effect.Effect<ProjectName, Refusal> =>
     Effect.gen(function* () {
-      const asked = yield* Fiber.join(
-        withTheWatcher(Effect.flatMap(projects.list, (projects) => askAbout(id, projects))),
-      ).pipe(Effect.result)
+      const listed = yield* projects.list.pipe(Effect.result)
+      if (Result.isFailure(listed)) {
+        return yield* refuse(
+          `The project holding ${id} cannot be found, because ${whyDown(listed.failure)}. Name its project.`,
+        )
+      }
+      const asked = yield* Fiber.join(withTheWatcher(askAbout(id, listed.success))).pipe(
+        Effect.result,
+      )
       if (Result.isFailure(asked)) {
         const { failure } = asked
         const why = failure._tag === 'WatcherDown' ? failure.why : failure
