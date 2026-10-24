@@ -88,6 +88,11 @@ export type ProjectName = typeof ProjectName.Type
 export const BeadId = aWord.pipe(Schema.brand('BeadId'))
 export type BeadId = typeof BeadId.Type
 
+/** The id Claude Code gives the session, which herdr reports as the pane's
+ * `agent_session`. */
+export const SessionId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SessionId'))
+export type SessionId = typeof SessionId.Type
+
 /** A status as bd accepts one: lowercase, letter first, with digits, hyphens
  * and underscores after. It is the `statusNameRegexp` in beads' types. */
 export const StatusWord = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_-]*$/)).pipe(
@@ -375,8 +380,9 @@ const saidIn = (text: string) =>
   )
 
 /** Every line the watcher sends after it is sent `asking`, until the
- * connection is down. */
-const linesFrom = (at: string, asking: readonly string[]) =>
+ * connection is down. Each line `sending` offers later goes on the same
+ * connection. */
+const linesFrom = (at: string, asking: readonly string[], sending: Queue.Dequeue<string>) =>
   Stream.callback<string, WatcherDown>((lines) =>
     Effect.gen(function* () {
       const connection = createConnection(at)
@@ -387,6 +393,11 @@ const linesFrom = (at: string, asking: readonly string[]) =>
         connected = true
         connection.write(asking.map((line) => `${line}\n`).join(''))
       })
+      yield* Queue.take(sending).pipe(
+        Effect.flatMap((line) => Effect.sync(() => connection.write(`${line}\n`))),
+        Effect.forever,
+        Effect.forkScoped,
+      )
       connection.on('data', (chunk: string) => {
         const arrived = (pending + chunk).split('\n')
         pending = arrived.pop() ?? ''
@@ -400,11 +411,15 @@ const linesFrom = (at: string, asking: readonly string[]) =>
     }),
   )
 
+/** The line to send in place of one the watcher refused, where there is one.
+ * The refusal then goes no further. */
+type AskInstead = (refused: RefusedLine) => string | undefined
+
 /**
  * Connect to the watcher, send it `asking`, and read every line it sends of a
  * kind the plugin reads, until the connection is down.
  */
-const talkTo = (asking: readonly string[]) =>
+const talkTo = (asking: readonly string[], instead: AskInstead = () => undefined) =>
   Stream.unwrap(
     Effect.gen(function* () {
       const timing = yield* WatcherTiming
@@ -412,13 +427,20 @@ const talkTo = (asking: readonly string[]) =>
       if (Option.isNone(at)) return yield* down('nowhere')
       const notBelieved = yield* whyNotBelieved(at.value)
       if (Option.isSome(notBelieved)) return yield* down(notBelieved.value)
-      return linesFrom(at.value, asking).pipe(
+      const sending = yield* Queue.unbounded<string>()
+      return linesFrom(at.value, asking, sending).pipe(
         Stream.timeoutOrElse({
           duration: timing.wedgedAfter,
           orElse: () => Stream.fail(down('wedged')),
         }),
         Stream.mapEffect(saidIn),
         Stream.filterMap(Filter.fromPredicateOption(identity)),
+        Stream.filterEffect((said) => {
+          const again = said.line === 'refused' ? instead(said) : undefined
+          return again === undefined
+            ? Effect.succeed(true)
+            : Effect.as(Queue.offer(sending, again), false)
+        }),
       )
     }),
   )
@@ -446,15 +468,29 @@ const watchLine = (bead: Bead) => `watch ${bead.project} ${bead.id}`
  * again with a growing pause whenever it is down. The protocol has no line to
  * stop a watch, so each bead has a connection of its own, and it closes when
  * the stream stops being read.
+ *
+ * The watch names the latest of `sessions`, and a new one closes the
+ * connection and opens another naming it. A watcher older than agent sessions
+ * refuses a line naming one as malformed, so the connection then asks again
+ * without it. The next connection names the session again, because the
+ * watcher it reaches may be a newer one.
  */
 export const watchBead = (
   bead: Bead,
+  sessions: Stream.Stream<SessionId | undefined> = Stream.succeed(undefined),
 ): Stream.Stream<Heard, never, WatcherLocation | FileSystem.FileSystem> =>
+  Stream.switchMap(sessions, (session) => watchBeadAs(bead, session))
+
+const watchBeadAs = (bead: Bead, session: SessionId | undefined) =>
   Stream.unwrap(
     Effect.gen(function* () {
       const timing = yield* WatcherTiming
       const failures = yield* Ref.make(0)
-      const connection = answersIn(talkTo([watchLine(bead)])).pipe(
+      const plain = watchLine(bead)
+      const asking = session === undefined ? plain : `${plain} ${session}`
+      const olderWatcher: AskInstead = ({ asked, reason }) =>
+        asking !== plain && asked === asking && reason === 'malformed' ? plain : undefined
+      const connection = answersIn(talkTo([asking], olderWatcher)).pipe(
         Stream.tap((batch) => (batch.is === 'answer' ? Ref.set(failures, 0) : Effect.void)),
         Stream.mapError(({ why }) => why),
         Stream.result,
