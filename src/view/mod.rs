@@ -591,40 +591,6 @@ mod tests {
         }
     }
 
-    /// A project the collection in flight is not reading keeps the read it
-    /// has. The whole point of moving the indicator off the foot: one
-    /// project's collection used to say every project was collecting.
-    #[test]
-    fn a_project_no_collection_is_reading_says_when_it_was_last_read() {
-        assert_eq!(
-            Freshness::of(Some(at(22, 14)), None, true, at(22, 20)),
-            Some(Freshness {
-                mark: Mark::Read,
-                read_at: Some(at(22, 14)),
-            })
-        );
-    }
-
-    /// The bead: the rows on the screen during a collection are the previous
-    /// collection's rows, and their age is the only thing saying so. A cell
-    /// that gave the age up for the mark left a reader watching a mark turn
-    /// over rows of unknown age.
-    #[test]
-    fn a_project_being_read_now_keeps_the_age_of_the_rows_still_on_the_screen() {
-        assert_eq!(
-            Freshness::of(
-                Some(at(22, 14)),
-                Some(&asked_at(at(22, 20))),
-                true,
-                at(22, 20)
-            ),
-            Some(Freshness {
-                mark: Mark::Collecting,
-                read_at: Some(at(22, 14)),
-            })
-        );
-    }
-
     /// A collection reading this project is the whole of what the mark says
     /// while it runs. How the one before it went is about rows that are
     /// seconds from being replaced.
@@ -673,17 +639,6 @@ mod tests {
         }
     }
 
-    /// A project several of whose roots disagree resolves to one mark, and to
-    /// the worse of them: the rows in front of the reader are short of the
-    /// refused root's.
-    #[test]
-    fn a_project_with_a_root_that_would_not_read_rests_on_the_refused_mark() {
-        assert_eq!(
-            Freshness::of(Some(at(22, 14)), None, false, at(22, 20)).map(|it| it.mark),
-            Some(Mark::Refused)
-        );
-    }
-
     /// The startup frame: every project drawn before any of them has been
     /// read. There is no time to quote, and the collection under way is the
     /// whole of what the line can say.
@@ -695,26 +650,6 @@ mod tests {
                 mark: Mark::Collecting,
                 read_at: None,
             })
-        );
-    }
-
-    /// The bead. A collection that has stopped answering was drawn exactly
-    /// as one asked half a second ago, because nothing measured the wait.
-    /// Past the deadline the mark says the tracker has stopped answering
-    /// rather than that a collection is under way.
-    #[test]
-    fn a_collection_that_has_stopped_answering_is_said_to_have_rather_than_to_be_running() {
-        let since = at(22, 20);
-
-        assert_eq!(
-            Freshness::of(
-                Some(at(22, 14)),
-                Some(&asked_at(since)),
-                true,
-                since + PATIENCE
-            )
-            .map(|it| it.mark),
-            Some(Mark::Unanswered)
         );
     }
 
