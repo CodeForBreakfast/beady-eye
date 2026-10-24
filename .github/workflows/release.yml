@@ -747,6 +747,25 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
+      # Nix consumers pin a release tag, so a release is the only build that
+      # needs to be in the cache. It runs on every path through this job, the
+      # from=announce and from=publish repairs included, and a candidate
+      # leaves the cache alone. A plugin-only release never reaches this job.
+      #
+      # Last, so a cache that will not take the push cannot hold up the
+      # announcement, the image or the tap. A repair dispatched on the tag
+      # runs it again, and `cachix push` skips what the cache already holds.
+      #
+      # cachix comes from this flake's locked nixpkgs rather than from an
+      # action, so the only code that sees the token is cachix itself.
+      - name: push the Linux build to Cachix
+        if: steps.plan.outputs.candidate != 'true'
+        run: |
+          nix run --inputs-from . nixpkgs#cachix -- push codeforbreakfast \
+            "$(nix build --no-link --print-out-paths .#beady-eye)"
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
   # The Claude Code plugin releases on a version of its own, so a fix to the
   # plugin alone publishes no unchanged bdi. It takes nothing from bdi's jobs
   # but the decision above, and what it publishes is the server the plugin's
