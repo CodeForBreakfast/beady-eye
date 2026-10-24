@@ -41,8 +41,9 @@
       # What the compiler, the tests and the tree scans read, and nothing else.
       # Every `include_str!` in the crate points inside tests/fixtures/, and
       # the two tests that start from CARGO_MANIFEST_DIR walk into src/ and
-      # tests/shims/.
-      source = sourceOf [ ./Cargo.toml ./Cargo.lock ./src ./tests ];
+      # tests/shims/. benches/ is here because Cargo.toml declares a bench
+      # target, and cargo refuses a manifest whose target file is missing.
+      source = sourceOf [ ./Cargo.toml ./Cargo.lock ./src ./tests ./benches ];
 
       # The crate names the version once. The release tag is cut from it and
       # this output is compared against it before anything is published, so a
@@ -159,12 +160,15 @@
         # `pathExists` rather than the paths themselves: naming a path is what
         # would put the file's contents back into the derivation. Deleting one
         # is still refused here rather than at publishing time.
+        #
+        # benches/ is present for the same reason as in `source`, though the
+        # include list leaves it out of the tarball.
         publishedSource =
           let
             copied = [ "README.md" "LICENSE" ];
             absent = builtins.filter (f: !builtins.pathExists (./. + "/${f}")) copied;
             stoodInFor = pkgs.runCommand "published-source" { } ''
-              cp -r ${sourceOf [ ./Cargo.toml ./Cargo.lock ./src ]} "$out"
+              cp -r ${sourceOf [ ./Cargo.toml ./Cargo.lock ./src ./benches ]} "$out"
               chmod -R u+w "$out"
               for file in ${builtins.concatStringsSep " " copied}; do
                 echo "Stood in for; see publishedSource in flake.nix." > "$out/$file"
@@ -4374,9 +4378,14 @@ and a second line"
           # bdi asks bd where the tracker is. The worktree-listing test builds
           # a repository and adds a worktree to it, so git has to be here too.
           # One test runs a `jq` filter README documents.
+          #
+          # cargo test runs one test binary at a time, so the run costs the sum
+          # of every binary. nextest runs every test of every binary at once,
+          # and costs about the slowest. It runs no doctests, so cargo still
+          # does.
           test = checkOf "test" artifacts.dev
-            [ beads.packages.${system}.bd pkgs.git pkgs.jq ]
-            "cargo test";
+            [ beads.packages.${system}.bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
+            "cargo nextest run && cargo test --doc";
           unbuilt-checks-test = unbuiltChecksTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,

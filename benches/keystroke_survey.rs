@@ -1,9 +1,10 @@
 //! How big the forest the maintainer's own config draws is, and what one
 //! keystroke over it costs.
 //!
-//! Reads the real trackers, so it needs the maintainer shell and is ignored:
+//! Reads the real trackers, so it needs the maintainer shell. It is a bench
+//! target, which `cargo test` does not build:
 //!
-//!     cargo test --release --test keystroke_survey -- --ignored --nocapture
+//!     cargo bench --bench keystroke_survey
 //!
 //! `BDI_CONFIG` names the config; unset, it is the one `bdi` reads by default.
 //! The numbers it prints are the ones `bdi-9jj` and its children are measured
@@ -171,9 +172,7 @@ fn report(name: &str, snapshot: &Snapshot) {
     landing(name, snapshot);
 }
 
-#[test]
-#[ignore = "reads the maintainer's own trackers, which need the maintainer shell"]
-fn rows_and_keystrokes_over_the_configured_trackers() {
+fn main() {
     let cfg = config();
     let started = Instant::now();
     let snapshot = app::run(

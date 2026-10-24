@@ -77,7 +77,9 @@ and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
 
 Unit tests live in `#[cfg(test)]` modules inside the file they cover; `tests/`
 holds the integration tests, which either link the library or run the built
-binary. A test that reaches a module no test has reached before needs that
+binary. Each top-level file there is a binary of its own and costs a link, so
+a test that never starts `bdi` and sets no environment variable is a module of
+`tests/never_start_bdi/` instead. A test that reaches a module no test has reached before needs that
 module opening up in `src/lib.rs`, which says why. Fixtures under
 `tests/fixtures/` are faithful captures of what `bd list`, `bd query` and
 `herdr agent list` put on the wire.

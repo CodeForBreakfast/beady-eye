@@ -11,9 +11,7 @@ use beady_eye::model::types::Bead;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
-mod canned;
-
-use canned::{refused, Canned};
+use crate::canned::{refused, Canned};
 
 /// One project's tracker: an epic with a pane on it, a claimed task with
 /// none, a claim nothing has touched in weeks, a task bd calls ready, and a
@@ -179,7 +177,7 @@ fn a_run_recorded_as_wisps_is_drawn_beside_the_permanent_work() {
 }
 
 /// Three beads each blocked by a `gh:pr` gate, as bd 1.3.0 wrote them.
-const GH_PR_GATES: &str = include_str!("fixtures/bd_1.3.0_gh_pr_gates.json");
+const GH_PR_GATES: &str = include_str!("../fixtures/bd_1.3.0_gh_pr_gates.json");
 
 /// A badge on a `gh:pr` gate's pull request, as the README gives it.
 const A_BADGE_ON_THE_PULL_REQUEST: &str = r#"
@@ -1336,7 +1334,7 @@ fn arkham_waiting_on_dunwich() -> Fakes {
         .with(
             "arkham",
             Fake::holding(beads(include_str!(
-                "fixtures/bd_1.3.0_a_dependency_on_another_project.json"
+                "../fixtures/bd_1.3.0_a_dependency_on_another_project.json"
             ))),
         )
         .with(
@@ -1410,7 +1408,7 @@ fn arkham_beside(dunwich: Fake) -> Fakes {
         .with(
             "arkham",
             Fake::holding(beads(include_str!(
-                "fixtures/bd_1.3.0_a_dependency_on_another_project.json"
+                "../fixtures/bd_1.3.0_a_dependency_on_another_project.json"
             ))),
         )
         .with("dunwich", dunwich)
@@ -1549,7 +1547,7 @@ fn arkham_calling_the_beacon_ready_beside(dunwich: Fake) -> Fakes {
         .with(
             "arkham",
             Fake::holding(beads(include_str!(
-                "fixtures/bd_1.3.0_a_dependency_on_another_project.json"
+                "../fixtures/bd_1.3.0_a_dependency_on_another_project.json"
             )))
             .ready(["ark-43o"]),
         )
