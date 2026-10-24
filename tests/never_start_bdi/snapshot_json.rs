@@ -267,6 +267,10 @@ fn the_json_carries_the_contract_fields() {
                "sessions": [{"name": "default", "state": "answering"}]})
     );
     assert_eq!(emitted["filter"], "live-agents");
+    assert!(
+        emitted.get("scope").is_none(),
+        "which projects a run read is in its trees; the scope is the view's"
+    );
     assert_eq!(emitted["hidden_trees"], json!([]));
     assert_eq!(emitted["failed_projects"], json!([]));
     assert_eq!(emitted["projects_named_without_git"], json!([]));
