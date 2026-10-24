@@ -11,8 +11,12 @@
 //! `--json` rather than a pty: the question is which projects were read, and
 //! the snapshot answers it in a form a test can read off a pipe.
 
+mod terminal;
+
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
+
+use terminal::bdi_on_pipes;
 
 /// Both projects point at the directory holding the config, which holds no
 /// tracker — so each one bdi reads fails to read, and says so under its own
@@ -42,8 +46,15 @@ fn a_config_naming_two_projects(named: &str) -> PathBuf {
     path
 }
 
+fn the_directory_holding(config: &Path) -> PathBuf {
+    config
+        .parent()
+        .expect("the config sits in a directory")
+        .to_path_buf()
+}
+
 fn bdi(config: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_bdi"))
+    bdi_on_pipes(&the_directory_holding(config))
         .arg("--config")
         .arg(config)
         .args(args)
@@ -54,7 +65,7 @@ fn bdi(config: &Path, args: &[&str]) -> Output {
 /// The same, started in a directory of the test's choosing — which is the
 /// whole of what decides the read set when no flag does.
 fn bdi_started_in(cwd: &Path, config: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_bdi"))
+    bdi_on_pipes(&the_directory_holding(config))
         .arg("--config")
         .arg(config)
         .args(args)

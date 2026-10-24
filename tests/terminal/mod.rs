@@ -12,6 +12,8 @@
 //! * a sized pty and a `bdi` owning it, on a command line of the test's own
 //!   — [`a_pty`], [`own_the_terminal`], [`bdi_on`],
 //!   [`driver::Driven::bdi_with_arguments`];
+//! * a `bdi` run to completion on pipes, reaching none of the machine's own
+//!   programs — [`bdi_on_pipes`];
 //! * a `bdi` that dies with the binary that spawned it, so a test binary
 //!   killed before its `Drop` leaves nothing running — [`own_the_terminal`];
 //! * typing at it and timestamping what comes back — [`driver::Driven`];
@@ -301,6 +303,24 @@ pub fn bdi_on(
             .spawn()
     }
     .expect("bdi runs")
+}
+
+/// A `bdi` for a test that runs it to completion on pipes, given `home` as
+/// its `HOME` and the shims first on `PATH`. Where it is started is the
+/// test's to say.
+///
+/// Neither `bd` nor `herdr` it finds is the machine's, and with no runtime
+/// directory there is no watcher socket to find. A test that wants a tracker
+/// to hold beads layers [`shims::ShimmedTracker::environment`] on top.
+pub fn bdi_on_pipes(home: &Path) -> Command {
+    let mut bdi = Command::new(env!("CARGO_BIN_EXE_bdi"));
+    bdi.env("HOME", home)
+        .envs([shims::shims_first_on_path()])
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("BDI_PROJECT")
+        .env_remove("XDG_RUNTIME_DIR");
+    bdi
 }
 
 /// The inherited `PATH`, minus every directory holding a `herdr` — the
