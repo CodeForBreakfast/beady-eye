@@ -679,7 +679,10 @@ pane, whichever pane its pane key names. That is an agent resumed in another
 pane, so the two keys naming different panes is not a disagreement and
 nothing is reported. A bead naming an agent session that no live pane holds
 names an agent that is not there, and it joins nothing, so `orphan-claim`
-reports a claim it holds. Two cases still read the pane key:
+reports a claim it holds. The exception is a session that a session this run
+could not ask had live in one of its panes when it last answered. The agent
+may still be there, so the claim is out of reach, whichever pane it names and
+whether or not it names one. Otherwise two cases still read the pane key:
 
 - **The pane it names is out of this run's reach.** The claim is out of reach,
   as it would be with no session, because the agent may be in that pane.
@@ -688,8 +691,11 @@ reports a claim it holds. Two cases still read the pane key:
   session for, such as one that is not Claude, on its bead. Its cost is the
   hole the session closes: a reused pane still inherits such an agent's claim.
 
-A session that several live panes hold awards none of them. A pane's
-`display_agent` does not override either answer. A bead naming an agent
+A session that several live panes hold awards none of them, and is reported.
+Several beads naming the one session a live pane holds is reported
+as a claim on the agent. Where any of the beads named the pane by its pane
+key instead, the pane is what is contested. A pane's `display_agent` does not
+override any of these answers. A bead naming an agent
 session is never inferred onto a pane holding another agent, nor onto one of
 several panes holding its own.
 
@@ -794,6 +800,8 @@ happened to exist.
 | `agent_pane` and `display_agent` name different panes | the bead's own key wins; the disagreement is reported |
 | several panes name one bead | none wins; reported |
 | one pane is named by several beads | none wins; reported, with what the pane says it is working on |
+| one agent session is named by several beads, and one live pane holds it | none wins; reported with the session and its pane, and what the pane says it is working on |
+| the bead's agent session is held by several live panes | none wins; reported with the panes, on the bead and in `conflicts` |
 | a pane's project differs from the bead's | no join; reported |
 | a pane's directory is under no configured project | no join; reported once as `unconfigured`, and on each bead whose key named it |
 | the bead's key names a pane id that several sessions each hold | none wins; reported with the sessions, on the bead and in `conflicts`, and every one of those panes is still drawn under its own session |
@@ -821,7 +829,8 @@ later. `started_at` stays parsed and unused.
 
 **A refused claim carries its refusal.** Where a bead's own key named a live
 pane the join would not award it — because the pane sits in another project,
-or in none, or because several beads name it — the bead's `orphan-claim`
+or in none, or because several beads name it or its agent session, or the
+session is in several panes — the bead's `orphan-claim`
 anomaly carries that conflict as its reason, and the row says it: *claimed ·
 its pane is in no configured project*, *claimed · 3 beads name its pane*. A
 bead whose row said only *claimed · no pane* sent the reader after a dead agent

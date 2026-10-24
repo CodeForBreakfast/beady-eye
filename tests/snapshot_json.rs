@@ -417,6 +417,91 @@ fn an_agent_joined_by_its_session_names_the_session_and_the_pane_it_was_found_in
     assert_eq!(emitted["conflicts"], json!([]));
 }
 
+/// Two beads naming one agent session contest the agent, and neither gets it.
+/// The disagreement names the session and the pane herdr found it in, and
+/// each bead says the disagreement took its claim.
+#[test]
+fn two_beads_naming_one_agent_session_is_a_conflict_naming_the_session() {
+    let herdr = Canned::default().herdr_holding(
+        r#"{"id":"cli:agent:list","result":{"agents":[
+          {"pane_id":"w:p4","cwd":"/srv/work/dunwich","agent_status":"working","agent":"claude",
+           "title":"the dish",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-dish"}}
+        ]}}"#,
+    );
+    let tracker = dunwich_holding(
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"in_progress",
+             "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
+             "metadata":{"agent_session":"sess-dish"}},
+            {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+             "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+             "priority":2,"issue_type":"task","updated_at":"2026-08-29T10:00:00Z",
+             "metadata":{"agent_session":"sess-dish"}}]"#,
+    );
+
+    let emitted = emit(&herdr, &dunwich_with(tracker), Filter::All);
+    let tree = &emitted["trees"][0];
+
+    let contested = json!({
+        "conflict": "several-beads-name-one-agent-session",
+        "agent_session": "sess-dish",
+        "pane": {"session": "default", "id": "w:p4"},
+        "caption": "the dish",
+        "beads": [
+            {"project": "dunwich", "id": "dun-7"},
+            {"project": "dunwich", "id": "dun-7.1"},
+        ],
+    });
+    assert_eq!(emitted["conflicts"], json!([contested]));
+    for id in ["dun-7", "dun-7.1"] {
+        assert_eq!(node(tree, id)["agent"], Value::Null, "{id}");
+        assert_eq!(
+            node(tree, id)["anomalies"],
+            json!([{"rule": "orphan-claim", "refused": contested}]),
+            "{id}"
+        );
+    }
+}
+
+/// An agent session two live panes hold is in neither for certain, so the
+/// bead gets neither and the disagreement names both panes. A pane whose
+/// agent has left still carries the session, and is not a third holder.
+#[test]
+fn an_agent_session_two_live_panes_hold_is_a_conflict_naming_the_panes() {
+    let herdr = Canned::default().herdr_holding(
+        r#"{"id":"cli:agent:list","result":{"agents":[
+          {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"idle",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-dish"}},
+          {"pane_id":"w:p4","cwd":"/srv/work/dunwich","agent_status":"working","agent":"claude",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-dish"}},
+          {"pane_id":"w:p5","cwd":"/srv/work/dunwich","agent_status":"working","agent":"claude",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-dish"}}
+        ]}}"#,
+    );
+    let tracker = dunwich_holding(
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"in_progress",
+             "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
+             "metadata":{"agent_pane":"w:p1","agent_session":"sess-dish"}}]"#,
+    );
+
+    let emitted = emit(&herdr, &dunwich_with(tracker), Filter::All);
+
+    let held_twice = json!({
+        "conflict": "agent-session-in-several-panes",
+        "bead": {"project": "dunwich", "id": "dun-7"},
+        "agent_session": "sess-dish",
+        "panes": [
+            {"session": "default", "id": "w:p4"},
+            {"session": "default", "id": "w:p5"},
+        ],
+    });
+    assert_eq!(emitted["conflicts"], json!([held_twice]));
+    assert_eq!(
+        node(&emitted["trees"][0], "dun-7")["anomalies"],
+        json!([{"rule": "orphan-claim", "refused": held_twice}])
+    );
+}
+
 /// The anomaly rules read the agent rather than the pane. A claim whose
 /// agent session no live pane holds has lost its agent even though the pane
 /// it names is alive, and a closed bead whose agent is still running in

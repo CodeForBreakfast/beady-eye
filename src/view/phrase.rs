@@ -361,6 +361,12 @@ fn orphan_claim(refused: Option<&Conflict>) -> String {
         Some(Conflict::PaneIdInSeveralSessions { sessions, .. }) => {
             format!("claimed · its pane id is in {} sessions", sessions.len())
         }
+        Some(Conflict::SeveralBeadsNameOneAgentSession { beads, .. }) => {
+            format!("claimed · {} beads claim its agent session", beads.len())
+        }
+        Some(Conflict::AgentSessionInSeveralPanes { panes, .. }) => {
+            format!("claimed · its agent session is in {} panes", panes.len())
+        }
         // Neither of these ever gets here. A refusal sends the reader to the
         // disagreement's row to find the pane the claim was for, and these two
         // name no one pane, so `join::resolve` refuses no claim with either.
@@ -417,6 +423,24 @@ pub fn conflict(conflict: &Conflict) -> String {
             bead_key(bead),
             sessions.len(),
             sessions.join(", ")
+        ),
+        Conflict::SeveralBeadsNameOneAgentSession {
+            pane,
+            caption,
+            beads,
+            ..
+        } => format!(
+            "the agent session in pane {}{} is claimed by {} beads: {} · none is shown on it",
+            pane_key(pane),
+            caption.as_deref().map(saying).unwrap_or_default(),
+            beads.len(),
+            beads.iter().map(bead_key).collect::<Vec<_>>().join(", ")
+        ),
+        Conflict::AgentSessionInSeveralPanes { bead, panes, .. } => format!(
+            "{}: its agent session is in {} panes: {} · cannot tell which is meant",
+            bead_key(bead),
+            panes.len(),
+            panes.iter().map(pane_key).collect::<Vec<_>>().join(", ")
         ),
     }
 }
@@ -1173,7 +1197,22 @@ mod tests {
                     pane_id: "wCM:p9".into(),
                     sessions: vec!["default".into(), "kadath".into()],
                 }),
-                Conflict::PaneIdInSeveralSessions { .. } => None,
+                Conflict::PaneIdInSeveralSessions { .. } => {
+                    Some(Conflict::SeveralBeadsNameOneAgentSession {
+                        agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+                        pane: pane_key("wCM:p9"),
+                        caption: None,
+                        beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
+                    })
+                }
+                Conflict::SeveralBeadsNameOneAgentSession { .. } => {
+                    Some(Conflict::AgentSessionInSeveralPanes {
+                        bead: key("smt-4kd3p.20"),
+                        agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+                        panes: vec![pane_key("wCM:p9"), pane_key("wCM:p6")],
+                    })
+                }
+                Conflict::AgentSessionInSeveralPanes { .. } => None,
             },
         )
     }
@@ -2138,6 +2177,67 @@ mod tests {
         assert!(!said.contains('\u{201c}'), "{said}");
         assert!(said.contains("wCM:p9"), "{said}");
         assert!(said.contains('2'), "{said}");
+    }
+
+    /// A contested agent session is said as the agent, not the pane, because
+    /// the key to clear is the session a bead names. Its pane is still named,
+    /// with its own words, since that is where a reader goes to find the agent.
+    #[test]
+    fn a_contested_agent_session_names_its_pane_and_the_beads_claiming_it() {
+        let said = conflict(&Conflict::SeveralBeadsNameOneAgentSession {
+            agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+            pane: pane_key("wCM:p9"),
+            caption: Some("rebuild the installer image".into()),
+            beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
+        });
+
+        assert!(said.contains("agent session"), "{said}");
+        assert!(said.contains("wCM:p9"), "{said}");
+        assert!(
+            said.contains("\u{201c}rebuild the installer image"),
+            "{said}"
+        );
+        assert!(said.contains("claimed by 2 beads"), "{said}");
+        assert!(said.contains("smt-4kd3p.1"), "{said}");
+    }
+
+    /// An agent session in several live panes is the mirror of a pane id in
+    /// several sessions: the bead is named, and so is every pane holding it.
+    #[test]
+    fn an_agent_session_in_several_panes_names_the_bead_and_each_pane() {
+        let said = conflict(&Conflict::AgentSessionInSeveralPanes {
+            bead: key("smt-4kd3p.20"),
+            agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+            panes: vec![pane_key("wCM:p9"), pane_key("wCM:p6")],
+        });
+
+        assert!(said.contains("smt-4kd3p.20"), "{said}");
+        assert!(said.contains("agent session is in 2 panes"), "{said}");
+        assert!(said.contains("wCM:p9"), "{said}");
+        assert!(said.contains("wCM:p6"), "{said}");
+    }
+
+    /// A claim either session disagreement refused says so on its own row.
+    #[test]
+    fn a_claim_a_session_disagreement_refused_says_which() {
+        let contested = anomaly(&Anomaly::OrphanClaim {
+            refused: Some(Conflict::SeveralBeadsNameOneAgentSession {
+                agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+                pane: pane_key("wCM:p9"),
+                caption: None,
+                beads: vec![key("smt-4kd3p.20"), key("smt-4kd3p.1")],
+            }),
+        });
+        let held_twice = anomaly(&Anomaly::OrphanClaim {
+            refused: Some(Conflict::AgentSessionInSeveralPanes {
+                bead: key("smt-4kd3p.20"),
+                agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+                panes: vec![pane_key("wCM:p9"), pane_key("wCM:p6")],
+            }),
+        });
+
+        assert_eq!(contested, "claimed · 2 beads claim its agent session");
+        assert_eq!(held_twice, "claimed · its agent session is in 2 panes");
     }
 
     /// A pane under no configured project has no project to name, and saying
