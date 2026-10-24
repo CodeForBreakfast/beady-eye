@@ -41,6 +41,10 @@ path = "src/lib.rs"
 name = "bdi"
 path = "src/main.rs"
 
+[[bench]]
+name = "keystroke_survey"
+harness = false
+
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23.1"

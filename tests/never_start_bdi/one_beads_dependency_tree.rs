@@ -12,9 +12,7 @@ use beady_eye::model::snapshot::{DependencyListing, Filter, Only};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
-mod canned;
-
-use canned::{refused, Canned};
+use crate::canned::{refused, Canned};
 
 const ARKHAM_AND_DUNWICH: &str = r#"
 [[projects]]
