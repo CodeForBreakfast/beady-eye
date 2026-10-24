@@ -15,7 +15,7 @@
 
 mod terminal;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::{a_home_naming_one_project, a_socket_of_its_own, contains};
@@ -55,6 +55,23 @@ const THE_CONFIGURED_PROJECT: &[u8] = THE_FIRST_FRAME;
 /// be shortened for a test.
 const A_CHECK_OR_TWO: Duration = Duration::from_secs(6);
 
+/// Whole frames until `gone` is off one, handed back either way — a frame
+/// that still holds it is what the assertion needs to fail against. The
+/// height alternates from `rows`, the height the terminal is at, because a
+/// resize to the height it already is is no resize at all and is answered by
+/// no whole frame.
+fn frames_until_gone(bdi: &mut Driven, rows: &mut u16, gone: &[u8], patience: Duration) -> Vec<u8> {
+    let giving_up = Instant::now() + patience;
+    loop {
+        *rows = if *rows == ROWS { ROWS - 1 } else { ROWS };
+        let whole = bdi.resize(*rows, COLS);
+        let frame = bdi.answer_to(whole, GIVING_UP);
+        if !contains(&frame, gone) || Instant::now() >= giving_up {
+            return frame;
+        }
+    }
+}
+
 #[test]
 fn a_config_that_will_not_parse_leaves_the_running_one_standing_and_says_so() {
     let home = a_home_naming_one_project("config-reload");
@@ -69,7 +86,8 @@ fn a_config_that_will_not_parse_leaves_the_running_one_standing_and_says_so() {
         .expect("the config is ours to write");
     bdi.read_until(WOULD_NOT_LOAD, A_CHECK_OR_TWO);
 
-    let whole = bdi.resize(ROWS - 1, COLS);
+    let mut rows = ROWS - 1;
+    let whole = bdi.resize(rows, COLS);
     let frame = bdi.answer_to(whole, GIVING_UP);
     assert!(
         contains(&frame, THE_CONFIGURED_PROJECT),
@@ -81,10 +99,7 @@ fn a_config_that_will_not_parse_leaves_the_running_one_standing_and_says_so() {
     // working to: nothing reloads, and the notice has to come off all the
     // same.
     std::fs::write(&config, &as_written).expect("the config is ours to write");
-    std::thread::sleep(A_CHECK_OR_TWO);
-
-    let whole = bdi.resize(ROWS, COLS);
-    let frame = bdi.answer_to(whole, GIVING_UP);
+    let frame = frames_until_gone(&mut bdi, &mut rows, WOULD_NOT_LOAD, A_CHECK_OR_TWO);
     assert!(
         !contains(&frame, WOULD_NOT_LOAD),
         "the reader has put the config back and the foot still says it \
