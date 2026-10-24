@@ -772,6 +772,36 @@ fn a_project_whose_tracker_refuses_the_credential_is_named_in_the_json() {
     );
 }
 
+/// A credential command that would not run is the project's own failure, and
+/// says nothing about a tracker nobody spoke to.
+#[test]
+fn a_project_whose_credential_command_will_not_run_is_named_in_the_json() {
+    let trackers = Fakes::default().without_the_credential_it_asked_for("dunwich");
+
+    let emitted = emit(&panes(), &trackers, Filter::LiveAgents);
+
+    assert_eq!(emitted["trees"], json!([]));
+    assert_eq!(
+        emitted["failed_projects"],
+        json!([{"project": "dunwich", "tracker": {"reason": "no-credential"}}])
+    );
+}
+
+/// An environment `bdi` could not enter is the project's own failure in the
+/// same way.
+#[test]
+fn a_project_bdi_could_not_enter_is_named_in_the_json() {
+    let trackers = Fakes::default().without_the_environment_it_asked_for("dunwich");
+
+    let emitted = emit(&panes(), &trackers, Filter::LiveAgents);
+
+    assert_eq!(emitted["trees"], json!([]));
+    assert_eq!(
+        emitted["failed_projects"],
+        json!([{"project": "dunwich", "tracker": {"reason": "no-environment"}}])
+    );
+}
+
 /// The one reason that says more than itself says it under the same key,
 /// alongside the reason rather than instead of it. A consumer reads every
 /// failure the same way and finds the extra where there is any.
