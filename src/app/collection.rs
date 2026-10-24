@@ -1242,7 +1242,7 @@ mod tests {
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::collect::tracker::Tracker;
-    use crate::collect::worktree::testing::a_linked_worktree_git_made;
+    use crate::collect::worktree::testing::a_linked_worktree_written_by_hand;
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{BeadKey, Conflict};
     use crate::model::snapshot::LoosePane;
@@ -2753,7 +2753,7 @@ path = "{}"
     /// of them and still report this pane as `unconfigured`.
     #[test]
     fn a_pane_in_a_linked_worktree_is_reported_in_the_project_its_main_working_tree_is_under() {
-        let fixture = a_linked_worktree_git_made("collection-linked-worktree");
+        let fixture = a_linked_worktree_written_by_hand("collection-linked-worktree");
         let cfg = dunwich_and_ferry_at(&fixture.checkout);
 
         let snap = run(
@@ -2791,7 +2791,7 @@ path = "{}"
     /// recorded is the whole of what `bdi` put to anything.
     #[test]
     fn a_pane_in_an_excluded_projects_linked_worktree_is_placed_without_running_anything() {
-        let fixture = a_linked_worktree_git_made("collection-linked-worktree-excluded");
+        let fixture = a_linked_worktree_written_by_hand("collection-linked-worktree-excluded");
         let cfg = dunwich_and_ferry_at(&fixture.checkout)
             .scoped_to(&["dunwich".to_string()])
             .expect("dunwich is configured");
