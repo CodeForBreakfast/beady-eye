@@ -415,6 +415,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
             &through_the_watcher(
                 &cfg,
+                where_this_machine_watches(&cfg).as_deref(),
                 &bd::Cli::new(&RealRunner).caching_environments(EnvironmentCache::here()),
             ),
             filter,
@@ -426,7 +427,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
     }
     if cli.each_bead {
         let only = only_asked_for(&cli, &cfg)?;
-        let snapshot = read_for_each_bead(&cfg, &RealRunner, EnvironmentCache::here(), Utc::now());
+        let snapshot = read_for_each_bead(
+            &cfg,
+            where_this_machine_watches(&cfg).as_deref(),
+            &RealRunner,
+            EnvironmentCache::here(),
+            Utc::now(),
+        );
         println!(
             "{}",
             beads_document(
@@ -496,7 +503,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // read here while none does. Looked for again at the refresh interval,
     // which is as long as a project read here waits for its next poll.
     let (heard_from_the_watcher, from_the_watcher) = mpsc::channel();
-    let watcher_at = changes::where_the_watcher_is(cfg.watcher.socket.clone());
+    let watcher_at = where_this_machine_watches(&cfg);
     let trackers = Arc::new(Through::staying(
         watcher_at.as_deref(),
         cfg.read().map(|project| project.name.as_str()),
@@ -553,8 +560,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
 
 /// What `bdi --beads` lists each unfinished bead from: every tree, read
 /// without the free text of finished beads, which the listing never shows.
+/// The watcher is looked for at `watcher_at`, and nowhere where it is `None`.
 fn read_for_each_bead(
     cfg: &Config,
+    watcher_at: Option<&Path>,
     runner: &dyn Runner,
     cache: Option<EnvironmentCache>,
     now: DateTime<Utc>,
@@ -564,6 +573,7 @@ fn read_for_each_bead(
         &herdr::Herdr::new(runner),
         &through_the_watcher(
             cfg,
+            watcher_at,
             &bd::Cli::new(runner)
                 .for_unfinished_work()
                 .caching_environments(cache),
@@ -623,13 +633,19 @@ fn only_asked_for(cli: &Cli, cfg: &Config) -> anyhow::Result<Only> {
 }
 
 /// The trackers a run that reads once is read through: the watcher's
-/// answers where one is running and answers, and `own` where it does not.
-fn through_the_watcher<O: Trackers>(cfg: &Config, own: O) -> Through<O> {
+/// answers where one is running at `watcher_at` and answers, and `own` where
+/// it does not.
+fn through_the_watcher<O: Trackers>(cfg: &Config, watcher_at: Option<&Path>, own: O) -> Through<O> {
     Through::watcher_at(
-        changes::where_the_watcher_is(cfg.watcher.socket.clone()).as_deref(),
+        watcher_at,
         cfg.read().map(|project| project.name.as_str()),
         own,
     )
+}
+
+/// Where `bdi` run on this machine looks for `bdi watch`.
+fn where_this_machine_watches(cfg: &Config) -> Option<PathBuf> {
+    changes::where_the_watcher_is(cfg.watcher.socket.clone())
 }
 
 /// The projects `cfg` reads, each armed to poll as `polling` says.
@@ -1936,7 +1952,7 @@ kadath = ["kad-11"]
                 Filter::All,
                 noon(),
             );
-            let listed = read_for_each_bead(&cfg, &without_text, None, noon());
+            let listed = read_for_each_bead(&cfg, None, &without_text, None, noon());
 
             assert_eq!(
                 serde_json::to_value(Listing::of(&listed, &Only::default(), false)).unwrap(),
@@ -1990,7 +2006,7 @@ kadath = ["kad-11"]
             asked: Mutex::default(),
         };
 
-        let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
+        let snapshot = read_for_each_bead(&cfg, None, &tracker, None, noon());
         let written: serde_json::Value = serde_json::from_str(
             &beads_document(&snapshot, true, &[], &Only::default(), false, &cfg.delivery).unwrap(),
         )
@@ -2043,6 +2059,25 @@ kadath = ["kad-11"]
         row
     }
 
+    /// A read told of no watcher makes no connection, though the config names
+    /// a socket with one listening on it, as a `bdi watch` on a developer's
+    /// machine is.
+    #[test]
+    fn a_listing_read_told_of_no_watcher_connects_to_none() {
+        let dir = std::env::temp_dir().join(format!("bdi-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("watcher.sock");
+        let _ = std::fs::remove_file(&socket);
+        let watcher = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        watcher.set_nonblocking(true).unwrap();
+        let cfg =
+            Config::from_toml(&format!("{KADATH}\n[watcher]\nsocket = {socket:?}\n")).unwrap();
+
+        read_for_each_bead(&cfg, None, &kadath(), None, noon());
+
+        assert_eq!(watcher.accept().unwrap_err().kind(), ErrorKind::WouldBlock);
+    }
+
     /// What `bdi --beads` writes of celephais's beads with `asked` on its
     /// command line. The archive's two children and a grandchild hang under
     /// it, and the second child, a bug, waits on the bead outside it.
@@ -2084,7 +2119,7 @@ kadath = ["kad-11"]
         let cli = Cli::try_parse_from([&["bdi", "--beads"][..], asked].concat())?;
         let only = only_asked_for(&cli, &cfg)?;
 
-        let snapshot = read_for_each_bead(&cfg, &tracker, None, noon());
+        let snapshot = read_for_each_bead(&cfg, None, &tracker, None, noon());
         Ok(serde_json::from_str(&beads_document(
             &snapshot,
             cli.ready,
