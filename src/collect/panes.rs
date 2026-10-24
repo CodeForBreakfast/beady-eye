@@ -89,6 +89,14 @@ impl Aside {
         P: Agents + 'static,
         A: From<Answer> + Send + 'static,
     {
+        Self::waiting(provider, answers, PATIENCE)
+    }
+
+    fn waiting<P, A>(provider: P, answers: Sender<A>, patience: Duration) -> Self
+    where
+        P: Agents + 'static,
+        A: From<Answer> + Send + 'static,
+    {
         let (wanted, wants) = mpsc::channel();
         let (asking, asked) = mpsc::channel();
         let (answered, done) = mpsc::channel();
@@ -101,6 +109,7 @@ impl Aside {
                 &mut Patience {
                     asking,
                     done,
+                    patience,
                     outstanding: 0,
                     unanswered,
                 },
@@ -117,6 +126,7 @@ impl Aside {
 struct Patience {
     asking: Sender<Job>,
     done: Receiver<Done>,
+    patience: Duration,
     outstanding: usize,
     unanswered: RunFailure,
 }
@@ -132,7 +142,7 @@ impl Patience {
         }
 
         self.outstanding = 1;
-        let answer = self.done.recv_timeout(PATIENCE).ok();
+        let answer = self.done.recv_timeout(self.patience).ok();
         self.outstanding = usize::from(answer.is_none());
         answer
     }
@@ -229,10 +239,24 @@ mod tests {
     /// What a provider that never answers calls itself.
     const WEDGED: &str = "a wedged provider";
 
+    /// How long a test that wants the tail to give up lets it wait. Wide
+    /// enough that a busy machine does not make a quick provider late, and
+    /// short enough that a test waiting it out is over at once.
+    const SHORT_PATIENCE: Duration = Duration::from_millis(100);
+
     /// A provider asked aside, and the answers it sends back.
     fn asking<P: Agents + 'static>(provider: P) -> (Aside, Receiver<Answer>) {
         let (answered, answers) = mpsc::channel();
         (Aside::new(provider, answered), answers)
+    }
+
+    /// The same, for a tail that gives up on the provider after `patience`.
+    fn asking_for<P: Agents + 'static>(
+        provider: P,
+        patience: Duration,
+    ) -> (Aside, Receiver<Answer>) {
+        let (answered, answers) = mpsc::channel();
+        (Aside::waiting(provider, answered, patience), answers)
     }
 
     /// The next answer, or a failure saying none came.
@@ -290,7 +314,7 @@ mod tests {
                 .expect("no test panics holding this")
                 .push(question);
             if self.late.swap(false, Ordering::SeqCst) {
-                thread::sleep(PATIENCE * 2);
+                thread::sleep(SHORT_PATIENCE * 2);
             }
         }
     }
@@ -400,7 +424,7 @@ mod tests {
     /// read is out, and it must go on to say the pane could not be read.
     #[test]
     fn a_provider_that_never_answers_is_waited_on_only_so_long() {
-        let (panes, answers) = asking(Wedged);
+        let (panes, answers) = asking_for(Wedged, SHORT_PATIENCE);
         let started = std::time::Instant::now();
 
         panes.read(&key("w:p1"), 6);
@@ -409,7 +433,7 @@ mod tests {
             Err(FailureKind::Unavailable)
         );
         assert!(
-            started.elapsed() < PATIENCE * 3,
+            started.elapsed() < SHORT_PATIENCE * 3,
             "the read waited {:?}",
             started.elapsed()
         );
@@ -418,7 +442,7 @@ mod tests {
         panes.read(&key("w:p1"), 6);
         assert!(read(answer(&answers)).is_err());
         assert!(
-            again.elapsed() < PATIENCE,
+            again.elapsed() < SHORT_PATIENCE,
             "a question is not asked while one is still out, so the second read did not wait again"
         );
     }
@@ -428,7 +452,7 @@ mod tests {
     /// them went quiet rather than naming whichever one was written down.
     #[test]
     fn an_unanswered_question_is_answered_against_the_provider_that_owed_it() {
-        let (panes, answers) = asking(Wedged);
+        let (panes, answers) = asking_for(Wedged, SHORT_PATIENCE);
 
         panes.read(&key("w:p1"), 6);
 
@@ -449,19 +473,19 @@ mod tests {
     #[test]
     fn the_tail_reads_again_after_a_read_that_timed_out() {
         let (echo, asked) = Echo::saying_late(&["back from the dead"]);
-        let (panes, answers) = asking(echo);
+        let (panes, answers) = asking_for(echo, SHORT_PATIENCE);
 
         panes.read(&key("w:p1"), 6);
         assert_eq!(
             read(answer(&answers)).map_err(|f| f.kind),
             Err(FailureKind::Unavailable),
-            "the first answer outstays PATIENCE"
+            "the first answer outstays the patience"
         );
 
         // Nothing is asked while a question is still out, so the tail asks
         // again on each refresh tick until the late answer has landed and
         // been drained. A tail that never recovers never leaves this loop.
-        let gave_up_at = std::time::Instant::now() + PATIENCE * 5;
+        let gave_up_at = std::time::Instant::now() + LONG_ENOUGH;
         let read = loop {
             panes.read(&key("w:p1"), 6);
             match read(answer(&answers)) {
