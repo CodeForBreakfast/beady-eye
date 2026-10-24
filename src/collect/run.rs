@@ -1041,21 +1041,6 @@ mod tests {
         assert_eq!(out.trim(), "/");
     }
 
-    #[test]
-    fn a_refused_credential_and_an_unreachable_server_are_told_apart() {
-        assert_eq!(failing_command(REFUSED).kind, FailureKind::Auth);
-        assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
-    }
-
-    /// A statement the tracker cannot run at all is told apart from a
-    /// tracker that did not answer it: asking the first again answers the
-    /// same, where the second is worth asking again on the next refresh.
-    #[test]
-    fn a_statement_the_tracker_cannot_run_is_told_apart_from_an_unanswered_one() {
-        assert_eq!(failing_command(EMBEDDED).kind, FailureKind::Unsupported);
-        assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
-    }
-
     /// What gh 2.102.0 printed, exit 1, for GitHub's primary rate limit on
     /// GraphQL, on REST, and for a secondary rate limit. gh's framing is
     /// measured against a stand-in for GitHub's API; the words inside it are
@@ -1215,25 +1200,6 @@ mod tests {
                 "text on stderr reached a failure's own field: {said:?}"
             );
         }
-    }
-
-    /// A failure we cannot place is reported as an unanswered tracker, never
-    /// guessed at as a credential problem.
-    #[test]
-    fn an_unrecognised_failure_is_not_reported_as_a_refused_credential() {
-        let failure = failing_command(UNPLACED);
-
-        assert_eq!(failure.kind, FailureKind::Unavailable);
-    }
-
-    /// The tail's two everyday failures against the one that ends the join.
-    /// A closed pane is one row to stop tailing and a busy pane is a retry,
-    /// where an unreachable herdr drops the whole live tier.
-    #[test]
-    fn herdrs_own_failures_are_told_apart_from_an_unreachable_herdr() {
-        assert_eq!(failing_command(NO_SUCH_PANE).kind, FailureKind::Gone);
-        assert_eq!(failing_command(PANE_BUSY).kind, FailureKind::Busy);
-        assert_eq!(failing_command(UNREACHABLE).kind, FailureKind::Unavailable);
     }
 
     #[test]

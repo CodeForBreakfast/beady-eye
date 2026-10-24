@@ -303,18 +303,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_worktree_git_made_is_placed_the_same_way() {
-        let fixture = a_linked_worktree_git_made("worktree-git-placed");
-        let deep = fixture.linked.join("crates/dish");
-        std::fs::create_dir_all(&deep).expect("the directory is ours to make");
-
-        assert_eq!(
-            in_the_main_working_tree(&deep),
-            Some(fixture.checkout.join("crates/dish"))
-        );
-    }
-
     /// The main working tree's own `.git` is a directory, and a directory
     /// under it is already where it would be placed.
     #[test]

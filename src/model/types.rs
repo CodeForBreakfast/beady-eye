@@ -420,3 +420,57 @@ pub mod testing {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_in_flight_ranks_ahead_of_work_that_is_finished() {
+        let mut statuses = vec![
+            Status::Closed,
+            Status::Open,
+            Status::Other("marinating".to_string()),
+            Status::InProgress,
+            Status::Deferred,
+            Status::Pinned,
+            Status::Blocked,
+            Status::Hooked,
+        ];
+        statuses.sort_by_key(Status::rank);
+
+        assert_eq!(
+            statuses,
+            vec![
+                Status::InProgress,
+                Status::Hooked,
+                Status::Blocked,
+                Status::Open,
+                Status::Deferred,
+                Status::Pinned,
+                Status::Closed,
+                Status::Other("marinating".to_string()),
+            ]
+        );
+        assert!(Status::Closed.is_closed());
+        assert!(!Status::Open.is_closed());
+        assert!(!Status::Pinned.is_closed());
+        assert!(!Status::Hooked.is_closed());
+    }
+
+    #[test]
+    fn a_pinned_bead_is_finished_without_being_closed() {
+        assert!(Status::Closed.is_finished());
+        assert!(Status::Pinned.is_finished());
+        for live in [
+            Status::Open,
+            Status::InProgress,
+            Status::Blocked,
+            Status::Deferred,
+            Status::Hooked,
+            Status::Other("marinating".to_string()),
+        ] {
+            assert!(!live.is_finished(), "{live:?}");
+        }
+    }
+}
