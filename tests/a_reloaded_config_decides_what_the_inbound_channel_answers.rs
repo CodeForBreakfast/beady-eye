@@ -22,6 +22,15 @@
 //! a weaker question, since a fresh connection is entitled to a fresh
 //! reading of anything.
 //!
+//! The same edit is also the one end-to-end test that a project added to the
+//! config is collected and drawn without a restart, and that one removed
+//! leaves no rows behind. The absence is read off a whole frame, because the
+//! rows are drawn as a difference from the frame before and a project that
+//! has gone leaves its cells where they were until something repaints them.
+//! Both projects are read from the shimmed tracker, which answers the same
+//! rows whichever project asks: what is watched is which projects the screen
+//! draws.
+//!
 //! The screen is what the edit is waited on, not a sleep. The project the
 //! edit gained is drawn only after the reload has been taken and the
 //! collection it asked for has come back, and the accepted names are settled
@@ -36,7 +45,7 @@ use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
-use terminal::{a_socket_of_its_own, the_socket_under, Producer, THE_DESCRIBED_SUBTREE};
+use terminal::{a_socket_of_its_own, contains, the_socket_under, Producer, THE_DESCRIBED_SUBTREE};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -127,6 +136,20 @@ fn the_names_the_channel_accepts_follow_the_config_the_reader_wrote() {
          out is not. An `ok` for the removed project asks for a read of one \
          bdi no longer collects, and tells the only party who could put it \
          right that bdi is watching a project it is not.\n{}",
+        bdi.timeline()
+    );
+
+    let whole = bdi.resize(ROWS - 1, COLS);
+    let frame = bdi.answer_to(whole, GIVING_UP);
+    assert!(
+        contains(&frame, FERRY),
+        "the project the reader added was collected and drawn, with no \
+         restart\n{}",
+        bdi.timeline()
+    );
+    assert!(
+        !contains(&frame, ARKHAM),
+        "and the one they took out left no rows behind it\n{}",
         bdi.timeline()
     );
 }
