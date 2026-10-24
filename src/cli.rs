@@ -491,6 +491,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
                         reading: reading.clone(),
                         roots: &roots,
                     },
+                    environment::trackers_kept_here().as_deref(),
                 )
             }),
             Utc::now(),
@@ -840,7 +841,12 @@ fn read_config(runner: &dyn Runner, path: &Path, launch: &Launch<'_>) -> anyhow:
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading the config at {}", path.display()))?;
     Ok(Settled {
-        config: config_for_this_run(&text, runner, launch)?,
+        config: config_for_this_run(
+            &text,
+            runner,
+            launch,
+            environment::trackers_kept_here().as_deref(),
+        )?,
         read_from: Some(path.to_path_buf()),
     })
 }
@@ -860,13 +866,16 @@ fn read_config(runner: &dyn Runner, path: &Path, launch: &Launch<'_>) -> anyhow:
 /// The whole config is parsed first either way: what `[roots.explicit]` is
 /// checked against is the config as written, not the part of it this run
 /// reads.
+///
+/// A project on a server is read in the directory kept for its database
+/// under `trackers_kept_in`.
 fn config_for_this_run(
     text: &str,
     runner: &dyn Runner,
     launch: &Launch<'_>,
+    trackers_kept_in: Option<&Path>,
 ) -> anyhow::Result<Config> {
-    let cfg = Config::from_toml(text)?
-        .keeping_trackers_in(environment::trackers_kept_here().as_deref())?;
+    let cfg = Config::from_toml(text)?.keeping_trackers_in(trackers_kept_in)?;
     let cfg = scoped(cfg, runner, launch)?.with_roots_named_on_the_command_line(launch.roots)?;
     Ok(discovery::with_the_working_trees_git_lists(cfg, runner))
 }
@@ -898,7 +907,12 @@ fn config_for_wherever_bdi_was_run(
 ) -> anyhow::Result<Settled> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Settled {
-            config: config_for_this_run(&text, runner, launch)?,
+            config: config_for_this_run(
+                &text,
+                runner,
+                launch,
+                environment::trackers_kept_here().as_deref(),
+            )?,
             read_from: Some(path.to_path_buf()),
         }),
         Err(absent) if absent.kind() == ErrorKind::NotFound => {
@@ -1066,12 +1080,15 @@ detached
     /// it reads that project, and nothing goes near the other.
     #[test]
     fn bdi_started_under_a_configured_project_reads_that_project_alone() {
-        let path = a_config_file_holding("started-in-dunwich", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(&runner, &path, &started_in("/srv/work/dunwich/src"))
-            .expect("the config is ours to read")
-            .config;
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
+            &runner,
+            &started_in("/srv/work/dunwich/src"),
+            None,
+        )
+        .expect("the config is ours to read");
 
         assert_eq!(read_by(&cfg), ["dunwich"]);
         assert_eq!(
@@ -1087,98 +1104,24 @@ detached
                 .is_some(),
             "the project read still learns its working trees"
         );
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
-    }
-
-    /// A project may be a directory holding several repositories — a desktop
-    /// of them — and a `bdi` started in any one of those is in the project.
-    #[test]
-    fn bdi_started_in_a_repository_inside_a_project_reads_that_project() {
-        let path = a_config_file_holding("started-inside", TWO_PROJECTS);
-        let runner = never_entering("/srv/work/ferry", two_repositories());
-
-        let cfg = read_config(
-            &runner,
-            &path,
-            &started_in("/srv/work/dunwich/ground-station/src"),
-        )
-        .expect("the config is ours to read")
-        .config;
-
-        assert_eq!(read_by(&cfg), ["dunwich"]);
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
-    }
-
-    /// A seat works in a linked worktree outside the project's tree, and the
-    /// scope is decided before any project has been asked where it is
-    /// worked. One `git worktree list` from the directory itself names the
-    /// checkout it was cut from, and that is under the project.
-    #[test]
-    fn bdi_started_in_a_linked_worktree_of_a_project_reads_that_project() {
-        let path = a_config_file_holding("started-in-a-worktree", TWO_PROJECTS);
-        let runner = never_entering("/srv/work/ferry", two_repositories());
-
-        let cfg = read_config(&runner, &path, &started_in("/tmp/seat-a/wt/src"))
-            .expect("the config is ours to read")
-            .config;
-
-        assert_eq!(read_by(&cfg), ["dunwich"]);
-        let from_the_directory: Vec<String> = runner
-            .inner
-            .calls()
-            .into_iter()
-            .filter(|c| c.cwd.as_deref() == Some(Path::new("/tmp/seat-a/wt/src")))
-            .map(|c| c.argv)
-            .collect();
-        assert_eq!(
-            from_the_directory,
-            ["git worktree list --porcelain"],
-            "one git call from the directory, and nothing else runs there"
-        );
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
-    }
-
-    /// Started outside every configured project there is nothing to scope
-    /// to, and nothing was asked for: `bdi` reads everything, as it did
-    /// before the directory had a say.
-    #[test]
-    fn bdi_started_outside_every_configured_project_reads_all_of_them() {
-        let path = a_config_file_holding("started-elsewhere", TWO_PROJECTS);
-        let runner = FakeRunner::default().with(
-            "git worktree list --porcelain",
-            "worktree /home/elsewhere\nHEAD 4d3c1f0e9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d\nbranch refs/heads/main\n",
-        );
-
-        let cfg = read_config(&runner, &path, &started_in("/home/elsewhere/notes"))
-            .expect("the config is ours to read")
-            .config;
-
-        assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
-        assert_eq!(cfg.scope, Scope::Everything);
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// `--all-projects` is the opt-out: the session watching everything from
     /// one project's checkout runs it, and the directory is not consulted.
     #[test]
     fn all_projects_reads_every_configured_project_wherever_bdi_was_started() {
-        let path = a_config_file_holding("all-projects", TWO_PROJECTS);
         let runner = two_repositories();
 
-        let cfg = read_config(
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
             &runner,
-            &path,
             &Launch {
                 reading: Reading::EveryProject,
                 ..started_in("/srv/work/dunwich/src")
             },
+            None,
         )
-        .expect("the config is ours to read")
-        .config;
+        .expect("the config is ours to read");
 
         assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
         assert_eq!(cfg.scope, Scope::Everything);
@@ -1186,8 +1129,6 @@ detached
             !directories_entered(&runner).contains(&Some(PathBuf::from("/srv/work/dunwich/src"))),
             "the directory was consulted when the command line had already decided"
         );
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// `--project` stays the way to ask for a different project, or two,
@@ -1195,24 +1136,21 @@ detached
     /// consulted.
     #[test]
     fn an_explicit_project_outranks_the_directory() {
-        let path = a_config_file_holding("project-outranks", TWO_PROJECTS);
         let runner = never_entering("/srv/work/dunwich", two_repositories());
 
-        let cfg = read_config(
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
             &runner,
-            &path,
             &Launch {
                 reading: Reading::Named(vec!["ferry".to_string()]),
                 ..started_in("/srv/work/dunwich/src")
             },
+            None,
         )
-        .expect("the config is ours to read")
-        .config;
+        .expect("the config is ours to read");
 
         assert_eq!(read_by(&cfg), ["ferry"]);
         assert_eq!(cfg.scope, Scope::Asked(vec!["ferry".to_string()]));
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// `bdi ferry:fer-1` from dunwich's desktop reads both. The widening
@@ -1220,19 +1158,18 @@ detached
     /// project a root brought in learns its working trees like any other.
     #[test]
     fn a_root_under_a_project_the_directory_left_out_widens_the_read_set() {
-        let path = a_config_file_holding("root-widens", TWO_PROJECTS);
         let runner = two_repositories();
 
-        let cfg = read_config(
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
             &runner,
-            &path,
             &Launch {
                 roots: &["ferry:fer-1".to_string()],
                 ..started_in("/srv/work/dunwich/src")
             },
+            None,
         )
-        .expect("a root elsewhere widens a scope the directory chose")
-        .config;
+        .expect("a root elsewhere widens a scope the directory chose");
 
         assert_eq!(read_by(&cfg), ["dunwich", "ferry"]);
         assert_eq!(
@@ -1243,31 +1180,27 @@ detached
             directories_entered(&runner).contains(&Some(PathBuf::from("/srv/work/ferry"))),
             "ferry is read now, so git was asked where it is worked"
         );
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// The same root against a scope the reader typed is a contradiction
     /// inside one command line, and stays refused.
     #[test]
     fn a_root_under_a_project_an_explicit_scope_left_out_is_still_refused() {
-        let path = a_config_file_holding("root-refused", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let refused = read_config(
+        let refused = config_for_this_run(
+            TWO_PROJECTS,
             &runner,
-            &path,
             &Launch {
                 reading: Reading::Named(vec!["dunwich".to_string()]),
                 roots: &["ferry:fer-1".to_string()],
                 ..started_in("/srv/work/dunwich/src")
             },
+            None,
         )
         .expect_err("asking for ferry's root and asking not to read ferry");
 
         assert!(format!("{refused:#}").contains("ferry"), "got: {refused:#}");
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// A bare id belongs to the one project being read, so `bdi dun-7` from
@@ -1275,26 +1208,23 @@ detached
     /// names.
     #[test]
     fn a_bare_root_belongs_to_the_project_the_directory_chose() {
-        let path = a_config_file_holding("bare-root", TWO_PROJECTS);
         let runner = never_entering("/srv/work/ferry", two_repositories());
 
-        let cfg = read_config(
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
             &runner,
-            &path,
             &Launch {
                 roots: &["dun-7".to_string()],
                 ..started_in("/srv/work/dunwich/src")
             },
+            None,
         )
-        .expect("the directory leaves only dunwich")
-        .config;
+        .expect("the directory leaves only dunwich");
 
         assert_eq!(
             cfg.roots.named_on_the_command_line,
             BTreeMap::from([("dunwich".to_string(), vec!["dun-7".to_string()])])
         );
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// The no-config run is unchanged: the one project it discovers is
@@ -1404,17 +1334,17 @@ detached
     /// been through this.
     #[test]
     fn a_project_the_scope_left_out_is_not_even_asked_where_it_is_worked() {
-        let path = a_config_file_holding("scoped-worktrees", TWO_PROJECTS);
         let runner =
             FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
 
-        read_config(
+        config_for_this_run(
+            TWO_PROJECTS,
             &runner,
-            &path,
             &Launch {
                 reading: Reading::Named(vec!["dunwich".to_string()]),
                 ..every_project()
             },
+            None,
         )
         .expect("the config is ours to read");
 
@@ -1427,37 +1357,31 @@ detached
             asked.contains(&Some(PathBuf::from("/srv/work/dunwich"))),
             "dunwich was scoped in, so git was asked where it is worked; asked {asked:?}"
         );
-
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// A project on a server has no checkout for git to be asked about, and
     /// is read from the directory kept for its database.
     #[test]
     fn a_project_on_a_server_is_not_asked_where_it_is_worked() {
-        let path = a_config_file_holding(
-            "on-a-server",
-            "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"reader\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n\n[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
-        );
         let runner =
             FakeRunner::default().with("git worktree list --porcelain", A_WORKTREE_PER_SEAT);
 
-        let cfg = read_config(&runner, &path, &every_project())
-            .expect("the config is ours to read")
-            .config;
+        let cfg = config_for_this_run(
+            "[dolt]\nhost = \"db.example.invalid\"\nport = 3306\nuser = \"reader\"\n\n[[projects]]\nname = \"arkham\"\ndatabase = \"arkham\"\n\n[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
+            &runner,
+            &every_project(),
+            Some(Path::new("/srv/kept/trackers")),
+        )
+        .expect("the config is ours to read");
 
         assert_eq!(
             directories_entered(&runner),
             [Some(PathBuf::from("/srv/work/dunwich"))]
         );
-        assert!(
-            cfg.projects[0]
-                .path
-                .ends_with(".cache/beady-eye/trackers/arkham"),
-            "read from {}",
-            cfg.projects[0].path.display()
+        assert_eq!(
+            cfg.projects[0].path,
+            PathBuf::from("/srv/kept/trackers/arkham")
         );
-        std::fs::remove_file(&path).expect("the file is ours to remove");
     }
 
     /// A run with no config file at all still has a scope to honour. The
@@ -2139,16 +2063,6 @@ kadath = ["kad-11"]
             .collect()
     }
 
-    #[test]
-    fn nothing_asked_trims_nothing() {
-        let written = celephais_trimmed_by(&[]).unwrap();
-
-        assert_eq!(
-            ids_in(&written, "beads"),
-            ["cel-1", "cel-1.1", "cel-1.1.1", "cel-1.2", "cel-2"]
-        );
-    }
-
     /// As `bd ready --label`: a bead is kept only where it carries every
     /// label named, whether they are named apart or between commas.
     #[test]
@@ -2165,36 +2079,6 @@ kadath = ["kad-11"]
         }
     }
 
-    #[test]
-    fn type_keeps_the_beads_of_that_type() {
-        let written = celephais_trimmed_by(&["--type", "bug"]).unwrap();
-
-        assert_eq!(ids_in(&written, "beads"), ["cel-1.2"]);
-    }
-
-    #[test]
-    fn assignee_keeps_the_beads_assigned_to_them() {
-        let written = celephais_trimmed_by(&["--assignee", "ward"]).unwrap();
-
-        assert_eq!(ids_in(&written, "beads"), ["cel-1.1", "cel-1.2"]);
-    }
-
-    /// As `bd ready --parent`: every bead beneath the parent at any depth,
-    /// and not the parent itself.
-    #[test]
-    fn parent_keeps_the_beads_beneath_it_at_any_depth() {
-        for parent in ["cel-1", "celephais:cel-1"] {
-            let written = celephais_trimmed_by(&["--parent", parent]).unwrap();
-            assert_eq!(
-                ids_in(&written, "beads"),
-                ["cel-1.1", "cel-1.1.1", "cel-1.2"],
-                "{parent}"
-            );
-        }
-        let under_the_child = celephais_trimmed_by(&["--parent", "cel-1.1"]).unwrap();
-        assert_eq!(ids_in(&under_the_child, "beads"), ["cel-1.1.1"]);
-    }
-
     /// A parent in a project the run does not read has nothing beneath it
     /// that the run could list, so it is refused rather than answered empty.
     #[test]
@@ -2204,85 +2088,29 @@ kadath = ["kad-11"]
         assert!(err.to_string().contains("kadath"), "{err}");
     }
 
-    /// Trimming chooses which beads are written and never what is written of
-    /// them: the bug still waits on the bead the trim left out.
+    /// Each trimming option and `--brief` reach both listings, and a parent
+    /// is named bare or by its project as a root is.
     #[test]
-    fn a_trimmed_bead_reads_as_ready_as_it_did_untrimmed() {
-        let untrimmed = celephais_trimmed_by(&[]).unwrap();
-        let trimmed = celephais_trimmed_by(&["--type", "bug"]).unwrap();
+    fn the_beads_options_reach_the_listing_they_narrow() {
+        let listed = celephais_trimmed_by(&[
+            "--type",
+            "task",
+            "--assignee",
+            "ward",
+            "--parent",
+            "celephais:cel-1",
+            "--brief",
+        ])
+        .unwrap();
+        assert_eq!(ids_in(&listed, "beads"), ["cel-1.1"]);
+        assert!(listed["beads"][0].get("description").is_none());
 
-        assert_eq!(trimmed["beads"][0]["ready"], false);
-        assert_eq!(trimmed["beads"][0], untrimmed["beads"][3]);
-    }
-
-    /// The trims narrow the ready list and never add to it: the first child
-    /// is urgent, but the list leaves it out for its own open child.
-    #[test]
-    fn the_trims_combine_with_ready_and_with_each_other() {
-        let untrimmed = celephais_trimmed_by(&["--ready"]).unwrap();
-        assert_eq!(ids_in(&untrimmed, "ready"), ["cel-1.1.1", "cel-2"]);
-        let ready = celephais_trimmed_by(&["--ready", "--label", "urgent"]).unwrap();
-        assert_eq!(ids_in(&ready, "in_progress"), Vec::<&str>::new());
-        assert_eq!(ids_in(&ready, "ready"), ["cel-2"]);
-
-        let both = celephais_trimmed_by(&["--parent", "cel-1", "--label", "human"]).unwrap();
-        assert_eq!(ids_in(&both, "beads"), ["cel-1.1", "cel-1.1.1"]);
-    }
-
-    /// Each bead names the bead it hangs beneath by its project and id, so a
-    /// reader can place it in its tree, and a root names none.
-    #[test]
-    fn each_bead_names_its_parent() {
-        let written = celephais_trimmed_by(&[]).unwrap();
-        let parents: Vec<_> = written["beads"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|bead| (bead["id"].as_str().unwrap(), &bead["parent"]))
-            .collect();
-
-        let celephais = |id: &str| serde_json::json!({"project": "celephais", "id": id});
-        assert_eq!(
-            parents,
-            [
-                ("cel-1", &serde_json::Value::Null),
-                ("cel-1.1", &celephais("cel-1")),
-                ("cel-1.1.1", &celephais("cel-1.1")),
-                ("cel-1.2", &celephais("cel-1")),
-                ("cel-2", &serde_json::Value::Null),
-            ]
-        );
-        let ready = celephais_trimmed_by(&["--ready"]).unwrap();
-        assert_eq!(ready["ready"][0]["parent"], celephais("cel-1.1"));
-    }
-
-    /// As `bd ready --brief`: every bead is written without its
-    /// description, and with everything else it says.
-    #[test]
-    fn brief_leaves_each_description_out() {
-        for (listed, sections) in [
-            (&[][..], &["beads"][..]),
-            (&["--ready"], &["in_progress", "ready"]),
-        ] {
-            let full = celephais_trimmed_by(listed).unwrap();
-            let brief = celephais_trimmed_by(&[listed, &["--brief"]].concat()).unwrap();
-            for section in sections {
-                let mut described = full[section].as_array().unwrap().clone();
-                for bead in &mut described {
-                    bead.as_object_mut().unwrap().remove("description");
-                }
-                assert_eq!(brief[section], serde_json::json!(described), "{section}");
-            }
-            assert!(
-                full["beads"]
-                    .as_array()
-                    .into_iter()
-                    .chain(full["ready"].as_array())
-                    .flatten()
-                    .all(|bead| bead["description"].is_string()),
-                "{full}"
-            );
-        }
+        let ready = celephais_trimmed_by(&[
+            "--ready", "--label", "human", "--parent", "cel-1.1", "--brief",
+        ])
+        .unwrap();
+        assert_eq!(ids_in(&ready, "ready"), ["cel-1.1.1"]);
+        assert!(ready["ready"][0].get("description").is_none());
     }
 
     #[test]

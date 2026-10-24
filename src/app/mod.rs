@@ -38,7 +38,7 @@ pub use watcher::{allocate_from_one_arena, hold, serve, Hold};
 /// knows how a real one is asked.
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeDelta, Utc};
 
     use crate::collect::agents::testing::{pane, titled, Fake as Provider};
     use crate::collect::bd::parse_beads;
@@ -48,7 +48,7 @@ pub(crate) mod fixtures {
     use crate::model::snapshot::{Node, Tree};
     use crate::model::types::{Bead, PaneStatus};
 
-    use super::Wanted;
+    use super::{Asked, Outstanding, Wanted};
 
     pub(super) const DUNWICH: &str = "/srv/work/dunwich";
     pub(super) const FERRY: &str = "/srv/work/ferry";
@@ -101,6 +101,51 @@ pub(crate) mod fixtures {
 
     pub(crate) fn ferry() -> Wanted {
         Wanted::Project("ferry".to_string())
+    }
+
+    /// How long the collections these tests build may go unanswered. A round
+    /// number the instants are written against, rather than the configured
+    /// default: what they assert is which mark a wait produces, not what the
+    /// deadline is.
+    pub(crate) const PATIENCE: TimeDelta = TimeDelta::seconds(30);
+
+    /// A window long enough that nothing in a test falls out of it, so a read
+    /// is asked for and demonstrably not sent.
+    pub(crate) const A_LONG_WINDOW: TimeDelta = TimeDelta::seconds(30);
+
+    /// What is outstanding with no window in front of it, which is what
+    /// every test about something other than the window wants: the read goes
+    /// the first time `sends` is called, so a test that drives the loop over a
+    /// fixed list of events and stops sees it sent.
+    ///
+    /// A window of nothing is a setting `bdi` could be run at rather than a
+    /// stand-in: `WINDOW` is the only value production uses, and the tests
+    /// that are about the window say so by naming one.
+    pub(crate) fn at_once() -> Outstanding {
+        Outstanding::waiting(PATIENCE, TimeDelta::zero())
+    }
+
+    /// The reads that reached the collector, in order.
+    ///
+    /// Every test but the ones about a config the reader has written is
+    /// asking about these, and a run with no file to look at puts nothing
+    /// else on the channel — so a `Reloaded` reaching here is a loop that
+    /// told the collector about a config nobody wrote.
+    pub(crate) fn reads(asked: impl IntoIterator<Item = Asked>) -> Vec<Wanted> {
+        asked.into_iter().map(read).collect()
+    }
+
+    /// One of them.
+    pub(crate) fn read(asked: Asked) -> Wanted {
+        match asked {
+            Asked::Read(wanted) => wanted,
+            Asked::Reloaded(cfg) => {
+                panic!("nobody wrote a config, and the collector was sent {cfg:?}")
+            }
+            Asked::Focused(beads) => {
+                panic!("nothing focused the forest, and the collector was sent {beads:?}")
+            }
+        }
     }
 
     pub(super) fn now() -> DateTime<Utc> {

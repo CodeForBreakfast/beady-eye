@@ -145,6 +145,49 @@ fn moving_stops_at_the_ends() {
     assert_eq!(forest.selected_line(), last);
 }
 
+/// A selection already at the end it was sent to stays where it is.
+#[test]
+fn the_first_and_last_row_move_nothing_when_the_selection_is_already_there() {
+    let mut forest = flatten(snapshot());
+    forest.apply(Action::Move(Motion::FirstRow));
+    let first = forest.selected_line();
+
+    assert!(!forest.apply(Action::Move(Motion::FirstRow)));
+    assert_eq!(forest.selected_line(), first);
+
+    forest.apply(Action::Move(Motion::LastRow));
+    let last = forest.selected_line();
+
+    assert!(!forest.apply(Action::Move(Motion::LastRow)));
+    assert_eq!(forest.selected_line(), last);
+}
+
+/// Dropping the filter takes away the open line the quiet tree was drawn
+/// under, above the selection, so the bead under it moves up the forest and
+/// the selection goes with the bead rather than staying on the line it was
+/// on. The quiet tree is filed under the project drawn first for that.
+#[test]
+fn dropping_the_filter_keeps_the_cursor_on_its_bead() {
+    let mut forest = flatten(gather(
+        vec![tree_of("dunwich", HARBOUR), tree_of("harbour", DUNWICH)],
+        Vec::new(),
+        Filter::LiveAgents,
+    ));
+    select_hidden_tree(&mut forest);
+    select(&mut forest, &key("harbour", "dun-7"));
+    let was = forest.selected_line();
+
+    assert!(forest.apply(Action::ToggleFilter));
+
+    assert_eq!(forest.snapshot().filter, Filter::All);
+    assert_eq!(cursor(&forest), Some(&key("harbour", "dun-7")));
+    assert_ne!(
+        forest.selected_line(),
+        was,
+        "the line over the quiet tree went from above it"
+    );
+}
+
 /// `^D` and `^U` move by half the band the trees are in, which the
 /// renderer measured for the last frame — not half a screen the key bar
 /// and the tail also sit in.
