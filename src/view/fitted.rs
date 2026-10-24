@@ -588,7 +588,7 @@ mod tests {
     use ratatui::widgets::Block as Bordered;
     use ratatui::Terminal;
 
-    use crate::view::painted::{symbols, Painted};
+    use crate::view::painted::{self, symbols, Painted};
 
     /// A row with something in all three blocks, so any painting at all shows.
     fn a_row() -> Fitted {
@@ -982,6 +982,26 @@ mod tests {
         assert_eq!(
             buf[(at, 0)].diff_option,
             CellDiffOption::ForcedWidth(NonZeroU16::new(5).expect("⇢ #12 is five columns"))
+        );
+    }
+
+    /// The bytes are what a terminal acts on, and a buffer cannot say whether
+    /// the backend prints a cell whole. A repaint reaches the wire a word at a
+    /// time, with a cursor move where each blank would be, and this badge has
+    /// a blank in it. The opening sequence, the words and the closer arrive
+    /// together only because they are one cell.
+    #[test]
+    fn a_linked_span_reaches_the_terminal_as_one_whole_hyperlink() {
+        let sent = painted::sent_by(40, 1, |frame| {
+            frame.render_widget(a_linked_row(), frame.area());
+        });
+        let whole =
+            hyperlink("⇢ #12", SOMEWHERE).expect("this vocabulary holds no control character");
+
+        assert!(
+            String::from_utf8_lossy(&sent).contains(&whole),
+            "the link did not reach the terminal whole: {:?}",
+            String::from_utf8_lossy(&sent)
         );
     }
 

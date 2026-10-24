@@ -16,13 +16,16 @@
 //! reads the buffer's raw symbols with [`symbols`] instead. `Painted` takes
 //! every escape out of a cell, so a test that no escape reached the buffer
 //! would pass against it whatever the buffer held.
+//!
+//! A test about what the backend prints from a cell, rather than what the
+//! cell holds, reads the bytes with [`sent_by`].
 
-use ratatui::backend::TestBackend;
+use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::buffer::{Buffer, Cell, CellDiffOption};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
-use ratatui::{Frame, Terminal};
+use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 
 use crate::view::fitted::words_of;
 
@@ -120,6 +123,22 @@ impl Painted {
 /// Every symbol in a buffer, row after row, escape bytes and all.
 pub(crate) fn symbols(buffer: &Buffer) -> String {
     buffer.content.iter().map(Cell::symbol).collect()
+}
+
+/// The bytes a draw sends a terminal: what the backend printed from each
+/// cell, escape sequences and all, in the order it printed them.
+pub(crate) fn sent_by(width: u16, height: u16, draw: impl FnOnce(&mut Frame)) -> Vec<u8> {
+    let mut sent = Vec::new();
+    let mut terminal = Terminal::with_options(
+        CrosstermBackend::new(&mut sent),
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, width, height)),
+        },
+    )
+    .expect("a terminal writing into memory");
+    terminal.draw(draw).expect("a draw into memory");
+    drop(terminal);
+    sent
 }
 
 /// How many columns a cell answers for. A cell that reports a width its

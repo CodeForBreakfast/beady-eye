@@ -1226,6 +1226,47 @@ mod tests {
         );
     }
 
+    /// The two kinds of name a config can give a colour, side by side on one
+    /// bead. `agent` is a slot of the palette, which the theme resolves;
+    /// `#c71585` is a colour the reader wrote, which no theme can move.
+    #[test]
+    fn a_badge_naming_a_slot_and_one_naming_a_colour_are_drawn_in_different_colours() {
+        let coloured = |key: &str, text: &str, colour: Colour| Badged {
+            key: key.into(),
+            text: text.into(),
+            link: None,
+            short: None,
+            colour: Some(colour),
+            drawn_on: DrawnOn::Own,
+        };
+        let mut badged = node("smt-4kd3p.20", "a bead", Status::Open);
+        badged.badges = vec![
+            coloured("jira", "ARKHAM-19", Colour::Slot(Slot::Agent)),
+            coloured(
+                "design",
+                "DISH-4",
+                Colour::Absolute(Color::Rgb(199, 21, 133)),
+            ),
+        ];
+
+        let painted = Painted::of(
+            bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
+            100,
+            1,
+        );
+
+        assert_eq!(
+            run_saying(&painted, "ARKHAM-19").style.fg,
+            palette::AGENT.fg,
+            "the badge naming a slot"
+        );
+        assert_eq!(
+            run_saying(&painted, "DISH-4").style.fg,
+            Some(Color::Rgb(199, 21, 133)),
+            "the badge naming a colour"
+        );
+    }
+
     /// A badge whose config named no colour is drawn as it was before there
     /// was one to name: nothing of its own, so the tone of the row it sits on
     /// reaches it the way it reaches the title beside it.
