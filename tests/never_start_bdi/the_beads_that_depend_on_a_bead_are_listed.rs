@@ -2,17 +2,20 @@
 //! lists them, whichever project's tracker holds the edge, and after the bead
 //! they wait on has closed.
 //!
-//! Run through the binary and the `jq` filter README gives, because a release
+//! The snapshot is the one `bdi --json --all --all-projects` prints, and it
+//! goes through the real `jq` with the filter README gives, because a release
 //! process cites that command line rather than anything inside `bdi`.
 
-mod terminal;
-
-use std::io::Write;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use beady_eye::collect::bd::parse_beads;
+use beady_eye::collect::herdr::Herdr;
+use beady_eye::collect::tracker::testing::{Fake, Fakes};
+use beady_eye::config::Config;
+use beady_eye::model::snapshot::Filter;
 use serde_json::{json, Value};
-use terminal::shims::ShimmedTracker;
+
+use crate::canned::Canned;
 
 /// The filter README's "Several trackers" gives, which has to change with it.
 /// README is not in the source this test is built from, so the test cannot
@@ -58,46 +61,35 @@ const ARKHAM: &str = r#"[
    "issue_type":"task","dependencies":[{"depends_on_id":"ark-5","type":"blocks"}]}
 ]"#;
 
-/// A home holding both projects, each in a directory of its own, and the
-/// config naming them.
-fn a_home(named: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
-    for directory in ["arkham", "dunwich", ".config/beady-eye"] {
-        std::fs::create_dir_all(home.join(directory)).expect("the directory is ours to make");
-    }
-    std::fs::write(
-        home.join(".config/beady-eye/config.toml"),
-        format!(
-            "[[projects]]\nname = \"arkham\"\npath = \"{}\"\n\n\
-             [[projects]]\nname = \"dunwich\"\npath = \"{}\"\n",
-            home.join("arkham").display(),
-            home.join("dunwich").display()
-        ),
-    )
-    .expect("the config is ours to write");
-    home
-}
+const BOTH_PROJECTS: &str = r#"
+[[projects]]
+name = "arkham"
+path = "/srv/work/arkham"
+
+[[projects]]
+name = "dunwich"
+path = "/srv/work/dunwich"
+"#;
 
 /// What the README's command line prints for `project`'s bead `id`.
 fn dependents_of(project: &str, id: &str) -> Value {
-    let home = a_home(&format!("dependents-of-{id}"));
-    let trackers = ShimmedTracker::beside(&home);
-    trackers.holds_for("arkham", ARKHAM);
-    trackers.holds_for("dunwich", DUNWICH);
-
-    let snapshot = Command::new(env!("CARGO_BIN_EXE_bdi"))
-        .arg("--config")
-        .arg(home.join(".config/beady-eye/config.toml"))
-        .args(["--json", "--all", "--all-projects"])
-        .envs(trackers.environment())
-        .current_dir(&home)
-        .output()
-        .expect("bdi runs");
-    assert!(
-        snapshot.status.success(),
-        "bdi exited {}: {}",
-        snapshot.status,
-        String::from_utf8_lossy(&snapshot.stderr)
+    let cfg = Config::from_toml(BOTH_PROJECTS).expect("the config parses");
+    let trackers = Fakes::default()
+        .with(
+            "arkham",
+            Fake::holding(parse_beads(ARKHAM).expect("the rows parse")),
+        )
+        .with(
+            "dunwich",
+            Fake::holding(parse_beads(DUNWICH).expect("the rows parse")),
+        );
+    let herdr = Canned::default().herdr_holding(r#"{"result":{"agents":[]}}"#);
+    let snapshot = beady_eye::app::run(
+        &cfg,
+        &Herdr::new(&herdr),
+        &trackers,
+        Filter::All,
+        "2026-08-30T12:00:00Z".parse().expect("the instant parses"),
     );
 
     let mut jq = Command::new("jq")
@@ -107,10 +99,7 @@ fn dependents_of(project: &str, id: &str) -> Value {
         .stderr(Stdio::piped())
         .spawn()
         .expect("jq runs");
-    jq.stdin
-        .take()
-        .expect("jq's stdin is piped")
-        .write_all(&snapshot.stdout)
+    serde_json::to_writer(jq.stdin.take().expect("jq's stdin is piped"), &snapshot)
         .expect("jq reads the snapshot");
     let listed = jq.wait_with_output().expect("jq finishes");
     assert!(

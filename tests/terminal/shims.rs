@@ -556,20 +556,6 @@ impl ShimmedHerdr {
             .collect()
     }
 
-    /// Every pane the reader has asked herdr to focus, as `<session> <pane>`,
-    /// in the order it asked. A focus is the only write `bdi` makes to herdr, and
-    /// one sent to the wrong session moves somebody else's terminal — which
-    /// is a fact only the shim can report, since both sessions answer to the
-    /// same pane id.
-    pub fn focused_panes(&self) -> Vec<String> {
-        std::fs::read_to_string(&self.reads)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|line| line.strip_prefix("focus "))
-            .map(str::to_string)
-            .collect()
-    }
-
     /// What every pane read from here answers with, in place of what it
     /// answered before.
     ///
