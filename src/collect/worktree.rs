@@ -103,7 +103,9 @@ fn the_admin_directory_claims(admin: &Path, root: &Path) -> bool {
 /// That is the price of the answer being a path a config can be compared
 /// against — resolving through the links would place the pane at git's
 /// spelling of the checkout rather than the reader's, and a project
-/// configured through a symlink would stop holding its own panes.
+/// configured through a symlink would stop holding its own panes. Git's
+/// spelling is the real path: `git worktree list` names a checkout reached
+/// through a symlink by its target, never by the link it was reached through.
 ///
 /// What the fold lands on is then a fact about the disk rather than
 /// anything this decides, which is why `the_admin_directory_claims` exists:
