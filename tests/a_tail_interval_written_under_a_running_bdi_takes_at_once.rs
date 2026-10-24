@@ -10,11 +10,9 @@
 //! due 40 asks in two seconds, and the ceiling on the other side is imposed
 //! by the code rather than by the hardware.
 //!
-//! `the_band_reads_its_pane_again_on_its_own_clock` is the neighbouring test
-//! and this is deliberately not it. That one starts on an interval short
-//! enough that the ages cannot be told from the band's own clock, and its
-//! whole difficulty is separating the two. This one starts on an interval no
-//! run outlives, where the band asks for its pane once and is not due again
+//! The band's own clock is pinned by the unit test
+//! `the_band_asks_for_its_pane_again_on_its_own_clock`, and this is
+//! deliberately not it. This one starts on an interval no run outlives, where the band asks for its pane once and is not due again
 //! inside the test — so the question is not *how often* but *whether the edit
 //! reaches the band at all*. Measured against `204dea35`, the tree before
 //! this change: **0 asks in the window after the reader wrote the short

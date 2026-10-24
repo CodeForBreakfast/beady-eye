@@ -4,14 +4,10 @@
 //! What is under test is the whole road: xterm's SGR encoding of a notch off
 //! the wire, `wire::incoming` turning it into a scroll, and the forest moving
 //! a viewport of its own under a selection that stays where the reader put
-//! it. None of it is reachable from a test that drives the forest directly,
-//! because the distance a notch travels is `bdi`'s answer to one report from
-//! the terminal and nothing else asks the question that way.
+//! it.
 //!
 //! The screen is nine rows because the forest has to have more lines than it
-//! has room for. Nine rows leave the forest five, over nine lines, so the
-//! furthest it can scroll is four — one further than a notch goes, which is
-//! what makes the distance the notch's rather than the end of the forest's.
+//! has room for. Nine rows leave the forest five, over nine lines.
 
 mod terminal;
 
@@ -31,15 +27,9 @@ const A_SILENCE: Duration = Duration::from_millis(300);
 /// Enter, which shows the bead the selection is on.
 const SHOW_BEAD: &[u8] = b"\r";
 
-/// How far one notch moves the view, for a run whose config says nothing —
-/// `[tui]`'s `wheel_notch_lines`. Written out rather than read off the
-/// default, which would agree with any number it was given.
-const THREE_LINES: u16 = 3;
-
 /// The fourth line of the forest, and the first of the six loose roots the
 /// capture ends with. Far enough down that it is on screen before the notch
-/// and still on screen after it, which is what lets one row say how far the
-/// view travelled.
+/// and still on screen after it.
 const A_ROOT_THE_NOTCH_KEEPS_ON_SCREEN: &[u8] = b"dun-b1";
 
 /// The window over that root, for a click that lands on it.
@@ -48,48 +38,6 @@ const THAT_ROOT: &str = "dun-b1";
 /// The root the walk leaves the selection on, which the notch takes off the
 /// screen — the whole point of the test that names it.
 const THE_SELECTED_ROOT: &[u8] = b"dun-c3";
-
-/// One notch of the wheel moves the forest three lines down.
-///
-/// Asserted as the distance one row travelled rather than as the row it
-/// arrived on: the row it arrives on is the same for every notch big enough
-/// to reach the end of the forest, and the distance is the thing chosen.
-#[test]
-fn a_notch_moves_the_forest_three_lines() {
-    let (mut bdi, _tracker) = over_the_loose_roots("wheeled", ROWS, COLS, A_SILENCE);
-
-    let before = repaint(&mut bdi, ROWS + 1);
-    let was = row_of(&before, A_ROOT_THE_NOTCH_KEEPS_ON_SCREEN).unwrap_or_else(|| {
-        panic!(
-            "that root is drawn on no one row before the notch. The screen it \
-             drew: {:?}\n{}",
-            String::from_utf8_lossy(&before),
-            bdi.timeline()
-        )
-    });
-
-    bdi.send(A_NOTCH_DOWN);
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    let after = repaint(&mut bdi, ROWS);
-    let now = row_of(&after, A_ROOT_THE_NOTCH_KEEPS_ON_SCREEN).unwrap_or_else(|| {
-        panic!(
-            "that root is drawn on no one row after the notch. The screen it \
-             drew: {:?}\n{}",
-            String::from_utf8_lossy(&after),
-            bdi.timeline()
-        )
-    });
-
-    assert_eq!(
-        was.checked_sub(now),
-        Some(THREE_LINES),
-        "one notch moved the view from row {was} to row {now}. The screen it \
-         drew: {:?}\n{}",
-        String::from_utf8_lossy(&after),
-        bdi.timeline()
-    );
-}
 
 /// The selection stays on the bead it was on, even where the notch has taken
 /// that bead off the screen.

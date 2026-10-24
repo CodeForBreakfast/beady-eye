@@ -861,7 +861,7 @@ fn asked_for(view: &mut dyn View, outstanding: &mut Outstanding, wanted: Wanted)
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::app::Armed;
     use crate::collect::changes::Reported;
@@ -1161,21 +1161,21 @@ mod tests {
     /// A window of nothing is a setting `bdi` could be run at rather than a
     /// stand-in: `WINDOW` is the only value production uses, and the tests
     /// that are about the window say so by naming one.
-    fn at_once() -> Outstanding {
+    pub(in crate::tui) fn at_once() -> Outstanding {
         Outstanding::waiting(PATIENCE, TimeDelta::zero())
     }
 
     /// The projects that ask for themselves, where the test is not about
     /// them. Nothing is armed at the start of a run either — the first read
     /// arms every project when it comes back.
-    fn nothing_armed() -> Vec<Armed> {
+    pub(in crate::tui) fn nothing_armed() -> Vec<Armed> {
         Vec::new()
     }
 
     /// A run with no config file to look at again. What the loop does with
     /// one is `Reload`'s own tests and the pty test that drives the binary;
     /// what these say is that the loop reaches everything else without one.
-    fn nothing_watched() -> Option<Reload> {
+    pub(in crate::tui) fn nothing_watched() -> Option<Reload> {
         None
     }
 
@@ -1188,7 +1188,7 @@ mod tests {
     }
 
     /// What the run reads, where only the polling half is the test's subject.
-    fn a_run_reading(polling: Vec<Armed>) -> Reading {
+    pub(in crate::tui) fn a_run_reading(polling: Vec<Armed>) -> Reading {
         Reading::of(polling, nothing_reported())
     }
 
@@ -1222,7 +1222,7 @@ mod tests {
     ///
     /// A run with nothing to look at never asks for this; the tests about a
     /// config the reader has written are the ones it answers.
-    fn polling_every_interval() -> Arming {
+    pub(in crate::tui) fn polling_every_interval() -> Arming {
         Box::new(|cfg: &Config| {
             cfg.read()
                 .map(|project| Armed::as_poll_says(project.name.clone(), project.poll, AN_INTERVAL))
@@ -1230,7 +1230,7 @@ mod tests {
         })
     }
 
-    fn waiting(events: Vec<Event>) -> Receiver<Event> {
+    pub(in crate::tui) fn waiting(events: Vec<Event>) -> Receiver<Event> {
         let (to, from) = mpsc::channel();
         for event in events {
             to.send(event)

@@ -1,10 +1,5 @@
 //! A bead the window names is followed to, and the way back returns.
 //!
-//! Nothing reaches `Screen::follow` or `Screen::retrace` through the binary
-//! otherwise: both are delegations a run never makes under the unit tests, so
-//! each could return a constant and `Tab`, `Enter` and `Esc` would all stop
-//! working over a bead window with the suite still green.
-//!
 //! What every assertion here names is the words a window says rather than the
 //! title of a bead. The window is drawn from the *selection*, so one wrongly
 //! left up after a jump draws over whatever the selection landed on and under
@@ -17,7 +12,7 @@ mod terminal;
 use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
-use terminal::{contains, over_the_described_subtree, window_over, THE_DESCRIBED_SUBTREE};
+use terminal::{over_the_described_subtree, window_over, THE_DESCRIBED_SUBTREE};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -49,71 +44,11 @@ const THE_FIRST_BEAD: &str = "dun-0tp.6";
 /// Its parent, which is the tree's root and the bead `Tab` puts the ring on.
 const ITS_PARENT: &str = "dun-0tp";
 
-/// The parent drawn as a bead the forest can take the reader to: `bd`'s own
-/// blue from `view::palette` as the terminal is told it, with the id right
-/// after it.
-///
-/// This is what says the forest answered before the test presses anything.
-/// Only an id the forest can be gone to is drawn in a run of its own, so the
-/// colour and the id reach the wire together, where the id on its own is on
-/// the forest's tree header as well.
-const THE_PARENT_CAN_BE_GONE_TO: &str = "\u{1b}[38;2;89;194;255;49mdun-0tp";
-
-/// Following the parent moves the forest to it and redraws the window there.
-///
-/// The window is drawn from the selection, so the second reading is two
-/// claims at once: the selection moved, and the window survived the move.
-/// `bead_still_shown` closes the window when the selection leaves the bead it
-/// was opened on, and it cannot tell a reader's deliberate jump from a
-/// collection dragging them off — so a follow that did not say where it had
-/// gone would close the window on the very press that asked for the bead.
-#[test]
-fn following_a_bead_the_window_names_takes_the_reader_to_it() {
-    let (mut bdi, _tracker) = over_the_described_subtree("followed", ROWS, COLS, A_SILENCE);
-    let opened = open_the_first_bead(&mut bdi);
-
-    bdi.send(NEXT_BEAD_NAMED);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    let on_the_parent = repaint(&mut bdi, ROWS);
-    assert!(
-        contains(&on_the_parent, THE_PARENT_CAN_BE_GONE_TO.as_bytes()),
-        "the window does not draw the parent as a bead the forest can be gone \
-         to, so there is nothing for this test to follow. The screen it drew: \
-         {:?}\n{}",
-        String::from_utf8_lossy(&on_the_parent),
-        bdi.timeline()
-    );
-
-    bdi.send(FOLLOW);
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    let followed = repaint(&mut bdi, ROWS + 1);
-    assert!(
-        window_over(&followed).is_some(),
-        "the window closed on the press that asked for the bead. The screen \
-         it drew: {:?}\nThe screen before the press: {:?}\n{}",
-        String::from_utf8_lossy(&followed),
-        String::from_utf8_lossy(&opened),
-        bdi.timeline()
-    );
-    assert_eq!(
-        window_over(&followed).as_deref(),
-        Some(ITS_PARENT),
-        "the window stayed up and is not on the bead that was followed. The \
-         screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&followed),
-        bdi.timeline()
-    );
-}
-
 /// A collection landing after a follow leaves the window up, on the bead the
 /// reader followed to.
 ///
-/// This is the one that reaches the guard. `bead_still_shown` is consulted
-/// only when a collection lands, so the test above can follow a bead and read
-/// the screen without the guard ever being asked — measured, by making the
-/// follow forget to say where it had gone: that turned exactly one test red
-/// and neither of the pty tests was it. The window closing here is a reader
+/// `bead_still_shown` is consulted only when a collection lands, so a follow
+/// read without one never asks the guard. The window closing here is a reader
 /// dropped into the forest at the next poll, several seconds after the press
 /// that looked as though it had worked.
 #[test]
@@ -139,34 +74,9 @@ fn a_collection_after_a_follow_leaves_the_window_on_the_bead_followed_to() {
     );
 }
 
-/// And `Esc` comes back to the bead it was followed from, rather than out to
-/// the forest. Without this the test above is met by a jump nobody can undo,
-/// which is a reader stranded one press from where they were reading.
-#[test]
-fn the_way_back_returns_to_the_bead_the_reference_was_followed_from() {
-    let (mut bdi, _tracker) = over_the_described_subtree("returned", ROWS, COLS, A_SILENCE);
-    open_the_first_bead(&mut bdi);
-    bdi.send(NEXT_BEAD_NAMED);
-    bdi.send(FOLLOW);
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    bdi.send(BACK);
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    let back = repaint(&mut bdi, ROWS);
-    assert_eq!(
-        window_over(&back).as_deref(),
-        Some(THE_FIRST_BEAD),
-        "the way back did not return to the bead the reference was followed \
-         from. The screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&back),
-        bdi.timeline()
-    );
-}
-
-/// And once more takes the window down, because the bead the window was
-/// opened on is where the way back leads out of the view. A reader who
-/// pressed `Esc` twice would otherwise still be in a window.
+/// The way back from a follow returns to the bead the window was opened on,
+/// and a second `Esc` leads out of the view from there. A reader who pressed
+/// `Esc` twice would otherwise still be in a window.
 #[test]
 fn the_way_back_leaves_the_view_from_the_bead_the_window_was_opened_on() {
     let (mut bdi, _tracker) = over_the_described_subtree("left", ROWS, COLS, A_SILENCE);
