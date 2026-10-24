@@ -1034,6 +1034,20 @@ mod tests {
         );
     }
 
+    /// A project whose writers all keep the journal has bd keep it too, or the
+    /// watcher misses the one write a person made through `bdi bd`.
+    #[test]
+    fn a_project_keeping_the_journal_has_bd_keep_it() {
+        let project = Project {
+            events_journal: true,
+            ..ambient_project()
+        };
+
+        let env = tracker_env(&FakeRunner::default(), &project, None, None).unwrap();
+
+        assert_eq!(env.get("BD_EVENTS_JOURNAL").map(String::as_str), Some("1"));
+    }
+
     /// A wrapper the machine has not got names *itself* as the missing
     /// program, which is what a reader can act on.
     ///

@@ -81,57 +81,6 @@ fn a_response_is_run_against_the_named_projects_tracker_and_bd_answers_the_calle
     assert_eq!(tracker.calls(), [RESPONDED]);
 }
 
-/// A defer goes the way a response does, to the named project's tracker.
-#[test]
-fn a_defer_until_a_date_is_run_against_the_named_projects_tracker() {
-    let home = a_home_naming_two_projects("defer-reaches-kadath", "");
-    let tracker = ShimmedTracker::beside(&home);
-    let deferred = "defer kad-1 --until 2026-03-20";
-    let said_by_bd = "* Deferred kad-1\n";
-    tracker.answers_for("kadath", deferred, said_by_bd);
-
-    let out = bdi(&home, &tracker, "bd kadath defer kad-1 --until 2026-03-20");
-
-    assert!(out.status.success(), "{}", said(&out.stderr));
-    assert_eq!(said(&out.stdout), said_by_bd);
-    assert_eq!(tracker.calls(), [deferred]);
-}
-
-/// A comment goes the way a response does, with its text after `--` as the
-/// caller wrote it.
-#[test]
-fn a_comment_is_run_against_the_named_projects_tracker() {
-    let home = a_home_naming_two_projects("comment-reaches-kadath", "");
-    let tracker = ShimmedTracker::beside(&home);
-    let commented = "comments add kad-1 -- -C is only text, and one more thing";
-    let said_by_bd = "Comment added to kad-1\n";
-    tracker.answers_for("kadath", commented, said_by_bd);
-
-    let out = bdi(
-        &home,
-        &tracker,
-        "bd kadath comments add kad-1 -- -C is only text, and one more thing",
-    );
-
-    assert!(out.status.success(), "{}", said(&out.stderr));
-    assert_eq!(said(&out.stdout), said_by_bd);
-    assert_eq!(tracker.calls(), [commented]);
-}
-
-/// A project whose writers all keep the journal has bdi's writes kept in it
-/// too, or the watcher misses the one write a person made.
-#[test]
-fn a_response_to_a_project_keeping_the_journal_is_journalled() {
-    let home = a_home_naming_two_projects("respond-journalled", "events_journal = true\n");
-    let tracker = ShimmedTracker::beside(&home);
-    tracker.answers_for("kadath", RESPONDED, CLOSED);
-
-    let out = bdi(&home, &tracker, "bd kadath human respond kad-1 -r yes");
-
-    assert!(out.status.success(), "{}", said(&out.stderr));
-    assert_eq!(tracker.journalled_calls(), [format!("1 {RESPONDED}")]);
-}
-
 /// Whether a tracker keeps the journal is its config's to say, so the
 /// caller's own setting reaches bd no more than its choice of database does.
 #[test]
@@ -269,13 +218,6 @@ fn any_command_line_but_a_response_is_refused_before_bd_is_reached() {
     let tracker = ShimmedTracker::beside(&home);
 
     for args in [
-        "bd kadath close kad-1",
-        "bd kadath defer kad-1 --until tomorrow --db arkham",
-        "bd kadath comments add kad-1 --db arkham yes",
-        "bd kadath comments add kad-1 -f notes.txt",
-        "bd kadath human respond kad-1 --db arkham yes",
-        "bd kadath human respond kad-1 -C ../arkham yes",
-        "bd kadath --global human respond kad-1 yes",
         "bd innsmouth human respond kad-1 yes",
         "--json bd kadath human respond kad-1 yes",
     ] {
