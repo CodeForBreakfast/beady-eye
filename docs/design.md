@@ -2373,8 +2373,8 @@ each connection with a `watch-all` on its project:
 A `watch-all` is sent one for each bead an agent session is watching when it
 starts, and one more whenever that set of agent sessions changes. An agent
 session stops watching when the last connection naming it on that bead
-closes, so the line after it has `"agent_sessions": []`. It says nothing a tracker holds, so it waits for no read and
-no freshness line follows it.
+closes, so the line after it has `"agent_sessions": []`. It says nothing a
+tracker holds, so it waits for no read and no freshness line follows it.
 
 **An alive line** goes out on every connection every 20 seconds, whatever else
 has been sent:
