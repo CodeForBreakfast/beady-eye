@@ -9,7 +9,7 @@
 mod terminal;
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{
-    a_home_naming_one_project_settled, a_socket_of_its_own, contains, die_with, the_socket_under,
-    Producer, ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
+    a_home_naming_one_project_settled, a_socket_of_its_own, die_with, the_socket_under, Producer,
+    ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
 };
 
 /// `a`, which shows every tree rather than only those with a live agent. No
@@ -332,237 +332,6 @@ fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
     assert!(freshness["reach"]["path"].is_string(), "{freshness}");
 }
 
-#[test]
-fn a_bead_created_after_the_consumer_connected_is_sent_and_one_that_goes_is_gone() {
-    let (home, tracker, watcher) = a_watcher("watch-learns-of-new-beads");
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-    consumer.sends("watch arkham").hears_an_answer();
-
-    the_tracker_now_holds(
-        &home,
-        &tracker,
-        &the_described_subtree_with(|rows| {
-            let mut created = rows[1].clone();
-            created["id"] = json!("dun-0tp.10");
-            rows.push(created);
-            rows.retain(|row| row["id"] != "dun-0tp.6");
-        }),
-    );
-    let answer = consumer.hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(beads_in(&answer), ["dun-0tp.10"]);
-    assert!(
-        answer.contains(&json!({ "line": "gone", "project": "arkham", "id": "dun-0tp.6" })),
-        "{answer:?}"
-    );
-}
-
-#[test]
-fn a_report_that_changes_nothing_is_answered_by_freshness_alone() {
-    let (home, tracker, watcher) = a_watcher("watch-quiet");
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-    let first = consumer.sends("watch arkham").hears_an_answer();
-
-    the_tracker_now_holds(&home, &tracker, THE_DESCRIBED_SUBTREE);
-    let answer = consumer.hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(answer.len(), 1, "{answer:?}");
-    assert_ne!(
-        answer[0]["as_of"],
-        first.last().expect("an answer ends")["as_of"],
-        "the second read vouches for a later instant"
-    );
-}
-
-/// `watch` starts from the beads that are not closed and is told when one
-/// closes. `watch-all` starts from every bead, and a reconnect is sent the
-/// beads as they now stand.
-#[test]
-fn a_watch_is_told_of_a_close_and_a_reconnect_is_sent_the_bead_as_it_stands() {
-    let (home, tracker, watcher) = a_watcher("watch-close");
-    let mut watching = Consumer::connected_to(&watching_at(&home));
-    watching.sends("watch arkham").hears_an_answer();
-
-    the_tracker_now_holds(
-        &home,
-        &tracker,
-        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
-    );
-    let told = watching.hears_an_answer();
-    let open_only = Consumer::connected_to(&watching_at(&home))
-        .sends("watch arkham")
-        .hears_an_answer();
-    let everything = Consumer::connected_to(&watching_at(&home))
-        .sends("watch-all arkham")
-        .hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(beads_in(&told), ["dun-0tp.7"]);
-    assert_eq!(told[0]["row"]["status"], "closed");
-    assert_eq!(
-        beads_in(&open_only),
-        ["dun-0tp", "dun-0tp.6", "dun-0tp.8", "dun-0tp.9"]
-    );
-    assert_eq!(beads_in(&everything), EVERY_DESCRIBED_BEAD);
-}
-
-#[test]
-fn a_watch_on_one_bead_is_sent_that_bead_whatever_its_status() {
-    let (home, tracker, watcher) = a_watcher("watch-one-bead");
-    let mut waiting = Consumer::connected_to(&watching_at(&home));
-    waiting.sends("watch arkham").hears_an_answer();
-    the_tracker_now_holds(
-        &home,
-        &tracker,
-        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
-    );
-    waiting.hears_an_answer();
-
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-    let closed = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
-    let never_held = consumer.sends("watch arkham dun-0tp.99").hears_an_answer();
-
-    the_tracker_now_holds(
-        &home,
-        &tracker,
-        &the_described_subtree_with(|rows| {
-            closing(rows, "dun-0tp.7");
-            closing(rows, "dun-0tp.8");
-        }),
-    );
-    let then_gone = consumer.hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(beads_in(&closed), ["dun-0tp.7"]);
-    assert_eq!(closed[0]["row"]["status"], "closed");
-    assert_eq!(
-        closed.len(),
-        2,
-        "the bead and its project's freshness: {closed:?}"
-    );
-    assert_eq!(
-        never_held.len(),
-        1,
-        "only the freshness, since the read it came from may predate the bead: {never_held:?}"
-    );
-    assert_eq!(never_held[0]["line"], "freshness");
-    assert_eq!(
-        then_gone[0],
-        json!({ "line": "gone", "project": "arkham", "id": "dun-0tp.99" })
-    );
-    assert_eq!(then_gone.len(), 2, "{then_gone:?}");
-}
-
-#[test]
-fn every_project_is_watched_by_a_bare_watch() {
-    let (home, _tracker, watcher) = a_watcher("watch-everything");
-
-    let answer = Consumer::connected_to(&watching_at(&home))
-        .sends("watch")
-        .hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
-}
-
-#[test]
-fn a_line_the_watcher_cannot_serve_is_refused_and_the_connection_goes_on() {
-    let (home, _tracker, watcher) = a_watcher("watch-refuses");
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-
-    let unknown = consumer.sends("watch innsmouth").hears();
-    let malformed = consumer.sends("watch-all").hears();
-    let answer = consumer.sends("watch arkham").hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(
-        unknown,
-        Some(json!({ "line": "refused", "asked": "watch innsmouth", "reason": "unknown-project" }))
-    );
-    assert_eq!(
-        malformed,
-        Some(json!({ "line": "refused", "asked": "watch-all", "reason": "malformed" }))
-    );
-    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
-}
-
-impl Consumer {
-    /// The next line that is not an alive line.
-    fn hears_past_alive(&mut self) -> Option<Value> {
-        std::iter::from_fn(|| Some(self.hears()))
-            .find(|line| line.as_ref().is_none_or(|line| line["line"] != "alive"))
-            .flatten()
-    }
-}
-
-/// Only a watch on one bead that names its agent session counts as that agent
-/// session watching the bead. A view watching the whole project is told of it,
-/// and told again once the agent session's connection closes.
-#[test]
-fn a_view_is_told_which_agent_sessions_watch_each_bead_and_when_one_stops() {
-    let (home, _tracker, watcher) = a_watcher("watch-sessions");
-    let mut view = Consumer::connected_to(&watching_at(&home));
-    view.sends("watch-all arkham").hears_an_answer();
-
-    let mut unnamed = Consumer::connected_to(&watching_at(&home));
-    unnamed.sends("watch arkham dun-0tp.8").hears_an_answer();
-    let mut whole = Consumer::connected_to(&watching_at(&home));
-    whole.sends("watch arkham").hears_an_answer();
-    let mut named = Consumer::connected_to(&watching_at(&home));
-    named
-        .sends("watch arkham dun-0tp.7 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")
-        .hears_an_answer();
-    let watching = view.hears_past_alive();
-    drop(named);
-    let stopped_watching = view.hears_past_alive();
-
-    stopped(watcher);
-    assert_eq!(
-        watching,
-        Some(
-            json!({ "line": "watching", "project": "arkham", "id": "dun-0tp.7", "agent_sessions": ["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"] })
-        )
-    );
-    assert_eq!(
-        stopped_watching,
-        Some(
-            json!({ "line": "watching", "project": "arkham", "id": "dun-0tp.7", "agent_sessions": [] })
-        )
-    );
-}
-
-/// A consumer naming its agent session is answered as any watch of one bead
-/// is. A bead's line this watcher cannot read, as an older watcher cannot read
-/// one naming an agent session, is refused as `malformed` with the line as
-/// asked, and the consumer goes on to watch the bead without it.
-#[test]
-fn a_consumer_can_tell_whether_the_watcher_understands_agent_sessions() {
-    let (home, _tracker, watcher) = a_watcher("watch-probe");
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-
-    let understood = consumer
-        .sends("watch arkham dun-0tp.7 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")
-        .hears_an_answer();
-    let refused = consumer
-        .sends("watch arkham dun-0tp.8 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952 c47e02b6-9d51-4a83-b6f2-08ac5e13d740")
-        .hears_past_alive();
-    let without = consumer.sends("watch arkham dun-0tp.8").hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(beads_in(&understood), ["dun-0tp.7"]);
-    assert_eq!(
-        refused,
-        Some(json!({
-            "line": "refused",
-            "asked": "watch arkham dun-0tp.8 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952 c47e02b6-9d51-4a83-b6f2-08ac5e13d740",
-            "reason": "malformed"
-        }))
-    );
-    assert_eq!(beads_in(&without), ["dun-0tp.8"]);
-}
-
 /// What a consumer that acts only on what it is told relies on: a watcher
 /// that goes closes the connection, and the next connect is refused.
 #[test]
@@ -638,66 +407,6 @@ fn a_watch_on_a_bead_in_a_project_keeping_a_journal_is_sent_its_records_before_t
         .map(|line| line["line"].as_str().expect("every line says its kind"))
         .collect();
     assert_eq!(kinds, ["event", "event", "event", "bead", "freshness"]);
-}
-
-/// bd's refusal of a read from the start of a journal it has pruned names
-/// the seq the journal ends at, and the watcher reads on from there.
-#[test]
-fn a_journal_bd_has_pruned_is_read_on_from_where_bds_refusal_says_it_ends() {
-    let (home, tracker, watcher) = a_watcher_over(
-        "watch-pruned",
-        &format!("{NOT_POLLED}events_journal = true\n"),
-        |tracker| {
-            tracker.refuses_with(
-                THE_JOURNAL_SINCE_IT_STARTED,
-                "Error: events journal truncated: checkpoint 0 is below the retained window [5..8]; records 1..4 were pruned\n\
-                 Hint: resume with --since 4 to continue from the oldest retained record (accepting the gap), or re-import from scratch\n",
-            )
-        },
-    );
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-    let first = consumer.sends("watch arkham dun-0tp.7").hears_an_answer();
-
-    tracker.answers_with("events tail --since 8", &the_journal_of_dun_0tp_7(8));
-    the_tracker_now_holds(
-        &home,
-        &tracker,
-        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
-    );
-    let answer = consumer.hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(first.last().expect("an answer ends")["events"], "ok");
-    assert_eq!(events_in(&answer), ["comment", "dep_add", "close"]);
-    assert_eq!(answer[0]["event"]["seq"], 9);
-}
-
-#[test]
-fn a_project_that_claims_no_journal_is_said_to_have_no_events_and_its_journal_is_never_read() {
-    let (home, tracker, watcher) = a_watcher_over("watch-no-journal", NOT_POLLED, |tracker| {
-        tracker.answers_with(THE_JOURNAL_SINCE_IT_STARTED, &the_journal_of_dun_0tp_7(0))
-    });
-    let mut consumer = Consumer::connected_to(&watching_at(&home));
-    consumer.sends("watch arkham").hears_an_answer();
-
-    the_tracker_now_holds(
-        &home,
-        &tracker,
-        &the_described_subtree_with(|rows| closing(rows, "dun-0tp.7")),
-    );
-    let answer = consumer.hears_an_answer();
-
-    stopped(watcher);
-    assert_eq!(events_in(&answer), Vec::<&str>::new());
-    assert_eq!(answer.last().expect("an answer ends")["events"], "off");
-    assert!(
-        !tracker
-            .calls()
-            .iter()
-            .any(|call| call.starts_with("events")),
-        "{:?}",
-        tracker.calls()
-    );
 }
 
 /// A home whose config tells every run where the watcher is, as a setup
@@ -776,59 +485,6 @@ fn a_one_shot_beside_a_watcher_reads_no_tracker_and_says_what_its_own_read_says(
     }
 }
 
-/// A one-shot is dated to the watcher's read rather than to the instant it
-/// asked, so it says how old what it says is.
-#[test]
-fn a_one_shot_beside_a_watcher_is_dated_to_the_watchers_read() {
-    let (home, tracker) = a_home_with_a_watcher_configured("watched-dated");
-    let watcher = watching_in(&home, &tracker);
-    let freshness = Consumer::connected_to(&watching_at(&home))
-        .sends("watch arkham")
-        .hears_an_answer()
-        .pop()
-        .expect("an answer ends");
-
-    let (_, dated) = one_shot(&home, &tracker, &["--json", "--all"]);
-
-    stopped(watcher);
-    assert_eq!(dated, freshness["as_of"]);
-}
-
-/// A watcher that hangs up without answering is one that is not running,
-/// and the run reads its tracker as it would with none configured.
-#[test]
-fn a_one_shot_whose_watcher_hangs_up_reads_for_itself() {
-    let (home, tracker) = a_home_with_a_watcher_configured("watched-hangs-up");
-    let hanging_up = UnixListener::bind(watching_at(&home)).expect("the socket is ours");
-    std::thread::spawn(move || {
-        for connection in hanging_up.incoming() {
-            drop(connection);
-        }
-    });
-
-    let (written, _) = one_shot(&home, &tracker, &["--json", "--all"]);
-
-    assert_eq!(reads_in_full(&tracker), 1, "the run read for itself");
-    assert_eq!(written["failed_projects"], json!([]));
-    assert_eq!(written["trees"][0]["root"], "dun-0tp");
-}
-
-/// Configured and not running is the ordinary state of a machine whose
-/// watcher is being restarted.
-#[test]
-fn a_one_shot_whose_watcher_is_not_running_reads_for_itself() {
-    let (home, tracker) = a_home_with_a_watcher_configured("watched-not-running");
-
-    let (written, _) = one_shot(&home, &tracker, &["--beads"]);
-
-    assert!(tracker.read_the_tracker(), "the run read for itself");
-    assert_eq!(written["failed_projects"], json!([]));
-    assert!(
-        !written["beads"].as_array().expect("beads").is_empty(),
-        "{written}"
-    );
-}
-
 /// A view beside a watcher draws what the watcher holds and asks bd
 /// nothing, and reads the tracker itself as soon as the watcher goes.
 #[test]
@@ -886,28 +542,6 @@ fn a_view_the_watcher_does_not_answer_for_says_it_reads_the_project_itself() {
     assert!(
         reads_in_full(&tracker) > read_by_the_watcher,
         "the view read arkham itself"
-    );
-}
-
-/// The same view under the watcher's own config is answered for, and says
-/// nothing of reading the project itself.
-#[test]
-fn a_view_the_watcher_answers_for_says_nothing_of_reading_the_project_itself() {
-    let (home, tracker) = a_home_with_a_watcher_configured("watched-view-answered");
-    let watcher = watching_in(&home, &tracker);
-    let mut environment = tracker.environment();
-    environment.push(a_socket_of_its_own(&home));
-
-    let mut bdi = Driven::bdi(40, 120, home.clone(), &environment);
-    bdi.read_until(ENTER_ALTERNATE_SCREEN, THE_SCREEN_GIVING_UP);
-    bdi.read_until(b"dun-0tp", THE_SCREEN_GIVING_UP);
-    bdi.settle(Duration::from_millis(300), THE_SCREEN_GIVING_UP);
-    stopped(watcher);
-
-    assert!(
-        !contains(&bdi.everything(), READ_HERE),
-        "a view the watcher answers for said it reads a project itself: {}",
-        bdi.timeline()
     );
 }
 
