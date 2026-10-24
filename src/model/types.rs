@@ -275,6 +275,17 @@ pub struct PaneKey {
     pub id: String,
 }
 
+/// The agent session herdr reports for a pane's agent, as herdr spells it.
+/// `kind` says what `value` is, so a reader matches on the kind it uses and
+/// leaves a session of any other kind alone.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentSession {
+    pub agent: String,
+    pub kind: String,
+    pub source: String,
+    pub value: String,
+}
+
 /// One pane as `bdi` holds it: only the fields it uses. The names are
 /// herdr's, under the terminology rule, and another provider maps into them.
 /// How one spells them on the wire, and which it may leave out, is the
@@ -290,6 +301,7 @@ pub struct Pane {
     /// name for it. `bdi` never reads anything into the name: it is the key
     /// the reader's `[tail.crop]` is written against.
     pub agent: Option<String>,
+    pub agent_session: Option<AgentSession>,
     pub display_agent: Option<String>,
     pub title: Option<String>,
     pub state_labels: BTreeMap<String, String>,
@@ -315,6 +327,7 @@ impl Pane {
             pane_id,
             cwd,
             agent: None,
+            agent_session: None,
             display_agent: None,
             title: None,
             state_labels: BTreeMap::new(),
