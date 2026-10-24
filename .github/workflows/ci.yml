@@ -92,6 +92,16 @@ jobs:
         with:
           determinate: false
 
+      # The cache step below uploads the whole closure of every path the run
+      # builds, writing it again even when the cache already holds it, and
+      # GitHub throttles the burst. Once throttled it uploads nothing more that
+      # run. The vendor directory's closure is every crate Cargo.lock names, so
+      # a run that built it there spent the budget before the dependency builds
+      # reached the queue. Fetched before the cache starts, the crates come
+      # from crates.io and never enter it.
+      - name: fetch the vendored crates
+        run: nix build --no-link .#beady-eye-deps.cargoVendorDir
+
       # Everything this job builds goes into the GitHub Actions cache, which
       # costs nothing, needs no account and no secret, and is scoped per
       # branch — a fork's pull request writes only into its own scope, so a
