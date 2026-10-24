@@ -1,7 +1,7 @@
 {
   "name": "beady-eye",
   "description": "Tells a Claude Code session when a bead it watches changes status, becomes ready, is commented on, or leaves or returns to its tracker. Part of beady-eye, which shows you, live, what every agent is doing across your projects, and tells agents and scripts when the beads they wait on change.",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "author": {
     "name": "Code For Breakfast",
     "email": "info@codeforbreakfast.co"
