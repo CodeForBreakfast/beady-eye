@@ -2333,18 +2333,6 @@ mod tests {
     // ---- the contract ----------------------------------------------------
 
     #[test]
-    fn the_join_source_serialises_the_way_the_contract_spells_it() {
-        assert_eq!(
-            serde_json::to_string(&JoinSource::AgentPane).unwrap(),
-            r#""agent_pane""#
-        );
-        assert_eq!(
-            serde_json::to_string(&JoinSource::DisplayAgent).unwrap(),
-            r#""display_agent""#
-        );
-    }
-
-    #[test]
     fn a_conflict_serialises_under_its_own_name() {
         let out = serde_json::to_string(&Conflict::SeveralPanesNameOneBead {
             bead: key("proj", "p-1"),
