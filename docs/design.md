@@ -2622,8 +2622,22 @@ starting sessions that way is the setup's business, as starting the watcher is.
 **The server learns its session as commy's does.** Claude Code starts it with
 the session's id in `CLAUDE_CODE_SESSION_ID`, and a `PreToolUse` hook adds the
 id and working directory to each call to the plugin's tools, because MCP tells
-a server neither. The server takes the first id it is given, from either, and
-keeps it.
+a server neither. The id is the one herdr reports as the pane's
+`agent_session`.
+
+**A running server's session can change its id.** Measured on Claude Code
+2.1.310:
+
+| What the session does | Its server | The id the hook gives |
+| --- | --- | --- |
+| `/clear` | keeps running, its environment still naming the old id | a new one |
+| `/resume` inside the session | keeps running, its environment still naming the old id | the resumed conversation's own |
+| `claude --resume <id>` | starts again, its environment naming `<id>` | `<id>` |
+| `/compact` | keeps running | unchanged |
+
+So the server takes each new id the hook gives as the session it serves now,
+and a running server learns of a `/clear` or a `/resume` at the session's next
+call to one of its tools, since the hook is the only thing that tells it.
 
 **A session is told how to use the plugin.** The server sends MCP
 instructions that every session loading the plugin receives: what the three
@@ -2676,6 +2690,21 @@ answered, for a session that named the wrong one.
 stop a watch, so `unwatch` closes that bead's connection, and a connection
 lost is that bead's alone to restore.
 
+**A watch names the agent session the plugin serves now.** Once the plugin
+knows its session's id, each bead's connection sends
+`watch <project> <id> <agent_session>`, so a view can draw the watch against
+the session's pane. The short connection that finds a bead's project sends no
+agent session, so the lookup is never taken for a watch. When the session's id
+changes, each bead's connection closes and another opens naming the new id.
+A watch made before the plugin knew any id moves the same way.
+
+**A watcher older than agent sessions is asked again without one.** It refuses
+the line as `malformed` and changes nothing else on the connection, so the
+plugin sends `watch <project> <id>` on the same connection and the bead is
+watched as before. The next connection names the agent session again, because
+the watcher it reaches may have been upgraded meanwhile. So the plugin's
+releases and `bdi`'s can go out in either order.
+
 **A session's watches outlive its server.** Claude Code restarts an MCP server
 under a live session, and a session can be resumed later under the same id. So
 the plugin keeps each session's watches in a file of its own under
@@ -2696,7 +2725,10 @@ beads the file named. Where the rename fails too, the block says so, and the
 session's next `watch` or `unwatch` writes over the file.
 Watches accepted before the session's id was known are written once it is,
 and where that write fails the session is sent a block with
-`watches="unkept"` naming them. They stay watched, and the next `watch` or
+`watches="unkept"` naming them.
+A new id moves the session's watches to the file named for it. The plugin
+watches again what that file already keeps, as a resumed conversation has its
+own, and writes the two together there. The old id's file keeps what it held. They stay watched, and the next `watch` or
 `unwatch` that is kept keeps them too.
 A watch ends when the session unwatches the bead, and not when the bead
 closes, because a closed bead can reopen. The server exits when the session
