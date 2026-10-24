@@ -648,3 +648,52 @@ fn in_the_snapshot(snapshot: &Snapshot, hidden_trees_open: bool) -> Reported {
         unconfigured_panes: snapshot.unconfigured.len(),
     }
 }
+
+/// A project `bdi` could not open is drawn in the group below the trees, and
+/// opening the group says why in the project's own words.
+fn said_once_its_failed_project_is_opened(failure: TrackerFailure) -> Vec<String> {
+    let mut forest = flatten(gather(
+        Vec::new(),
+        vec![FailedProject {
+            project: "lunar".into(),
+            tracker: failure,
+        }],
+        Filter::LiveAgents,
+    ));
+    let group = forest
+        .lines()
+        .iter()
+        .position(|line| {
+            matches!(&line.content, Content::Group(group)
+                if group.kind == GroupKind::FailedProjects)
+        })
+        .unwrap_or_else(|| panic!("the failed project has a group: {:#?}", sketch(&forest)));
+    step_onto(&mut forest, group);
+
+    forest.apply(Action::ExpandOrChild);
+
+    forest
+        .lines()
+        .iter()
+        .filter_map(|line| match &line.content {
+            Content::Item(Item::Failed(failed)) => Some(phrase::failed_project(failed)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_project_whose_credential_command_will_not_run_says_so_once_opened() {
+    assert_eq!(
+        said_once_its_failed_project_is_opened(TrackerFailure::NoCredential),
+        ["lunar: this project's credential command failed · nothing was read"]
+    );
+}
+
+#[test]
+fn a_project_whose_environment_will_not_run_says_so_once_opened() {
+    assert_eq!(
+        said_once_its_failed_project_is_opened(TrackerFailure::NoEnvironment),
+        ["lunar: could not set up this project's environment · nothing was read"]
+    );
+}
