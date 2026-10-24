@@ -589,6 +589,43 @@ mod tests {
         assert!(call.env.is_empty());
     }
 
+    /// A pane id is minted per session, so a pane in another session is
+    /// read from that session and not the one `bdi` sits in.
+    #[test]
+    fn a_pane_in_another_session_is_read_from_that_session() {
+        const ARGV: &str =
+            "herdr --session kadath agent read w1:p1 --source visible --lines 4 --format ansi";
+        let runner = FakeRunner::default().with(ARGV, "one\n");
+
+        let lines = Herdr::new(&runner)
+            .read(&in_kadath("w1:p1"), 4)
+            .expect("herdr answers");
+
+        assert_eq!(lines, ["one"]);
+        runner.call(ARGV);
+    }
+
+    /// A focus is the one write `bdi` makes to herdr, so one sent to the
+    /// session `bdi` sits in would move somebody else's terminal.
+    #[test]
+    fn a_focus_on_a_pane_in_another_session_is_sent_to_that_session() {
+        const ARGV: &str = "herdr --session kadath agent focus w1:p1";
+        let runner = FakeRunner::default().with(ARGV, "");
+
+        Herdr::new(&runner)
+            .focus(&in_kadath("w1:p1"))
+            .expect("herdr answers");
+
+        runner.call(ARGV);
+    }
+
+    fn in_kadath(id: &str) -> PaneKey {
+        PaneKey {
+            session: "kadath".to_string(),
+            id: id.to_string(),
+        }
+    }
+
     fn vanished() -> RunFailure {
         RunFailure {
             kind: FailureKind::Gone,

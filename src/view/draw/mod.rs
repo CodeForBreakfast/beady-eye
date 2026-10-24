@@ -1010,6 +1010,58 @@ mod tests {
         );
     }
 
+    /// A tracker is read whole, so a row bdi refused would cost every bead
+    /// in the project, not one field on one bead. The capture holds one row
+    /// of every shape bd wrote while it spelled `metadata` as a string, each
+    /// a loose root, and the frame drawn from it holds every one. The badge
+    /// on `phase` says the string was read as the object it spells rather
+    /// than merely tolerated.
+    #[test]
+    fn a_tracker_written_before_the_metadata_cutover_draws_its_beads() {
+        use crate::collect::agents::testing::Fake as Provider;
+        use crate::collect::bd::parse_beads;
+        use crate::collect::tracker::testing::{Fake, Fakes};
+        use crate::config::Config;
+
+        let cfg = Config::from_toml(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "/tmp/bdi-ground/dunwich"
+
+[[badges]]
+key = "metadata.phase"
+render = "{}"
+"#,
+        )
+        .expect("the config parses");
+        let capture = include_str!("../../../tests/fixtures/bd_before_the_metadata_cutover.json");
+        let trackers = Fakes::default().with(
+            "dunwich",
+            Fake::holding(parse_beads(capture).expect("the capture parses")),
+        );
+        let snapshot = crate::app::run(
+            &cfg,
+            &Provider::holding(Vec::new()),
+            &trackers,
+            Filter::All,
+            drawn_at(),
+        );
+
+        let frame = frame_of(&flatten(snapshot), 120, 40).rows();
+
+        for bead in ["dun-v1", "dun-v2", "dun-v3", "dun-v4", "dun-v5", "dun-v6"] {
+            assert!(
+                frame.iter().any(|row| row.contains(bead)),
+                "{bead} is on no row of {frame:#?}"
+            );
+        }
+        assert!(
+            frame.iter().any(|row| row.contains("vacuum-soak")),
+            "the badge on phase is on no row of {frame:#?}"
+        );
+    }
+
     /// An unread root has no row of its own to measure, so its id is padded to
     /// the id column the bead rows settled between them: the reason beside it
     /// starts where their titles do.

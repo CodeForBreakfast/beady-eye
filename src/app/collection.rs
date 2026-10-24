@@ -3842,10 +3842,12 @@ path = "{FERRY}"
         assert_ne!(trees_assembled(&standing)["dunwich"], 0);
     }
 
-    /// dunwich's bead waits on kadath's, so reading dunwich for ferry's
-    /// blocker is what says kadath is needed too.
+    /// dunwich's bead holds a child waiting on kadath's, so reading dunwich
+    /// for ferry's blocker is what says kadath is needed too. Reach runs from
+    /// a bead to its children and its blockers, whichever project holds
+    /// them, and never up to a parent or out to what a blocker blocks.
     #[test]
-    fn a_blocker_of_a_blocker_read_on_demand_is_read_on_demand_too() {
+    fn a_chain_of_blockers_across_projects_is_followed_through_blockers_and_children_only() {
         let cfg = Config::from_toml(&format!(
             r#"
 [[projects]]
@@ -3870,9 +3872,17 @@ prefix = "kad"
                 "dunwich",
                 Fake::holding(beads(
                     r#"[
+                  {"id":"dun-1","title":"chart the fens","status":"open",
+                   "priority":2,"issue_type":"epic"},
                   {"id":"dun-7","title":"lift the ground station","status":"in_progress",
-                   "dependencies":[{"depends_on_id":"kad-1","type":"blocks"}],
-                   "priority":1,"issue_type":"epic"}
+                   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}],
+                   "priority":1,"issue_type":"epic"},
+                  {"id":"dun-8","title":"raise the mast","status":"open",
+                   "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"},
+                                   {"depends_on_id":"kad-1","type":"blocks"}],
+                   "priority":2,"issue_type":"task"},
+                  {"id":"dun-3","title":"survey the moor","status":"in_progress",
+                   "priority":1,"issue_type":"task"}
                 ]"#,
                 )),
             )
@@ -3882,6 +3892,14 @@ prefix = "kad"
                 Fake::holding(beads(
                     r#"[
                   {"id":"kad-1","title":"survey the plateau","status":"open",
+                   "priority":2,"issue_type":"epic"},
+                  {"id":"kad-2","title":"stake the plateau","status":"open",
+                   "dependencies":[{"depends_on_id":"kad-1","type":"parent-child"}],
+                   "priority":2,"issue_type":"task"},
+                  {"id":"kad-5","title":"build on the plateau","status":"open",
+                   "dependencies":[{"depends_on_id":"kad-1","type":"blocks"}],
+                   "priority":2,"issue_type":"task"},
+                  {"id":"kad-9","title":"climb the peaks","status":"open",
                    "priority":2,"issue_type":"task"}
                 ]"#,
                 )),
@@ -3891,6 +3909,130 @@ prefix = "kad"
 
         assert_eq!(node(tree_of(&snap, "ferry"), "kad-1").project, "kadath");
         assert_eq!(snap.projects, ["dunwich", "ferry", "kadath"]);
+        assert_eq!(roots_drawn(&snap), ["fer-2"]);
+        let drawn: BTreeSet<&str> = tree_of(&snap, "ferry")
+            .beads
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
+        assert_eq!(
+            drawn,
+            BTreeSet::from(["dun-7", "dun-8", "fer-2", "kad-1", "kad-2"])
+        );
+    }
+
+    /// Every tree's root, shown or hidden.
+    fn roots_drawn(snap: &Snapshot) -> Vec<&str> {
+        snap.trees
+            .iter()
+            .map(|tree| tree.root.as_str())
+            .chain(snap.hidden_trees.iter().map(|tree| tree.root.as_str()))
+            .collect()
+    }
+
+    /// A seat in dunwich shows through a bead a drawn tree reaches, and one on
+    /// a bead nothing reaches is no more reported than it would be had dunwich
+    /// not been read. A seat in ferry on no bead is the control: it says the
+    /// panes were listed and a loose one is reported.
+    #[test]
+    fn a_pane_in_a_project_read_for_a_blocker_shows_only_through_a_bead_the_reach_drew() {
+        let trackers = Fakes::default()
+            .with(
+                "dunwich",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+                   "priority":1,"issue_type":"epic"},
+                  {"id":"dun-3","title":"survey the moor","status":"in_progress",
+                   "priority":1,"issue_type":"task"}
+                ]"#,
+                )),
+            )
+            .with("ferry", Fake::holding(beads(WAITING_ON_DUNWICH)));
+        let panes = Provider::holding(vec![
+            named(pane("w:p1", DUNWICH, PaneStatus::Working), "dun-7"),
+            named(pane("w:p2", DUNWICH, PaneStatus::Working), "dun-3"),
+            pane("w:p3", FERRY, PaneStatus::Working),
+        ]);
+
+        let snap = Collection::default().collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &panes,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            node(tree_of(&snap, "ferry"), "dun-7")
+                .agent
+                .as_ref()
+                .map(|agent| agent.pane.id.as_str()),
+            Some("w:p1")
+        );
+        let loose: Vec<&str> = snap
+            .unattributed
+            .iter()
+            .map(|loose| loose.pane.id.as_str())
+            .collect();
+        assert_eq!(loose, ["w:p3"]);
+    }
+
+    /// A seat in dunwich naming a bead nothing reaches is on dunwich's work,
+    /// so ferry's bead of the same id, which uncoordinated prefixes allow, is
+    /// no bead of the seat's.
+    #[test]
+    fn a_pane_in_a_project_read_for_a_blocker_is_not_joined_across_to_a_drawn_bead_of_its_id() {
+        let trackers = Fakes::default()
+            .with(
+                "dunwich",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+                   "priority":1,"issue_type":"epic"},
+                  {"id":"fer-4","title":"dredge the channel","status":"open",
+                   "priority":2,"issue_type":"task"}
+                ]"#,
+                )),
+            )
+            .with(
+                "ferry",
+                Fake::holding(beads(
+                    r#"[
+                  {"id":"fer-2","title":"moor the barge","status":"open",
+                   "dependencies":[{"depends_on_id":"dun-7","type":"blocks"}],
+                   "priority":2,"issue_type":"task"},
+                  {"id":"fer-4","title":"caulk the hull","status":"open",
+                   "priority":2,"issue_type":"task"}
+                ]"#,
+                )),
+            );
+        let panes = Provider::holding(vec![named(
+            pane("w:p2", DUNWICH, PaneStatus::Working),
+            "fer-4",
+        )]);
+
+        let snap = Collection::default().collect(
+            &reading_ferry_where_dunwich(STATES_ITS_PREFIX),
+            &panes,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(roots_drawn(&snap), ["fer-2", "fer-4"]);
+        assert_eq!(node(tree_of(&snap, "ferry"), "dun-7").project, "dunwich");
+        assert!(
+            snap.trees
+                .iter()
+                .flat_map(|tree| &tree.beads)
+                .all(|node| node.agent.is_none()),
+            "the seat is joined to a bead it is not on"
+        );
+        assert_eq!(snap.conflicts, []);
+        assert!(snap.unattributed.is_empty());
     }
 
     #[test]

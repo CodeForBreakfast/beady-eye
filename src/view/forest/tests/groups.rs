@@ -371,6 +371,21 @@ fn the_default_puts_an_opened_hidden_tree_back() {
     assert_eq!(beneath_the_selection(&forest), shut);
 }
 
+/// A hidden tree the reader opened is a fold set by hand, and a refresh
+/// keeps it where the reader left it.
+#[test]
+fn a_refresh_keeps_a_hidden_tree_opened_by_hand_open() {
+    let mut forest = flatten(snapshot());
+    select_hidden_tree(&mut forest);
+    assert!(forest.apply(Action::ExpandOrChild));
+    let opened = beneath_the_selection(&forest);
+
+    forest.refresh(snapshot());
+
+    assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
+    assert_eq!(beneath_the_selection(&forest), opened);
+}
+
 /// A tree that is only its root has nothing to open onto, and a fold
 /// over nothing would be a key that does nothing.
 #[test]

@@ -1316,6 +1316,7 @@ impl<B: PutBack> View for Screen<B> {
 mod tests {
     mod driven;
     mod fold_keys;
+    mod sessions;
 
     use super::*;
     use crate::app::Wanted;
