@@ -122,16 +122,10 @@
       beadyEyeFor = pkgs: (crane.mkLib pkgs).buildPackage (common // {
         cargoArtifacts = (artifactsFor pkgs).release;
 
-        # tests/no_config.rs runs the binary as a fresh machine would, and
-        # bdi asks bd where the tracker is. The worktree-listing test builds
-        # a repository and adds a worktree to it, so git has to be here too.
-        # One test runs a `jq` filter README documents. Only the check phase
-        # needs any of them; nothing at runtime is built against them.
-        nativeCheckInputs = [
-          beads.packages.${pkgs.stdenv.hostPlatform.system}.bd
-          pkgs.git
-          pkgs.jq
-        ];
+        # The tests are the `test` check rather than this build's check phase.
+        # Compiled at release they cost more than the build does, and the
+        # package installs none of what they compile.
+        doCheck = false;
 
         # The package is named for the crate, the binary for the command.
         meta.mainProgram = "bdi";
@@ -4286,7 +4280,7 @@ and a second line"
         # here, not in the workflow that calls it.
         checks = {
           await-ci-verdict-test = awaitCiVerdictTest;
-          build-and-test = beady-eye;
+          build = beady-eye;
 
           # A source of its own for the same reason readme-pin has one.
           claude-plugin-version = pkgs.runCommand "claude-plugin-version"
@@ -4364,6 +4358,17 @@ and a second line"
           screen-walks-test = screenWalksAreBoundedTest;
           stamp-version-test = stampVersionTest;
           tap-formula-test = tapFormulaTest;
+
+          # At the dev profile, where compiling the tests costs a fraction of
+          # what it does at release and running them costs about the same.
+          #
+          # tests/no_config.rs runs the binary as a fresh machine would, and
+          # bdi asks bd where the tracker is. The worktree-listing test builds
+          # a repository and adds a worktree to it, so git has to be here too.
+          # One test runs a `jq` filter README documents.
+          test = checkOf "test" artifacts.dev
+            [ beads.packages.${system}.bd pkgs.git pkgs.jq ]
+            "cargo test";
           unbuilt-checks-test = unbuiltChecksTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
