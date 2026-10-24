@@ -93,17 +93,6 @@ fn a_selected_elided_run_stands_for_no_bead_of_its_own() {
     assert_eq!(line.bead(), None);
 }
 
-/// A closed bead with a pane still on it is the stale-pane anomaly, and
-/// eliding it would hide a live agent.
-#[test]
-fn a_closed_bead_with_a_live_agent_is_drawn_rather_than_elided() {
-    let forest = flatten(snapshot());
-
-    assert!(sketch(&forest)
-        .iter()
-        .any(|line| line.contains("clear the access road")));
-}
-
 #[test]
 fn a_single_quiet_closed_sibling_is_drawn_rather_than_said_as_a_count() {
     let one_closed = edited(

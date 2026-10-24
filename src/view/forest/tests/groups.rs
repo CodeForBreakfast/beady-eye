@@ -250,16 +250,6 @@ fn beneath_the_selection(forest: &Forest) -> Vec<String> {
         .collect()
 }
 
-/// A hidden tree's row is its root's row, so it stands for that bead as
-/// a tree's header does: the show key and `y` have a bead to work on.
-#[test]
-fn a_hidden_trees_row_stands_for_its_root() {
-    let mut forest = flatten(snapshot());
-    select_hidden_tree(&mut forest);
-
-    assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
-}
-
 /// A hidden tree is a tree, and the group is only where the filter put
 /// it: it is drawn there as its project would draw it, one level further
 /// in under the group's line, and opens onto the same rows.

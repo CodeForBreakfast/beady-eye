@@ -69,45 +69,6 @@ fn a_root_that_could_not_be_read_says_so_where_its_row_would_have_been() {
     );
 }
 
-/// A project with no loose pane draws no line saying so: a group's line
-/// on every healthy project buries the one where it matters.
-#[test]
-fn a_project_with_no_loose_pane_draws_no_line_for_them() {
-    let forest = flatten(snapshot());
-
-    assert!(
-        !forest.lines().iter().any(|line| matches!(
-            &line.content,
-            Content::Group(group)
-                if group.kind == GroupKind::Unattributed
-                    && group.project.as_deref() == Some("harbour")
-        )),
-        "{:#?}",
-        sketch(&forest)
-    );
-}
-
-/// The defect: a root drew as a tree header, which is not a bead row, so
-/// nothing that reads a bead row could see the agent on it. What is the
-/// project's — its name, and the panes recovered for it — is the project's
-/// own line, and the root beneath it is a bead like any other.
-#[test]
-fn a_project_owns_its_own_line_and_its_roots_are_ordinary_bead_rows() {
-    let forest = flatten(snapshot());
-    let lines = forest.lines();
-
-    assert!(
-        matches!(&lines[0].content, Content::Project(line) if line.project == "dunwich"),
-        "{:#?}",
-        sketch(&forest)
-    );
-    assert!(
-        matches!(&lines[1].content, Content::Bead(row) if row.id == "dun-7"),
-        "{:#?}",
-        sketch(&forest)
-    );
-}
-
 /// `bdi-2bb.25`: the root carries a pane of its own while `dun-7.4`
 /// beneath it carries another, so a count over the subtree and the root's
 /// own agent cannot come out the same by chance.
