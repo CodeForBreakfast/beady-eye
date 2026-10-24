@@ -488,6 +488,81 @@ fn a_line_the_watcher_cannot_serve_is_refused_and_the_connection_goes_on() {
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
 }
 
+impl Consumer {
+    /// The next line that is not an alive line.
+    fn hears_past_alive(&mut self) -> Option<Value> {
+        std::iter::from_fn(|| Some(self.hears()))
+            .find(|line| line.as_ref().is_none_or(|line| line["line"] != "alive"))
+            .flatten()
+    }
+}
+
+/// Only a watch on one bead that names its agent session counts as that agent
+/// session watching the bead. A view watching the whole project is told of it,
+/// and told again once the agent session's connection closes.
+#[test]
+fn a_view_is_told_which_agent_sessions_watch_each_bead_and_when_one_stops() {
+    let (home, _tracker, watcher) = a_watcher("watch-sessions");
+    let mut view = Consumer::connected_to(&watching_at(&home));
+    view.sends("watch-all arkham").hears_an_answer();
+
+    let mut unnamed = Consumer::connected_to(&watching_at(&home));
+    unnamed.sends("watch arkham dun-0tp.8").hears_an_answer();
+    let mut whole = Consumer::connected_to(&watching_at(&home));
+    whole.sends("watch arkham").hears_an_answer();
+    let mut named = Consumer::connected_to(&watching_at(&home));
+    named
+        .sends("watch arkham dun-0tp.7 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")
+        .hears_an_answer();
+    let watching = view.hears_past_alive();
+    drop(named);
+    let stopped_watching = view.hears_past_alive();
+
+    stopped(watcher);
+    assert_eq!(
+        watching,
+        Some(
+            json!({ "line": "watching", "project": "arkham", "id": "dun-0tp.7", "agent_sessions": ["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"] })
+        )
+    );
+    assert_eq!(
+        stopped_watching,
+        Some(
+            json!({ "line": "watching", "project": "arkham", "id": "dun-0tp.7", "agent_sessions": [] })
+        )
+    );
+}
+
+/// A consumer naming its agent session is answered as any watch of one bead
+/// is. A bead's line this watcher cannot read, as an older watcher cannot read
+/// one naming an agent session, is refused as `malformed` with the line as
+/// asked, and the consumer goes on to watch the bead without it.
+#[test]
+fn a_consumer_can_tell_whether_the_watcher_understands_agent_sessions() {
+    let (home, _tracker, watcher) = a_watcher("watch-probe");
+    let mut consumer = Consumer::connected_to(&watching_at(&home));
+
+    let understood = consumer
+        .sends("watch arkham dun-0tp.7 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")
+        .hears_an_answer();
+    let refused = consumer
+        .sends("watch arkham dun-0tp.8 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952 c47e02b6-9d51-4a83-b6f2-08ac5e13d740")
+        .hears_past_alive();
+    let without = consumer.sends("watch arkham dun-0tp.8").hears_an_answer();
+
+    stopped(watcher);
+    assert_eq!(beads_in(&understood), ["dun-0tp.7"]);
+    assert_eq!(
+        refused,
+        Some(json!({
+            "line": "refused",
+            "asked": "watch arkham dun-0tp.8 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952 c47e02b6-9d51-4a83-b6f2-08ac5e13d740",
+            "reason": "malformed"
+        }))
+    );
+    assert_eq!(beads_in(&without), ["dun-0tp.8"]);
+}
+
 /// What a consumer that acts only on what it is told relies on: a watcher
 /// that goes closes the connection, and the next connect is refused.
 #[test]
