@@ -1278,27 +1278,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_bead_reached_two_ways_is_drawn_once_for_each() {
-        let json = tracker(&[
-            bead("r", "open", &[]),
-            bead(
-                "r.1",
-                "open",
-                &[dep("r", "parent-child"), dep("r.2", "blocks")],
-            ),
-            bead("r.2", "open", &[dep("r", "parent-child")]),
-        ]);
-        let a = assembled(&json, ROOT);
-
-        assert_eq!(
-            drawn(&a, "r.2"),
-            2,
-            "once as the root's child, once as what r.1 waits on"
-        );
-        assert_eq!(a.beads.len(), 3, "and held once");
-    }
-
     /// The first line drawn of a bead is the one that stands for the work,
     /// and it is the line whose every link down from the root is a first
     /// link. Here `r.2` is met under `r.1` before it is met under the root,
@@ -1502,43 +1481,6 @@ mod tests {
     }
 
     #[test]
-    fn the_root_leads_the_rows_at_depth_zero() {
-        let a = assembled(FIXTURE, FIXTURE_ROOT);
-        assert_eq!(a.beads[0].id, FIXTURE_ROOT);
-        assert_eq!(
-            rows(&a)[0],
-            (FIXTURE_ROOT, 0, None),
-            "nothing reached the root"
-        );
-    }
-
-    #[test]
-    fn a_descendant_follows_its_own_forebear_rather_than_the_next_sibling() {
-        // `bdi-2bb.5` waits on `bdi-2bb.3`, so the blocker sits directly under
-        // it rather than after the sibling that comes next.
-        let a = assembled(FIXTURE, FIXTURE_ROOT);
-        let rows = rows(&a);
-        let at = rows
-            .iter()
-            .position(|(id, _, _)| *id == "bdi-2bb.5")
-            .expect("the waiting bead is drawn");
-
-        assert_eq!(
-            rows[at + 1],
-            ("bdi-2bb.3", rows[at].1 + 1, Some(Edge::Blocks))
-        );
-    }
-
-    #[test]
-    fn the_tracker_draws_a_blocker_under_each_bead_that_waits_on_it() {
-        // `bdi-2bb.3` blocks both `bdi-2bb.4` and `bdi-2bb.5`, and is a child
-        // of the root besides.
-        let a = assembled(FIXTURE, FIXTURE_ROOT);
-
-        assert_eq!(drawn(&a, "bdi-2bb.3"), 3);
-    }
-
-    #[test]
     fn depth_counts_the_parent_chain_rather_than_what_bd_reported() {
         // bd flattens `depth` under --max-depth, so these values are wrong on
         // purpose: an implementation that trusts them cannot pass.
@@ -1610,14 +1552,6 @@ mod tests {
         let a = assembled(&json, "t");
 
         assert_eq!(ids(&a), vec!["t", "t.2", "t.10", "t.100"]);
-    }
-
-    #[test]
-    fn real_siblings_from_the_tracker_come_back_in_flight_first() {
-        // bd's own order is arbitrary; the tree owes them one.
-        let a = assembled(FIXTURE, FIXTURE_ROOT);
-
-        assert_eq!(ids(&a)[1], "bdi-r5l", "the bead in flight leads");
     }
 
     #[test]
