@@ -690,6 +690,28 @@ mod tests {
     }
 
     #[test]
+    fn a_rate_limit_github_says_no_reset_for_is_waited_out_for_the_least_wait() {
+        let before = Instant::now();
+
+        let until = waited_out(None);
+
+        assert!(until >= before + UNSAID_WAIT);
+        assert!(until <= Instant::now() + UNSAID_WAIT);
+    }
+
+    #[test]
+    fn a_tracker_that_did_not_answer_is_reported_by_name() {
+        assert_eq!(
+            reported(&Found::TrackerUnread {
+                project: "dunwich".to_string(),
+                failure: TrackerFailure::Unavailable,
+            })
+            .as_deref(),
+            Some("dunwich: its gates could not be read: the tracker did not answer")
+        );
+    }
+
+    #[test]
     fn a_gate_that_cannot_be_settled_is_reported_with_every_reason() {
         assert_eq!(
             reported(&Found::Unsettleable {
@@ -787,6 +809,10 @@ mod tests {
         assert_eq!(
             refused(&Heard::Unmeasured),
             Some("a delivery was refused: it does not give its Content-Length up front")
+        );
+        assert_eq!(
+            refused(&Heard::TooLarge),
+            Some("a delivery was refused: it is larger than any pull_request delivery")
         );
         assert_eq!(
             refused(&Heard::Settle(Delivery {
