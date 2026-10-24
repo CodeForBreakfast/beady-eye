@@ -2784,6 +2784,48 @@ pub(super) mod tests {
         );
     }
 
+    /// `[tui] unanswered_after_seconds` written under a running `bdi` is how
+    /// long the next read may go unanswered. The run opens on a patience far
+    /// longer than the one written, so the read the reload asks for carrying
+    /// the written one is only possible if `looked_at` handed it over.
+    #[test]
+    fn a_patience_written_under_a_running_bdi_governs_the_next_read() {
+        const PATIENT: &str = "\n[tui]\nunanswered_after_seconds = 300\n";
+        const IMPATIENT: &str = "\n[tui]\nunanswered_after_seconds = 1\n";
+        let mut view = Recorder::default();
+        let (ask, _asked) = mpsc::channel();
+        let events = going_round(&mut view, A_FEW_PASSES, Vec::new());
+
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            Outstanding::waiting(TimeDelta::seconds(300), TimeDelta::zero()),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            Some(a_config_file_saying(
+                "patience",
+                &format!("{ARKHAM_ALONE}{IMPATIENT}"),
+                &format!("{ARKHAM_ALONE}{PATIENT}"),
+            )),
+        )
+        .expect("the loop runs");
+
+        let patience_of_each_read: Vec<TimeDelta> = view
+            .awaited
+            .iter()
+            .flatten()
+            .filter(|read| read.wanted == Wanted::Everything)
+            .map(|read| read.patience)
+            .collect();
+        assert_eq!(
+            patience_of_each_read,
+            [TimeDelta::seconds(1)],
+            "the read the reload asked for may go unanswered for the patience \
+             the reader wrote"
+        );
+    }
+
     /// The whole sequence a config the reader has written sets off, driven
     /// until the first project asks for itself: `armed` is what the run was
     /// polling, `written` is what the reader has left in the file, and what

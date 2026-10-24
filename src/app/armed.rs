@@ -515,6 +515,22 @@ mod tests {
         assert_eq!(named.asks(at(125)), Some(arkham()));
     }
 
+    /// An interval written under a running `bdi` is the gap after the read the
+    /// reload asks for, so a reader who shortens it is not made to wait out
+    /// the one they replaced. The read of every project is what the reload
+    /// asks for, and it alone puts "read just now" on the screen, so only the
+    /// gap that follows it says which interval is in force.
+    #[test]
+    fn a_poll_interval_the_reader_writes_is_the_gap_after_the_read_it_asks_for() {
+        let mut standing = Armed::polling("arkham".to_string(), Some(Duration::from_secs(600)));
+        standing.came_back(&arkham(), at(100), None);
+
+        let mut named = standing.still_due(Armed::polling("arkham".to_string(), Some(EVERY)));
+        named.came_back(&Wanted::Everything, at(110), None);
+
+        assert_eq!(named.asks_in(at(110)), Some(EVERY));
+    }
+
     /// A run that has read nothing has a read on its way already. Arming at
     /// the start would ask a second time for what is being collected.
     #[test]
