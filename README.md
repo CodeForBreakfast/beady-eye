@@ -96,7 +96,7 @@ beady-eye.packages.${system}.default                # the package
 nixpkgs.overlays = [ beady-eye.overlays.default ];  # pkgs.beady-eye
 ```
 
-CI pushes every `main` build for x86_64 Linux to a Cachix cache, so with the
+Each release's x86_64 Linux build is pushed to a Cachix cache, so with the
 cache in your `nix.settings` neither of those compiles anything:
 
 ```nix
