@@ -77,6 +77,7 @@ coin one — and say so.**
 | `⊙` | *coined* | pinned. bd's own mark is 📌, two cells wide where every other glyph is one |
 | agent, pane, session | herdr | the worker; its terminal; the server holding them |
 | `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
+| `agent_session` | herdr (`herdr agent list`) | the id of the session the agent in a pane is running, its `value` in herdr's answer. An agent knows its own, so a watch can name it without knowing its pane |
 | snapshot | herdr (`herdr api snapshot`) | one poll's whole state |
 | **ground** | *coined* | the terminal's own foreground, untreated, which the liveness scale is measured from rather than being a step on. `bdi` holds a symbol and the terminal holds the value, so a scale with the default among its steps has one interval nobody can size — and a theme setting `color7` or `color15` to its foreground, which is how themes are written, closes that interval to nothing. Neither project has the concept: neither draws a scale. |
 | **badge** | *coined* | a rendering of one value a bead carries, read either from its `metadata` or from a field of its own. beads has `label`, but a label is a bead's own tag; neither project has a display term for this. |
@@ -113,6 +114,7 @@ coin one — and say so.**
 | **block** | *coined* | one of the three parts a row is fitted from: the identity, left-aligned and yielding last; the title, filling the middle and cut first; the state, right-justified and cut from its own end. Neither project has a word for it, because neither fits a row to a width. |
 | **watcher** | *coined* | `bdi watch`, the one process per machine that holds each project's beads as last read and sends them, and each change to them, to whoever watches. Neither project names it: bd's events journal records changes, and nothing in either project routes them to whoever asked. |
 | **change source** | *coined* | what hands the watcher each project's beads, how current they are, and bd's event records where the project keeps them. The first reads trackers, and another can replace it. Distinct from a *producer*, which only says a project changed. |
+| **watching** | *coined* | an `agent_session` named on a watch of one bead, for as long as a connection naming it on that bead stays open. The watcher tells views which agent sessions are watching each bead. Neither project names it: herdr knows nothing of beads, and bd keeps no record of who is waiting on one. |
 | gate, resolve | beads (`bd gate`) | a bead that blocks another until something outside the tracker happens, and closing one. A gh:pr gate waits on a pull request, a gh:issue gate on an issue closing, a gh:release gate on a repository publishing a release, a gh:run gate on a workflow run finishing, a timer gate on its timeout running out after it was made, and a bead gate on the bead its await id names closing, and `bdi gates` is named for these. bd accepts any gate type, and its own `bd gate check` passes over gh:issue and gh:release |
 | delivery | GitHub (webhooks) | one webhook request GitHub sends, with its event and signature in headers. `bdi gates --listen` takes a `pull_request` delivery as a trigger to settle the pull request it names, and nothing more |
 | **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has done what the gate waits for: resolve the gate on a merge, or on leaving draft for a gate with `awaits=ready_for_review`, or on approval for a gate with `awaits=approved`, and on a close without a merge, or on failing or passing checks or a conflict with the base on the head commit, or on a submitted review, or on a comment on its conversation, comment on the beads it holds back, once each. Act on a gh:issue gate once its issue closes, on a gh:release gate once its repository publishes a release after the gate was made, on a gh:run gate once its run succeeds or is skipped, on a timer gate once its deadline passes, and on a bead gate once its bead closes, in its own tracker or another the config names, by resolving the gate. beads has `bd gate check`, which resolves a gh:pr gate on a merge alone and acts on a close through an escalation `bdi` does not make |
@@ -2261,10 +2263,11 @@ finds any other socket at the path takes it as no watcher at all.
 A consumer connects and sends one line for each thing it watches:
 
 ```
-watch                              every project the watcher reads
-watch summit-works                 one project
-watch summit-works smt-4kd3p.20    one bead
-watch-all summit-works             one project, closed beads included
+watch                                             every project the watcher reads
+watch summit-works                                one project
+watch summit-works smt-4kd3p.20                   one bead
+watch summit-works smt-4kd3p.20 <agent_session>   one bead, watched from an agent session
+watch-all summit-works                            one project, closed beads included
 ```
 
 The key is `(project, id)` as everywhere else, so a blocker in another project
@@ -2280,6 +2283,14 @@ come to outnumber the rest many times over, and a consumer acting on live work
 should not be sent them each time it connects. From there both send every
 change, so a `watch` is told of a bead closing and of a closed bead reopening.
 A bead named on a line of its own is sent whatever its status.
+
+**An `agent_session` named on a bead's line is watching that bead.** The
+watcher tells each view which agent sessions are watching its beads. Only a
+line naming one bead and an agent session counts. A line naming no agent
+session, a project and a `watch-all` are not watching, and a consumer naming
+none is answered exactly as before. The watcher never asks herdr anything, so
+the agent session is whatever the consumer names. A view finds its pane by
+matching it against the `agent_session` herdr reports.
 
 Every line the watcher sends about a watch is one JSON object, and its `line`
 says which kind it is.
@@ -2352,6 +2363,19 @@ on the freshness line rather than on a greeting, because producers share the
 socket and read their first line as their answer, and because a consumer
 takes nothing from an answer before its freshness line arrives.
 
+**A watching line** names every agent session watching a bead, and goes to
+each connection with a `watch-all` on its project:
+
+```json
+{ "line": "watching", "project": "summit-works", "id": "smt-4kd3p.20", "agent_sessions": ["9c1e47d2-8b60-4a35-92f8-e05d3b716ca4"] }
+```
+
+A `watch-all` is sent one for each bead an agent session is watching when it
+starts, and one more whenever that set of agent sessions changes. An agent
+session stops watching when the last connection naming it on that bead
+closes, so the line after it has `"agent_sessions": []`. It says nothing a
+tracker holds, so it waits for no read and no freshness line follows it.
+
 **An alive line** goes out on every connection every 20 seconds, whatever else
 has been sent:
 
@@ -2369,9 +2393,13 @@ else on the connection:
 ```
 
 `unknown-project` is a project the watcher does not read, and `malformed` is
-a `watch` or `watch-all` in none of the four forms above. A `bdi` older than
+a `watch` or `watch-all` in none of the five forms above. A `bdi` older than
 `watch` answers `unknown watch <project>`, the inbound channel's answer to a
 name it does not know, which is how a consumer can tell it has reached one.
+A watcher older than agent sessions refuses a bead's line naming one as
+`malformed`, and the refusal changes nothing else on the connection. So a
+consumer that is refused that way can send the line again without the agent
+session, and is watching the bead as a consumer naming none.
 The words cost what `covered` costs: a project named `watch` or `watch-all`,
 or whose name begins with either and a space, cannot be reported bare on this
 socket.
