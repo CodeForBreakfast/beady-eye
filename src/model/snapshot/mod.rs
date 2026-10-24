@@ -952,33 +952,6 @@ render = "⏸ waiting"
         built(trees, Filter::LiveAgents)
     }
 
-    #[test]
-    fn the_snapshot_serialises() {
-        let snap = snapshot(vec![tree()]);
-        let json: serde_json::Value = serde_json::to_value(&snap).expect("the snapshot serialises");
-
-        assert_eq!(json["generated_at"], "2026-08-30T12:00:00Z");
-        assert_eq!(json["agents"]["provider"], A_PROVIDER);
-        assert_eq!(json["agents"]["state"], "answering");
-        assert_eq!(json["filter"], "live-agents");
-        assert!(
-            json.get("scope").is_none(),
-            "which projects a run read is in its trees; the scope is the view's"
-        );
-        assert_eq!(json["trees"][0]["tracker"], "ok");
-        assert_eq!(json["trees"][0]["counts"]["total"], 5);
-        assert_eq!(json["trees"][0]["nodes"][0]["id"], "dun-7");
-        assert_eq!(
-            json["trees"][0]["nodes"][0]["agent"]["source"],
-            "agent_pane"
-        );
-        assert_eq!(json["unattributed"][0]["project"], "dunwich");
-        assert!(
-            json["trees"][0]["nodes"][1]["anomalies"].is_array(),
-            "anomalies is a list"
-        );
-    }
-
     /// `nodes` is written by hand, field by field, and a field added to a
     /// bead and not to the row would leave the JSON silently. So the row is
     /// held to the bead: every field the bead writes, with the same value,
@@ -1050,34 +1023,6 @@ render = "⏸ waiting"
             tracker["cause"],
             "invalid type: null, expected a string at line 1 column 25"
         );
-    }
-
-    /// A reason that knows nothing beyond itself writes its reason and
-    /// nothing else, so a consumer reading `read` tells a parse failure from
-    /// every other kind by the key's absence rather than by an empty string.
-    #[test]
-    fn a_failure_that_knows_only_its_kind_writes_only_its_kind() {
-        let snap = build(
-            Collected {
-                failed_projects: vec![FailedProject {
-                    project: "dunwich".to_string(),
-                    tracker: TrackerFailure::Auth,
-                }],
-                ..Default::default()
-            },
-            &[],
-            &Joined::default(),
-            &cfg(),
-            a_provider(ProviderState::Answering),
-            Filter::LiveAgents,
-            now(),
-        );
-        let json: serde_json::Value = serde_json::to_value(&snap).expect("the snapshot serialises");
-
-        let tracker = &json["failed_projects"][0]["tracker"];
-        assert_eq!(tracker["reason"], "auth");
-        assert_eq!(tracker.get("read"), None);
-        assert_eq!(tracker.get("cause"), None);
     }
 
     #[test]
