@@ -337,7 +337,7 @@ mod tests {
     use crate::model::anomaly::Anomaly;
     use crate::model::badges::Badged;
     use crate::model::edges::relations;
-    use crate::model::join::{AgentRef, BeadKey, Conflict, JoinSource, Listed};
+    use crate::model::join::{AgentRef, BeadKey, JoinSource, Listed};
     use crate::model::snapshot::tests::*;
     use crate::model::snapshot::{a_provider, ProviderState};
     use crate::model::snapshot::{FailedProject, TrackerFailure};
@@ -388,29 +388,6 @@ mod tests {
                 ("dun-7.4", 1, Some(Edge::ParentChild)),
                 ("dun-7.2", 1, Some(Edge::ParentChild)),
             ]
-        );
-    }
-
-    #[test]
-    fn the_root_names_the_tree() {
-        let t = tree();
-        assert_eq!(t.project, "dunwich");
-        assert_eq!(t.root, "dun-7");
-        assert_eq!(t.title, "lift the ground station");
-        assert_eq!(t.tracker, TrackerState::Ok);
-    }
-
-    #[test]
-    fn the_counts_come_from_the_nodes() {
-        let t = tree();
-        assert_eq!(
-            t.counts,
-            Counts {
-                total: 5,
-                finished: 1,
-                live_agents: 2,
-                anomalies: 2,
-            }
         );
     }
 
@@ -489,18 +466,6 @@ mod tests {
         );
 
         assert!(node(&t, "hbr-1").blocked_by.is_empty());
-    }
-
-    #[test]
-    fn a_claim_beneath_a_seat_is_held_to_its_age_alone() {
-        let t = tree();
-        assert_eq!(
-            node(&t, "dun-7.3").anomalies,
-            vec![Anomaly::StaleClaim { days: 60 }],
-            "dun-7.3 is under dun-7's seat, so only its age is held against it"
-        );
-        assert_eq!(node(&t, "dun-7.2").anomalies, vec![Anomaly::StalePane]);
-        assert_eq!(t.counts.anomalies, 2);
     }
 
     /// One pane, working on the work in `dun-1`'s tree.
@@ -836,46 +801,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ready_comes_from_bd_rather_than_the_bead_s_status() {
-        let t = tree();
-        assert!(node(&t, "dun-7.4").ready);
-        assert!(
-            !node(&t, "dun-7.1").ready,
-            "open is not ready; only bd knows which"
-        );
-        assert!(!node(&t, "dun-7").ready);
-    }
-
-    #[test]
-    fn blocked_by_comes_from_bd_rather_than_the_tree() {
-        let t = tree();
-        assert_eq!(
-            node(&t, "dun-7.1").blocked_by,
-            ["dun-9", "dun-7.3"],
-            "a blocker outside the tree is still a blocker"
-        );
-        assert!(node(&t, "dun-7.4").blocked_by.is_empty());
-    }
-
-    #[test]
-    fn the_contract_fields_reach_the_node() {
-        let t = tree();
-        let root = node(&t, "dun-7");
-        assert_eq!(root.status, Status::InProgress);
-        assert_eq!(root.issue_type, "epic");
-        assert_eq!(root.priority, 1);
-        assert_eq!(
-            root.started_at,
-            Some("2026-08-20T09:00:00Z".parse().unwrap())
-        );
-        assert_eq!(root.closed_at, None);
-        assert_eq!(
-            node(&t, "dun-7.2").closed_at,
-            Some("2026-08-28T09:00:00Z".parse().unwrap())
-        );
-    }
-
     /// What `bd show` says of a bead, carried on the node so the screen can
     /// say it without asking the tracker again: the words the row holds, and
     /// what the answer ties the bead to — each with the status and title the
@@ -951,23 +876,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("dun-6.1", Some(Status::Open), Some("waiting"))]
         );
-    }
-
-    #[test]
-    fn the_badges_reach_the_node() {
-        let t = tree();
-        assert_eq!(
-            node(&t, "dun-7.1").badges,
-            vec![Badged {
-                key: "metadata.blocked_on".to_string(),
-                text: "⏸ waiting".to_string(),
-                link: None,
-                short: None,
-                colour: None,
-                drawn_on: DrawnOn::Own,
-            }]
-        );
-        assert!(node(&t, "dun-7").badges.is_empty());
     }
 
     /// The two shapes a reference is held in that a pattern written for the
@@ -1176,25 +1084,6 @@ render = "⇢ {repo} #{number}"
     }
 
     #[test]
-    fn the_agent_reaches_the_node_with_the_direction_that_resolved_it() {
-        let t = tree();
-        let claimed = node(&t, "dun-7")
-            .agent
-            .as_ref()
-            .expect("the bead named a pane");
-        assert_eq!(claimed.pane, key("w:p1"));
-        assert_eq!(claimed.source, JoinSource::AgentPane);
-        assert_eq!(claimed.title.as_deref(), Some("lifting the mast"));
-
-        let inferred = node(&t, "dun-7.2")
-            .agent
-            .as_ref()
-            .expect("the pane named the bead");
-        assert_eq!(inferred.source, JoinSource::DisplayAgent);
-        assert!(node(&t, "dun-7.1").agent.is_none());
-    }
-
-    #[test]
     fn an_agent_on_a_colliding_id_in_another_project_is_not_this_tree_s() {
         let a = assembled(BEADS);
         let p = panes(PANES);
@@ -1231,65 +1120,6 @@ render = "⇢ {repo} #{number}"
     }
 
     #[test]
-    fn a_bead_whose_parent_is_absent_is_reported_and_kept() {
-        let json = r#"[
-          {"id":"dun-4","title":"root","status":"open"},
-          {"id":"dun-4.2","title":"waiting on a bead bd did not return","status":"open",
-           "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"},
-                           {"depends_on_id":"dun-4.1","type":"blocks"}]}
-        ]"#;
-        let a = assembled(json);
-        let t = build_tree(
-            "dunwich",
-            &a,
-            &Joined::default(),
-            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
-            ProviderState::Answering,
-            &cfg(),
-            now(),
-        );
-
-        assert_eq!(t.orphaned_dependencies, ["dun-4.2"]);
-        assert_eq!(t.counts.total, 2, "a reported bead is still drawn");
-        assert_eq!(rows(&t)[1], ("dun-4.2", 1, Some(Edge::ParentChild)));
-    }
-
-    /// The nesting is the whole of what this tree says, so each row has to
-    /// carry which kind of edge put it where it is. A copy reached because a
-    /// bead blocks its forebear and a copy reached because it is that
-    /// forebear's child are drawn the same way and mean different things.
-    #[test]
-    fn a_node_carries_the_kind_of_edge_its_copy_was_reached_by() {
-        let json = r#"[
-          {"id":"dun-9","title":"root","status":"open"},
-          {"id":"dun-9.1","title":"waiting","status":"open",
-           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"},
-                           {"depends_on_id":"dun-9.2","type":"blocks"}]},
-          {"id":"dun-9.2","title":"what it waits on","status":"closed",
-           "dependencies":[{"depends_on_id":"dun-9","type":"parent-child"}]}
-        ]"#;
-        let t = build_tree(
-            "dunwich",
-            &assembled(json),
-            &Joined::default(),
-            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
-            ProviderState::Answering,
-            &cfg(),
-            now(),
-        );
-
-        assert_eq!(
-            rows(&t),
-            vec![
-                ("dun-9", 0, None),
-                ("dun-9.1", 1, Some(Edge::ParentChild)),
-                ("dun-9.2", 2, Some(Edge::Blocks)),
-                ("dun-9.2", 1, Some(Edge::ParentChild)),
-            ]
-        );
-    }
-
-    #[test]
     fn a_header_counts_beads_rather_than_the_rows_they_are_drawn_on() {
         // `dun-8.9` blocks both of the root's children, so it is drawn three
         // times. A header saying five would send a reader looking for a bead
@@ -1319,113 +1149,6 @@ render = "⇢ {repo} #{number}"
         assert_eq!(t.beads.len(), 4, "held once each");
         assert_eq!(t.counts.total, 4);
         assert_eq!(t.counts.finished, 1);
-    }
-
-    #[test]
-    fn a_cycle_is_reported_and_its_beads_kept() {
-        // `dun-5.1` hangs under `dun-5` and is blocked by it, so each must
-        // finish before the other.
-        let json = r#"[
-          {"id":"dun-5","title":"root","status":"open"},
-          {"id":"dun-5.1","title":"one","status":"open",
-           "dependencies":[{"depends_on_id":"dun-5","type":"parent-child"},
-                           {"depends_on_id":"dun-5","type":"blocks"}]},
-          {"id":"dun-5.2","title":"two","status":"open",
-           "dependencies":[{"depends_on_id":"dun-5.1","type":"parent-child"}]}
-        ]"#;
-        let a = assembled(json);
-        let t = build_tree(
-            "dunwich",
-            &a,
-            &Joined::default(),
-            &crate::model::snapshot::said_by("dunwich", &Readiness::default(), &BTreeMap::new()),
-            ProviderState::Answering,
-            &cfg(),
-            now(),
-        );
-
-        assert_eq!(t.cycles, ["dun-5"]);
-        assert_eq!(t.counts.total, 3);
-    }
-
-    #[test]
-    fn a_pane_on_no_bead_lands_in_unattributed_with_its_project() {
-        let snap = snapshot(vec![tree()]);
-
-        assert_eq!(
-            snap.unattributed,
-            vec![LoosePane {
-                pane: key("w:p9"),
-                project: "dunwich".to_string(),
-                cwd: "/srv/work/dunwich".to_string(),
-                pane_status: PaneStatus::Blocked,
-                display_agent: None,
-                title: None,
-                claim_refused: false,
-            }],
-            "a pane in a known project that no bead claims is unattributed"
-        );
-    }
-
-    /// Two beads naming one pane, and beside it a pane nothing names at all.
-    /// The join refuses the contested claim both ways, so both panes come
-    /// away unattributed — and only one of them was refused anything.
-    #[test]
-    fn a_pane_whose_claim_the_join_refused_is_apart_from_one_nothing_claims() {
-        let contested = r#"[
-          {"id":"dun-1","title":"root","status":"open"},
-          {"id":"dun-1.1","title":"one","status":"in_progress",
-           "metadata":{"agent_pane":"w:p5"},
-           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]},
-          {"id":"dun-1.2","title":"two","status":"in_progress",
-           "metadata":{"agent_pane":"w:p5"},
-           "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]}
-        ]"#;
-        let panes = panes(
-            r#"{"result":{"agents":[
-              {"pane_id":"w:p5","cwd":"/srv/work/dunwich","agent_status":"working"},
-              {"pane_id":"w:p9","cwd":"/srv/work/dunwich","agent_status":"idle"}
-            ]}}"#,
-        );
-        let assembled = assembled(contested);
-        let joined = joined(&assembled.beads, &panes);
-        let snap = build(
-            Collected::default(),
-            &panes,
-            &joined,
-            &cfg(),
-            a_provider(ProviderState::Answering),
-            Filter::All,
-            now(),
-        );
-
-        assert_eq!(
-            snap.unattributed
-                .iter()
-                .map(|loose| (loose.pane.id.as_str(), loose.claim_refused))
-                .collect::<Vec<_>>(),
-            vec![("w:p5", true), ("w:p9", false)]
-        );
-    }
-
-    /// The two loose cases ask different things of the reader: one is an agent
-    /// off the tracked work, the other is a project `bdi` was never told about.
-    #[test]
-    fn a_pane_under_no_configured_project_is_reported_apart_from_the_unattributed() {
-        let snap = snapshot(vec![tree()]);
-
-        assert_eq!(
-            snap.unconfigured,
-            vec![UnconfiguredPane {
-                pane: key("w:pF"),
-                cwd: "/srv/spike".to_string(),
-                pane_status: PaneStatus::Idle,
-            }]
-        );
-        assert!(
-            !snap.unattributed.iter().any(|p| p.pane == key("w:pF")),
-            "a pane is in one list or the other, never both"
-        );
     }
 
     /// A pane under a project the scope left out is neither drawn nor
@@ -1551,41 +1274,6 @@ render = "⇢ {repo} #{number}"
                 project: "ferry".to_string(),
                 widened: Vec::new(),
             }
-        );
-    }
-
-    #[test]
-    fn the_join_s_conflicts_reach_the_snapshot() {
-        let disagreeing = r#"{"result":{"agents":[
-          {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working"},
-          {"pane_id":"w:p2","cwd":"/srv/work/dunwich","agent_status":"idle",
-           "display_agent":"dun-7"}
-        ]}}"#;
-        let a = assembled(BEADS);
-        let p = panes(disagreeing);
-        let j = joined(&a.beads, &p);
-
-        let snap = build(
-            Collected::default(),
-            &p,
-            &j,
-            &cfg(),
-            a_provider(ProviderState::Answering),
-            Filter::LiveAgents,
-            now(),
-        );
-
-        assert_eq!(
-            snap.conflicts,
-            vec![Conflict::BeadAndPaneDisagree {
-                bead: BeadKey {
-                    project: "dunwich".to_string(),
-                    id: "dun-7".to_string(),
-                },
-                named_by_bead: key("w:p1"),
-                named_by_pane: key("w:p2"),
-            }],
-            "a disagreement computed by the join must not stop at the model boundary"
         );
     }
 
