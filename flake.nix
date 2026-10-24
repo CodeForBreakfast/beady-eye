@@ -102,6 +102,14 @@
           craneLib = crane.mkLib pkgs;
           depsCommon = common // {
             version = versionForDeps;
+            # The artifacts name the vendored crates, and Nix sees a few of those
+            # names through the compression and takes them for references. CI's
+            # cache uploads a path's whole closure, so that drags every crate
+            # along with the dependency build. Nothing needs them: every build
+            # that unpacks these artifacts takes the same vendor directory as
+            # an input of its own.
+            __structuredAttrs = true;
+            unsafeDiscardReferences.out = true;
             src = pkgs.runCommand "beady-eye-deps-source" { } ''
               mkdir -p $out
               cp ${pkgs.writeText "Cargo.toml" (pinnedManifest ./Cargo.toml)} $out/Cargo.toml
