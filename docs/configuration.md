@@ -63,6 +63,7 @@ render = "⏸ in review"
 
 [join]
 pane_key = "agent_pane"
+agent_session_key = "agent_session"
 
 [delivery]
 outside_key = "borrowed"
@@ -294,9 +295,9 @@ A key naming a value the bead does not hold draws no badge and says nothing. So
 does one naming a whole object rather than a value inside it, and one naming a
 list.
 
-`[join]`'s `pane_key` is a metadata key on its own, with no field in front of
-it. A pane id is only ever written in metadata, so there is nowhere else it
-could be read from.
+`[join]`'s `pane_key` and `agent_session_key` are metadata keys on their own,
+with no field in front of them. A pane id and an agent session are only ever
+written in metadata, so there is nowhere else either could be read from.
 
 `render` is the text, with `{}` for the whole value. `match` restricts the badge
 to the values a pattern matches, and the pattern is anchored against the whole
@@ -717,6 +718,11 @@ link under mouse capture.
 
 `pane_key` is the metadata key that names the herdr pane an agent sits in. It
 ties an agent to its bead exactly.
+
+`agent_session_key` is the metadata key that names the agent session of the
+agent working the bead, as herdr reports it for the agent's pane. It defaults
+to `agent_session`. Where a bead names one, `bdi` draws it against the pane
+herdr finds that session in, whichever pane `pane_key` names.
 
 ## `[delivery]`
 

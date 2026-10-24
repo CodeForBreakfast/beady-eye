@@ -494,6 +494,7 @@ mod tests {
             pane_status: PaneStatus::Working,
             title: Some("shell selector".into()),
             source,
+            agent_session: None,
         }
     }
 

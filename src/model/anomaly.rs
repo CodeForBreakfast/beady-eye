@@ -123,6 +123,7 @@ mod tests {
             pane_status,
             title: None,
             source: JoinSource::AgentPane,
+            agent_session: None,
         }
     }
 

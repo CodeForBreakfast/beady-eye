@@ -12,22 +12,31 @@ into whatever instructions you already follow.
 
 ## Name your pane on the bead, and the bead on your pane
 
-`bdi` learns which pane is yours from two things you write. When you start on
-a bead, write your pane id onto it and the bead id onto your pane:
+`bdi` learns which pane is yours from what you write. When you start on a
+bead, write your agent session and your pane id onto it, and the bead id onto
+your pane:
 
 ```bash
-bd update <id> --set-metadata agent_pane="$HERDR_PANE_ID"
+bd update <id> --set-metadata agent_session="$CLAUDE_CODE_SESSION_ID" \
+               --set-metadata agent_pane="$HERDR_PANE_ID"
 herdr pane report-metadata "$HERDR_PANE_ID" --source herdr:claude --display-agent <id>
 ```
 
-The first line is the join `bdi` trusts: the key names your pane exactly. The
-second is the fallback: where the key was never written, `bdi` reads the pane's
-`display_agent`, and when that is exactly a bead id in the pane's own project,
-it resolves to that bead. The bare id, nothing around it, or the fallback
-matches nothing.
+Your agent session is the id herdr reports for the agent in your pane, which
+for Claude Code is `$CLAUDE_CODE_SESSION_ID`. It is the join `bdi` trusts
+most, because it names you rather than your pane. `bdi` draws the bead against
+whichever pane herdr finds your session in, so the bead follows you when you
+are resumed in another pane, and it drops a pane another agent has taken over.
 
-`agent_pane` is the default name for the key. A project whose `bdi` config sets
-`pane_key` under `[join]` uses that name instead, and it is the one to write.
+The pane id is the join for an agent herdr reports no session for. The
+`display_agent` is the fallback: where neither key was written, `bdi` reads
+the pane's `display_agent`, and when that is exactly a bead id in the pane's
+own project, it resolves to that bead. The bare id, nothing around it, or the
+fallback matches nothing.
+
+`agent_session` and `agent_pane` are the default names for the keys. A project
+whose `bdi` config sets `agent_session_key` or `pane_key` under `[join]` uses
+that name instead, and it is the one to write.
 
 ## One pane joins one bead
 

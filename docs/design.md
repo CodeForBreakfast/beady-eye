@@ -75,7 +75,8 @@ coin one — and say so.**
 | `○ ◐ ● ✓ ❄` | beads (`bd list`'s legend) | open, in_progress, blocked, closed, deferred — glyph for glyph, because a glyph is terminology. `?` is `bdi`'s for a status bd has no legend for |
 | `◇` | beads (`format.StatusIcon`) | hooked. It is what bd draws beside a hooked row, though its printed legend leaves it out |
 | `⊙` | *coined* | pinned. bd's own mark is 📌, two cells wide where every other glyph is one |
-| agent, pane, session | herdr | the worker; its terminal; the server holding them |
+| agent, pane, session | herdr | the worker; its terminal; the server holding them. A bare *session* is herdr's server, except under *Waking a Claude Code session when a bead changes*, where it is the Claude Code session the plugin runs in |
+| agent session | herdr (`agent_session`) | the agent's own session, as herdr reports it for the pane the agent runs in. It names the agent wherever it runs, where a pane names only where it sits |
 | `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
 | snapshot | herdr (`herdr api snapshot`) | one poll's whole state |
 | **ground** | *coined* | the terminal's own foreground, untreated, which the liveness scale is measured from rather than being a step on. `bdi` holds a symbol and the terminal holds the value, so a scale with the default among its steps has one interval nobody can size — and a theme setting `color7` or `color15` to its foreground, which is how themes are written, closes that interval to nothing. Neither project has the concept: neither draws a scale. |
@@ -511,7 +512,7 @@ or none — works the same way.
 
 ## Data sources
 
-Verified against a live session, 2026-08-30.
+Verified against a live herdr session, 2026-08-30.
 
 ### bd
 
@@ -653,13 +654,42 @@ Bidirectional, because each direction alone has a hole.
 id. Its hole: an agent that has not identified itself carries no bead, so its
 work looks unstaffed.
 
-**bead → pane** is a metadata key naming the pane:
+**bead → agent** is a metadata key naming the agent session, beside one
+naming the pane:
 
 ```bash
-bd update <id> --set-metadata agent_pane=$HERDR_PANE_ID
+bd update <id> --set-metadata agent_session=$CLAUDE_CODE_SESSION_ID \
+               --set-metadata agent_pane=$HERDR_PANE_ID
 ```
 
-Its hole: a setup that does not write it. And it names the pane by id alone —
+The pane key alone names where an agent sat, and a pane outlives its agent. A
+reused pane inherits a dead agent's claim, and so does a `/clear` or a
+relaunch in it. An agent resumed in another pane loses its claim. The agent
+session names the agent itself, and herdr says which pane it is in.
+
+A pane holds an agent session only while herdr reports an agent in it, and
+only a session of kind `id`, which is the one that names the agent. herdr
+keeps a pane's `agent_session` after its agent has left, so a pane with no
+agent holds none.
+
+A bead naming an agent session that one live pane holds is joined to that
+pane, whichever pane its pane key names. That is an agent resumed in another
+pane, so the two keys naming different panes is not a disagreement and
+nothing is reported. A bead naming an agent session that no live pane holds
+names an agent that is not there, and it joins nothing, so `orphan-claim`
+reports a claim it holds. Two cases still read the pane key:
+
+- **The pane it names is out of this run's reach.** The claim is out of reach,
+  as it would be with no session, because the agent may be in that pane.
+- **herdr reports no agent session for the pane it names.** The bead joins
+  that pane as though it named no session. This keeps an agent herdr reads no
+  session for, such as one that is not Claude, on its bead. Its cost is the
+  hole the session closes: a reused pane still inherits such an agent's claim.
+
+A session that several live panes hold awards none of them.
+
+A bead naming only a pane joins by its pane. The pane key's own hole is a
+setup that does not write it. And it names the pane by id alone —
 `$HERDR_PANE_ID` is what a seat has, and the session's name is in a pane's
 environment only outside the default session — so `bdi` matches the id
 across every session it read. Held by one session, that is the pane. Held by
@@ -672,9 +702,10 @@ moment the pane does, so there is no race against an agent that has not
 identified itself yet — which is what makes drift detection exact rather than
 a guess.
 
-`agent_pane` is the default key name and is configurable. `bdi` never requires
-it: without it, liveness falls back to `display_agent` alone and the affected
-rows say so.
+`agent_session` and `agent_pane` are the default key names, and each is
+configurable as `join.agent_session_key` and `join.pane_key`. `bdi` requires
+neither: without both, liveness falls back to `display_agent` alone and the
+affected rows say so.
 
 ### The join is scoped to one project, and conflicts are reported
 
@@ -754,6 +785,7 @@ happened to exist.
 
 | situation | what `bdi` does |
 |---|---|
+| the bead's agent session is in a different pane from the one its pane key names | the agent session wins; nothing is reported |
 | `agent_pane` and `display_agent` name different panes | the bead's own key wins; the disagreement is reported |
 | several panes name one bead | none wins; reported |
 | one pane is named by several beads | none wins; reported, with what the pane says it is working on |
@@ -800,7 +832,7 @@ All computed in the pure model. The first needs bd alone; the rest need herdr.
 |---|---|---|
 | `stale-claim` | `in_progress`, not updated in N days | beads' own `bd stale`, narrowed to claims |
 | `orphan-claim` | `in_progress`, no pane resolves for it or for any bead above it in the tree, and no live lease is held on it or on any bead above it | the agent died mid-claim — or the bead named a live pane the join refused it, in which case the refusal travels with the rule and the row says which |
-| `stale-pane` | bead is closed, its pane is alive | agent finished and did not exit |
+| `stale-pane` | bead is closed, its agent's pane is alive | agent finished and did not exit |
 | `unattributed` | pane alive in a configured project, no bead resolves | a pane nobody can account for |
 | `unconfigured` | pane alive in a directory no `[[projects]]` entry covers | a project `bdi` was never told about; the fix is a config entry |
 
@@ -840,7 +872,7 @@ key. The field is omitted rather than null when there is none, so the two are
 byte-identical up to it. `Conflict` was already contract surface as the
 top-level `conflicts` array, so nesting one here exposes nothing new.
 
-`unattributed` will also catch ordinary interactive sessions, which are not
+`unattributed` will also catch ordinary interactive shells, which are not
 anomalies. It renders as a group of its own below the trees, never as an error
 against a tree, and rests open, because what it holds is live. `unconfigured`
 renders as a group of its own above it, naming each directory, because the
@@ -2796,7 +2828,8 @@ freshness line's `protocol` is what keeps them honest.
             "pane": { "session": "default", "id": "wCM:p9" },
             "pane_status": "working",
             "title": "shell selector + stable path",
-            "source": "agent_pane"
+            "source": "agent_session",
+            "agent_session": "5b8e2c4d-1f07-4a39-9d6e-3c2a7f1e0b54"
           },
           "anomalies": [],
           "orphaned_dependencies": []
@@ -2848,7 +2881,9 @@ tree reached the bead through a bead waiting on it, so a node is keyed
 written at emission from a model that holds each bead once (see *Tree
 construction*), so what `--json` says does not follow what the model stores. `agent.source` records which
 direction of the join resolved it, so a consumer can tell a confirmed agent
-from an inferred one. `anomalies` is every rule that fired, `[]` where none
+from an inferred one: `agent_session`, `agent_pane` or `display_agent`.
+`agent.agent_session` is the agent session herdr reports for the agent in
+`agent.pane`, and null where it reports none. `anomalies` is every rule that fired, `[]` where none
 did — never absent, never null; an `orphan-claim` the join refused carries the
 refusing conflict as `refused`, and one it did not omits the field.
 `orphaned_dependencies` is every blocker the bead waits on that no tracker
@@ -4101,7 +4136,7 @@ set. Three is the terminal convention and suits a wheel mouse; a high-precision
 trackpad reports once per cell of travel rather than per detent, and no one
 number serves both.
 
-**Capture is on for the whole session, unconditionally, and that is a decision
+**Capture is on for the whole run, unconditionally, and that is a decision
 with a cost.** While `bdi` is up the terminal stops getting the mouse, so
 dragging over the window no longer selects text in it — a real loss in a tool
 whose job is showing bead ids and pane ids you then want to paste. It is taken
@@ -4296,5 +4331,5 @@ draws what it is told to draw.
   than rendering a silently wrong tree.
 - **The `stale-claim` threshold is a guess.** A long-running bead trips it. A
   warning, never a verdict, and configurable.
-- **`unattributed` noise.** Every interactive session shows up here. If it is
+- **`unattributed` noise.** Every interactive shell shows up here. If it is
   louder than it is useful, it becomes opt-in.

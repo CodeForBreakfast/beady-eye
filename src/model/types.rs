@@ -344,6 +344,22 @@ impl Pane {
         }
     }
 
+    /// The agent session herdr reports for this pane, where it names the
+    /// agent by id. herdr keeps it after the agent has left the pane.
+    pub fn agent_session_id(&self) -> Option<&str> {
+        self.agent_session
+            .as_ref()
+            .filter(|session| session.kind == "id")
+            .map(|session| session.value.as_str())
+    }
+
+    /// The agent session of the agent herdr reports in this pane now. A pane
+    /// whose agent has left holds none, whatever session it still carries.
+    pub fn live_agent_session(&self) -> Option<&str> {
+        self.agent.as_ref()?;
+        self.agent_session_id()
+    }
+
     /// This pane, with where its directory sits in the main working tree.
     pub fn with_cwd_in_the_main_working_tree(mut self, cwd: Option<PathBuf>) -> Self {
         self.cwd_in_the_main_working_tree = cwd;
