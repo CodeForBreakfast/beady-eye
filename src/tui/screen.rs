@@ -1343,9 +1343,10 @@ mod tests {
     use crate::view::Motion;
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     use chrono::Utc;
+    use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
     use ratatui::layout::Rect;
-    use ratatui::style::{Color, Modifier};
+    use ratatui::style::{Color, Modifier, Style};
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
@@ -4129,6 +4130,86 @@ mod tests {
 
         assert_eq!(shown.drawing.layout, written.row);
         assert_eq!(shown.forest.lines().widths().of(&Cell::Id), 0);
+    }
+
+    /// The style `bdi`'s own sentence on the band is drawn in, off the
+    /// screen's real draw rather than a palette handed a background: what
+    /// this is about is the background that draw reaches the band with.
+    fn the_bands_sentence_style(screen: &mut Screen<TestBackend>) -> Style {
+        let Tail::Silent(sentence) = screen.shown.tail.clone() else {
+            panic!(
+                "a grove with no agents has nothing to tail: {:?}",
+                screen.shown.tail
+            );
+        };
+        screen
+            .draw(Showing::Forest, an_instant())
+            .expect("a draw into memory");
+        let drawn = Painted::read(screen.terminal.backend().buffer());
+        let runs: Vec<Run> = (0..drawn.rows().len())
+            .flat_map(|y| drawn.row(y))
+            .filter(|run| run.said.contains(sentence))
+            .collect();
+        let [run] = &runs[..] else {
+            panic!("{sentence:?} is drawn once, not as {runs:?}");
+        };
+        run.style
+    }
+
+    /// A `[theme] background` written under a running `bdi` reaches the band,
+    /// whose sentence is the one thing on the screen the background decides.
+    /// `palette::voice` answers about a background handed to it; what this
+    /// pins is that the one handed to it is the reload's, not the run's.
+    #[test]
+    fn a_background_written_under_a_running_bdi_reaches_the_band() {
+        let mut screen = Screen {
+            terminal: Terminal::new(TestBackend::new(60, 12)).expect("a test backend"),
+            shown: shown(a_grove(2)),
+        };
+        let dark = the_bands_sentence_style(&mut screen);
+        assert!(
+            dark.add_modifier.contains(Modifier::DIM),
+            "the run opened on the dark background it was configured with: {dark:?}"
+        );
+        let mut written = the_config_in_force();
+        written.theme.background = Background::Light;
+
+        assert!(
+            screen
+                .shown
+                .reloaded(Reloaded::Fresh(&written), an_instant()),
+            "the screen has changed"
+        );
+
+        let light = the_bands_sentence_style(&mut screen);
+        assert!(
+            !light.add_modifier.contains(Modifier::DIM)
+                && light.fg == palette::voice(Background::Light).fg,
+            "and the band is drawn on the palette the reader has just declared: {light:?}"
+        );
+    }
+
+    /// A `tail_refresh_millis` written under a running `bdi` takes at once:
+    /// the due date the longer interval set is worked out again from the check
+    /// that found the shorter one, so the reader does not wait out the
+    /// interval they replaced.
+    #[test]
+    fn a_band_takes_the_interval_the_reader_writes_without_a_restart() {
+        let (mut shown, _) = shown_asking_every(a_staffed_grove(6), Duration::from_secs(3600));
+        shown.tailed(read(A_SELECTED_PANE, &["what it says"]), an_instant());
+        assert_eq!(
+            shown.rereads_in(an_instant()),
+            Some(Duration::from_secs(3600))
+        );
+        let mut written = the_config_in_force();
+        written.tui.tail_refresh_millis = 50;
+
+        shown.reloaded(Reloaded::Fresh(&written), an_instant());
+
+        assert_eq!(
+            shown.rereads_in(an_instant()),
+            Some(Duration::from_millis(50))
+        );
     }
 
     /// A check that read nothing says nothing, which is what leaves the
