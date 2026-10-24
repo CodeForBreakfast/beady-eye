@@ -29,6 +29,7 @@ use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link, OrphanedDependency};
 use crate::model::types::{Edge, Pane, PaneKey, PaneStatus, Printed, Status, Unreadable};
+use crate::model::watching::Watching;
 
 /// Which agent provider this run read, and how that went.
 ///
@@ -310,6 +311,9 @@ pub struct Node {
     #[serde(skip)]
     pub undrawn: Vec<Undrawn>,
     pub agent: Option<AgentRef>,
+    /// Who watches the bead besides `agent`. Not part of the JSON contract.
+    #[serde(skip)]
+    pub watching: Watching,
     pub anomalies: Vec<Anomaly>,
     /// The blockers the bead waits on that no tracker holds a bead for, each
     /// drawn beneath it with why.

@@ -922,6 +922,7 @@ mod tests {
             closed_at: None,
             badges: Vec::new(),
             undrawn: Vec::new(),
+            watching: crate::model::watching::Watching::nobody(),
             agent: Some(AgentRef {
                 pane: key("w:p1"),
                 pane_status: PaneStatus::Working,

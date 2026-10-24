@@ -145,6 +145,13 @@ pub trait Trackers: Sync {
     fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
         BTreeSet::new()
     }
+
+    /// The agent sessions watching each of `project`'s beads, by the bead's
+    /// id, as a running watcher says. `None` where no watcher answers for
+    /// the project, so nobody can say who watches its beads.
+    fn watches(&self, _project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+        None
+    }
 }
 
 impl<T: Trackers + ?Sized> Trackers for &T {
@@ -154,6 +161,10 @@ impl<T: Trackers + ?Sized> Trackers for &T {
 
     fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
         (**self).unanswered_by_the_watcher()
+    }
+
+    fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+        (**self).watches(project)
     }
 }
 

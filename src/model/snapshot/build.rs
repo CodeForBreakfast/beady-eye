@@ -13,6 +13,7 @@ use crate::model::edges::{Elsewhere, Named, Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
+use crate::model::watching::{Watchers, Watching};
 
 use super::filter::{in_flight_first, partition};
 use super::{
@@ -37,6 +38,10 @@ pub struct Said<'a> {
     /// edge stands for, where this project's answer lacks it. Nothing where
     /// no other project was read.
     pub elsewhere: Option<&'a BTreeMap<Named, Elsewhere>>,
+    /// The watchers of each of this project's beads, by id. Nothing where
+    /// no watcher answered for the project, which leaves who watches them
+    /// unknown.
+    pub watching: Option<&'a BTreeMap<String, Watchers>>,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -53,6 +58,7 @@ pub fn said_by<'a>(
             relations,
             waiting: None,
             elsewhere: None,
+            watching: None,
         },
     )])
 }
@@ -146,6 +152,11 @@ pub fn build_tree(
                     joined.under_a_seat.contains(&key),
                     &cfg.anomalies,
                     now,
+                ),
+                watching: Watching::of(
+                    said.and_then(|said| said.watching),
+                    &bead.id,
+                    agent.as_ref().and_then(|agent| agent.agent_session.as_deref()),
                 ),
                 agent,
                 orphaned_dependencies: orphaned,

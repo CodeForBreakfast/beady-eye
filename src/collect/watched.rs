@@ -189,6 +189,12 @@ impl<O: Trackers> Trackers for Through<O> {
     fn unanswered_by_the_watcher(&self) -> BTreeSet<String> {
         self.watcher.said().around.clone()
     }
+
+    fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+        let said = self.watcher.said();
+        let answering = said.current.contains_key(project) && !said.around.contains(project);
+        answering.then(|| said.watches.get(project).cloned().unwrap_or_default())
+    }
 }
 
 /// What the watcher has said on the connection to it.
@@ -216,6 +222,9 @@ struct Watcher {
     current: BTreeMap<String, Arc<Told>>,
     /// The answers that have begun and not yet closed.
     arriving: BTreeMap<String, Told>,
+    /// The agent sessions watching each bead, by project and then by id. A
+    /// bead nobody watches is not held.
+    watches: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     /// How many answers have changed what a project holds, over every
     /// connection, which numbers each project's beads.
     changes: u64,
@@ -271,6 +280,11 @@ enum Line {
     },
     Refused {
         asked: String,
+    },
+    Watching {
+        project: String,
+        id: String,
+        agent_sessions: BTreeSet<String>,
     },
     #[serde(other)]
     Other,
@@ -381,14 +395,15 @@ impl Watcher {
         }
         self.arriving.clear();
         self.refused.clear();
+        self.watches.clear();
         let mut changed = std::mem::take(&mut self.around);
         changed.extend(std::mem::take(&mut self.current).into_keys());
         changed.into_iter().collect()
     }
 
     /// Take one line into what has been said, and say which project's
-    /// answer it closed. Nothing where it cannot be taken, which is a
-    /// watcher this run cannot read.
+    /// answer it closed or whose watches it moved. Nothing where it cannot be
+    /// taken, which is a watcher this run cannot read.
     fn take(&mut self, line: Line) -> Option<Option<String>> {
         match line {
             Line::Bead { project, bd, row } => {
@@ -433,6 +448,19 @@ impl Watcher {
             Line::Refused { asked } => {
                 let project = asked.strip_prefix(WATCH_ALL)?.trim();
                 self.refused.insert(project.to_string());
+            }
+            Line::Watching {
+                project,
+                id,
+                agent_sessions,
+            } => {
+                let watched = self.watches.entry(project.clone()).or_default();
+                if agent_sessions.is_empty() {
+                    watched.remove(&id);
+                } else {
+                    watched.insert(id, agent_sessions);
+                }
+                return Some(Some(project));
             }
             Line::Other => {}
         }
@@ -907,6 +935,77 @@ path = "/srv/work/ferry"
             .map(|tracker| ids(tracker.as_ref()));
         assert_eq!(read, Ok(vec!["dun-1".to_string()]));
         assert!(own.tracker("dunwich").asked().is_empty());
+    }
+
+    fn watching(project: &str, id: &str, agent_sessions: &[&str]) -> String {
+        json!({ "line": "watching", "project": project, "id": id, "agent_sessions": agent_sessions })
+            .to_string()
+    }
+
+    fn sessions(of: &[&str]) -> BTreeSet<String> {
+        of.iter().map(|session| session.to_string()).collect()
+    }
+
+    /// A watching line has a view draw the project again, as a freshness line
+    /// does, though no read follows it. The last line for a bead stands, and
+    /// one naming nobody leaves the bead unwatched.
+    #[test]
+    fn a_run_that_stays_is_told_which_agent_sessions_watch_each_bead() {
+        let at = a_watcher_saying(
+            "watched-watching",
+            vec![
+                fresh("dunwich", json!("ok")),
+                watching("dunwich", "dun-1", &["4f1c-keeper", "9a2e-ferryman"]),
+                watching("dunwich", "dun-2", &["4f1c-keeper"]),
+                watching("dunwich", "dun-2", &[]),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, A_MOMENT);
+
+        for _ in 0..4 {
+            assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        }
+        through.of(project(&cfg, "dunwich")).expect("answered");
+
+        assert_eq!(
+            through.watches("dunwich"),
+            Some(BTreeMap::from([(
+                "dun-1".to_string(),
+                sessions(&["4f1c-keeper", "9a2e-ferryman"])
+            )]))
+        );
+    }
+
+    /// Who watches a bead is the watcher's to say, so a project this run
+    /// reads for itself has its watches unknown rather than empty.
+    #[test]
+    fn who_watches_a_project_the_watcher_does_not_answer_for_is_unknown() {
+        let at = a_watcher_saying(
+            "watched-watching-around",
+            vec![
+                json!({ "line": "refused", "asked": "watch-all ferry", "reason": "unknown-project" })
+                    .to_string(),
+                fresh_reaching(
+                    "dunwich",
+                    json!("ok"),
+                    json!({ "path": "/srv/elsewhere/dunwich", "environment_command": null }),
+                ),
+                watching("dunwich", "dun-1", &["4f1c-keeper"]),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        let _ = through.of(project(&cfg, "ferry"));
+        let _ = through.of(project(&cfg, "dunwich"));
+
+        assert_eq!(through.watches("ferry"), None);
+        assert_eq!(through.watches("dunwich"), None);
+        let unwatched = Through::watcher_at(None, ["dunwich"], &own);
+        assert_eq!(unwatched.watches("dunwich"), None);
     }
 
     /// A watcher that has gone answers around nothing, at once rather than at

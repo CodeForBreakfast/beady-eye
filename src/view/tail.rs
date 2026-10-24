@@ -320,6 +320,7 @@ mod tests {
             badges: Vec::new(),
             undrawn: Vec::new(),
             agent,
+            watching: crate::model::watching::Watching::nobody(),
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
             row: Printed::saying("", ""),
