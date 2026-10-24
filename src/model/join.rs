@@ -86,6 +86,25 @@ pub enum Conflict {
         pane_id: String,
         sessions: Vec<String>,
     },
+    /// Several beads name one agent session, which one live pane holds.
+    /// None of them gets it.
+    ///
+    /// `caption` is carried for the reason `SeveralBeadsNameOnePane` carries
+    /// it: the pane is awarded to nobody, so nothing else says what it is
+    /// working on.
+    SeveralBeadsNameOneAgentSession {
+        agent_session: String,
+        pane: PaneKey,
+        caption: Option<String>,
+        beads: Vec<BeadKey>,
+    },
+    /// The bead names an agent session that several live panes hold. None of
+    /// them wins it.
+    AgentSessionInSeveralPanes {
+        bead: BeadKey,
+        agent_session: String,
+        panes: Vec<PaneKey>,
+    },
 }
 
 impl Conflict {
@@ -101,7 +120,9 @@ impl Conflict {
         match self {
             Conflict::BeadAndPaneDisagree { named_by_pane, .. } => vec![named_by_pane.clone()],
             Conflict::SeveralPanesNameOneBead { panes, .. } => panes.clone(),
-            Conflict::SeveralBeadsNameOnePane { pane, .. } => vec![pane.clone()],
+            Conflict::SeveralBeadsNameOnePane { pane, .. }
+            | Conflict::SeveralBeadsNameOneAgentSession { pane, .. } => vec![pane.clone()],
+            Conflict::AgentSessionInSeveralPanes { panes, .. } => panes.clone(),
             Conflict::PaneInAnotherProject { pane, .. } => vec![pane.clone()],
             Conflict::PaneIdInSeveralSessions {
                 pane_id, sessions, ..
@@ -123,7 +144,7 @@ pub struct ProjectRows<'a> {
 }
 
 /// What one run holds about panes: every pane a session answered with, and
-/// the ids of the panes it knows it is missing.
+/// what it knows it is missing.
 ///
 /// The second is not the first's complement, and nothing could enumerate
 /// that: a pane id nothing answered for is usually a pane that has gone.
@@ -137,12 +158,35 @@ pub struct ProjectRows<'a> {
 /// that has one without the other cannot tell which it is holding.
 pub struct Listed<'a> {
     pub panes: &'a [Pane],
-    pub out_of_reach: &'a BTreeSet<String>,
+    pub out_of_reach: &'a OutOfReach,
 }
 
-/// A run every session of which answered, so there is no pane it is missing.
+/// What the sessions a run could not ask were holding when they last
+/// answered: the ids of their panes, and the agent sessions live in them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OutOfReach {
+    pub pane_ids: BTreeSet<String>,
+    pub agent_sessions: BTreeSet<String>,
+}
+
+impl OutOfReach {
+    /// Add what a session that has gone quiet held in `last_answered`, the
+    /// panes it last answered with.
+    pub fn extend(&mut self, last_answered: &[Pane]) {
+        for pane in last_answered {
+            self.pane_ids.insert(pane.pane_id.clone());
+            self.agent_sessions
+                .extend(pane.live_agent_session().map(str::to_string));
+        }
+    }
+}
+
+/// A run every session of which answered, so there is nothing it is missing.
 #[cfg(feature = "testing")]
-static NOTHING_MISSED: BTreeSet<String> = BTreeSet::new();
+static NOTHING_MISSED: OutOfReach = OutOfReach {
+    pane_ids: BTreeSet::new(),
+    agent_sessions: BTreeSet::new(),
+};
 
 /// Behind the feature rather than `cfg(test)` because the tests under
 /// `tests/` resolve a join too, and they link the library.
@@ -171,9 +215,9 @@ pub struct Joined {
     /// id another tracker happens to reuse says nothing about that tracker's
     /// bead.
     pub refused: BTreeMap<BeadKey, Conflict>,
-    /// Beads whose own key named a pane that is out of this run's reach, so
-    /// nothing it holds says whether the seat behind the claim is alive. A
-    /// rule reading that pane's absence has no absence to read.
+    /// Beads whose own key named a pane or an agent session that is out of
+    /// this run's reach, so nothing it holds says whether the seat behind the
+    /// claim is alive. A rule reading that absence has no absence to read.
     pub out_of_reach: BTreeSet<BeadKey>,
     /// Beads sitting beneath one that holds an agent, one whose pane is out
     /// of reach, or one whose claim is live, in any tree the run drew. Filled
@@ -315,19 +359,33 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
             if let Some(session) = session {
                 named_session.insert(bead.clone(), session.as_str());
             }
-            let holding_session = session
-                .and_then(|session| live_agents.get(session.as_str()))
-                .map_or(&[][..], Vec::as_slice);
+            let holding_session = session.map(|session| {
+                let holding = live_agents.get(session.as_str());
+                (session, holding.map_or(&[][..], Vec::as_slice))
+            });
             let (pane, source) = match holding_session {
-                [pane] => (*pane, JoinSource::AgentSession),
-                // An agent session found in several live panes awards none
-                // of them.
-                [_, _, ..] => continue,
-                [] => {
+                Some((_, [pane])) => (*pane, JoinSource::AgentSession),
+                Some((session, several @ [_, _, ..])) => {
+                    let ambiguous = Conflict::AgentSessionInSeveralPanes {
+                        bead: bead.clone(),
+                        agent_session: session.clone(),
+                        panes: several.iter().map(|pane| pane.key()).collect(),
+                    };
+                    conflicts.push(ambiguous.clone());
+                    refused.insert(bead, ambiguous);
+                    continue;
+                }
+                // The agent may be live in a session that has gone quiet, in
+                // a pane other than the one the bead names.
+                Some((session, [])) if panes_out_of_reach.agent_sessions.contains(session) => {
+                    out_of_reach.insert(bead);
+                    continue;
+                }
+                Some((_, [])) | None => {
                     let Some(named) = row.metadata.get(&cfg.join.pane_key) else {
                         continue;
                     };
-                    let pane = match pane_named(named, &live_under, panes_out_of_reach) {
+                    let pane = match pane_named(named, &live_under, &panes_out_of_reach.pane_ids) {
                         Named::Live(pane) => pane,
                         Named::OutOfReach => {
                             out_of_reach.insert(bead);
@@ -381,11 +439,26 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
             let (bead, source) = named.remove(0);
             agents.insert(bead, agent_ref(pane, source));
         } else {
+            // Beads that all reached the pane through its agent's session
+            // contest the agent; any bead that named the pane itself makes it
+            // the pane they contest.
+            let by_session = named
+                .iter()
+                .all(|(_, source)| *source == JoinSource::AgentSession);
             let named: Vec<BeadKey> = named.into_iter().map(|(bead, _)| bead).collect();
-            let shared = Conflict::SeveralBeadsNameOnePane {
-                pane: key,
-                caption: pane.caption().map(str::to_string),
-                beads: named.clone(),
+            let caption = pane.caption().map(str::to_string);
+            let shared = match pane.live_agent_session().filter(|_| by_session) {
+                Some(agent_session) => Conflict::SeveralBeadsNameOneAgentSession {
+                    agent_session: agent_session.to_string(),
+                    pane: key,
+                    caption,
+                    beads: named.clone(),
+                },
+                None => Conflict::SeveralBeadsNameOnePane {
+                    pane: key,
+                    caption,
+                    beads: named.clone(),
+                },
             };
             conflicts.push(shared.clone());
             for bead in named {
@@ -633,9 +706,28 @@ mod tests {
         }
     }
 
-    /// The three disagreements whose panes are the ones they already carry.
+    /// The five disagreements whose panes are the ones they already carry.
     #[test]
     fn a_disagreement_names_the_panes_it_left_holding_nothing() {
+        assert_eq!(
+            Conflict::SeveralBeadsNameOneAgentSession {
+                agent_session: "sess-mine".to_string(),
+                pane: pane_key("w:p1"),
+                caption: None,
+                beads: vec![key("proj", "p-1"), key("proj", "p-2")],
+            }
+            .refused_panes(),
+            vec![pane_key("w:p1")]
+        );
+        assert_eq!(
+            Conflict::AgentSessionInSeveralPanes {
+                bead: key("proj", "p-1"),
+                agent_session: "sess-mine".to_string(),
+                panes: vec![pane_key("w:p3"), pane_key("w:p4")],
+            }
+            .refused_panes(),
+            vec![pane_key("w:p3"), pane_key("w:p4")]
+        );
         assert_eq!(
             Conflict::SeveralBeadsNameOnePane {
                 pane: pane_key("w:p1"),
@@ -1196,7 +1288,10 @@ mod tests {
             r#"[{"id":"p-1","title":"root","status":"in_progress",
                  "metadata":{"agent_pane":"w:p1","agent_session":"sess-mine"}}]"#,
         );
-        let quiet = BTreeSet::from(["w:p1".to_string()]);
+        let quiet = OutOfReach {
+            pane_ids: BTreeSet::from(["w:p1".to_string()]),
+            ..OutOfReach::default()
+        };
 
         let joined = resolve(
             &[ProjectRows {
@@ -1211,6 +1306,189 @@ mod tests {
         );
 
         assert_eq!(joined.out_of_reach, BTreeSet::from([key("proj", "p-1")]));
+    }
+
+    /// A bead naming only its agent session has no pane id to place, so the
+    /// session itself is placed: one a quiet session's pane last held is out
+    /// of reach, and one nothing held is no agent at all.
+    #[test]
+    fn a_bead_naming_only_a_session_a_quiet_session_last_held_is_out_of_reach() {
+        let beads = rows(
+            r#"[{"id":"p-1","title":"the seat that went quiet","status":"in_progress",
+                 "metadata":{"agent_session":"sess-quiet"}},
+                {"id":"p-2","title":"the seat that died","status":"in_progress",
+                 "metadata":{"agent_session":"sess-gone"}}]"#,
+        );
+        let mut missing = OutOfReach::default();
+        missing.extend(&panes_in("kadath", &an_agent("w:p1", "sess-quiet")));
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            Listed {
+                panes: &[],
+                out_of_reach: &missing,
+            },
+            &Config::naming(vec![project("proj", "/home/user/proj")]),
+        );
+
+        assert_eq!(joined.out_of_reach, BTreeSet::from([key("proj", "p-1")]));
+        assert_eq!(joined.conflicts, vec![]);
+    }
+
+    /// herdr keeps a pane's agent session after its agent has left, so what a
+    /// quiet session last held places only the agents live in its panes.
+    #[test]
+    fn what_a_quiet_session_held_is_its_pane_ids_and_the_agents_live_in_them() {
+        let mut missing = OutOfReach::default();
+        missing.extend(&panes_in(
+            "kadath",
+            &format!(
+                r#"{},{{"pane_id":"w:p2","cwd":"/home/user/proj","agent_status":"idle",
+                     "agent_session":{{"agent":"claude","kind":"id","source":"herdr:claude",
+                                       "value":"sess-left"}}}}"#,
+                an_agent("w:p1", "sess-quiet")
+            ),
+        ));
+
+        assert_eq!(
+            missing,
+            OutOfReach {
+                pane_ids: BTreeSet::from(["w:p1".to_string(), "w:p2".to_string()]),
+                agent_sessions: BTreeSet::from(["sess-quiet".to_string()]),
+            }
+        );
+    }
+
+    /// Nothing says which of two live panes holding one agent session is the
+    /// agent, so the bead gets neither and says which panes hold it.
+    #[test]
+    fn an_agent_session_two_live_panes_hold_is_refused_and_names_the_panes() {
+        let live = panes(&format!(
+            "{},{}",
+            an_agent("w:p1", "sess-mine"),
+            an_agent("w:p2", "sess-mine")
+        ));
+
+        let joined = join_one(r#"{"agent_session":"sess-mine"}"#, &live);
+
+        let held_twice = Conflict::AgentSessionInSeveralPanes {
+            bead: key("proj", "p-1"),
+            agent_session: "sess-mine".to_string(),
+            panes: vec![pane_key("w:p1"), pane_key("w:p2")],
+        };
+        assert_eq!(joined.agents, BTreeMap::new());
+        assert_eq!(joined.conflicts, vec![held_twice.clone()]);
+        assert_eq!(
+            joined.refused,
+            BTreeMap::from([(key("proj", "p-1"), held_twice)])
+        );
+    }
+
+    /// An agent resumed in another pane leaves its old pane carrying its
+    /// session with no agent in it. That pane is not a second holder.
+    #[test]
+    fn an_agent_resumed_in_another_pane_raises_no_conflict() {
+        let live = panes(&format!(
+            r#"{{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle",
+                 "agent_session":{{"agent":"claude","kind":"id","source":"herdr:claude",
+                                   "value":"sess-mine"}}}},{}"#,
+            an_agent("w:p2", "sess-mine")
+        ));
+
+        let joined = join_one(
+            r#"{"agent_pane":"w:p1","agent_session":"sess-mine"}"#,
+            &live,
+        );
+
+        assert_eq!(pane_of(&joined, "proj", "p-1").pane, pane_key("w:p2"));
+        assert_eq!(joined.conflicts, vec![]);
+        assert_eq!(joined.refused, BTreeMap::new());
+    }
+
+    /// Two beads naming the agent in one pane are a disagreement about the
+    /// agent, so it is reported by its session as well as its pane.
+    #[test]
+    fn several_beads_naming_one_agent_session_leaves_them_all_unclaimed_and_reported() {
+        let beads = rows(
+            r#"[
+              {"id":"p-1","title":"root","status":"open"},
+              {"id":"p-1.1","title":"one","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
+               "metadata":{"agent_session":"sess-mine"}},
+              {"id":"p-1.2","title":"two","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
+               "metadata":{"agent_session":"sess-mine"}}
+            ]"#,
+        );
+        let live = panes(&an_agent("w:p1", "sess-mine"));
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            Listed::all(&live),
+            &Config::naming(vec![project("proj", "/home/user/proj")]),
+        );
+
+        let contested = Conflict::SeveralBeadsNameOneAgentSession {
+            agent_session: "sess-mine".to_string(),
+            pane: pane_key("w:p1"),
+            caption: None,
+            beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
+        };
+        assert_eq!(
+            joined.agents,
+            BTreeMap::new(),
+            "neither bead gets the agent"
+        );
+        assert_eq!(joined.conflicts, vec![contested.clone()]);
+        assert_eq!(
+            joined.refused,
+            BTreeMap::from([
+                (key("proj", "p-1.1"), contested.clone()),
+                (key("proj", "p-1.2"), contested),
+            ])
+        );
+    }
+
+    /// Where one bead names the agent and another only its pane, they agree
+    /// on nothing but the pane, so the pane is what is contested.
+    #[test]
+    fn a_bead_naming_the_agent_and_one_naming_only_its_pane_contest_the_pane() {
+        let beads = rows(
+            r#"[
+              {"id":"p-1","title":"root","status":"open"},
+              {"id":"p-1.1","title":"one","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
+               "metadata":{"agent_session":"sess-mine"}},
+              {"id":"p-1.2","title":"two","status":"in_progress",
+               "dependencies":[{"depends_on_id":"p-1","type":"parent-child"}],
+               "metadata":{"agent_pane":"w:p1"}}
+            ]"#,
+        );
+        let live = panes(&an_agent("w:p1", "sess-mine"));
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            Listed::all(&live),
+            &Config::naming(vec![project("proj", "/home/user/proj")]),
+        );
+
+        assert_eq!(
+            joined.conflicts,
+            vec![Conflict::SeveralBeadsNameOnePane {
+                pane: pane_key("w:p1"),
+                caption: None,
+                beads: vec![key("proj", "p-1.1"), key("proj", "p-1.2")],
+            }]
+        );
     }
 
     /// The pane exists and its bead does not — that absence is `orphan-claim`'s
@@ -1254,7 +1532,10 @@ mod tests {
         );
         let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"idle"}"#);
         let cfg = vec![project("proj", "/home/user/proj")];
-        let missing = BTreeSet::from(["w:pQUIET".to_string()]);
+        let missing = OutOfReach {
+            pane_ids: BTreeSet::from(["w:pQUIET".to_string()]),
+            ..OutOfReach::default()
+        };
 
         let joined = resolve(
             &[ProjectRows {
@@ -1292,7 +1573,10 @@ mod tests {
         );
         let live = panes(r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working"}"#);
         let cfg = vec![project("proj", "/home/user/proj")];
-        let missing = BTreeSet::from(["w:p1".to_string()]);
+        let missing = OutOfReach {
+            pane_ids: BTreeSet::from(["w:p1".to_string()]),
+            ..OutOfReach::default()
+        };
 
         let joined = resolve(
             &[ProjectRows {

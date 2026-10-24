@@ -90,22 +90,24 @@ pub fn target(forest: &Forest) -> Target<'_> {
 /// The pane one of the groups' entries names, where it names exactly one.
 ///
 /// A loose pane and an unconfigured one are panes; that is the whole of what
-/// they are. A conflict is not, but two of its five shapes turn on a single
-/// pane and name it. The other three name two panes, several, and an id held
-/// in several sessions, so there is nothing to pick rather than nothing to
-/// show.
+/// they are. A conflict is not, but three of its seven shapes turn on a single
+/// pane and name it. The other four name two panes, several, an id held in
+/// several sessions, and an agent session held in several panes, so there is
+/// nothing to pick rather than nothing to show.
 fn named_pane(item: &Item) -> Option<&PaneKey> {
     match item {
         Item::Loose(loose) => Some(&loose.pane),
         Item::Unconfigured(unconfigured) => Some(&unconfigured.pane),
         Item::Conflict(
             Conflict::SeveralBeadsNameOnePane { pane, .. }
+            | Conflict::SeveralBeadsNameOneAgentSession { pane, .. }
             | Conflict::PaneInAnotherProject { pane, .. },
         ) => Some(pane),
         Item::Conflict(
             Conflict::BeadAndPaneDisagree { .. }
             | Conflict::SeveralPanesNameOneBead { .. }
-            | Conflict::PaneIdInSeveralSessions { .. },
+            | Conflict::PaneIdInSeveralSessions { .. }
+            | Conflict::AgentSessionInSeveralPanes { .. },
         )
         | Item::Failed(_) => None,
     }

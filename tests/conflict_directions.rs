@@ -230,6 +230,8 @@ fn arm(conflict: &Conflict) -> &'static str {
         Conflict::SeveralBeadsNameOnePane { .. } => "several-beads-name-one-pane",
         Conflict::PaneInAnotherProject { .. } => "pane-in-another-project",
         Conflict::PaneIdInSeveralSessions { .. } => "pane-id-in-several-sessions",
+        Conflict::SeveralBeadsNameOneAgentSession { .. } => "several-beads-name-one-agent-session",
+        Conflict::AgentSessionInSeveralPanes { .. } => "agent-session-in-several-panes",
     }
 }
 
@@ -281,6 +283,26 @@ fn two_claims_on_one_pane() -> Reading {
     )
 }
 
+/// Two beads of one tracker naming one agent, each by its session and the pane
+/// it sits in, as a seat writes both. Neither gets it.
+fn two_claims_on_one_agent() -> Reading {
+    read(
+        r#"[
+          {"id":"dun-4","title":"tune the receiver","status":"open"},
+          {"id":"dun-4.1","title":"one of two claims on the same agent",
+           "status":"in_progress",
+           "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p1","agent_session":"sess-dish"}},
+          {"id":"dun-4.2","title":"the other","status":"in_progress",
+           "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"}],
+           "metadata":{"agent_pane":"w:p1","agent_session":"sess-dish"}}
+        ]"#,
+        r#"{"pane_id":"w:p1","cwd":"/srv/dunwich/src","agent_status":"working","agent":"claude",
+            "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude",
+                             "value":"sess-dish"}}"#,
+    )
+}
+
 /// The two disagreements that refuse nobody's claim: a bead and a pane naming
 /// each other's opposite number, and two panes naming one bead.
 fn disagreements_that_refuse_no_claim() -> Reading {
@@ -308,6 +330,7 @@ fn readings() -> Vec<Reading> {
     vec![
         a_claim_reaching_out_of_its_project(),
         two_claims_on_one_pane(),
+        two_claims_on_one_agent(),
         disagreements_that_refuse_no_claim(),
     ]
 }
@@ -346,9 +369,9 @@ fn a_disagreement_that_took_a_claim_names_the_pane_that_claim_named() {
         }
     }
     assert_eq!(
-        crossed, 5,
-        "the readings refuse five claims between them, so a crossing that checked \
-         fewer than five checked nothing"
+        crossed, 7,
+        "the readings refuse seven claims between them, so a crossing that checked \
+         fewer than seven checked nothing"
     );
 }
 
@@ -392,6 +415,7 @@ fn every_arm_of_a_disagreement_is_asked_both_questions() {
         BTreeSet::from([
             "bead-and-pane-disagree",
             "pane-in-another-project",
+            "several-beads-name-one-agent-session",
             "several-beads-name-one-pane",
             "several-panes-name-one-bead",
         ])

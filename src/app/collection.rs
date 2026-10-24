@@ -23,7 +23,7 @@ use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::worktree;
 use crate::config::{Config, Project, Scope};
 use crate::model::edges::{self, Elsewhere, Named, Related};
-use crate::model::join::{self, BeadKey, Listed, ProjectRows};
+use crate::model::join::{self, BeadKey, Listed, OutOfReach, ProjectRows};
 use crate::model::snapshot::{
     self, AgentProvider, Collected, FailedProject, Filter, Node, ProviderState, Said, Session,
     SessionState, Snapshot, TrackerFailure, TrackerState, Tree,
@@ -160,16 +160,16 @@ fn placed(pane: Pane) -> Pane {
 #[derive(Default)]
 pub struct Collection {
     read: BTreeMap<String, Read>,
-    /// Which pane ids each session last answered with. A session that
-    /// answers replaces its own entry and no other's, and one the provider
-    /// has stopped running loses its.
+    /// Which panes each session last answered with. A session that answers
+    /// replaces its own entry and no other's, and one the provider has
+    /// stopped running loses its.
     ///
     /// Kept for the collection where a session does *not* answer, which is
     /// the only time it is read. A seat writes a bare pane id, and an id
     /// names a pane only within its session, so nothing in the run's own
-    /// answer can place the id a silent session was holding. What it last
-    /// answered with can.
-    panes_last_answered: BTreeMap<String, BTreeSet<String>>,
+    /// answer can place the id a silent session was holding, nor the agent
+    /// session it was holding. What it last answered with can.
+    panes_last_answered: BTreeMap<String, Vec<Pane>>,
     /// The projects the scope left out that held a drawn bead's blocker. Each
     /// is read from the collection that needed it onwards. Kept here
     /// rather than written into a config, so a config the reader rewrites
@@ -428,7 +428,7 @@ impl Collection {
         cfg: &Config,
         trackers: &dyn Trackers,
         panes: &[Pane],
-        out_of_reach: &BTreeSet<String>,
+        out_of_reach: &OutOfReach,
         provider: &AgentProvider,
         filter: Filter,
         now: DateTime<Utc>,
@@ -717,7 +717,7 @@ impl Collection {
         cfg: &Config,
         trackers: &dyn Trackers,
         panes: &[Pane],
-        out_of_reach: &BTreeSet<String>,
+        out_of_reach: &OutOfReach,
         agents: &AgentProvider,
         filter: Filter,
         now: DateTime<Utc>,
@@ -910,7 +910,7 @@ impl Collection {
     /// agents filter would fall back to showing everything and the tail would
     /// refuse to read any pane on the machine, both because one session of five
     /// hiccuped. So what a partial answer costs is carried at the grain it
-    /// happened at, and the third value here is that grain: the panes the
+    /// happened at, and the third value here is that grain: what the
     /// missing sessions were holding when they last answered, which is what
     /// tells a claim this run cannot speak for from a seat that has died.
     ///
@@ -920,7 +920,7 @@ impl Collection {
     /// one collection — but it never closes for `bdi --json`, which builds a
     /// collection per invocation and so has watched nothing. That divergence
     /// between the screen and the published snapshot is `bdi-0tp.15`.
-    fn every_pane(&mut self, agents: &dyn Agents) -> (Vec<Pane>, AgentProvider, BTreeSet<String>) {
+    fn every_pane(&mut self, agents: &dyn Agents) -> (Vec<Pane>, AgentProvider, OutOfReach) {
         let sessions = match agents.sessions() {
             Ok(sessions) => sessions,
             Err(failure) => {
@@ -932,7 +932,7 @@ impl Collection {
                         sessions: Vec::new(),
                         pane_agents: BTreeMap::new(),
                     },
-                    BTreeSet::new(),
+                    OutOfReach::default(),
                 )
             }
         };
@@ -941,20 +941,18 @@ impl Collection {
 
         let mut panes = Vec::new();
         let mut read = Vec::with_capacity(sessions.len());
-        let mut out_of_reach = BTreeSet::new();
+        let mut out_of_reach = OutOfReach::default();
         for name in sessions {
             let state = match agents.list(&name) {
                 Ok(listed) => {
-                    self.panes_last_answered.insert(
-                        name.clone(),
-                        listed.iter().map(|pane| pane.pane_id.clone()).collect(),
-                    );
+                    self.panes_last_answered
+                        .insert(name.clone(), listed.clone());
                     panes.extend(listed.into_iter().map(placed));
                     SessionState::Answering
                 }
                 Err(_) => {
                     if let Some(held) = self.panes_last_answered.get(&name) {
-                        out_of_reach.extend(held.iter().cloned());
+                        out_of_reach.extend(held);
                     }
                     SessionState::NotAnswering
                 }
@@ -1238,8 +1236,8 @@ mod tests {
     use crate::app::fixtures::*;
     use crate::app::watcher::Journal;
     use crate::collect::agents::testing::{
-        in_session, named, pane, running, titled, Asked as AskedOfTheProvider, Fake as Provider,
-        THE_FAKE,
+        holding_agent, in_session, named, pane, titled, Asked as AskedOfTheProvider,
+        Fake as Provider, THE_FAKE,
     };
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
@@ -1558,11 +1556,11 @@ mod tests {
     /// session, and the session herdr reports in no pane is counted.
     #[test]
     fn a_bead_is_watched_by_each_agent_herdr_reports_watching_it_but_its_claim() {
-        let keeper = running(
+        let keeper = holding_agent(
             titled(pane("w:p1", DUNWICH, PaneStatus::Working), "the dish"),
             "4f1c-keeper",
         );
-        let crew = running(
+        let crew = holding_agent(
             titled(
                 named(pane("w:p3", DUNWICH, PaneStatus::Idle), "ferry crew"),
                 "coiling rope",
@@ -3258,6 +3256,61 @@ path = "{}"
         assert!(
             node(tree_of(&after, "dunwich"), "dun-7.1").agent.is_some(),
             "the seat that answered is still drawn on its bead"
+        );
+    }
+
+    /// The same for a claim naming only its agent session. It has no pane id
+    /// to place, so what places it is the agent the quiet session's pane was
+    /// holding when it last answered.
+    #[test]
+    fn a_claim_naming_only_an_agent_session_a_quiet_session_held_is_not_orphaned() {
+        const BY_SESSION: &str = r#"[
+          {"id":"dun-7","title":"lift the ground station","status":"open",
+           "priority":1,"issue_type":"epic"},
+          {"id":"dun-7.1","title":"re-point the dish","status":"in_progress","parent":"dun-7",
+           "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+           "priority":2,"issue_type":"task","metadata":{"agent_session":"sess-dish"}},
+          {"id":"dun-7.2","title":"survey the mast","status":"in_progress","parent":"dun-7",
+           "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+           "priority":2,"issue_type":"task","metadata":{"agent_session":"sess-mast"}}
+        ]"#;
+        let cfg = one_project();
+        let trackers = dunwich_with(dunwich_holding(BY_SESSION));
+        let mut standing = Collection::default();
+
+        let seated = Provider::holding(vec![
+            in_session(
+                holding_agent(pane("w:p1", DUNWICH, PaneStatus::Working), "sess-dish"),
+                "kadath",
+            ),
+            holding_agent(pane("w:p2", DUNWICH, PaneStatus::Working), "sess-mast"),
+        ]);
+        standing.collect(
+            &cfg,
+            &seated,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        // kadath stops answering, and the mast's agent leaves the session
+        // that still does.
+        let quiet = Provider::holding(Vec::new()).not_answering_for("kadath", wedged());
+        let after = standing.collect(
+            &cfg,
+            &quiet,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            orphaned(&after),
+            ["dun-7.2"],
+            "the agent in the session that went quiet is out of reach, and the \
+             one that left the session that answered is an orphan"
         );
     }
 

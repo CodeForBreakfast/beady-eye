@@ -206,9 +206,8 @@ pub mod testing {
         pane
     }
 
-    /// The same pane, with herdr reporting a live `claude` in it running the
-    /// agent session `session`.
-    pub fn running(mut pane: Pane, session: &str) -> Pane {
+    /// The same pane, with an agent in it that herdr names by `session`.
+    pub fn holding_agent(mut pane: Pane, session: &str) -> Pane {
         pane.agent = Some("claude".to_string());
         pane.agent_session = Some(AgentSession {
             agent: "claude".to_string(),
