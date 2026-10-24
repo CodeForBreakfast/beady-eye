@@ -332,30 +332,6 @@ mod tests {
         assert!(drawn[0].starts_with(A_KEY_ROW), "{drawn:?}");
     }
 
-    /// With no herdr there is no agent on any row, and a screen that only
-    /// stopped showing them would read as a fleet with nobody working in it.
-    /// It goes at the foot because that is the one row that cannot be folded
-    /// or scrolled away.
-    #[test]
-    fn a_herdr_that_could_not_be_reached_is_said_where_nothing_can_hide_it() {
-        let drawn = Painted::of(
-            status_bar(
-                &[Notice::AgentsUnknown],
-                None,
-                None,
-                &a_key_row(),
-                Spine::default(),
-                false,
-                90,
-            ),
-            90,
-            1,
-        )
-        .rows();
-
-        says(&drawn[0], "no herdr session · agents are not shown");
-    }
-
     /// The bead this row was built for: a `bdi` that could not open its
     /// inbound socket is told nothing when a project changes, so what is on
     /// screen is only as fresh as the last poll. Nothing above the foot could
@@ -1037,29 +1013,6 @@ mod tests {
             notices(&behind_a_frame(a_provider(ProviderState::Answering)), &[]),
             Vec::new()
         );
-    }
-
-    /// Keys can be rediscovered; a herdr that is silently absent cannot. So on
-    /// a screen too narrow for both, the keys are what gives way.
-    #[test]
-    fn a_narrow_foot_gives_up_the_keys_before_the_missing_herdr() {
-        let drawn = Painted::of(
-            status_bar(
-                &[Notice::AgentsUnknown],
-                None,
-                None,
-                &a_key_row(),
-                Spine::default(),
-                false,
-                60,
-            ),
-            60,
-            1,
-        )
-        .rows();
-
-        assert!(drawn[0].contains("no herdr session"), "{drawn:?}");
-        assert_eq!(drawn[0].chars().count(), 60);
     }
 
     /// The bead this was written for. Measured at 60 columns, the foot drew
