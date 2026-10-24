@@ -618,9 +618,8 @@ const PANES: &str = r#"{"result":{"agents":[
   {"pane_id":"w:pF","cwd":"/srv/spike","agent_status":"idle"}
 ]}}"#;
 
-fn cfg() -> Config {
-    Config::from_toml(
-        r#"
+/// The projects every fixture here is read from.
+const CONFIG: &str = r#"
 [[projects]]
 name = "dunwich"
 path = "/srv/work/dunwich"
@@ -635,9 +634,10 @@ credential_command = "secret ferry"
 name = "harbour"
 path = "/srv/work/harbour"
 credential_command = "secret harbour"
-"#,
-    )
-    .expect("the config parses")
+"#;
+
+fn cfg() -> Config {
+    Config::from_toml(CONFIG).expect("the config parses")
 }
 
 fn now() -> DateTime<Utc> {
@@ -1030,29 +1030,31 @@ fn ready_together(project: &str, jsons: &[&str], panes: &[Pane], ready: &[&str])
         .iter()
         .map(|json| parse_shared_beads(json).expect("the rows parse"))
         .collect();
-    let rows: Vec<Arc<Bead>> = answers.iter().flatten().cloned().collect();
-    let nesting = Nesting::of(&rows);
-    let roots: Vec<Assembled> = answers
-        .iter()
-        .map(|answer| {
-            nesting
-                .assemble(&root_row(answer))
-                .expect("the rows assemble")
-        })
-        .collect();
-    let cfg = cfg();
-    let joined = join::resolve(
-        &[ProjectRows {
-            project,
-            rows: &rows,
-        }],
-        Listed::all(panes),
-        &cfg,
-    );
+    let roots: Vec<String> = answers.iter().map(|answer| root_row(answer)).collect();
+    let rows: Vec<Arc<Bead>> = answers.into_iter().flatten().collect();
     let readiness = Readiness {
         ready: ready.iter().map(|id| (*id).to_string()).collect(),
         ..Readiness::default()
     };
+    rooted_under(&cfg(), project, &rows, &roots, panes, &readiness)
+}
+
+/// `rows` hung under each of `roots` and badged as `cfg` says, for a fixture
+/// holding several roots in one answer, as `bd` gives them.
+fn rooted_under(
+    cfg: &Config,
+    project: &str,
+    rows: &[Arc<Bead>],
+    roots: &[String],
+    panes: &[Pane],
+    readiness: &Readiness,
+) -> Snapshot {
+    let nesting = Nesting::of(rows);
+    let roots: Vec<Assembled> = roots
+        .iter()
+        .map(|root| nesting.assemble(root).expect("the rows assemble"))
+        .collect();
+    let joined = join::resolve(&[ProjectRows { project, rows }], Listed::all(panes), cfg);
     let trees = roots
         .iter()
         .map(|root| {
@@ -1060,9 +1062,9 @@ fn ready_together(project: &str, jsons: &[&str], panes: &[Pane], ready: &[&str])
                 project,
                 root,
                 &joined,
-                &crate::model::snapshot::said_by(project, &readiness, &BTreeMap::new()),
+                &crate::model::snapshot::said_by(project, readiness, &BTreeMap::new()),
                 ProviderState::Answering,
-                &cfg,
+                cfg,
                 now(),
             )
         })
@@ -1077,7 +1079,7 @@ fn ready_together(project: &str, jsons: &[&str], panes: &[Pane], ready: &[&str])
         },
         panes,
         &joined,
-        &cfg,
+        cfg,
         a_provider(ProviderState::Answering),
         Filter::All,
         now(),

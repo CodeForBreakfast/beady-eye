@@ -329,6 +329,57 @@ fn a_line_shut_over_its_blockers_draws_the_badges_of_the_open_ones_after_its_own
     assert_eq!(badges_on(&forest, SURVEY), ["⇢ dun-19.1.1", "⇢ dun-21"]);
 }
 
+/// Three beads each blocked by a `gh:pr` gate, as bd 1.3.0 wrote them. Only
+/// `dun-auk`, the gate holding `dun-bz4` back, names its repository.
+const GH_PR_GATES: &str = include_str!("../../../../tests/fixtures/bd_1.3.0_gh_pr_gates.json");
+
+/// The entry the README gives for a `gh:pr` gate, word for word.
+const THE_READMES_ENTRY: &str = r#"
+[[badges]]
+key      = "metadata.repo"
+when     = { await_type = "gh:pr", await_id = "[0-9]+" }
+match    = "(?<owner>[A-Za-z0-9_.-]+)/(?<name>[A-Za-z0-9_.-]+)"
+render   = "⇢ {name} #{await_id}"
+short    = "⇢ #{await_id}"
+link     = "https://github.com/{owner}/{name}/pull/{await_id}"
+drawn_on = "blocked"
+"#;
+
+/// A pull request's link is why a bead waits on its gate, so the badge a
+/// shut line lifts off the gate still takes the reader there.
+#[test]
+fn a_line_shut_over_its_gate_draws_the_gates_pull_request_link() {
+    let cfg =
+        Config::from_toml(&format!("{CONFIG}{THE_READMES_ENTRY}")).expect("the config parses");
+    let rows = parse_shared_beads(GH_PR_GATES).expect("the rows parse");
+    let snapshot = rooted_under(
+        &cfg,
+        "dunwich",
+        &rows,
+        &["dun-bz4".to_string()],
+        &[],
+        &Readiness::default(),
+    );
+    let mut forest = flatten(snapshot);
+    select(&mut forest, &key("dunwich", "dun-bz4"));
+
+    forest.apply(Action::CollapseSubtree);
+
+    assert_eq!(fold_of(&forest, "dun-bz4"), Some(false));
+    let lifted: Vec<(&str, Option<&str>)> = row_of(&forest, "dun-bz4")
+        .badges
+        .iter()
+        .map(|badge| (badge.text.as_str(), badge.link.as_deref()))
+        .collect();
+    assert_eq!(
+        lifted,
+        [(
+            "⇢ arkham #12",
+            Some("https://github.com/dunwich/arkham/pull/12")
+        )]
+    );
+}
+
 /// Only an entry knows whether its badge means anything on another bead's
 /// row. A blocker's ticket drawn there unasked would read as the row's own.
 #[test]
