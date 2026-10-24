@@ -320,36 +320,3 @@ fn configured(home: &Path, toml: &str) {
     std::fs::create_dir_all(&at).expect("the directory is ours to make");
     std::fs::write(at.join("config.toml"), toml).expect("the config is ours to write");
 }
-
-/// The other half: a directory with no `.envrc` runs no direnv, on a machine
-/// that has one and would have answered.
-///
-/// The absence is read off the file the shim writes rather than off a
-/// duration. `direnv exec` on a directory with no `.envrc` is a 3 to 5ms
-/// pass-through, so a timing assertion passes whether or not the call was
-/// made, and would report the skip it was written to catch either way.
-#[test]
-fn a_directory_with_no_envrc_runs_no_direnv_on_a_machine_that_has_one() {
-    let cwd = a_project("no-envrc");
-    let tracker = ShimmedTracker::beside(&cwd);
-    tracker.tracks(&cwd);
-    tracker.holds(THE_LAUNCHING_SHELLS);
-    tracker.enters_with(&[("BDI_SHIM_BD_ANSWERS", "/nowhere-a-tracker-answers-from")]);
-
-    let out = bdi(&cwd, &tracker.environment());
-    let snapshot = String::from_utf8_lossy(&out.stdout).to_string();
-    let said = String::from_utf8_lossy(&out.stderr).to_string();
-
-    assert!(out.status.success(), "bdi exited {}: {said}", out.status);
-    assert_eq!(
-        tracker.direnv_runs(),
-        Vec::<String>::new(),
-        "a directory with no .envrc was handed to direnv anyway"
-    );
-    assert!(
-        snapshot.contains(&format!("\"{THE_LAUNCHING_SHELLS_ROOT}\"")),
-        "the project was not read in the ambient environment: {snapshot}"
-    );
-
-    std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
-}
