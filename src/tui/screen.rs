@@ -1653,6 +1653,53 @@ mod tests {
         );
     }
 
+    /// The shorter of the two heights where the tail band is one row: a
+    /// forest of two rows, the band, and the keys. A band one row high holds
+    /// the rule naming the pane and nothing under it, because the row a line
+    /// beneath the rule would go on is the key bar.
+    ///
+    /// Both guarded arms are drawn, since they are two guards: the band
+    /// saying it has nothing to tail, and the band saying it is reading.
+    #[test]
+    fn a_four_row_screen_keeps_its_key_bar_under_a_tail_that_is_silent_or_reading() {
+        the_key_bar_survives_a_one_row_band(4);
+    }
+
+    /// The taller of the two: one row more of forest and the same band, so
+    /// the rule is met at both heights rather than skirted at one.
+    #[test]
+    fn a_five_row_screen_keeps_its_key_bar_under_a_tail_that_is_silent_or_reading() {
+        the_key_bar_survives_a_one_row_band(5);
+    }
+
+    fn the_key_bar_survives_a_one_row_band(height: u16) {
+        let silent = "the line a silent band would write";
+        let reading = "reading that pane";
+        for (tail, line) in [
+            (Tail::Silent(silent), silent),
+            (
+                Tail::Reading {
+                    pane: pane_key(A_SELECTED_PANE),
+                },
+                reading,
+            ),
+        ] {
+            let mut forest = forest::flatten(a_grove(2));
+            let screen = screen_of(&mut forest, &tail, 120, height, Over::Nothing).rows();
+
+            assert_eq!(
+                screen.last().expect("a screen with rows on it").trim_end(),
+                key_row(),
+                "a {height}-row screen lost its key bar under {tail:?}: {screen:#?}"
+            );
+            assert!(
+                screen.iter().all(|row| !row.contains(line)),
+                "a band one row high wrote its line on a {height}-row screen \
+                 under {tail:?}: {screen:#?}"
+            );
+        }
+    }
+
     /// A tree with enough beads under it that a half-screen motion has room
     /// to land somewhere that says how far it moved.
     fn a_grove(beads: usize) -> Snapshot {
@@ -3319,6 +3366,42 @@ mod tests {
         );
     }
 
+    /// A click after the wheel selects the line under the pointer. The wheel
+    /// moves the forest's view and leaves the selection where it was, so the
+    /// line a click names is the one the scrolled view drew on that row. An
+    /// inverse that took its offset from the selection would name the first
+    /// line of the forest instead.
+    #[test]
+    fn a_click_after_the_wheel_selects_the_line_the_scrolled_view_drew_on_that_row() {
+        let screen = Rect::new(0, 0, 60, 24);
+        let mut shown = shown(a_grove(30));
+        let band = draw::regions(screen, shown.forest.lines().len(), shown.tail_band).forest;
+        forest_band(&mut shown, 60, 24);
+        let was = shown.forest.selected_line();
+
+        assert!(shown.scrolled(Notch::Down));
+        assert_eq!(
+            shown.forest.selected_line(),
+            was,
+            "the wheel moved the selection"
+        );
+        let drawn = forest_band(&mut shown, 60, 24);
+        assert!(shown.clicked(screen, band.y));
+
+        let selected = shown.forest.selected_line();
+        assert_ne!(
+            selected, was,
+            "the click read the view as it was unscrolled"
+        );
+        let id = &cursor(&shown).expect("the click landed on a bead").id;
+        let as_drawn = format!("{} ", id.trim_start_matches("grv-1"));
+        assert!(
+            drawn[0].contains(&as_drawn),
+            "the click selected {id}, and the top row drew {:?}",
+            drawn[0]
+        );
+    }
+
     /// The tail is an echo of a pane and the key row is a legend. A click on
     /// either holds nothing the selection could sit on, and leaves it where
     /// it was.
@@ -3409,6 +3492,44 @@ mod tests {
                 "the click at row {row} did not take the window away: {rows:#?}"
             );
         }
+    }
+
+    /// The window `offered` hands a 120-column screen shows the whole of a
+    /// title too long to fit across it. `show.rs` pins the wrapping at a
+    /// width of its own choosing, and this is the width a reader's terminal
+    /// gives it.
+    #[test]
+    fn the_bead_window_on_a_wide_screen_shows_the_whole_of_a_long_title() {
+        const A_LONG_TITLE: &str = "Thirty-three of thirty-four forest rows are the terminal's default, so the three an agent is on are found by reading rather than by looking";
+        let mut snapshot = a_grove(2);
+        for tree in &mut snapshot.collected {
+            for node in &mut Arc::make_mut(tree).beads {
+                if node.id == "grv-1.1" {
+                    node.title = A_LONG_TITLE.to_string();
+                }
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        let mut shown = shown(snapshot);
+        shown.apply(Action::ExpandOrChild);
+        assert!(shown.apply(Action::ShowBead));
+
+        let forest = forest_band(&mut shown, 120, 40).join("\n");
+        assert!(
+            !forest.contains("by looking"),
+            "the forest already says the end of the title, so a window that \
+             said nothing of it would pass: {forest}"
+        );
+
+        let name = bead_page(&mut shown, 120, 40)
+            .into_iter()
+            .take_while(|row| !row.contains("in_progress"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            name.contains(A_LONG_TITLE),
+            "the window cut the title: {name:?}"
+        );
     }
 
     /// Wide enough for the window's rows to be drawn whole, and tall enough
