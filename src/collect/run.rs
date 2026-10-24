@@ -468,7 +468,7 @@ impl RunFailure {
 
     /// Classify a non-zero exit from what the command wrote to stderr, then
     /// drop that text.
-    fn from_exit(program: &str, code: Option<i32>, stderr: &str) -> Self {
+    pub(crate) fn from_exit(program: &str, code: Option<i32>, stderr: &str) -> Self {
         let said = stderr.to_lowercase();
         let (kind, detail) = if REFUSAL.iter().any(|phrase| said.contains(phrase)) {
             (
@@ -949,6 +949,13 @@ mod tests {
     const NO_SUCH_PANE: &str = r#"{"error":{"code":"agent_not_found","message":"agent target wCW:nosuchpane not found"},"id":"cli:agent:read"}"#;
     const PANE_BUSY: &str = r#"{"error":{"code":"agent_not_idle","message":"cannot read 8 lines while wCW:pM is working: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible"},"id":"cli:agent:read"}"#;
 
+    /// The failure of a command that wrote `stderr` and exited non-zero,
+    /// without running one. `RealRunner` hands the command's stderr to
+    /// `from_exit` as lossy UTF-8 and nothing else.
+    fn classified(stderr: &str) -> RunFailure {
+        RunFailure::from_exit("sh", Some(1), stderr)
+    }
+
     /// A real subprocess writing `stderr` and exiting non-zero.
     fn failing_command(stderr: &str) -> RunFailure {
         RealRunner
@@ -1169,14 +1176,14 @@ mod tests {
         ];
 
         for (said, expected) in placed {
-            assert_eq!(failing_command(said).kind, expected, "on {said:?}");
+            assert_eq!(classified(said).kind, expected, "on {said:?}");
         }
     }
 
     /// bd's failures name the database and the user it authenticated as.
     #[test]
     fn bds_error_text_never_survives_into_the_failure() {
-        let failure = failing_command(REFUSED);
+        let failure = classified(REFUSED);
         let shown = format!("{failure} {failure:?}");
 
         for secret in ["arkham", "db.example.invalid", "Access denied", "1045"] {
@@ -1204,7 +1211,7 @@ mod tests {
             PRUNED,
         ] {
             assert!(
-                failing_command(said).unreadable.is_none(),
+                classified(said).unreadable.is_none(),
                 "text on stderr reached a failure's own field: {said:?}"
             );
         }
@@ -1265,7 +1272,7 @@ mod tests {
     #[test]
     fn herdrs_error_json_never_survives_into_the_failure() {
         for said in [NO_SUCH_PANE, PANE_BUSY] {
-            let failure = failing_command(said);
+            let failure = classified(said);
             let shown = format!("{failure} {failure:?}");
 
             for leaked in ["agent_not", "wCW", "cli:agent", "\"error\""] {

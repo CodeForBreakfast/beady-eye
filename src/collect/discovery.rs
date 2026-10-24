@@ -806,13 +806,8 @@ path = "/tmp/seat-b/wt/crates/dish"
     /// that spelling still join, and no other repository's trees are annexed.
     #[test]
     fn a_path_in_none_of_the_working_trees_git_listed_holds_only_itself() {
-        let scratch = a_scratch_directory("symlinked-path");
-        let checkout = scratch.join("checkout");
-        std::fs::create_dir_all(&checkout).expect("the directory is ours to make");
-        git_in(&checkout, &["init"]);
-        git_in(&checkout, &["commit", "--allow-empty", "-m", "root"]);
-        let spelled = scratch.join("dunwich");
-        std::os::unix::fs::symlink(&checkout, &spelled).expect("the link is ours to make");
+        let spelled = Path::new("/srv/links/dunwich");
+        let runner = FakeRunner::default().with("git worktree list --porcelain", ONE_CHECKOUT);
 
         let cfg = with_the_working_trees_git_lists(
             Config::from_toml(&format!(
@@ -820,7 +815,7 @@ path = "/tmp/seat-b/wt/crates/dish"
                 spelled.display()
             ))
             .expect("the config parses"),
-            &RealRunner,
+            &runner,
         );
 
         assert!(
@@ -832,8 +827,6 @@ path = "/tmp/seat-b/wt/crates/dish"
             cfg.projects[0].holds(&spelled.join("src")).is_some(),
             "the project stopped holding the path it was configured with"
         );
-
-        std::fs::remove_dir_all(&scratch).expect("the directory is ours to remove");
     }
 
     /// The listing is asked for where bdi was run, because a worktree only

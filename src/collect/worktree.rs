@@ -103,7 +103,9 @@ fn the_admin_directory_claims(admin: &Path, root: &Path) -> bool {
 /// That is the price of the answer being a path a config can be compared
 /// against — resolving through the links would place the pane at git's
 /// spelling of the checkout rather than the reader's, and a project
-/// configured through a symlink would stop holding its own panes.
+/// configured through a symlink would stop holding its own panes. Git's
+/// spelling is the real path: `git worktree list` names a checkout reached
+/// through a symlink by its target, never by the link it was reached through.
 ///
 /// What the fold lands on is then a fact about the disk rather than
 /// anything this decides, which is why `the_admin_directory_claims` exists:
@@ -215,19 +217,15 @@ pub mod testing {
             linked,
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::testing::{a_linked_worktree_git_made, a_scratch_directory, git_in, LinkedWorktree};
-    use super::*;
-    use pretty_assertions::assert_eq;
 
     /// A linked worktree's files as git 2.55 writes them, captured from a
     /// worktree of this repository: `.git` is a file naming the admin
     /// directory outright, and the admin directory's `commondir` climbs back
     /// to the main `.git` relatively.
-    fn a_linked_worktree_written_by_hand(named: &str) -> LinkedWorktree {
+    ///
+    /// Nothing runs, so a test that only reads the files git leaves behind
+    /// takes this one and spares the three git processes the other costs.
+    pub fn a_linked_worktree_written_by_hand(named: &str) -> LinkedWorktree {
         let scratch = a_scratch_directory(named);
         let checkout = scratch.join("checkout");
         let linked = scratch.join("seat/wt");
@@ -251,6 +249,15 @@ mod tests {
             linked,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::{
+        a_linked_worktree_git_made, a_linked_worktree_written_by_hand, a_scratch_directory, git_in,
+    };
+    use super::*;
+    use pretty_assertions::assert_eq;
 
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
@@ -551,7 +558,7 @@ mod tests {
     /// here for the back-check to catch and something for it to lose.
     #[test]
     fn a_worktree_moved_without_repair_is_still_placed() {
-        let fixture = a_linked_worktree_git_made("worktree-moved-without-repair");
+        let fixture = a_linked_worktree_written_by_hand("worktree-moved-without-repair");
         let moved = fixture.scratch.join("elsewhere/wt");
         std::fs::create_dir_all(moved.parent().expect("it has a parent"))
             .expect("the directory is ours to make");
@@ -674,7 +681,7 @@ mod tests {
     /// answers the worktree.
     #[test]
     fn a_dot_git_whose_symlink_dangles_is_walked_past_as_git_walks_past_it() {
-        let fixture = a_linked_worktree_git_made("worktree-dangling-dot-git");
+        let fixture = a_linked_worktree_written_by_hand("worktree-dangling-dot-git");
         let deep = fixture.linked.join("nested/sub");
         std::fs::create_dir_all(&deep).expect("the directory is ours to make");
         let gone = fixture.scratch.join("the-target-a-build-collected");
