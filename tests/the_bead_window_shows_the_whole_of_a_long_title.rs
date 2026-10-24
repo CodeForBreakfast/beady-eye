@@ -25,9 +25,9 @@ const LONG_ENOUGH_TO_COLLECT: Duration = Duration::from_secs(10);
 const REFRESH: &[u8] = b"\x12";
 
 /// From the tree's header down onto the first bead, and Enter, which shows
-/// it. The same walk `the_bead_window_moves_and_closes_behind_its_bead`
-/// makes, and for the same reason: the anomaly the tree's orphaned dependencies
-/// raise is drawn between the two rows and a motion passes over it.
+/// it. One motion rather than two: the anomaly the tree's orphaned
+/// dependencies raise is drawn between the two rows and a motion passes over
+/// it.
 const SHOW_THE_FIRST_BEAD: &[u8] = b"j\r";
 
 /// A title from this tracker, long enough that it does not fit across the

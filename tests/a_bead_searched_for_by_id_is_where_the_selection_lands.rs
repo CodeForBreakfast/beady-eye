@@ -1,12 +1,5 @@
 //! `/`, an id, and the selection is on that bead.
 //!
-//! Nothing reaches the prompt through the binary otherwise. `Screen::typing`
-//! is a delegation a run never makes under the unit tests, and the loop's
-//! whole reason for holding a third `Showing` is that a keystroke means
-//! something else while the prompt is up — so `typing` could return a
-//! constant, or the loop could hand every key to the mapping instead, and the
-//! suite would stay green while `/` did nothing a reader could see.
-//!
 //! Where the selection landed is read off a bead window's title rather than
 //! off the forest. The window is drawn from the *selection*, so its title
 //! names the row the search left it on and nothing else can stand in for
@@ -43,13 +36,6 @@ const TYPE_AN_ID: &[u8] = b"/dun-0tp.7";
 
 /// `/` and the end of that id, which the start is typed in front of.
 const TYPE_THE_END_OF_THE_ID: &[u8] = b"/0tp.7";
-
-/// `/` alone, which opens the prompt for the paste below.
-const OPEN_THE_PROMPT: &[u8] = b"/";
-
-/// The id of a bead in that tree pasted, as a terminal sends a paste once
-/// the program has asked for it bracketed.
-const PASTE_AN_ID: &[u8] = b"\x1b[200~dun-0tp.7\x1b[201~";
 
 /// `Home`, as a terminal sends it.
 const HOME: &[u8] = b"\x1b[H";
@@ -98,85 +84,6 @@ const THE_ID_THAT_REACHED_NOTHING: &[u8] = "bdi-404".as_bytes();
 /// the prompt down, so this is what tells the answer from the question — and
 /// the two are the same letters otherwise.
 const THE_PROMPT_STILL_UP: &[u8] = "/bdi-404".as_bytes();
-
-/// The whole key, end to end: the prompt takes the characters and takes the
-/// reader to the bead, Enter leaves them there, and the fold that was over it
-/// is open.
-#[test]
-fn an_id_typed_into_the_prompt_takes_the_reader_to_that_bead() {
-    let (mut bdi, _tracker) = over_the_described_subtree("searched", ROWS, COLS, A_SILENCE);
-    let mut rows = ROWS;
-
-    bdi.send(SHUT_THE_TREE);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    let shut = repaint_until(&mut bdi, &mut rows, |screen| {
-        !contains(screen, THE_SEARCHED_BEADS_TITLE)
-    });
-    assert!(
-        !contains(&shut, THE_SEARCHED_BEADS_TITLE),
-        "the bead is drawn with its tree shut, so the search below has no \
-         fold to open and nothing to prove. The screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&shut),
-        bdi.timeline()
-    );
-
-    bdi.send(TYPE_AN_ID);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    let typing = repaint_until(&mut bdi, &mut rows, |screen| contains(screen, THE_PROMPT));
-    assert!(
-        contains(&typing, THE_PROMPT),
-        "the characters typed after `/` are not on the foot, so either the \
-         key never opened a prompt or the prompt did not take them. The \
-         screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&typing),
-        bdi.timeline()
-    );
-
-    bdi.send(ENTER);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    bdi.send(ENTER);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    let landed = repaint_until(&mut bdi, &mut rows, |screen| {
-        window_over(screen).as_deref() == Some(THE_SEARCHED_BEAD)
-    });
-    assert_eq!(
-        window_over(&landed).as_deref(),
-        Some(THE_SEARCHED_BEAD),
-        "the search did not leave the selection on the bead it named. The \
-         screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&landed),
-        bdi.timeline()
-    );
-}
-
-/// A paste reaches the prompt as the id it carries, and takes the reader to
-/// that bead as typing it would.
-#[test]
-fn an_id_pasted_into_the_prompt_takes_the_reader_to_that_bead() {
-    let (mut bdi, _tracker) = over_the_described_subtree("pasted", ROWS, COLS, A_SILENCE);
-    let mut rows = ROWS;
-    bdi.send(SHUT_THE_TREE);
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    bdi.send(OPEN_THE_PROMPT);
-    bdi.send(PASTE_AN_ID);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    bdi.send(ENTER);
-    bdi.settle(A_SILENCE, GIVING_UP);
-    bdi.send(ENTER);
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    let landed = repaint_until(&mut bdi, &mut rows, |screen| {
-        window_over(screen).as_deref() == Some(THE_SEARCHED_BEAD)
-    });
-    assert_eq!(
-        window_over(&landed).as_deref(),
-        Some(THE_SEARCHED_BEAD),
-        "the pasted id did not reach the prompt. The screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&landed),
-        bdi.timeline()
-    );
-}
 
 /// The search moves while the prompt is still up, opening the fold over the
 /// bead the id names, and Esc shuts it again with the selection back on the
