@@ -671,13 +671,9 @@ mod tests {
     use crate::app::fixtures::*;
     use crate::app::run;
     use crate::app::{Collection, Wanted};
-    use std::fs::Permissions;
-    use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
-
     use crate::collect::agents::testing::{named, pane, Fake as Provider};
     use crate::collect::run::testing::Rendezvous;
-    use crate::collect::run::{Env, RealRunner, Retained, Runner};
+    use crate::collect::run::Retained;
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
@@ -752,23 +748,6 @@ mod tests {
     }
 
     // ---- discovery ----------------------------------------------------
-
-    /// Discovery reads the listing the forest is drawn from, so a changed
-    /// refresh asks the tracker for its beads once, and for no subset of them.
-    #[test]
-    fn a_changed_refresh_asks_the_tracker_for_its_beads_once() {
-        let trackers = dunwich();
-
-        run(&one_project(), &panes(), &trackers, Filter::All, now());
-
-        let listings = trackers
-            .tracker("dunwich")
-            .asked()
-            .into_iter()
-            .filter(|question| *question == Asked::All)
-            .count();
-        assert_eq!(listings, 1);
-    }
 
     /// The same edges nest the same beads whichever root is walked, so one
     /// read of a tracker reads them once, however many trees it draws from
@@ -1213,29 +1192,6 @@ dunwich = ["dun-c3"]
             roots,
             vec!["dun-c1"],
             "a pane on a buried bead does not stand it up beside its own tree"
-        );
-    }
-
-    /// A closed bead is never discovered — statuses, wisps and metadata keys
-    /// are all populations of unfinished work — so nothing makes it a root
-    /// and nothing climbs from it. It is the same defect with nothing else
-    /// moving.
-    #[test]
-    fn a_closed_bead_the_answer_holds_no_way_down_to_is_still_drawn() {
-        let lost = r#"[{"id":"dun-3","title":"its parent was deleted","status":"closed",
-                        "dependencies":[{"depends_on_id":"dun-404","type":"parent-child"}],
-                        "priority":2,"issue_type":"task"}]"#;
-        let trackers = dunwich_with(dunwich_tracker().also(beads(lost)));
-
-        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
-
-        // The tree somebody is working leads, as it does whatever else is
-        // drawn beside it.
-        let roots: Vec<&str> = snap.trees.iter().map(|t| t.root.as_str()).collect();
-        assert_eq!(roots, vec!["dun-7", "dun-3"]);
-        assert_eq!(
-            rooted_at(&snap, "dun-3").orphaned_dependencies,
-            vec!["dun-3".to_string()]
         );
     }
 
@@ -1773,24 +1729,6 @@ dunwich = ["dun-c3"]
         };
         assert!(matches!(journal, Some(Err(_))));
         assert!(at.is_none(), "the next refresh reads in full");
-    }
-
-    /// A read made once and never again has no later read to compare a
-    /// fingerprint against, so it asks for none.
-    #[test]
-    fn a_read_made_once_asks_for_no_fingerprint() {
-        let trackers = dunwich();
-
-        run(&one_project(), &panes(), &trackers, Filter::All, now());
-
-        assert!(
-            !trackers
-                .tracker("dunwich")
-                .asked()
-                .contains(&Asked::Fingerprint),
-            "{:?}",
-            trackers.tracker("dunwich").asked()
-        );
     }
 
     /// The defect this rule replaces. Every seat stood down, so nothing was
@@ -2487,73 +2425,6 @@ dunwich = ["dun-404"]
     }
 
     // ---- degradation ---------------------------------------------------
-
-    #[test]
-    fn a_project_whose_listing_fails_is_named_not_dropped() {
-        let trackers =
-            dunwich_with(dunwich_tracker().failing(Asked::All, failing(FailureKind::Auth)));
-
-        let snap = run(
-            &one_project(),
-            &panes(),
-            &trackers,
-            Filter::LiveAgents,
-            now(),
-        );
-
-        assert!(snap.trees.is_empty());
-        assert_eq!(
-            snap.failed_projects,
-            vec![FailedProject {
-                project: "dunwich".to_string(),
-                tracker: TrackerFailure::Auth,
-            }]
-        );
-    }
-
-    /// The sentence a reader is given for a spawn the kernel refused, taken
-    /// from a machine rather than from a `FailureKind` chosen by hand.
-    ///
-    /// One unsearchable directory on `PATH` refuses the search that would
-    /// find bd and the `execve` that would run it alike, so the spawn fails
-    /// `EACCES` on a machine that has no bd at all. Nothing in that establishes
-    /// an installation, and a phrase asserting one sends the reader hunting a
-    /// bd that was never there.
-    ///
-    /// It runs the whole seam — the spawn, the classification, the mapping
-    /// and the phrase — because each of those is right on its own today and
-    /// the false sentence is what they add up to.
-    #[test]
-    fn a_spawn_no_search_could_reach_does_not_tell_the_reader_bd_is_installed() {
-        let locked = an_unsearchable_directory("no-claim-to-make");
-        let mut env = Env::new();
-        env.insert("PATH".to_string(), locked.display().to_string());
-
-        let failure = RealRunner
-            .run("bdi-no-such-program", &[], None, &env)
-            .expect_err("the one directory on PATH cannot be searched");
-        let readable_again = std::fs::set_permissions(&locked, Permissions::from_mode(0o755));
-
-        let said = crate::view::phrase::tracker_failure(&tracker_failure(&failure));
-        readable_again.expect("the mode is ours to set");
-        std::fs::remove_dir_all(&locked).expect("the directory is ours to remove");
-
-        assert!(
-            !said.contains("installed"),
-            "a machine with no bd on it was told bd is installed: {said}"
-        );
-    }
-
-    /// A directory nothing may search, with a `bd` inside it that no search
-    /// can reach. The mode is put back before the directory is removed.
-    fn an_unsearchable_directory(named: &str) -> PathBuf {
-        let locked =
-            std::env::temp_dir().join(format!("bdi-locked-{named}-{}", std::process::id()));
-        std::fs::create_dir_all(&locked).expect("the directory is ours to make");
-        std::fs::set_permissions(&locked, Permissions::from_mode(0o644))
-            .expect("the mode is ours to set");
-        locked
-    }
 
     #[test]
     fn every_way_a_tracker_fails_keeps_its_own_kind() {

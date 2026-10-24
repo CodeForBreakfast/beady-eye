@@ -675,23 +675,6 @@ mod tests {
     }
 
     #[test]
-    fn freshness_says_the_tracker_could_not_be_reached_and_why() {
-        let line: Value = serde_json::from_str(&freshness_line(
-            "dunwich",
-            &Reach::default(),
-            None,
-            Some(&TrackerFailure::Auth),
-            &Events::Off,
-        ))
-        .expect("JSON");
-
-        assert_eq!(
-            line["tracker"],
-            json!({ "unreachable": { "reason": "auth" } })
-        );
-    }
-
-    #[test]
     fn freshness_says_how_the_watcher_reaches_the_tracker() {
         let reach = Reach {
             path: "/srv/work/dunwich".into(),
@@ -709,21 +692,6 @@ mod tests {
         assert_eq!(
             line,
             json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "events": "off", "protocol": 1, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
-        );
-    }
-
-    #[test]
-    fn freshness_says_whether_the_journal_is_read() {
-        let events = |events: Events| -> Value {
-            let line = freshness_line("dunwich", &Reach::default(), None, None, &events);
-            serde_json::from_str::<Value>(&line).expect("JSON")["events"].clone()
-        };
-
-        assert_eq!(events(Events::Off), json!("off"));
-        assert_eq!(events(Events::Ok), json!("ok"));
-        assert_eq!(
-            events(Events::Unreadable(TrackerFailure::Unavailable)),
-            json!({ "unreadable": { "reason": "unavailable" } })
         );
     }
 

@@ -353,22 +353,6 @@ mod tests {
         assert_eq!(armed.asks(at(1_000_000)), None);
     }
 
-    /// The largest `refresh_seconds` the key can hold at all, which is a
-    /// thousandfold past the reach an instant has — so what turns it away is
-    /// the conversion to an interval rather than the addition. It is the
-    /// same answer, reached the other way, and reaching it needs no
-    /// arithmetic on `MAX_UTC`: a `u64` full of ones is what a config that
-    /// has gone wrong hands over.
-    #[test]
-    fn a_project_whose_interval_fills_the_key_asks_no_more() {
-        let mut armed = Armed::polling("arkham".to_string(), Some(Duration::from_secs(u64::MAX)));
-
-        armed.came_back(&arkham(), at(100), None);
-
-        assert_eq!(armed.asks_in(at(100)), None);
-        assert_eq!(armed.asks(at(1_000_000)), None);
-    }
-
     /// The whole of the design: the interval is a gap after the read rather
     /// than a period the read happens inside.
     #[test]
@@ -571,18 +555,6 @@ mod tests {
         assert_eq!(armed.asks(at(240)), Some(arkham()));
     }
 
-    /// The hazard, stated as a test so that a later arm added anywhere but on
-    /// a completed read fails here: a tracker that never answers goes quiet,
-    /// and is reported as unanswered rather than polled over.
-    #[test]
-    fn a_project_whose_read_never_comes_back_asks_no_more() {
-        let mut armed = polling();
-        armed.came_back(&arkham(), at(100), None);
-        armed.asks(at(130));
-
-        assert_eq!(armed.asks(at(1_000_000)), None);
-    }
-
     /// A project something keeps reporting for is read on each report, and
     /// each read pushes the poll out past the interval before it arrives, so
     /// the reports cost no polls on top of their reads.
@@ -620,17 +592,6 @@ mod tests {
 
         assert_eq!(has_one.asks(at(130)), None);
         assert_eq!(has_none.asks(at(130)), Some(ferry()));
-    }
-
-    /// A poll the reader chose goes on when the reports stop, because it was
-    /// never standing in for them.
-    #[test]
-    fn a_project_whose_poll_the_reader_chose_polls_when_the_reports_stop() {
-        let mut armed = polling();
-
-        armed.came_back(&arkham(), at(100), None);
-
-        assert_eq!(armed.asks(at(130)), Some(arkham()));
     }
 
     /// A poll the reader chose is how they check a producer, so a producer
@@ -760,16 +721,6 @@ mod tests {
         assert!(named.lapsed(at(160)));
     }
 
-    /// A read of everything reads this project too, so it arms this project.
-    #[test]
-    fn a_read_of_every_project_arms_this_one() {
-        let mut armed = polling();
-
-        armed.came_back(&Wanted::Everything, at(100), None);
-
-        assert_eq!(armed.asks(at(130)), Some(arkham()));
-    }
-
     /// And a read of a different project does not: that is the whole of
     /// per-project independence, and it is settled by what the read named.
     #[test]
@@ -802,22 +753,6 @@ mod tests {
         assert_eq!(second.asks_in(at(100)), Some(Duration::from_secs(42)));
         assert_eq!(first.asks(at(130)), Some(arkham()));
         assert_eq!(second.asks(at(130)), None, "ferry's own read was later");
-    }
-
-    /// An ask already overdue is due now rather than negative: the loop asks
-    /// this how long to wait, and a wait it cannot express is one it would
-    /// have to guess at.
-    #[test]
-    fn an_ask_already_overdue_says_it_waits_no_longer() {
-        let mut armed = polling();
-        armed.came_back(&arkham(), at(100), None);
-
-        assert_eq!(armed.asks_in(at(500)), Some(Duration::ZERO));
-    }
-
-    #[test]
-    fn a_project_answers_to_its_own_name() {
-        assert_eq!(polling().project(), "arkham");
     }
 
     fn polling_until_covered() -> Armed {

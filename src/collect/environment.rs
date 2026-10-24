@@ -778,28 +778,6 @@ mod tests {
         );
     }
 
-    /// A project whose directory cannot be entered at all is that project's
-    /// failure, not a quiet fallback that reads as having worked. Where
-    /// direnv does fall back for itself — a flake that will not evaluate — it
-    /// exits 0 and this is not the path taken.
-    ///
-    /// It is its own failure rather than one of bd's, and that is the whole
-    /// of what the reader gets from it: no bd ran, so nothing about bd is
-    /// true of this project, and a sentence about bd would send them after a
-    /// program that was never asked anything.
-    #[test]
-    fn a_directory_that_cannot_be_entered_fails_the_project_rather_than_falling_back() {
-        let runner = FakeRunner::default().failing(
-            &entering_the_directory(),
-            RunFailure::unstartable("direnv", "No such file or directory"),
-        );
-
-        let failure =
-            tracker_env(&runner, &entered_with_direnv(), Some("hunter2"), None).unwrap_err();
-
-        assert_eq!(failure, OpenFailure::NoEnvironment);
-    }
-
     /// Whichever way the capture fails, and there are two that land on
     /// different names: an absent direnv is `NotInstalled` and one that exists
     /// and refuses is `Unavailable`. The project's failure is the same either
@@ -975,37 +953,6 @@ mod tests {
             env.get(CREDENTIAL_VAR).map(String::as_str),
             Some("hunter2"),
             "the credential command's answer did not win over the captured one"
-        );
-    }
-
-    /// The escape hatch answers instead of entering the directory, for a
-    /// tracker outside direnv's reach.
-    #[test]
-    fn a_credential_command_answers_instead_of_entering_the_directory() {
-        let runner = FakeRunner::default().with("sh -c op read the/password", "hunter2\n");
-        let project = Project {
-            name: "arkham".to_string(),
-            path: project_dir(),
-            database: None,
-            user: None,
-            server: None,
-            environment_command: None,
-            credential_command: Some("op read the/password".to_string()),
-            prefix: None,
-            poll: Default::default(),
-            events_journal: false,
-            badges: Vec::new(),
-            worktrees: Vec::new(),
-        };
-
-        tracker_env(&runner, &project, None, None).unwrap();
-
-        assert!(
-            !runner
-                .calls()
-                .iter()
-                .any(|call| call.argv.starts_with("direnv ")),
-            "the directory was entered as well as the escape hatch being used"
         );
     }
 

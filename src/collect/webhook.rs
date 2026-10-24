@@ -956,25 +956,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_pull_request_review_delivery_with_no_or_a_wrong_signature_is_refused() {
-        let body = SUBMITTED_42.as_bytes();
-        let other = Secret::new("hunter2").expect("a secret");
-        assert_eq!(
-            delivery(&secret(), Some("pull_request_review"), None, body),
-            Heard::Unsigned
-        );
-        assert_eq!(
-            delivery(
-                &other,
-                Some("pull_request_review"),
-                Some(&signature(body)),
-                body
-            ),
-            Heard::Forged
-        );
-    }
-
     /// A pull_request_review_comment delivery cut down the same way. An inline
     /// comment names its pull request as a review does, and says nothing of
     /// its own.
@@ -999,25 +980,6 @@ mod tests {
                 r#"{"action":"created","repository":{"full_name":"example/ark"}}"#
             ),
             Heard::NamesNoPullRequest
-        );
-    }
-
-    #[test]
-    fn a_pull_request_review_comment_delivery_with_no_or_a_wrong_signature_is_refused() {
-        let body = INLINE_COMMENT_42.as_bytes();
-        let other = Secret::new("hunter2").expect("a secret");
-        assert_eq!(
-            delivery(&secret(), Some("pull_request_review_comment"), None, body),
-            Heard::Unsigned
-        );
-        assert_eq!(
-            delivery(
-                &other,
-                Some("pull_request_review_comment"),
-                Some(&signature(body)),
-                body
-            ),
-            Heard::Forged
         );
     }
 
@@ -1072,20 +1034,6 @@ mod tests {
         ] {
             assert_eq!(heard_as("issue_comment", body), Heard::NamesNoPullRequest);
         }
-    }
-
-    #[test]
-    fn an_issue_comment_delivery_with_no_or_a_wrong_signature_is_refused() {
-        let body = COMMENT_ON_PULL_REQUEST_42.as_bytes();
-        let other = Secret::new("hunter2").expect("a secret");
-        assert_eq!(
-            delivery(&secret(), Some("issue_comment"), None, body),
-            Heard::Unsigned
-        );
-        assert_eq!(
-            delivery(&other, Some("issue_comment"), Some(&signature(body)), body),
-            Heard::Forged
-        );
     }
 
     const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
@@ -1174,27 +1122,6 @@ mod tests {
     }
 
     #[test]
-    fn a_check_suite_or_status_delivery_with_no_or_a_wrong_signature_is_refused() {
-        let body = format!(r#"{{"sha":"{SHA}","repository":{{"full_name":"example/ark"}}}}"#);
-        let other = Secret::new("hunter2").expect("a secret");
-        for event in ["check_suite", "status"] {
-            assert_eq!(
-                delivery(&secret(), Some(event), None, body.as_bytes()),
-                Heard::Unsigned
-            );
-            assert_eq!(
-                delivery(
-                    &other,
-                    Some(event),
-                    Some(&signature(body.as_bytes())),
-                    body.as_bytes()
-                ),
-                Heard::Forged
-            );
-        }
-    }
-
-    #[test]
     fn a_delivery_naming_a_commit_is_answered_like_one_naming_a_pull_request() {
         assert_eq!(
             commit_of_ark().answer(true, true),
@@ -1203,18 +1130,33 @@ mod tests {
         assert_eq!(commit_of_ark().answer(false, true), BUSY);
     }
 
+    fn every_settling_delivery() -> [(&'static str, String); 6] {
+        let commit = format!(r#"{{"sha":"{SHA}","repository":{{"full_name":"example/ark"}}}}"#);
+        [
+            ("pull_request", CLOSED_42.to_string()),
+            ("pull_request_review", SUBMITTED_42.to_string()),
+            ("pull_request_review_comment", INLINE_COMMENT_42.to_string()),
+            ("issue_comment", COMMENT_ON_PULL_REQUEST_42.to_string()),
+            ("check_suite", commit.clone()),
+            ("status", commit),
+        ]
+    }
+
     #[test]
     fn a_delivery_signed_with_another_secret_is_forged() {
         let other = Secret::new("hunter2").expect("a secret");
-        assert_eq!(
-            delivery(
-                &other,
-                Some("pull_request"),
-                Some(&signature(CLOSED_42.as_bytes())),
-                CLOSED_42.as_bytes()
-            ),
-            Heard::Forged
-        );
+        for (event, body) in every_settling_delivery() {
+            assert_eq!(
+                delivery(
+                    &other,
+                    Some(event),
+                    Some(&signature(body.as_bytes())),
+                    body.as_bytes()
+                ),
+                Heard::Forged,
+                "{event}"
+            );
+        }
     }
 
     #[test]
@@ -1243,7 +1185,14 @@ mod tests {
 
     #[test]
     fn a_delivery_with_no_signature_is_unsigned_whatever_its_event() {
-        for event in [Some("pull_request"), Some("ping"), None] {
+        for (event, body) in every_settling_delivery() {
+            assert_eq!(
+                delivery(&secret(), Some(event), None, body.as_bytes()),
+                Heard::Unsigned,
+                "{event}"
+            );
+        }
+        for event in [Some("ping"), None] {
             assert_eq!(
                 delivery(&secret(), event, None, CLOSED_42.as_bytes()),
                 Heard::Unsigned
