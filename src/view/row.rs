@@ -22,6 +22,9 @@ pub const AGENT: char = '◍';
 /// Something the reader should look at.
 pub const WARNING: char = '⚠';
 
+/// Some agent besides the one on the claim is watching the bead.
+pub const WATCHED: char = '◉';
+
 /// How much of what a line stands for is done, closed beads over all of them.
 ///
 /// Counted over the whole subtree with the line's own bead among them, which
@@ -51,6 +54,9 @@ pub struct Row {
     /// both this cell and the bead's own title. Present exactly when `agent`
     /// is: they are two forms of one cell rather than two cells.
     pub agent_briefly: Option<String>,
+    /// Whether some agent besides the one on the claim watches the bead,
+    /// which the agent cell marks.
+    pub watched: bool,
     /// Every anomaly rule that fired, said one at a time, because the forest
     /// draws them in one cell and the bead window on a row each.
     pub anomalies: Vec<String>,
@@ -341,6 +347,7 @@ pub fn cells(
         progress,
         agent: node.agent.as_ref().map(agent_marker),
         agent_briefly: node.agent.as_ref().map(agent_briefly),
+        watched: node.watching.is_watched(),
         anomalies: node.anomalies.iter().map(phrase::anomaly).collect(),
         shut_over,
         notes,
@@ -470,6 +477,7 @@ mod tests {
             badges: Vec::new(),
             undrawn: Vec::new(),
             agent: None,
+            watching: crate::model::watching::Watching::nobody(),
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
             row: Printed::saying("", ""),

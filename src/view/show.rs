@@ -13,6 +13,7 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
+use crate::model::watching::Watching;
 use crate::view::draw::bead::{badge_style, opens_at};
 use crate::view::draw::tone::status_style;
 use crate::view::draw::{done, key_rows};
@@ -563,6 +564,21 @@ pub fn said(
     if let Some(agent) = &cells.agent {
         rows.push(indented(vec![Span::styled(agent.clone(), palette::AGENT)]));
     }
+    match &node.watching {
+        Watching::Unknown => rows.push(indented(vec![Span::styled(
+            phrase::watches_unknown(),
+            palette::QUIET,
+        )])),
+        Watching::Known { agents, unreported } => {
+            let unreported = (*unreported > 0).then(|| phrase::watched_unreported(*unreported));
+            for watched in agents.iter().map(phrase::watched_by).chain(unreported) {
+                rows.push(indented(vec![Span::styled(
+                    format!("{} {watched}", row::WATCHED),
+                    palette::AGENT,
+                )]));
+            }
+        }
+    }
     for anomaly in &cells.anomalies {
         rows.push(indented(vec![Span::styled(
             row::anomaly_alone(anomaly),
@@ -873,6 +889,7 @@ mod tests {
     use crate::model::types::testing::key;
     use crate::model::types::Printed;
     use crate::model::types::{Edge, PaneStatus, Status};
+    use crate::model::watching::WatchingAgent;
     use crate::view::fitted::hyperlink;
     use chrono::{DateTime, Utc};
     use ratatui::backend::TestBackend;
@@ -922,6 +939,7 @@ mod tests {
             closed_at: None,
             badges: Vec::new(),
             undrawn: Vec::new(),
+            watching: crate::model::watching::Watching::nobody(),
             agent: Some(AgentRef {
                 pane: key("w:p1"),
                 pane_status: PaneStatus::Working,
@@ -2713,6 +2731,64 @@ mod tests {
                 "   ⇢ #12  ⏸ waiting",
                 "   3/7",
             ],
+            "{drawn:#?}"
+        );
+    }
+
+    /// Each agent watching the bead besides its claim is named under the
+    /// claim by what herdr reports of it, as an unattributed pane is. One
+    /// herdr reports in no pane has nothing to name it by, so it is counted.
+    #[test]
+    fn the_head_names_the_agents_watching_the_bead_under_its_claim() {
+        let watched = Node {
+            watching: Watching::Known {
+                agents: vec![WatchingAgent {
+                    agent: "claude".to_string(),
+                    display_agent: Some("ferry crew".to_string()),
+                    caption: Some("coiling rope".to_string()),
+                }],
+                unreported: 1,
+            },
+            ..a_busy_bead()
+        };
+
+        let drawn = drawn_with(&watched, None, &mut Show::default(), 90, 24);
+
+        let head = head_of(&drawn);
+        let claim = head
+            .iter()
+            .position(|row| row.contains(row::AGENT))
+            .expect("the claim is said");
+        assert_eq!(
+            head[claim + 1..claim + 3],
+            [
+                "   ◉ watched by ferry crew · coiling rope",
+                "   ◉ watched by 1 agent herdr reports in no pane",
+            ],
+            "{drawn:#?}"
+        );
+        assert!(
+            drawn.iter().all(|row| !row.contains("w:p")),
+            "no pane is named by its id: {drawn:#?}"
+        );
+    }
+
+    #[test]
+    fn the_head_says_who_watches_is_unknown_where_nothing_could_say() {
+        let unknown = Node {
+            watching: Watching::Unknown,
+            ..a_busy_bead()
+        };
+
+        let drawn = drawn_with(&unknown, None, &mut Show::default(), 90, 24);
+
+        let head = head_of(&drawn);
+        assert!(
+            head.contains(&"   who watches it is unknown".to_string()),
+            "{drawn:#?}"
+        );
+        assert!(
+            drawn.iter().all(|row| !row.contains(row::WATCHED)),
             "{drawn:#?}"
         );
     }

@@ -30,6 +30,7 @@ use crate::model::snapshot::{
 };
 use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
+use crate::model::watching::{self, Watchers};
 
 use super::tracker::{
     open_failure, refresh_project, tracker_failure, with_own_edges_unprefixed, ProjectWork, ReadAt,
@@ -434,7 +435,7 @@ impl Collection {
     ) -> Snapshot {
         loop {
             self.reach_across(cfg);
-            match self.draw(cfg, panes, out_of_reach, provider, filter, now) {
+            match self.draw(cfg, trackers, panes, out_of_reach, provider, filter, now) {
                 Ok(mut snapshot) => {
                     let unanswered = trackers.unanswered_by_the_watcher();
                     snapshot.unanswered_by_the_watcher = self
@@ -710,9 +711,11 @@ impl Collection {
     ///
     /// Only a project `cfg` reads contributes trees of its own. One read on
     /// demand draws only what those trees reach in it.
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &self,
         cfg: &Config,
+        trackers: &dyn Trackers,
         panes: &[Pane],
         out_of_reach: &OutOfReach,
         agents: &AgentProvider,
@@ -787,6 +790,15 @@ impl Collection {
         }
         let joined = &joined;
 
+        let watching: BTreeMap<&str, BTreeMap<String, Watchers>> = answered
+            .iter()
+            .filter_map(|(project, _)| {
+                Some((
+                    *project,
+                    watching::in_panes(trackers.watches(project)?, panes),
+                ))
+            })
+            .collect();
         let said: BTreeMap<&str, Said> = answered
             .iter()
             .map(|(project, work)| {
@@ -797,6 +809,7 @@ impl Collection {
                         relations: &work.relations,
                         waiting: self.reached.waiting.get(*project),
                         elsewhere: self.reached.elsewhere.get(*project),
+                        watching: watching.get(*project),
                     },
                 )
             })
@@ -1236,6 +1249,7 @@ mod tests {
     use crate::model::tree::Unreachable;
     use crate::model::types::testing::{key, A_SESSION};
     use crate::model::types::{Edge, PaneStatus, Status};
+    use crate::model::watching::{Watching, WatchingAgent};
     use pretty_assertions::assert_eq;
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -1514,6 +1528,110 @@ mod tests {
         let snap = run(&two_projects(), &no_panes(), &trackers, Filter::All, now());
 
         assert_eq!(snap.unanswered_by_the_watcher, ["dunwich", "ferry"]);
+    }
+
+    /// Trackers whose watcher says which agent sessions watch dunwich's
+    /// beads.
+    struct WatchedBy {
+        inner: Fakes,
+        watches: BTreeMap<String, BTreeSet<String>>,
+    }
+
+    impl Trackers for WatchedBy {
+        fn of(&self, project: &Project) -> Result<Box<dyn Tracker + '_>, OpenFailure> {
+            self.inner.of(project)
+        }
+
+        fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+            (project == "dunwich").then(|| self.watches.clone())
+        }
+    }
+
+    fn watching_of<'s>(snap: &'s Snapshot, id: &str) -> &'s Watching {
+        &node(tree_of(snap, "dunwich"), id).watching
+    }
+
+    /// `w:p1` holds dun-7.1's claim and watches it too, which says nothing
+    /// a reader does not already see. The ferry crew is placed by its agent
+    /// session, and the session herdr reports in no pane is counted.
+    #[test]
+    fn a_bead_is_watched_by_each_agent_herdr_reports_watching_it_but_its_claim() {
+        let keeper = holding_agent(
+            titled(pane("w:p1", DUNWICH, PaneStatus::Working), "the dish"),
+            "4f1c-keeper",
+        );
+        let crew = holding_agent(
+            titled(
+                named(pane("w:p3", DUNWICH, PaneStatus::Idle), "ferry crew"),
+                "coiling rope",
+            ),
+            "9a2e-ferryman",
+        );
+        let trackers = WatchedBy {
+            inner: dunwich(),
+            watches: BTreeMap::from([
+                (
+                    "dun-7.1".to_string(),
+                    ["4f1c-keeper", "9a2e-ferryman", "77d0-ghost"]
+                        .map(str::to_string)
+                        .into(),
+                ),
+                (
+                    "dun-7.2".to_string(),
+                    ["4f1c-keeper"].map(str::to_string).into(),
+                ),
+            ]),
+        };
+
+        let snap = run(
+            &one_project(),
+            &Provider::holding(vec![keeper, crew]),
+            &trackers,
+            Filter::All,
+            now(),
+        );
+
+        assert_eq!(
+            node(tree_of(&snap, "dunwich"), "dun-7.1")
+                .agent
+                .as_ref()
+                .map(|agent| &agent.pane),
+            Some(&key("w:p1"))
+        );
+        let crew_reported = WatchingAgent {
+            agent: "claude".to_string(),
+            display_agent: Some("ferry crew".to_string()),
+            caption: Some("coiling rope".to_string()),
+        };
+        assert_eq!(
+            watching_of(&snap, "dun-7.1"),
+            &Watching::Known {
+                agents: vec![crew_reported],
+                unreported: 1
+            }
+        );
+        let keeper_reported = WatchingAgent {
+            agent: "claude".to_string(),
+            display_agent: None,
+            caption: Some("the dish".to_string()),
+        };
+        assert_eq!(
+            watching_of(&snap, "dun-7.2"),
+            &Watching::Known {
+                agents: vec![keeper_reported],
+                unreported: 0
+            }
+        );
+        assert_eq!(watching_of(&snap, "dun-7"), &Watching::nobody());
+    }
+
+    #[test]
+    fn who_watches_a_bead_is_unknown_where_no_watcher_answers_for_its_project() {
+        let snap = run(&one_project(), &panes(), &dunwich(), Filter::All, now());
+
+        for id in ["dun-7", "dun-7.1", "dun-7.2"] {
+            assert_eq!(watching_of(&snap, id), &Watching::Unknown, "{id}");
+        }
     }
 
     #[test]

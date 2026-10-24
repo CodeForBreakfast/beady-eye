@@ -1487,6 +1487,7 @@ fn harbour_and_dunwich_ready(
                     relations,
                     waiting: waiting.get(*project),
                     elsewhere: elsewhere.get(*project),
+                    watching: None,
                 },
             )
         })

@@ -302,6 +302,7 @@ mod tests {
     };
     use crate::model::tree::Link;
     use crate::model::types::{Edge, Status};
+    use crate::model::watching::Watching;
     use crate::view::forest::flatten;
     use crate::view::row::{self, Row};
     use crate::view::{Action, Edit, Motion};
@@ -382,6 +383,7 @@ mod tests {
             badges: Vec::new(),
             undrawn: Vec::new(),
             agent: None,
+            watching: crate::model::watching::Watching::nobody(),
             anomalies: Vec::new(),
             orphaned_dependencies: Vec::new(),
             row: Printed::saying("", ""),
@@ -795,6 +797,31 @@ mod tests {
                 "                                                            ",
                 "                                                            ",
                 "⚠ no herdr session · agents are not shown                   ",
+            ]
+        );
+    }
+
+    /// The mark sits at the end of the watched bead's row and names nobody,
+    /// and the bead nobody watches beside it carries none.
+    #[test]
+    fn a_frame_marks_the_row_of_a_bead_another_agent_watches() {
+        let mut watched = grove(2);
+        watched.beads[1].watching = Watching::Known {
+            agents: Vec::new(),
+            unreported: 1,
+        };
+        let forest = opened(&snapshot(
+            vec![watched],
+            Vec::new(),
+            ProviderState::NotAnswering,
+        ));
+
+        assert_eq!(
+            frame_of(&forest, 60, 10).rows()[1..4],
+            [
+                "  └── ◐ smt-4kd3p  lift the ground station               0/3",
+                "      ├── ○ .1         bead number 1                       ◉",
+                "      └── ○ .2         bead number 2                        ",
             ]
         );
     }
