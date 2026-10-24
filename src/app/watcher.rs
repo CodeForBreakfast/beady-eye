@@ -845,6 +845,45 @@ mod tests {
         assert_eq!(kinds(&told), [["bead", "freshness"]], "and after");
     }
 
+    /// Each line sent so far, as its kind and the project it is about.
+    fn projects_told_of(told: &Receiver<Vec<String>>) -> Vec<(String, String)> {
+        told.try_iter()
+            .flatten()
+            .map(|line| {
+                let line: serde_json::Value = serde_json::from_str(&line).expect("JSON");
+                (
+                    line["line"].as_str().expect("a kind").to_string(),
+                    line["project"].as_str().expect("a project").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_watch_on_every_project_is_sent_the_beads_of_each() {
+        let mut hold = Hold::reading([
+            ("dunwich".to_string(), dunwich(), false),
+            ("innsmouth".to_string(), dunwich(), false),
+        ]);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.take(read("innsmouth", now(), &["inn-1"]));
+        let consumer = connected(&mut hold, 4);
+
+        hold.watch(consumer.consumer, &Watch::Everything, now())
+            .expect("every project is read");
+
+        let told = |kind: &str, project: &str| (kind.to_string(), project.to_string());
+        assert_eq!(
+            projects_told_of(&consumer.told),
+            [
+                told("bead", "dunwich"),
+                told("freshness", "dunwich"),
+                told("bead", "innsmouth"),
+                told("freshness", "innsmouth"),
+            ]
+        );
+    }
+
     fn watching_bead(id: &str) -> Watch {
         Watch::Bead {
             project: "dunwich".to_string(),
@@ -1353,5 +1392,137 @@ mod tests {
             .expect("the writer stops when nothing is left to tell");
 
         assert_eq!(lines, ["{}", ALIVE_LINE, ALIVE_LINE]);
+    }
+
+    // ---- serving a connection ----------------------------------------------
+
+    /// A hold reading dunwich, and already holding `ids` of it.
+    fn dunwich_holding(ids: &[&str]) -> Arc<Mutex<Hold>> {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), ids));
+        Arc::new(Mutex::new(hold))
+    }
+
+    /// One connection to the watcher, served by `serve` as the watcher's
+    /// socket serves one.
+    struct Served {
+        speaking: UnixStream,
+        hearing: std::io::BufReader<UnixStream>,
+        serving: thread::JoinHandle<()>,
+    }
+
+    fn served(hold: &Arc<Mutex<Hold>>) -> Served {
+        let (ours, theirs) = UnixStream::pair().expect("a connection");
+        theirs
+            .set_read_timeout(Some(GIVING_UP))
+            .expect("a read is ours to give up on");
+        let hearing = std::io::BufReader::new(theirs.try_clone().expect("ours to share"));
+        let hold = Arc::clone(hold);
+        let serving = thread::spawn(move || {
+            let (changed, _heard) = mpsc::channel();
+            let reported = Reported::watching(["dunwich".to_string()]);
+            serve(ours, &hold, &reported, &changed);
+        });
+        Served {
+            speaking: theirs,
+            hearing,
+            serving,
+        }
+    }
+
+    impl Served {
+        fn sends(&mut self, line: &str) -> &mut Self {
+            writeln!(self.speaking, "{line}").expect("the line is ours to send");
+            self
+        }
+
+        fn hears(&mut self) -> serde_json::Value {
+            let mut line = String::new();
+            let read = std::io::BufRead::read_line(&mut self.hearing, &mut line)
+                .expect("the watcher said something in time");
+            assert_ne!(read, 0, "the watcher closed the connection");
+            serde_json::from_str(&line).expect("the watcher sends JSON lines")
+        }
+
+        /// Every line up to and including the next freshness line.
+        fn hears_an_answer(&mut self) -> Vec<serde_json::Value> {
+            let mut answer = Vec::new();
+            loop {
+                let line = self.hears();
+                let done = line["line"] == "freshness";
+                answer.push(line);
+                if done {
+                    return answer;
+                }
+            }
+        }
+
+        /// Hang up as a consumer going away does, and wait for `serve` to
+        /// finish forgetting it.
+        fn hangs_up(self) {
+            self.speaking
+                .shutdown(Shutdown::Write)
+                .expect("the connection is ours to close");
+            self.serving.join().expect("serve returns");
+        }
+    }
+
+    fn beads_in(answer: &[serde_json::Value]) -> Vec<&str> {
+        answer
+            .iter()
+            .filter(|line| line["line"] == "bead")
+            .map(|line| line["row"]["id"].as_str().expect("a row names its bead"))
+            .collect()
+    }
+
+    #[test]
+    fn a_line_the_watcher_cannot_serve_is_refused_and_the_connection_goes_on() {
+        let hold = dunwich_holding(&["dun-1"]);
+        let mut consumer = served(&hold);
+
+        let unknown = consumer.sends("watch innsmouth").hears();
+        let malformed = consumer.sends("watch-all").hears();
+        let answer = consumer.sends("watch dunwich").hears_an_answer();
+
+        assert_eq!(
+            unknown,
+            serde_json::json!({ "line": "refused", "asked": "watch innsmouth", "reason": "unknown-project" })
+        );
+        assert_eq!(
+            malformed,
+            serde_json::json!({ "line": "refused", "asked": "watch-all", "reason": "malformed" })
+        );
+        assert_eq!(beads_in(&answer), ["dun-1"]);
+    }
+
+    /// Only a watch on one bead that names its agent session counts as that
+    /// agent session watching the bead. A view watching the whole project is
+    /// told of it, and told again once the agent session's connection closes.
+    #[test]
+    fn a_view_is_told_which_agent_sessions_watch_each_bead_and_when_one_stops() {
+        let hold = dunwich_holding(&["dun-1", "dun-2"]);
+        let mut view = served(&hold);
+        view.sends("watch-all dunwich").hears_an_answer();
+        let mut unnamed = served(&hold);
+        unnamed.sends("watch dunwich dun-2").hears_an_answer();
+        let mut whole = served(&hold);
+        whole.sends("watch dunwich").hears_an_answer();
+        let mut named = served(&hold);
+        named
+            .sends("watch dunwich dun-1 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")
+            .hears_an_answer();
+        let watching = view.hears();
+
+        named.hangs_up();
+        let stopped_watching = view.hears();
+
+        assert_eq!(
+            watching,
+            serde_json::json!({ "line": "watching", "project": "dunwich", "id": "dun-1", "agent_sessions": ["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"] })
+        );
+        assert_eq!(
+            stopped_watching,
+            serde_json::json!({ "line": "watching", "project": "dunwich", "id": "dun-1", "agent_sessions": [] })
+        );
     }
 }
