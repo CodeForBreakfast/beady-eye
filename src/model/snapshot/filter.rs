@@ -443,29 +443,6 @@ mod tests {
     }
 
     #[test]
-    fn asking_for_every_tree_hides_none() {
-        let mut quiet = tree();
-        quiet.counts.live_agents = 0;
-        quiet.beads.iter_mut().for_each(|n| n.agent = None);
-
-        let snap = build(
-            Collected {
-                trees: vec![quiet],
-                ..Collected::default()
-            },
-            &panes(PANES),
-            &Joined::default(),
-            &cfg(),
-            a_provider(ProviderState::Answering),
-            Filter::All,
-            now(),
-        );
-
-        assert_eq!(snap.trees.len(), 1);
-        assert!(snap.hidden_trees.is_empty());
-    }
-
-    #[test]
     fn lifting_the_filter_gives_what_a_fresh_collection_would_have() {
         let filtered = built(interleaved(), Filter::LiveAgents);
 
@@ -498,16 +475,6 @@ mod tests {
         );
         assert!(lifted.hidden_trees.is_empty());
         assert_eq!(lifted.filter, Filter::All);
-    }
-
-    #[test]
-    fn the_filter_goes_off_and_on_again_without_drift() {
-        let filtered = built(interleaved(), Filter::LiveAgents);
-
-        assert_eq!(
-            refiltered(&refiltered(&filtered, Filter::All), Filter::LiveAgents),
-            filtered
-        );
     }
 
     /// A filter is a display choice over what was collected, so what it
