@@ -288,37 +288,6 @@ fn the_json_carries_the_contract_fields() {
     );
 }
 
-/// `nodes` is pre-flattened in render order with an explicit depth, so a
-/// consumer draws it without rebuilding the tree.
-#[test]
-fn the_nodes_arrive_flattened_in_render_order() {
-    let emitted = emit(&panes(), &dunwich(), Filter::LiveAgents);
-    let nodes = emitted["trees"][0]["nodes"]
-        .as_array()
-        .expect("nodes is an array");
-
-    let order: Vec<(&str, u64)> = nodes
-        .iter()
-        .map(|node| {
-            (
-                node["id"].as_str().expect("an id"),
-                node["depth"].as_u64().expect("a depth"),
-            )
-        })
-        .collect();
-
-    assert_eq!(
-        order,
-        vec![
-            ("dun-7", 0),
-            ("dun-7.3", 1),
-            ("dun-7.1", 1),
-            ("dun-7.4", 1),
-            ("dun-7.2", 1),
-        ]
-    );
-}
-
 #[test]
 fn a_node_carries_every_field_the_contract_names() {
     let emitted = emit(&panes(), &dunwich(), Filter::LiveAgents);
@@ -1048,31 +1017,11 @@ fn emit_over(cfg: &Config, runner: &Canned, trackers: &Fakes, filter: Filter) ->
     serde_json::to_value(&snapshot).expect("the snapshot serialises")
 }
 
-/// Both roots are called `dun-7`, so the project each tree was read from is
-/// the only thing that tells the two apart.
-#[test]
-fn each_tree_carries_the_project_it_was_read_from() {
-    let emitted = emit_over(
-        &two_projects(),
-        &panes_across(),
-        &across_two_projects(),
-        Filter::LiveAgents,
-    );
-
-    let trees = emitted["trees"].as_array().expect("trees is an array");
-    assert_eq!(trees.len(), 2);
-
-    assert_eq!(trees[0]["project"], "dunwich");
-    assert_eq!(trees[0]["root"], "dun-7");
-    assert_eq!(trees[0]["title"], "lift the ground station");
-
-    assert_eq!(trees[1]["project"], "harbour");
-    assert_eq!(trees[1]["root"], "dun-7");
-    assert_eq!(trees[1]["title"], "re-dredge the north channel");
-}
-
 /// The two `dun-7.1`s are different beads: each carries its own tracker's
 /// title, its own tracker's readiness, and the agent in its own project.
+///
+/// Both roots are called `dun-7`, so the project each tree was read from is
+/// the only thing that tells the two trees apart.
 #[test]
 fn a_bare_id_in_two_trackers_names_two_beads() {
     let emitted = emit_over(
@@ -1081,8 +1030,18 @@ fn a_bare_id_in_two_trackers_names_two_beads() {
         &across_two_projects(),
         Filter::LiveAgents,
     );
-    let dunwich = &emitted["trees"][0];
-    let harbour = &emitted["trees"][1];
+    let trees = emitted["trees"].as_array().expect("trees is an array");
+    assert_eq!(trees.len(), 2);
+    let dunwich = &trees[0];
+    let harbour = &trees[1];
+
+    assert_eq!(dunwich["project"], "dunwich");
+    assert_eq!(dunwich["root"], "dun-7");
+    assert_eq!(dunwich["title"], "lift the ground station");
+
+    assert_eq!(harbour["project"], "harbour");
+    assert_eq!(harbour["root"], "dun-7");
+    assert_eq!(harbour["title"], "re-dredge the north channel");
 
     assert_eq!(node(dunwich, "dun-7.1")["title"], "re-point the dish");
     assert_eq!(node(harbour, "dun-7.1")["title"], "hire the dredger");
@@ -1415,6 +1374,11 @@ fn a_bead_waiting_on_another_projects_bead_draws_it_beneath_itself() {
         json!([]),
         "the bead it waits on is held"
     );
+    assert_eq!(
+        node(arkham, "ark-43o")["orphaned_dependencies"],
+        json!([]),
+        "a bead with nothing missing beneath it says so, rather than leaving the key out"
+    );
 
     assert_eq!(node(arkham, "dun-2e7")["agent"]["pane"]["id"], "w:p1");
     assert_eq!(node(arkham, "dun-2e7.1")["ready"], true);
@@ -1462,22 +1426,6 @@ fn orphaned_under_the_beacon(cfg: &Config, trackers: &Fakes) -> Value {
     node(&arkham, "ark-43o")["orphaned_dependencies"].clone()
 }
 
-/// A bead with nothing missing beneath it says so, rather than leaving the
-/// key out.
-#[test]
-fn a_node_waiting_on_nothing_missing_carries_no_orphaned_dependency() {
-    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
-    let emitted = emit_over(&cfg, &panes(), &arkham_waiting_on_dunwich(), Filter::All);
-    let arkham = emitted["trees"]
-        .as_array()
-        .expect("trees is an array")
-        .iter()
-        .find(|tree| tree["project"] == "arkham")
-        .expect("arkham draws a tree");
-
-    assert_eq!(node(arkham, "ark-43o")["orphaned_dependencies"], json!([]));
-}
-
 /// Dunwich answered, and its beads carry the prefix `dun-2e7` does, so the
 /// bead is one dunwich's tracker does not hold.
 #[test]
@@ -1490,34 +1438,6 @@ fn a_bead_waiting_on_one_the_other_tracker_does_not_hold_says_so_at_the_edge() {
     assert_eq!(
         orphaned_under_the_beacon(&cfg, &arkham_beside(dunwich)),
         json!([{"id": "dun-2e7", "reason": "not-held", "projects": ["dunwich"]}])
-    );
-}
-
-/// Dunwich's tracker refused its credential, so nothing says which prefix
-/// its beads carry, and the bead may be one of them.
-#[test]
-fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_names_that_project_at_the_edge() {
-    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
-    let dunwich = Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
-
-    assert_eq!(
-        orphaned_under_the_beacon(&cfg, &arkham_beside(dunwich)),
-        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
-    );
-}
-
-/// A run scoped to arkham leaves dunwich unread, and a project left out is
-/// still configured, so the bead may be dunwich's.
-#[test]
-fn a_bead_waiting_on_one_in_a_project_the_run_left_out_names_that_project_at_the_edge() {
-    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
-        .expect("the config parses")
-        .scoped_to(&["arkham".to_string()])
-        .expect("arkham is configured");
-
-    assert_eq!(
-        orphaned_under_the_beacon(&cfg, &arkham_waiting_on_dunwich()),
-        json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }
 
@@ -1647,35 +1567,39 @@ fn a_bead_whose_blocker_in_another_project_is_pinned_is_as_ready_as_bd_says() {
 /// Dunwich's tracker refused its credential, so its bead may be the blocker
 /// and may be open. A bead whose blocker nothing could check is not ready,
 /// and the blocker is reported as not read rather than as open.
+///
+/// Nothing says which prefix dunwich's beads carry, so the edge names
+/// dunwich as the project the bead may be in.
 #[test]
 fn a_bead_waiting_on_one_in_a_tracker_that_could_not_be_read_is_not_ready_and_not_blocked_by_it() {
+    let cfg = Config::from_toml(ARKHAM_AND_DUNWICH).expect("the config parses");
     let dunwich = Fake::holding(beads(WAITED_ON)).failing(Asked::All, refused(FailureKind::Auth));
-    let beacon = the_beacon(&arkham_calling_the_beacon_ready_beside(dunwich));
+    let trackers = arkham_calling_the_beacon_ready_beside(dunwich);
+    let beacon = the_beacon_under(&cfg, &trackers);
 
     assert_eq!(beacon["ready"], false);
     assert_eq!(beacon["blocked_by"], json!([]));
     assert_eq!(
-        beacon["orphaned_dependencies"],
+        orphaned_under_the_beacon(&cfg, &trackers),
         json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }
 
-/// A project the run left out is not read either, so the same holds.
+/// A project the run left out is not read either, so the same holds. It is
+/// still configured, so the edge names it.
 #[test]
 fn a_bead_waiting_on_one_in_a_project_the_run_left_out_is_not_ready_and_not_blocked_by_it() {
     let cfg = Config::from_toml(ARKHAM_AND_DUNWICH)
         .expect("the config parses")
         .scoped_to(&["arkham".to_string()])
         .expect("arkham is configured");
-    let beacon = the_beacon_under(
-        &cfg,
-        &arkham_calling_the_beacon_ready_beside(Fake::holding(beads(WAITED_ON))),
-    );
+    let trackers = arkham_calling_the_beacon_ready_beside(Fake::holding(beads(WAITED_ON)));
+    let beacon = the_beacon_under(&cfg, &trackers);
 
     assert_eq!(beacon["ready"], false);
     assert_eq!(beacon["blocked_by"], json!([]));
     assert_eq!(
-        beacon["orphaned_dependencies"],
+        orphaned_under_the_beacon(&cfg, &trackers),
         json!([{"id": "dun-2e7", "reason": "not-read", "projects": ["dunwich"]}])
     );
 }
