@@ -6,17 +6,18 @@
 //! one module because the drawing reaches into the rows it draws.
 
 use std::collections::BTreeSet;
-use std::io;
+use std::io::{self, Stdout};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{Clear, ClearType};
 use ratatui::layout::Rect;
-use ratatui::{DefaultTerminal, Frame};
+use ratatui::{Frame, Terminal};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
@@ -974,9 +975,18 @@ impl Shown {
 /// runs as the panic unwinds, so a crash does not leave a wedged tty behind
 /// either. A signal arrives as an event the loop returns on, so it is the
 /// same drop again rather than a second way of restoring anything.
-pub(super) struct Screen {
-    terminal: DefaultTerminal,
+///
+/// Generic over the backend so that a test can run the loop over the real
+/// screen on a buffer: `showing` is the one way to a screen on the reader's
+/// terminal.
+pub(super) struct Screen<B: PutBack = CrosstermBackend<Stdout>> {
+    terminal: Terminal<B>,
     shown: Shown,
+}
+
+/// A backend `Screen` hands back as it found it when it is dropped.
+pub(super) trait PutBack: Backend<Error: Send + Sync + 'static> {
+    fn put_back(&mut self);
 }
 
 impl Screen {
@@ -1139,8 +1149,14 @@ compile_error!(
      screen up, the terminal in raw mode, and the mouse reporting every move"
 );
 
-impl Drop for Screen {
+impl<B: PutBack> Drop for Screen<B> {
     fn drop(&mut self) {
+        self.terminal.backend_mut().put_back();
+    }
+}
+
+impl PutBack for CrosstermBackend<Stdout> {
+    fn put_back(&mut self) {
         // Ahead of the restore, mirroring the order they were turned on in.
         // A terminal left reporting the mouse writes an escape sequence into
         // whatever runs next for every cell the pointer crosses, and there
@@ -1156,7 +1172,7 @@ impl Drop for Screen {
     }
 }
 
-impl View for Screen {
+impl<B: PutBack> View for Screen<B> {
     fn collected(&mut self, snapshot: Snapshot) {
         self.shown.collected(snapshot);
     }
@@ -1298,6 +1314,7 @@ impl View for Screen {
 
 #[cfg(test)]
 mod tests {
+    mod driven;
     mod fold_keys;
 
     use super::*;

@@ -1,11 +1,7 @@
 //! A reference the bead window draws is followed by clicking it, and the rest
 //! of the window answers a click the way it did before.
 //!
-//! `Screen::clicked_bead` is reached through the binary by nothing else: it is
-//! a delegation no unit test makes, so it could return a constant and every
-//! click over a bead window would do the wrong thing with the suite still
-//! green. What is under test is the whole road — xterm's SGR encoding off the
-//! wire, `wire::incoming` turning it into a row, and the window being asked
+//! What is under test is the whole road — xterm's SGR encoding off the wire, `wire::incoming` turning it into a row, and the window being asked
 //! what it drew there.
 //!
 //! No row here is written down. Which row a reference lands on follows from
@@ -73,19 +69,14 @@ const THE_WINDOWS_TOP_BORDER: &[u8] = "┌".as_bytes();
 /// The first bead of the capture's tree, which the window opens over.
 const THE_BEAD_THE_WINDOW_OPENS_ON: &str = "dun-0tp.6";
 
-/// That bead's parent, which is the tree's root.
-const ITS_PARENT: &str = "dun-0tp";
-
 /// The rows two forest lines are drawn on are the rows the harness already
 /// says they are.
 ///
 /// Every test below reads a row off a frame and presses on it, so a reading
 /// that is quietly wrong makes all of them green by construction — the press
 /// lands somewhere nobody chose, and whatever it does there is what gets
-/// asserted. These two rows are settled elsewhere: `THE_TREES_HEADER` and
-/// `THE_FIRST_BEAD` are where `over_the_described_subtree`'s walk leaves the
-/// forest, and `a_click_opens_the_bead_it_lands_on` presses on both of them
-/// and says which bead each opens.
+/// asserted. `THE_TREES_HEADER` and `THE_FIRST_BEAD` are where
+/// `over_the_described_subtree`'s walk leaves the forest.
 #[test]
 fn the_rows_read_off_a_frame_are_the_rows_bdi_drew_on() {
     let (mut bdi, _tracker) = over_the_described_subtree("read-back", ROWS, COLS, A_SILENCE);
@@ -138,35 +129,8 @@ fn words_drawn_twice_are_read_off_no_row() {
     );
 }
 
-/// A click on a reference the forest can reach goes to that bead, the way
-/// `Enter` on the ring does.
-#[test]
-fn a_click_on_a_reference_goes_to_the_bead_it_names() {
-    let (mut bdi, _tracker, page) = at_the_end_of_the_first_beads_page("followed");
-    let on = the_row(&mut bdi, &page, A_REFERENCE_THAT_CAN_BE_FOLLOWED);
-
-    bdi.send(&clicked_on(on));
-    bdi.settle(A_SILENCE, GIVING_UP);
-
-    let after = repaint(&mut bdi, ROWS + 2);
-    assert!(
-        window_over(&after).is_some(),
-        "the click on a reference took the window away rather than following \
-         it. The screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&after),
-        bdi.timeline()
-    );
-    assert_eq!(
-        window_over(&after).as_deref(),
-        Some(ITS_PARENT),
-        "the click on the parent did not go to it. The screen it drew: {:?}\n{}",
-        String::from_utf8_lossy(&after),
-        bdi.timeline()
-    );
-}
-
-/// And leaves the way back behind it, so `Esc` returns to the bead the
-/// reference was clicked in.
+/// A click on a reference leaves the way back behind it, so `Esc` returns to
+/// the bead the reference was clicked in.
 ///
 /// A click that went without recording where it went from would strand the
 /// reader one press from where they were reading, which is worse than not

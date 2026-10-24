@@ -491,7 +491,7 @@ fn a_click_after_e_selects_the_row_it_lands_on() {
 
 /// What the collection after a `^R` finds: this tracker, with these panes
 /// working in the project's directory.
-fn collected(tracker: &str, panes: &[&str]) -> Snapshot {
+pub(super) fn collected(tracker: &str, panes: &[&str]) -> Snapshot {
     let cfg = Config::from_toml(&format!(
         "[[projects]]\nname = \"arkham\"\npath = \"{ARKHAM}\"\n"
     ))
