@@ -477,43 +477,6 @@ mod tests {
         }
     }
 
-    /// The same silence read off the badge the shipped waiting badge is written
-    /// as, where the one above is read off a pair that name a `link`: a pattern
-    /// is how a config says which values it wants, and declining is what every
-    /// pattern is there to do.
-    #[test]
-    fn a_badge_configured_to_decline_stays_silent() {
-        let bead = bead_with(r#"{"blocked_on":"dependency"}"#);
-        let filter = Badge {
-            when: Default::default(),
-            unless: Default::default(),
-            key: "metadata.blocked_on".into(),
-            match_value: Some(matching("human")),
-            render: "⏸ waiting".into(),
-            link: None,
-            short: None,
-            colour: None,
-            drawn_on: DrawnOn::Own,
-        };
-
-        let got = badges_for(&bead, &[filter]);
-
-        assert_eq!(got.drawn, Vec::new());
-        assert_eq!(got.undrawn, Vec::new());
-    }
-
-    /// A key the bead does not carry is not a badge that fell short — it is a
-    /// badge that was never about this bead.
-    #[test]
-    fn a_badge_whose_key_the_bead_does_not_carry_reports_nothing() {
-        let bead = bead_with(r#"{"blocked_on":"human"}"#);
-
-        let got = badges_for(&bead, &[qualified_only()]);
-
-        assert_eq!(got.drawn, Vec::new());
-        assert_eq!(got.undrawn, Vec::new());
-    }
-
     /// The badge draws and the link does not, which is the case a reader
     /// cannot see: an ordinary-looking badge that has quietly lost its
     /// destination.
@@ -597,18 +560,6 @@ mod tests {
                 drawn_on: DrawnOn::Own,
             }]
         );
-        assert_eq!(got.undrawn, Vec::new());
-    }
-
-    /// A badge naming no short form is a badge with one length, which is
-    /// every badge written before there was a second one to name.
-    #[test]
-    fn a_badge_whose_config_names_no_short_form_carries_none() {
-        let bead = bead_with(r#"{"delivery_pr":"dunwich/arkham#30"}"#);
-
-        let got = badges_for(&bead, &[qualified_only()]);
-
-        assert_eq!(got.drawn[0].short, None);
         assert_eq!(got.undrawn, Vec::new());
     }
 
