@@ -957,7 +957,7 @@ fn saying(caption: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::run::{Env, RealRunner, Runner};
+    use crate::collect::run::RunFailure;
     use crate::model::types::testing::{an_unreadable, key as pane_key};
     use crate::model::types::Unreadable;
     use crate::view::fitted::columns;
@@ -1598,20 +1598,12 @@ mod tests {
 
     /// The collector's own account of a command that failed with `text`.
     fn detail_of(text: &str) -> String {
-        RealRunner
-            .run(
-                "sh",
-                &["-c", "printf '%s' \"$1\" >&2; exit 1", "sh", text],
-                None,
-                &Env::new(),
-            )
-            .expect_err("the command exits non-zero")
-            .to_string()
+        RunFailure::from_exit("sh", Some(1), text).to_string()
     }
 
-    /// The constraint, end to end: a real command fails with the text bd
-    /// really writes, and none of it — nor the words the collector wrote
-    /// about it — can be found in anything this module can say.
+    /// The constraint, end to end: a command fails with the text bd really
+    /// writes, and none of it — nor the words the collector wrote about it —
+    /// can be found in anything this module can say.
     #[test]
     fn nothing_a_tool_wrote_reaches_a_phrase() {
         let mut poison: Vec<String> = [
