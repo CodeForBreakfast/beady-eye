@@ -26,6 +26,7 @@ import {
   type Scope,
   Semaphore,
   Stream,
+  SubscriptionRef,
 } from 'effect'
 import {
   type AnswerLine,
@@ -41,6 +42,7 @@ import {
   type ProjectAnswer,
   type ProjectName,
   type Said,
+  type SessionId,
   StatusWord,
   WatchedProjects,
   type WatcherLocation,
@@ -156,9 +158,6 @@ interface Watch {
 }
 
 const isAccepted = ({ acceptance }: Watch) => acceptance.is === 'accepted'
-
-export const SessionId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SessionId'))
-export type SessionId = typeof SessionId.Type
 
 const watchesDirectory = Config.NonEmptyString('XDG_STATE_HOME').pipe(
   Config.withDefault(join(homedir(), '.local', 'state')),
@@ -389,7 +388,7 @@ const keptUnreadable = (
 
 const watchesUnkept = (why: string, beads: readonly Bead[]): Omit<News, 'told'> => ({
   content: [
-    `The watches this session made before its id was known could not be kept: ${why}.`,
+    `The watches this session made before it had its current id could not be kept: ${why}.`,
     'These beads are watched until the plugin stops, and the next watch or unwatch that is kept keeps them:',
     ...listed(beads),
   ].join('\n'),
@@ -428,9 +427,9 @@ const describe = ({ known: { standing } }: Watch): string =>
   )
 
 export interface Watches {
-  /** Take the session's id, and watch again what it watched, where this is
-   * the first id the server has been given. A server serves one session, so
-   * a later id changes nothing. */
+  /** Take the session's id where it is a new one, watch again what the
+   * session watched under it, and move every watch to it. `/clear` and
+   * `/resume` give a running server's session another id. */
   learn(session: SessionId | undefined): Effect.Effect<void>
   watch(id: BeadId, project: ProjectName | undefined): Effect.Effect<Answer>
   unwatch(id: BeadId, project: ProjectName | undefined): Effect.Effect<Answer>
@@ -452,9 +451,10 @@ export const makeWatches: Effect.Effect<
   const scope = yield* Effect.scope
   const fs = yield* FileSystem.FileSystem
   const directory = yield* Effect.orDie(watchesDirectory)
-  const session = yield* Deferred.make<SessionId>()
+  const session = yield* SubscriptionRef.make<SessionId | undefined>(undefined)
   /** The session's file, once its watches are back. */
-  const file = yield* Deferred.make<string>()
+  let file: string | undefined
+  const learning = yield* Semaphore.make(1)
   const keeping = yield* Semaphore.make(1)
   const watches = new Map<string, Watch>()
   const news = yield* Effect.acquireRelease(Queue.unbounded<News>(), Queue.shutdown)
@@ -638,7 +638,9 @@ export const makeWatches: Effect.Effect<
       Result.match(heard, { onSuccess: hearBatch, onFailure: goDown }).pipe(
         Effect.andThen(Deferred.succeed(firstHeard, undefined)),
       )
-    const connection = withTheWatcher(watchBead(bead).pipe(Stream.runForEach(hear)))
+    const connection = withTheWatcher(
+      watchBead(bead, SubscriptionRef.changes(session)).pipe(Stream.runForEach(hear)),
+    )
     const watch: Watch = {
       bead,
       known,
@@ -672,27 +674,21 @@ export const makeWatches: Effect.Effect<
   /** Make the session's file keep `kept`. A caller holds a `keeping`
    * permit. */
   const write = (kept: readonly Watch[]) =>
-    Deferred.poll(file).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.void,
-          onSome: (known) =>
-            Effect.flatMap(known, (path) => {
-              const beads = kept.map(({ bead: { project, id }, known }) => ({
-                project,
-                id,
-                told: known.told,
-              }))
-              const written = `${path}.new`
-              return fs.makeDirectory(directory, { recursive: true }).pipe(
-                Effect.andThen(Schema.encodeEffect(KeptWatches)(beads)),
-                Effect.flatMap((encoded) => fs.writeFileString(written, encoded)),
-                Effect.andThen(fs.rename(written, path)),
-              )
-            }),
-        }),
-      ),
-    )
+    Effect.suspend(() => {
+      const path = file
+      if (path === undefined) return Effect.void
+      const beads = kept.map(({ bead: { project, id }, known }) => ({
+        project,
+        id,
+        told: known.told,
+      }))
+      const written = `${path}.new`
+      return fs.makeDirectory(directory, { recursive: true }).pipe(
+        Effect.andThen(Schema.encodeEffect(KeptWatches)(beads)),
+        Effect.flatMap((encoded) => fs.writeFileString(written, encoded)),
+        Effect.andThen(fs.rename(written, path)),
+      )
+    })
 
   const persist = keeping.withPermit(Effect.suspend(() => write(acceptedWatches())))
 
@@ -747,8 +743,11 @@ export const makeWatches: Effect.Effect<
       yield* tell(keptUnreadable(why, moved))
     })
 
+  /** Watch again what the session `id` watched, and keep what is watched now
+   * under `id`. */
   const restore = (id: SessionId) =>
     Effect.gen(function* () {
+      file = undefined
       const path = join(directory, `${id}.json`)
       const kept = yield* fs.readFileString(path).pipe(
         Effect.flatMap(Schema.decodeEffect(KeptWatches)),
@@ -758,7 +757,7 @@ export const makeWatches: Effect.Effect<
       for (const { told: lastTold, ...bead } of kept) {
         if (!watches.has(keyOf(bead))) start(bead, { is: 'accepted' }, lastTold)
       }
-      yield* Deferred.succeed(file, path)
+      file = path
       const unkept = Arr.differenceWith((one: Bead, other: Bead) => keyOf(one) === keyOf(other))(
         acceptedWatches().map(({ bead }) => bead),
         kept,
@@ -828,18 +827,13 @@ export const makeWatches: Effect.Effect<
     news: Stream.fromQueue(news),
 
     learn: (given) =>
-      Effect.gen(function* () {
-        if (given !== undefined && (yield* Deferred.succeed(session, given))) {
-          return yield* restore(given)
-        }
-        if (yield* Deferred.isDone(session)) {
-          yield* Deferred.await(file)
-          // Completing `file` resumes this call at once, inside the call
-          // that restored the watches. Yielding lets that call, which
-          // arrived first, run until it next waits.
-          yield* Effect.yieldNow
-        }
-      }),
+      learning.withPermit(
+        Effect.gen(function* () {
+          if (given === undefined || given === (yield* SubscriptionRef.get(session))) return
+          yield* SubscriptionRef.set(session, given)
+          yield* restore(given)
+        }),
+      ),
 
     watch: (id, project) =>
       Effect.gen(function* () {

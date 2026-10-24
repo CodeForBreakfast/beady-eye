@@ -52,24 +52,53 @@ export interface Connection {
   readonly asked: string
 }
 
+/** Whether `bdi` 0.36.0, the last release before agent sessions, refuses
+ * `line` as malformed: a `watch` naming more than a project and an id, or a
+ * `watch-all` naming other than one project. */
+const malformedBeforeAgentSessions = (line: string) => {
+  const [first, ...rest] = line.split(/\s+/).filter((word) => word !== '')
+  return (first === 'watch' && rest.length > 2) || (first === 'watch-all' && rest.length !== 1)
+}
+
 /** A watcher of the test's own, handing over each connection with the lines
- * it asked. */
-export const aWatcherAt = async (at: string) => {
+ * it asked. One `predatingAgentSessions` answers a line naming an agent
+ * session as `bdi` 0.36.0 does, and hands the connection over once it is
+ * asked a line it serves, with every line it was asked. */
+export const aWatcherAt = async (at: string, { predatingAgentSessions = false } = {}) => {
   const arrived: Connection[] = []
   const waiting: ((connection: Connection) => void)[] = []
   const held: Socket[] = []
+  const handOver = (accepted: Connection) => {
+    const waiter = waiting.shift()
+    if (waiter) waiter(accepted)
+    else arrived.push(accepted)
+  }
   const server: Server = createServer((connection) => {
     held.push(connection)
     connection.setEncoding('utf8')
     // A session can hang up as a line is written. The write fails and closes
     // the connection, as it does in `bdi watch`, and that is no failure.
     connection.on('error', () => {})
-    connection.once('data', (asked) => {
-      const accepted = { connection, asked: String(asked) }
-      const waiter = waiting.shift()
-      if (waiter) waiter(accepted)
-      else arrived.push(accepted)
-    })
+    if (!predatingAgentSessions) {
+      connection.once('data', (asked) => handOver({ connection, asked: String(asked) }))
+      return
+    }
+    let asked = ''
+    let refused = 0
+    const reading = (chunk: string) => {
+      asked += chunk
+      const lines = asked.split('\n').slice(0, -1)
+      for (const line of lines.slice(refused)) {
+        if (!malformedBeforeAgentSessions(line)) {
+          connection.off('data', reading)
+          handOver({ connection, asked: `${lines.slice(0, refused + 1).join('\n')}\n` })
+          return
+        }
+        connection.write(said({ line: 'refused', asked: line.trim(), reason: 'malformed' }))
+        refused += 1
+      }
+    }
+    connection.on('data', reading)
   })
   await new Promise<void>((listening) => server.listen(at, listening))
   cleanUp.push(() => server.close())
