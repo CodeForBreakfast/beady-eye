@@ -1106,6 +1106,37 @@ detached
         );
     }
 
+    /// A seat works in a linked worktree outside the project's tree, and the
+    /// scope is decided before any project has been asked where it is
+    /// worked. One `git worktree list` from the directory itself names the
+    /// checkout it was cut from, and that is under the project.
+    #[test]
+    fn bdi_started_in_a_linked_worktree_of_a_project_reads_that_project() {
+        let runner = never_entering("/srv/work/ferry", two_repositories());
+
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
+            &runner,
+            &started_in("/tmp/seat-a/wt/src"),
+            None,
+        )
+        .expect("the config is ours to read");
+
+        assert_eq!(read_by(&cfg), ["dunwich"]);
+        let from_the_directory: Vec<String> = runner
+            .inner
+            .calls()
+            .into_iter()
+            .filter(|c| c.cwd.as_deref() == Some(Path::new("/tmp/seat-a/wt/src")))
+            .map(|c| c.argv)
+            .collect();
+        assert_eq!(
+            from_the_directory,
+            ["git worktree list --porcelain"],
+            "one git call from the directory, and nothing else runs there"
+        );
+    }
+
     /// `--all-projects` is the opt-out: the session watching everything from
     /// one project's checkout runs it, and the directory is not consulted.
     #[test]
