@@ -1007,6 +1007,30 @@ mod tests {
         );
     }
 
+    /// A session that will not answer empties its part of the agent column,
+    /// so the foot names it, and the sessions that answered say nothing.
+    #[test]
+    fn a_session_that_will_not_answer_is_named_at_the_foot() {
+        use crate::model::snapshot::{Session, SessionState};
+        let session = |name: &str, state| Session {
+            name: name.to_string(),
+            state,
+        };
+        let mut agents = a_provider(ProviderState::Answering);
+        agents.sessions = vec![
+            session("default", SessionState::Answering),
+            session("standing-agents", SessionState::NotAnswering),
+        ];
+
+        assert_eq!(
+            notices(&behind_a_frame(agents), &[Notice::NoInboundChannel]),
+            vec![
+                Notice::SessionUnanswered("standing-agents".to_string()),
+                Notice::NoInboundChannel
+            ]
+        );
+    }
+
     #[test]
     fn a_session_with_nothing_wrong_leaves_the_foot_to_the_keys() {
         assert_eq!(
