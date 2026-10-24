@@ -133,7 +133,7 @@ test('a bundle started again under the session watches its beads before any tool
 
   await theBundle(home, { CLAUDE_CODE_SESSION_ID: session })
 
-  expect((await watcher.next()).asked).toBe('watch summit-works smt-4kd3p.20\n')
+  expect((await watcher.next()).asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
 })
 
 test('a bundle started again under the session tells it of a bead that changed while it was away', async () => {

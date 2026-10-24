@@ -26,8 +26,7 @@ import {
   someWatches,
   watchesReading,
 } from './test-watcher'
-import type { Timing } from './watcher'
-import { SessionId } from './watches'
+import { SessionId, type Timing } from './watcher'
 
 afterEach(cleanUpAfterEach)
 
@@ -135,12 +134,12 @@ interface Message {
   readonly meta: Record<string, string>
 }
 
-const keptFile = ({ directory }: Place) =>
-  JSON.parse(readFileSync(join(directory, 'beady-eye', 'watches', `${session}.json`), 'utf8'))
+const keptFile = ({ directory }: Place, under: SessionId = session) =>
+  JSON.parse(readFileSync(join(directory, 'beady-eye', 'watches', `${under}.json`), 'utf8'))
 
 /** The beads the session's file keeps. */
-const kept = (place: Place) =>
-  keptFile(place).map(({ project, id }: { project: string; id: string }) => ({
+const kept = (place: Place, under: SessionId = session) =>
+  keptFile(place, under).map(({ project, id }: { project: string; id: string }) => ({
     project,
     id,
   }))
@@ -154,7 +153,7 @@ test('watch answers with the bead as it stands, and keeps the watch', async () =
   const { connection, asked } = await watcher.next()
   connection.write(said(beadLine('summit-works'), freshness('summit-works')))
 
-  expect(asked).toBe('watch summit-works smt-4kd3p.20\n')
+  expect(asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
   expect(await answer).toEqual({
     text: `Watching ${watched}: ${asWatched}.`,
     refused: false,
@@ -185,7 +184,7 @@ test('watch finds a bead named without its project by asking the watcher', async
   watching.connection.write(said(beadLine('summit-works'), freshness('summit-works')))
 
   expect(asking.asked).toBe('watch summit-works smt-4kd3p.20\nwatch harbour smt-4kd3p.20\n')
-  expect(watching.asked).toBe('watch summit-works smt-4kd3p.20\n')
+  expect(watching.asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
   expect(await answer).toEqual({
     text: `Watching ${watched}: ${asWatched}.`,
     refused: false,
@@ -626,7 +625,7 @@ test("a server started again watches what the session watched once it learns the
   const listed = after('watching')
   const { connection, asked } = await watcher.next()
 
-  expect(asked).toBe('watch summit-works smt-4kd3p.20\n')
+  expect(asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
   expect((await listed).text).toBe(
     `The watcher has not answered yet. Each bead's status is the last one known.\n- ${watched}: ${asWatched}`,
   )
@@ -768,20 +767,94 @@ test('a kept file that cannot be read or moved aside is told of before anything 
   ).toBe('not json')
 })
 
-test('a server keeps the first session id it learns', async () => {
+const cleared = Schema.decodeSync(SessionId)('0e1d2c3b-4a59-4876-9543-210fedcba987')
+
+test('a session given a new id watches from it, and keeps its watches under it', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+  const answer = use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const before = await watcher.next()
+  before.connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+  await answer
+  const closed = new Promise((resolve) => before.connection.once('close', resolve))
+
+  const listed = await use('watching', { session_id: cleared })
+  const after = await watcher.next()
+  after.connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+
+  expect(listed.text).toBe(`The watcher is answering.\n- ${watched}: ${asWatched}`)
+  expect(after.asked).toBe(`watch summit-works smt-4kd3p.20 ${cleared}\n`)
+  await closed
+  expect(kept(place, cleared)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+  expect(await use('watching', { session_id: cleared })).toEqual(listed)
+})
+
+test("a watch made before the session's id is known names it once it is", async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+  const answer = use('watch', {
+    id: 'smt-4kd3p.20',
+    project: 'summit-works',
+    session_id: undefined,
+  })
+  const before = await watcher.next()
+  before.connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+  await answer
+
+  await use('watching')
+  const after = await watcher.next()
+
+  expect(before.asked).toBe('watch summit-works smt-4kd3p.20\n')
+  expect(after.asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
+})
+
+test('a session resumed into another id watches what that id watched too', async () => {
   const place = { ...aPlace(), at: undefined }
-  const { watches } = await someWatches(place.directory, place.at, [], timing)
-
-  await Effect.runPromise(
-    Effect.all([
-      watches.learn(undefined),
-      watches.learn(session),
-      watches.learn(Schema.decodeSync(SessionId)('0e1d2c3b-4a59-4876-9543-210fedcba987')),
-      watches.watch(anId('smt-4kd3p.20'), aProject('summit-works')),
-    ]),
+  mkdirSync(join(place.directory, 'beady-eye', 'watches'), { recursive: true })
+  writeFileSync(
+    join(place.directory, 'beady-eye', 'watches', `${cleared}.json`),
+    JSON.stringify([{ project: 'harbour', id: 'hbr-2' }]),
   )
+  const use = await aServer(place)
+  await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
 
-  expect(kept(place)).toEqual([{ project: 'summit-works', id: 'smt-4kd3p.20' }])
+  const listed = await use('watching', { session_id: cleared })
+
+  expect(listed.text).toContain(`- ${watched}: not heard of yet`)
+  expect(listed.text).toContain('- hbr-2 in harbour: not heard of yet')
+  expect(kept(place, cleared)).toEqual([
+    { project: 'summit-works', id: 'smt-4kd3p.20' },
+    { project: 'harbour', id: 'hbr-2' },
+  ])
+})
+
+test('every watch is accepted by a watcher predating agent sessions, restored ones too', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string, { predatingAgentSessions: true })
+  const before = await aServer(place)
+  const answer = before('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+  const watching = await watcher.next()
+  watching.connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+
+  expect(watching.asked).toBe(
+    `watch summit-works smt-4kd3p.20 ${session}\nwatch summit-works smt-4kd3p.20\n`,
+  )
+  expect(await answer).toEqual({ text: `Watching ${watched}: ${asWatched}.`, refused: false })
+  await before.exit()
+
+  const after = await aServer(place)
+  const listed = after('watching')
+  const restored = await watcher.next()
+  restored.connection.write(said(beadLine('summit-works'), freshness('summit-works')))
+
+  expect(restored.asked).toBe(watching.asked)
+  expect((await listed).text).toContain(`- ${watched}: ${asWatched}`)
+  expect(await after('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).toEqual({
+    text: `Watching ${watched}: ${asWatched}.`,
+    refused: false,
+  })
 })
 
 test('a call whose session id is not one is served, and keeps nothing for the session', async () => {
@@ -1298,7 +1371,7 @@ test('watches made before the session id that its file cannot keep are told of, 
 
   expect(meta).toEqual({ watches: 'unkept' })
   expect(content).toStartWith(
-    'The watches this session made before its id was known could not be kept: ',
+    'The watches this session made before it had its current id could not be kept: ',
   )
   expect(content).toEndWith(
     `\nThese beads are watched until the plugin stops, and the next watch or unwatch that is kept keeps them:\n- ${watched}`,

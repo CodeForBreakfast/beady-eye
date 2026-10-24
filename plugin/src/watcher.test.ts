@@ -34,6 +34,7 @@ import {
   ProjectName,
   pauseAfter,
   projectsNamedIn,
+  SessionId,
   type Timing,
   WatcherLocation,
   WatcherTiming,
@@ -123,11 +124,16 @@ const aWatcherThatDied = async (at: string) => {
   await watcher.exited
 }
 
-/** A session watching the bead at `path`, and what it is told, in order. */
-const watching = (path: string | undefined, watchTiming = timing) => {
+/** A session watching the bead at `path` from each of `sessions` in turn, and
+ * what it is told, in order. */
+const watching = (
+  path: string | undefined,
+  watchTiming = timing,
+  sessions?: Stream.Stream<SessionId | undefined>,
+) => {
   const told = Effect.runSync(Queue.unbounded<Heard>())
   const watch = Effect.runFork(
-    watchBead(bead).pipe(
+    watchBead(bead, sessions).pipe(
       Stream.runForEach((heard) => Queue.offer(told, heard)),
       at(path, watchTiming),
       Effect.provide(NodeFileSystem.layer),
@@ -293,6 +299,84 @@ test('a refusal of the watch arrives on its own', async () => {
   ;(await watcher.next()).connection.write(said(refused))
 
   expect(await session.next()).toEqual(Result.succeed({ is: 'refused', refused }))
+})
+
+const agentSession = Schema.decodeSync(SessionId)('6f1c2d3e-4a5b-4c6d-8e7f-901234567890')
+const askedFrom = (session: SessionId) => `watch summit-works smt-4kd3p.20 ${session}\n`
+
+test('a watch names the agent session it is watched from', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path)
+  const session = watching(path, timing, Stream.succeed(agentSession))
+
+  const { connection, asked: line } = await watcher.next()
+  connection.write(said(beadLine, freshness))
+
+  expect(line).toBe(askedFrom(agentSession))
+  expect(await session.next()).toEqual(answerHeard)
+})
+
+test('a watcher predating agent sessions is asked again without the session, on the same connection', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path, { predatingAgentSessions: true })
+  const session = watching(path, timing, Stream.succeed(agentSession))
+
+  const { connection, asked: lines } = await watcher.next()
+  connection.write(said(beadLine, freshness))
+
+  expect(lines).toBe(`${askedFrom(agentSession)}${asked}`)
+  expect(await session.next()).toEqual(answerHeard)
+})
+
+test('the connection after one to a watcher predating agent sessions names the session again', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const older = await aWatcherAt(path, { predatingAgentSessions: true })
+  const session = watching(path, timing, Stream.succeed(agentSession))
+  ;(await older.next()).connection.write(said(beadLine, freshness))
+  expect(await session.next()).toEqual(answerHeard)
+
+  older.stop()
+  expect(await session.next()).toEqual(Result.fail('closed'))
+  const newer = await aWatcherAt(path)
+
+  expect((await newer.next()).asked).toBe(askedFrom(agentSession))
+})
+
+test('a watch naming the session refused for another reason arrives as a refusal', async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path)
+  const session = watching(path, timing, Stream.succeed(agentSession))
+
+  const refused = {
+    line: 'refused',
+    asked: askedFrom(agentSession).trim(),
+    reason: 'unknown-project',
+  } as const
+  ;(await watcher.next()).connection.write(said(refused))
+
+  expect(await session.next()).toEqual(Result.succeed({ is: 'refused', refused }))
+})
+
+test("a session's new id closes the connection and watches from the new one", async () => {
+  const path = join(aPrivateDirectory(), 'watcher.sock')
+  const watcher = await aWatcherAt(path)
+  const sessions = Effect.runSync(Queue.unbounded<SessionId | undefined>())
+  const cleared = Schema.decodeSync(SessionId)('0e1d2c3b-4a59-4876-9543-210fedcba987')
+  const session = watching(path, timing, Stream.fromQueue(sessions))
+
+  Effect.runSync(Queue.offer(sessions, agentSession))
+  const first = await watcher.next()
+  first.connection.write(said(beadLine, freshness))
+  expect(await session.next()).toEqual(answerHeard)
+  const closed = new Promise((resolve) => first.connection.once('close', resolve))
+  Effect.runSync(Queue.offer(sessions, cleared))
+  const second = await watcher.next()
+  second.connection.write(said(beadLine, freshness))
+
+  expect(first.asked).toBe(askedFrom(agentSession))
+  expect(second.asked).toBe(askedFrom(cleared))
+  await closed
+  expect(await session.next()).toEqual(answerHeard)
 })
 
 test('a refused connection is a watcher that is down', async () => {
