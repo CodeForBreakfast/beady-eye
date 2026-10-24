@@ -122,6 +122,21 @@
       beadyEyeFor = pkgs: (crane.mkLib pkgs).buildPackage (common // {
         cargoArtifacts = (artifactsFor pkgs).release;
 
+        # Measurement probe only: print cargo's per-unit timings into the log.
+        cargoExtraArgs = "--locked --timings";
+        preCheck = ''
+          echo "PROBE cores: NIX_BUILD_CORES=$NIX_BUILD_CORES nproc=$(nproc)"
+        '';
+        postCheck = ''
+          for html in target/cargo-timings/cargo-timing-*.html; do
+            echo "PROBE timings from $html"
+            sed -n '/^const UNIT_DATA = \[/,/^\];/p' "$html" \
+              | sed '1s/.*/[/; $s/.*/]/' \
+              | jq -c '.[] | {target, mode, start, duration, sections}' \
+              | sed 's/^/PROBE unit /' || true
+          done
+        '';
+
         # tests/no_config.rs runs the binary as a fresh machine would, and
         # bdi asks bd where the tracker is. The worktree-listing test builds
         # a repository and adds a worktree to it, so git has to be here too.
