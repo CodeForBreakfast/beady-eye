@@ -870,25 +870,25 @@ path = "/srv/work/ferry"
     /// begun arriving and not closed is not read as half of one.
     #[test]
     fn a_change_is_taken_whole_at_the_freshness_line_closing_it() {
-        let at = a_watcher_saying(
-            "watched-whole",
-            vec![
+        let mut watcher = Watcher::default();
+        let first = taking(
+            &mut watcher,
+            &[
                 bead("dunwich", "dun-1", true, &[]),
                 fresh("dunwich", json!("ok")),
+            ],
+        );
+        let midway = taking(
+            &mut watcher,
+            &[
                 bead("dunwich", "dun-2", true, &[]),
-                json!({ "line": "gone", "project": "dunwich", "id": "dun-1" }).to_string(),
+                gone("dun-1"),
                 fresh("ferry", json!("ok")),
             ],
         );
-        let own = own_trackers();
-        let cfg = projects();
-        let through = through(&at, &own, A_MOMENT);
-        let first = through.of(project(&cfg, "dunwich")).expect("answered");
-        through.of(project(&cfg, "ferry")).expect("answered");
-        let midway = through.of(project(&cfg, "dunwich")).expect("answered");
 
-        assert_eq!(ids(first.as_ref()), ["dun-1"]);
-        assert_eq!(ids(midway.as_ref()), ["dun-1"]);
+        assert_eq!(ids(&first), ["dun-1"]);
+        assert_eq!(ids(&midway), ["dun-1"]);
     }
 
     fn staying<'t>(
