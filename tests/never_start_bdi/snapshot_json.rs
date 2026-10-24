@@ -325,6 +325,11 @@ fn a_node_carries_every_field_the_contract_names() {
             "orphaned_dependencies": [],
         })
     );
+    assert_eq!(
+        node(&emitted["trees"][0], "dun-7.2")["closed_at"],
+        "2026-08-28T09:00:00Z",
+        "a closed bead says when it closed"
+    );
 }
 
 /// `agent.source` records which direction of the join resolved it, so a
