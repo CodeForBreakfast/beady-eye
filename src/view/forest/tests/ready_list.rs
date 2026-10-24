@@ -597,20 +597,6 @@ fn a_waiter_in_another_project_is_drawn_up_to_its_root() {
     assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-1")));
 }
 
-/// How many more beads the first step drawn for a bead says it waits on,
-/// found by the whole id its line carries.
-fn also_waits_on(forest: &Forest, id: &str) -> usize {
-    forest
-        .lines()
-        .iter()
-        .find_map(|line| match (line.bead(), &line.content) {
-            (Some(bead), Content::Waiting(waiting)) if bead.id == id => waiting.row.step,
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("{id} is drawn as no step: {:#?}", sketch(forest)))
-        .also_waits_on
-}
-
 /// A search in the list counts the beads the list draws. `lgt-4.8` is open
 /// and waits on nothing bd called ready, and `lgt-4.7` is closed, so the
 /// list draws neither of them.

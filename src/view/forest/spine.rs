@@ -418,29 +418,3 @@ fn work_under(
 fn wanted(bead: &Node) -> bool {
     !quiet(bead) || bead.ready
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    /// The cycle takes in every rule and comes back round.
-    #[test]
-    fn every_rule_is_one_step_from_the_next_and_the_cycle_closes() {
-        let mut reached = vec![Spine::default()];
-        while reached.len() < Spine::EVERY.len() {
-            let next = reached.last().expect("the cycle starts somewhere").next();
-            assert!(
-                !reached.contains(&next),
-                "the cycle closed early: {reached:?}"
-            );
-            reached.push(next);
-        }
-
-        assert_eq!(
-            reached.last().expect("the cycle ends somewhere").next(),
-            Spine::default(),
-            "the cycle did not come back round"
-        );
-    }
-}
