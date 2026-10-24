@@ -26,12 +26,10 @@
 //! sits where the real one would be found instead, and writes down what it
 //! was asked. The file it writes is the red.
 
-mod terminal;
-
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use terminal::shims::{shim, shims_first_over_a_stand_in, A_PANE, A_SESSION};
+use crate::terminal::shims::{shim, shims_first_over_a_stand_in, A_PANE, A_SESSION};
 
 /// Where `tests/shims/stand-in` writes down what it was asked. The path is a
 /// temporary directory's, and a `TMPDIR` holding a space must not split it.

@@ -13,11 +13,9 @@ use beady_eye::config::Config;
 use beady_eye::model::snapshot::Filter;
 use chrono::{DateTime, Utc};
 
-mod canned;
+use crate::canned::Canned;
 
-use canned::Canned;
-
-const TRACKER: &str = include_str!("fixtures/bulk_loose_roots.json");
+const TRACKER: &str = include_str!("../fixtures/bulk_loose_roots.json");
 
 const PANES: &str = r#"{"result":{"agents":[
   {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"working","title":"the dish"}
