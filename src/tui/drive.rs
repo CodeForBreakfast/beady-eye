@@ -865,7 +865,7 @@ mod tests {
     use super::*;
     use crate::app::Armed;
     use crate::collect::changes::Reported;
-    use crate::config::Config;
+    use crate::config::{Config, Poll};
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
@@ -2388,6 +2388,81 @@ mod tests {
             view.collecting(),
             [vec![arkham()]],
             "a hundred messages, one read, and the screen told once"
+        );
+    }
+
+    /// A project a producer covers is read once for each burst of reports
+    /// about it and never polled, while its neighbour goes on polling.
+    ///
+    /// The producer replaces the poll rather than backing it up, so the
+    /// assertion that matters is an absence: once covered, the only reads of
+    /// arkham are the ones its bursts asked for. The loop is held open until
+    /// ferry has polled three more times after arkham's last burst, so
+    /// arkham has been due that often by the same clock and was declined.
+    #[test]
+    fn a_covered_project_is_read_once_per_burst_and_never_polled_while_its_neighbour_polls() {
+        const A_BURST: usize = 5;
+        let mut view = Recorder::default();
+        let (ask, asked) = mpsc::channel();
+        let (send, events) = mpsc::channel();
+        let collector = thread::spawn(move || {
+            let report = |event: Event| send.send(event).expect("the loop's end is open");
+            let burst = || {
+                for _ in 0..A_BURST {
+                    report(Event::Changed(arkham()));
+                }
+            };
+            let mut reached = Vec::new();
+            let mut bursts = 0;
+            let mut ferry_after_last_burst = 0;
+            while let Ok(ask_made) = asked.recv_timeout(A_MOMENT) {
+                reached.push(read(ask_made));
+                report(Event::Collected(Box::new(a_snapshot())));
+                let of = |project: Wanted| reached.iter().filter(|it| **it == project).count();
+                if of(arkham()) > 2 {
+                    break;
+                } else if reached.len() == 1 {
+                    report(Event::Covered("arkham".to_string()));
+                    burst();
+                    bursts = 1;
+                } else if bursts == 1 && of(arkham()) == 1 && of(ferry()) >= 2 {
+                    burst();
+                    bursts = 2;
+                } else if bursts == 2 && of(arkham()) == 2 && ferry_after_last_burst == 0 {
+                    ferry_after_last_burst = of(ferry());
+                } else if ferry_after_last_burst > 0 && of(ferry()) >= ferry_after_last_burst + 3 {
+                    break;
+                }
+            }
+            reached
+        });
+
+        let mut outstanding = gathering(an_interval());
+        outstanding.ask(Wanted::Everything, Utc::now());
+        drive(
+            &mut view,
+            &events,
+            &ask,
+            outstanding,
+            a_run_reading(vec![
+                Armed::as_poll_says("arkham".to_string(), Poll::UntilCovered, AN_INTERVAL),
+                Armed::as_poll_says("ferry".to_string(), Poll::UntilCovered, AN_INTERVAL),
+            ]),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+
+        let reached = collector.join().expect("the thread ran");
+        let of = |project: Wanted| reached.iter().filter(|it| **it == project).count();
+        assert_eq!(
+            of(arkham()),
+            2,
+            "arkham was read for its two bursts and for nothing else: {reached:?}"
+        );
+        assert!(
+            of(ferry()) >= 5,
+            "while ferry, which nothing covered, polled on: {reached:?}"
         );
     }
 
