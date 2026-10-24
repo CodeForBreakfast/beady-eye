@@ -5,11 +5,10 @@
 mod terminal;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::{json, Value};
-use terminal::a_home_naming_one_project_settled;
 use terminal::shims::ShimmedTracker;
+use terminal::{a_home_naming_one_project_settled, bdi_on_pipes};
 
 /// Both projects point at the directory holding the config, which holds no
 /// tracker, so each one bdi reads fails and says so under its own name.
@@ -35,9 +34,14 @@ fn a_config_naming_two_projects(named: &str) -> PathBuf {
     path
 }
 
+/// The directory holding the config, which is the `HOME` a run reading it has.
+fn the_directory_holding(config: &Path) -> &Path {
+    config.parent().expect("the config sits in a directory")
+}
+
 /// What `bdi --beads` wrote, read as JSON.
 fn listing(config: &Path, args: &[&str]) -> Value {
-    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+    let out = bdi_on_pipes(the_directory_holding(config))
         .arg("--config")
         .arg(config)
         .arg("--beads")
@@ -113,13 +117,9 @@ fn a_bead_named_beside_beads_is_delivered_as_the_config_says() {
         r#"[{"id":"ark-1","title":"lay the rugs","status":"open","issue_type":"task"}]"#,
     );
 
-    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+    let out = bdi_on_pipes(&home)
         .args(["--beads", "arkham:ark-1"])
         .current_dir(&home)
-        .env("HOME", &home)
-        .env_remove("BEADS_DIR")
-        .env_remove("BEADS_DOLT_PASSWORD")
-        .env_remove("BDI_PROJECT")
         .envs(tracker.environment())
         .output()
         .expect("bdi runs");
@@ -141,7 +141,7 @@ fn a_bead_named_beside_beads_is_delivered_as_the_config_says() {
 fn a_bead_named_beside_beads_and_ready_is_refused() {
     let config = a_config_naming_two_projects("beads-tree-ready");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+    let out = bdi_on_pipes(the_directory_holding(&config))
         .arg("--config")
         .arg(&config)
         .args(["--beads", "--ready", "arkham:ark-1"])
