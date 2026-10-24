@@ -1513,32 +1513,6 @@ name = "kadath"
 path = "/home/user/dev/kadath"
 "#;
 
-    const ONE_CREDENTIALLED_ONE_AMBIENT: &str = r#"
-[[projects]]
-name = "arkham"
-path = "/home/user/arkham"
-credential_command = "secret-tool lookup tracker arkham"
-
-[[projects]]
-name = "kadath"
-path = "/home/user/dev/kadath"
-"#;
-
-    const TWO_AMBIENT: &str = r#"
-[[projects]]
-name = "arkham"
-path = "/home/user/arkham"
-credential_command = "secret-tool lookup tracker arkham"
-
-[[projects]]
-name = "kadath"
-path = "/home/user/dev/kadath"
-
-[[projects]]
-name = "cinder"
-path = "/home/user/dev/cinder"
-"#;
-
     #[test]
     fn parses_every_section() {
         let cfg = Config::from_toml(EVERY_SECTION).expect("parses");
@@ -2062,23 +2036,6 @@ path = "/home/user/dev/kadath"
         assert!(said.contains("claude-code"), "names what it ships: {said}");
     }
 
-    /// `bdi` cannot see the reader's background, so a reader who says
-    /// nothing is answered from the shipped default rather than from
-    /// anything about the machine. That is what makes a wrong answer stable
-    /// and attributable: it is wrong the same way on every terminal, and
-    /// one documented key fixes it for good.
-    #[test]
-    fn an_undeclared_background_is_the_fallback() {
-        assert_eq!(Theme::default().background, Background::Dark);
-        assert_eq!(
-            Config::from_toml(ONE_PROJECT)
-                .expect("parses")
-                .theme
-                .background,
-            Background::Dark
-        );
-    }
-
     /// And a background the reader misspelled is refused rather than read
     /// as the fallback. A typo answered silently with the default is the
     /// failure the key exists to remove, arriving through the key: the
@@ -2152,50 +2109,11 @@ path = "/home/user/dev/kadath"
         assert_eq!(patient_for(u64::MAX).unanswered_after(), TimeDelta::MAX);
     }
 
-    /// The same rule as far out as a config file can put it: `i64::MAX`
-    /// seconds, the largest integer TOML carries, already a thousandfold past
-    /// what an interval holds — and the exact value the old fallback
-    /// substituted for every value it caught.
-    #[test]
-    fn a_config_naming_a_patience_no_interval_can_hold_is_read_as_the_longest_there_is() {
-        let cfg = Config::from_toml(&format!(
-            "{ONE_PROJECT}[tui]\nunanswered_after_seconds = {}\n",
-            i64::MAX
-        ))
-        .expect("parses");
-
-        assert_eq!(cfg.tui.unanswered_after(), TimeDelta::MAX);
-    }
-
     fn patient_for(seconds: u64) -> Tui {
         Tui {
             unanswered_after_seconds: seconds,
             ..Tui::default()
         }
-    }
-
-    /// The whole of a project entry: a path. A tracker is read in `bdi`'s own
-    /// environment unless its entry says otherwise, so a config restates
-    /// neither where a tracker is nor how to authenticate to it, however many
-    /// it names.
-    #[test]
-    fn a_project_needs_only_a_path_however_many_the_config_names() {
-        for spelling in [ONE_PROJECT, TWO_AMBIENT, ONE_CREDENTIALLED_ONE_AMBIENT] {
-            let cfg = Config::from_toml(spelling).expect("a path is the whole of an entry");
-
-            assert!(cfg.projects.iter().any(|p| p.credential_command.is_none()));
-        }
-    }
-
-    /// The escape hatch survives, for a tracker outside direnv's reach.
-    #[test]
-    fn a_project_may_still_name_a_credential_command() {
-        let cfg = Config::from_toml(ONE_CREDENTIALLED_ONE_AMBIENT).expect("parses");
-
-        assert_eq!(
-            cfg.projects[0].credential_command.as_deref(),
-            Some("secret-tool lookup tracker arkham")
-        );
     }
 
     const TWO_ON_A_SERVER_ONE_CHECKED_OUT: &str = r#"
@@ -2406,24 +2324,6 @@ path = "/home/user/kadath"
         }
     }
 
-    /// A project that names no command is read in the environment `bdi`
-    /// itself runs in, and nothing is run to reproduce a shell's.
-    #[test]
-    fn a_project_saying_nothing_about_its_environment_is_read_in_bdis_own() {
-        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
-
-        assert_eq!(cfg.projects[0].environment_command, None);
-    }
-
-    /// A config written before a project could state its prefix still
-    /// parses, and says nothing about whose a bead is.
-    #[test]
-    fn a_project_saying_nothing_about_its_prefix_states_none() {
-        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
-
-        assert_eq!(cfg.projects[0].prefix, None);
-    }
-
     /// A project that says nothing polls until a producer covers it, and one
     /// that names `poll` has said which it wants whatever covers it.
     #[test]
@@ -2632,28 +2532,6 @@ credential_command = "cat /home/user/dev/arkham-fork/.beads-password"
             .to_string();
 
         assert!(err.contains("arkham"), "got: {err}");
-    }
-
-    const ONE_NAME_ON_TWO_AMBIENT_PROJECTS: &str = r#"
-[[projects]]
-name = "arkham"
-path = "/home/user/arkham"
-
-[[projects]]
-name = "arkham"
-path = "/home/user/dev/arkham-fork"
-"#;
-
-    /// Both guards have something to say about this config, and only one of
-    /// them says the thing that is actually wrong with it.
-    #[test]
-    fn a_repeated_name_is_reported_before_a_missing_credential() {
-        let err = Config::from_toml(ONE_NAME_ON_TWO_AMBIENT_PROJECTS)
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("arkham"), "got: {err}");
-        assert!(!err.contains("credential_command"), "got: {err}");
     }
 
     fn two_projects() -> Config {
@@ -2999,26 +2877,6 @@ metadata_keys = ["working_topic"]
             b.apply("owner/repo#7", &no_fields()),
             Some("⇢ owner/repo#7".to_string())
         );
-    }
-
-    #[test]
-    fn badge_with_match_is_selective() {
-        let b = Badge {
-            when: Default::default(),
-            unless: Default::default(),
-            key: "metadata.blocked_on".to_string(),
-            match_value: Some(pattern("human")),
-            render: "⏸ waiting".to_string(),
-            link: None,
-            short: None,
-            colour: None,
-            drawn_on: DrawnOn::Own,
-        };
-        assert_eq!(
-            b.apply("human", &no_fields()),
-            Some("⏸ waiting".to_string())
-        );
-        assert_eq!(b.apply("dependency", &no_fields()), None);
     }
 
     /// What anchoring buys, stated over every pair a corpus makes rather

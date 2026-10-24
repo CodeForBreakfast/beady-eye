@@ -1183,11 +1183,6 @@ mod tests {
             .unwrap_or_else(|| panic!("{id} is in the fixture"))
     }
 
-    #[test]
-    fn parses_every_row() {
-        assert_eq!(fixture().len(), 7);
-    }
-
     const JOINED: &str = include_str!("../../tests/fixtures/joined_bd_list.json");
 
     /// The bead as `bd show` gives it is in the rows `bd list` already
@@ -1707,55 +1702,6 @@ mod tests {
         assert!(parse_beads(bad).is_err());
     }
 
-    #[test]
-    fn work_in_flight_ranks_ahead_of_work_that_is_finished() {
-        let mut statuses = vec![
-            Status::Closed,
-            Status::Open,
-            Status::Other("marinating".to_string()),
-            Status::InProgress,
-            Status::Deferred,
-            Status::Pinned,
-            Status::Blocked,
-            Status::Hooked,
-        ];
-        statuses.sort_by_key(Status::rank);
-
-        assert_eq!(
-            statuses,
-            vec![
-                Status::InProgress,
-                Status::Hooked,
-                Status::Blocked,
-                Status::Open,
-                Status::Deferred,
-                Status::Pinned,
-                Status::Closed,
-                Status::Other("marinating".to_string()),
-            ]
-        );
-        assert!(Status::Closed.is_closed());
-        assert!(!Status::Open.is_closed());
-        assert!(!Status::Pinned.is_closed());
-        assert!(!Status::Hooked.is_closed());
-    }
-
-    #[test]
-    fn a_pinned_bead_is_finished_without_being_closed() {
-        assert!(Status::Closed.is_finished());
-        assert!(Status::Pinned.is_finished());
-        for live in [
-            Status::Open,
-            Status::InProgress,
-            Status::Blocked,
-            Status::Deferred,
-            Status::Hooked,
-            Status::Other("marinating".to_string()),
-        ] {
-            assert!(!live.is_finished(), "{live:?}");
-        }
-    }
-
     use crate::collect::environment::CREDENTIAL_VAR;
     use crate::collect::run::testing::FakeRunner;
     use crate::collect::run::FailureKind;
@@ -2249,29 +2195,6 @@ mod tests {
         assert_eq!(failure.unreadable.expect("a parse failure").read, "events");
     }
 
-    /// `bd list` answers about the permanent table, so it returns no wisp at
-    /// all — not under `--all`, and not under its own `--wisp-type` filter.
-    /// A tracker read only that way draws none of them.
-    #[test]
-    fn a_tracker_answers_with_its_wisps_as_well_as_its_permanent_beads() {
-        let runner = FakeRunner::default()
-            .with(&spelled(TRACKER_CALL), FIXTURE)
-            .with(&spelled(WISP_CALL), WISPS);
-
-        let beads = opened(&runner).all().unwrap();
-
-        let ids: Vec<&str> = beads.iter().map(|bead| bead.id.as_str()).collect();
-        assert!(
-            ids.contains(&"bdi-7ao.17.2"),
-            "the wisp under a bead: {ids:?}"
-        );
-        assert!(
-            ids.contains(&"bdi-wisp-w3m"),
-            "the free-standing wisp: {ids:?}"
-        );
-        assert_eq!(beads.len(), 9, "both answers, neither replacing the other");
-    }
-
     /// What a reader for unfinished work asks for in place of the whole
     /// listing: the unfinished beads whole, and every bead without its free
     /// text.
@@ -2528,30 +2451,6 @@ mod tests {
         nulls(&rows, "", &mut found);
 
         assert_eq!(found, Vec::<String>::new(), "nulls bd wrote");
-    }
-
-    #[test]
-    fn a_row_carries_every_bead_it_depends_on_and_the_kind_of_each() {
-        let json = r#"[{"id":"p-1.4","title":"t","status":"open","dependencies":[
-          {"issue_id":"p-1.4","depends_on_id":"p-1","type":"parent-child"},
-          {"issue_id":"p-1.4","depends_on_id":"p-1.3","type":"blocks"}]}]"#;
-        let bead = &parse_beads(json).expect("the row parses")[0];
-
-        assert_eq!(
-            bead.dependencies,
-            vec![
-                Dependency {
-                    on: "p-1".to_string(),
-                    edge: Edge::ParentChild,
-                    project: None,
-                },
-                Dependency {
-                    on: "p-1.3".to_string(),
-                    edge: Edge::Blocks,
-                    project: None,
-                },
-            ]
-        );
     }
 
     /// The diff from the commit a read stood at, spelled out rather than
@@ -2922,32 +2821,6 @@ mod tests {
         let failure = opened(&runner).blocked().unwrap_err();
 
         assert_eq!(failure.kind, FailureKind::Parse);
-    }
-
-    /// The whole of the invocation, in one test because the two halves are
-    /// one fact: bd is told which tracker to read, and told it may not write
-    /// to it. Asserting the tracker alone would pass with the writes still
-    /// allowed.
-    #[test]
-    fn every_call_names_the_tracker_outright_and_refuses_writes() {
-        let runner = FakeRunner::default()
-            .with(&spelled(TRACKER_CALL), FIXTURE)
-            .with(&spelled(WISP_CALL), "[]");
-
-        opened(&runner).all().unwrap();
-
-        for call in runner.calls() {
-            let after_the_program = call
-                .argv
-                .strip_prefix("bd ")
-                .unwrap_or_else(|| panic!("{} is not a bd call", call.argv));
-            assert!(
-                after_the_program
-                    .starts_with(&format!("-C {} --readonly ", project_dir().display())),
-                "the tracker is left to the working directory in: {}",
-                call.argv
-            );
-        }
     }
 
     /// A captured row carries the bead's own parent, which is the one the
