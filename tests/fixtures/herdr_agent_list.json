@@ -94,12 +94,6 @@
       },
       {
         "agent": "claude",
-        "agent_session": {
-          "agent": "claude",
-          "kind": "id",
-          "source": "herdr:claude",
-          "value": "74d6b1a8-0e39-4f27-b85c-3a0947ed21f6"
-        },
         "agent_status": "idle",
         "cwd": "/tmp/bdi-ground/dunwich",
         "focused": false,
@@ -212,7 +206,7 @@
         "agent": "claude",
         "agent_session": {
           "agent": "claude",
-          "kind": "id",
+          "kind": "path",
           "source": "herdr:claude",
           "value": "d0f52a63-9e14-4b87-8c02-b7a35916ef4d"
         },
