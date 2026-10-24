@@ -1,3 +1,3 @@
-beady-eye plugin 0.2.5
+beady-eye plugin 0.3.1
 
-Patch release, **0.2.4 → 0.2.5**.
+Patch release, **0.3.0 → 0.3.1**.
