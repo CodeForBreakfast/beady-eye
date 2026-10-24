@@ -1755,4 +1755,148 @@ mod tests {
         sender.read_to_string(&mut answered).expect("the answer");
         assert!(answered.starts_with("HTTP/1.1 503 "), "{answered}");
     }
+
+    /// [`CLOSED_42`] with spaces after it to make `size` bytes, which JSON
+    /// reads as the same delivery.
+    fn padded(size: usize) -> String {
+        CLOSED_42.to_string() + &" ".repeat(size - CLOSED_42.len())
+    }
+
+    fn signed_post(body: &str) -> Vec<u8> {
+        posted(
+            &format!(
+                "Content-Length: {}\r\nX-GitHub-Event: pull_request\r\nX-Hub-Signature-256: {}\r\n",
+                body.len(),
+                signature(body.as_bytes())
+            ),
+            body,
+        )
+    }
+
+    /// What the listener at `address` answers `request` with.
+    fn answered(address: SocketAddr, request: &[u8]) -> String {
+        let mut stream = TcpStream::connect(address).expect("the listener takes the connection");
+        stream
+            .set_read_timeout(Some(PATIENCE))
+            .expect("a timeout is ours to set");
+        stream.write_all(request).expect("the request is sent");
+        let mut answer = String::new();
+        stream
+            .read_to_string(&mut answer)
+            .expect("the listener answers");
+        answer
+    }
+
+    #[test]
+    fn a_delivery_of_the_largest_size_is_settled_and_one_byte_more_is_answered_too_large() {
+        assert_eq!(
+            heard(&signed_post(&padded(LARGEST_DELIVERY))),
+            Some(settles(PullRequest {
+                repo: "example/ark".to_string(),
+                number: 42,
+            }))
+        );
+        assert_eq!(
+            heard(&signed_post(&padded(LARGEST_DELIVERY + 1))),
+            Some(Heard::TooLarge)
+        );
+        assert_eq!(
+            Heard::TooLarge.answer(true, true).0,
+            "413 Content Too Large"
+        );
+    }
+
+    /// The body sent is the whole of a signed delivery, so reading to the end
+    /// of what arrived, rather than to the length it gives, would settle it.
+    #[test]
+    fn a_request_ending_before_its_length_is_closed_unanswered_and_settles_nothing() {
+        let (settle, settling) = std::sync::mpsc::sync_channel::<Delivery>(1);
+        let (reader, mut sender) = connected(PATIENCE);
+        sender
+            .write_all(&posted(
+                &format!(
+                    "Content-Length: {}\r\nX-GitHub-Event: pull_request\r\nX-Hub-Signature-256: \
+                     {}\r\n",
+                    CLOSED_42.len() + 1,
+                    signature(CLOSED_42.as_bytes())
+                ),
+                CLOSED_42,
+            ))
+            .expect("the request");
+        sender
+            .shutdown(Shutdown::Write)
+            .expect("nothing more to send");
+
+        answer(
+            reader.stream,
+            &secret(),
+            &settle,
+            &AtomicBool::new(true),
+            &|_: &Heard| {},
+        );
+
+        let mut answered = String::new();
+        sender
+            .read_to_string(&mut answered)
+            .expect("the connection is closed");
+        assert_eq!(answered, "");
+        assert!(settling.try_recv().is_err());
+    }
+
+    /// Eight senders that give their headers and never their body hold every
+    /// answer there is, so a ninth request, signed with the secret, is turned
+    /// away and never settled. Its body is as large as a delivery may be, so it
+    /// is still being sent when the answer comes. Once they go, deliveries are
+    /// taken again.
+    #[test]
+    fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
+        let (settle, settling) = std::sync::mpsc::sync_channel::<Delivery>(MOST_WAITING);
+        let address = listen(
+            "127.0.0.1:0",
+            secret(),
+            settle,
+            Arc::new(AtomicBool::new(true)),
+            |_: &Heard| {},
+        )
+        .expect("the listener starts");
+        let stalled: Vec<TcpStream> = (0..MOST_AT_ONCE)
+            .map(|_| {
+                let mut stream = TcpStream::connect(address).expect("the listener takes it");
+                stream
+                    .write_all(
+                        b"POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: 2048\r\n\
+                          X-GitHub-Event: pull_request\r\n\r\n",
+                    )
+                    .expect("the headers are sent");
+                stream
+            })
+            .collect();
+        let ninth = signed_post(&padded(LARGEST_DELIVERY));
+
+        assert!(answered(address, &ninth).starts_with("HTTP/1.1 503 "));
+        assert!(settling.try_recv().is_err());
+
+        drop(stalled);
+        let unsigned = b"POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: 0\r\n\
+                         X-GitHub-Event: pull_request\r\n\r\n";
+        let giving_up = Instant::now() + PATIENCE;
+        while answered(address, unsigned).starts_with("HTTP/1.1 503 ") {
+            assert!(
+                Instant::now() < giving_up,
+                "never answered once the eight had gone"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(answered(address, &ninth).starts_with("HTTP/1.1 202 "));
+        assert_eq!(
+            settling.recv_timeout(PATIENCE).expect("the delivery waits"),
+            Delivery {
+                named: Named::PullRequest(PullRequest {
+                    repo: "example/ark".to_string(),
+                    number: 42,
+                }),
+                said: None,
+            }
+        );
+    }
 }

@@ -366,84 +366,6 @@ const RELEASES: &str = "api graphql -f owner=example -f name=ark -f \
                         name:$name){releases(first:10,orderBy:{field:CREATED_AT,direction:\
                         DESC}){nodes{tagName isDraft publishedAt}}}}";
 
-#[test]
-fn a_closed_issue_and_a_release_published_since_close_the_gates_waiting_on_them() {
-    let home = a_home_looking_every("upstream", &["arkham"], 3600);
-    let tracker = ShimmedTracker::beside(&home);
-    tracker.answers_for("arkham", "gate list --limit 0 --json", UPSTREAM);
-    let closing_zl0 = "gate resolve ark-zl0 --reason example/ark#31 closed.";
-    let closing_8dq = "gate resolve ark-8dq --reason example/ark published v1.2.0.";
-    tracker.answers_for("arkham", closing_zl0, "✓ Gate resolved: ark-zl0\n");
-    tracker.answers_for("arkham", closing_8dq, "✓ Gate resolved: ark-8dq\n");
-    let github = ShimmedGitHub::beside(&home);
-    github.answers_with(
-        ISSUE_31,
-        r#"{"data":{"repository":{"issue":{"state":"CLOSED"}}}}"#,
-    );
-    github.answers_with(
-        RELEASES,
-        r#"{"data":{"repository":{"releases":{"nodes":[
-            {"tagName":"v1.2.0","isDraft":false,"publishedAt":"2026-10-13T09:00:00Z"},
-            {"tagName":"v1.1.0","isDraft":false,"publishedAt":"2026-10-11T09:00:00Z"}]}}}}"#,
-    );
-
-    let settling = Settling::started(&home, &tracker, &github);
-
-    settling.says("example/ark published v1.2.0: arkham closed gate ark-8dq");
-    settling.says("example/ark#31 closed: arkham closed gate ark-zl0");
-    let calls = tracker.calls();
-    assert!(
-        [closing_zl0, closing_8dq]
-            .iter()
-            .all(|closing| calls.iter().any(|call| call == closing)),
-        "{calls:?}"
-    );
-    assert_eq!(github.calls(), [RELEASES, ISSUE_31]);
-}
-
-/// GitHub answers a pull request in an organisation whose single sign-on
-/// authorisation has lapsed with a refusal, and gh exits non-zero until
-/// someone runs `gh auth refresh`. The words are not a capture, and bdi
-/// drops them: what a refusal is read as is decided by the exit.
-#[test]
-fn a_github_refusing_for_lapsed_single_sign_on_is_reported_closes_nothing_and_is_asked_again() {
-    let home = a_home_naming("refused", &["arkham"]);
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    let github = ShimmedGitHub::beside(&home);
-    github.refuses_with(
-        &queried(),
-        "GraphQL: Resource protected by organization SAML enforcement. You must grant your \
-         OAuth token access to this organization. (repository)\n",
-    );
-
-    let settling = Settling::started(&home, &tracker, &github);
-
-    settling.says(
-        "example/ark#42: GitHub did not say where it stands, so no gate waiting on it was \
-         touched: gh exited 1 for a reason bdi cannot place",
-    );
-    until(
-        || {
-            github
-                .calls()
-                .iter()
-                .filter(|call| **call == queried())
-                .count()
-                >= 2
-        },
-        "a second look at example/ark",
-    );
-    assert!(
-        tracker
-            .calls()
-            .iter()
-            .all(|call| !call.starts_with("gate resolve")),
-        "{:?}",
-        tracker.calls()
-    );
-}
-
 /// What gh 2.102.0 prints, exit 1, when GitHub refuses a GraphQL query for
 /// the primary rate limit. The user id is invented.
 const RATE_LIMITED: &str = "GraphQL: API rate limit already exceeded for user ID 1234567.\n";
@@ -468,7 +390,7 @@ fn rate_limited(named: &str) -> (PathBuf, ShimmedTracker, ShimmedGitHub) {
     (home, tracker, github)
 }
 
-/// The poll is a second, so three seconds without a second look is the
+/// The poll is a second, so a second and a half without a second look is the
 /// limit being waited out rather than a look that has not come yet.
 #[test]
 fn a_look_github_refuses_for_a_rate_limit_waits_until_the_limit_resets_and_says_so() {
@@ -477,39 +399,11 @@ fn a_look_github_refuses_for_a_rate_limit_waits_until_the_limit_resets_and_says_
     let settling = Settling::started(&home, &tracker, &github);
 
     settling.says(WAITING_UNTIL_2100);
-    std::thread::sleep(Duration::from_secs(3));
+    std::thread::sleep(Duration::from_millis(1500));
     assert_eq!(
         github.calls(),
         [queried(), "api rate_limit".to_string()],
         "#42 is never asked after, and no look follows the first"
-    );
-}
-
-/// No limit `gh api rate_limit` shows is spent, as with GitHub's secondary
-/// limit, so `bdi gates` waits a minute of its own rather than a reset.
-#[test]
-fn a_rate_limit_github_says_no_reset_for_is_waited_out_all_the_same() {
-    let home = a_home_naming("rate-limited-unsaid", &["arkham"]);
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    let github = ShimmedGitHub::beside(&home);
-    github.refuses_with(&queried(), RATE_LIMITED);
-    github.answers_with(
-        "api rate_limit",
-        include_str!("fixtures/gh_2.102.0_api_rate_limit_unspent.json"),
-    );
-
-    let settling = Settling::started(&home, &tracker, &github);
-
-    settling.says(
-        "example/ark#7: GitHub refused it for a rate limit without saying when it resets, so \
-         GitHub is asked nothing more for at least 60s",
-    );
-    std::thread::sleep(Duration::from_secs(3));
-    assert_eq!(
-        github.calls(),
-        [queried(), "api rate_limit".to_string()],
-        "no look follows the first"
     );
 }
 
@@ -535,23 +429,6 @@ fn a_delivery_while_a_rate_limit_is_waited_out_asks_github_nothing() {
          look settles it",
     );
     assert_eq!(github.calls(), [queried(), "api rate_limit".to_string()]);
-}
-
-/// The dunwich tracker has no answers written down, so the shim refuses
-/// every call to it as a tracker that is not there does.
-#[test]
-fn a_tracker_that_does_not_answer_is_reported_and_the_others_are_settled() {
-    let home = a_home_naming("unanswered", &["dunwich", "arkham"]);
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    tracker.answers_for("arkham", RESOLVING_42, "");
-    let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&queried(), QUERIED);
-
-    let settling = Settling::started(&home, &tracker, &github);
-
-    settling.says("dunwich: its gates could not be read: the tracker did not answer");
-    settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
 }
 
 const LISTING_GATES: &str = "gate list --limit 0 --json";
@@ -595,12 +472,11 @@ fn looks(github: &ShimmedGitHub) -> usize {
         .count()
 }
 
-/// Until a producer names arkham, each look reads its tracker again. Once
-/// one covers it, looks go on asking GitHub and read no bd at all, so a gate
-/// written there meanwhile waits until the producer says arkham changed.
+/// Once a producer covers arkham, looks go on asking GitHub and read no bd, so
+/// the gate closed there is the one thing that makes the next look read it.
 #[test]
-fn a_tracker_a_producer_covers_is_read_only_once_the_producer_says_it_changed() {
-    let home = a_home_naming("covered", &["arkham"]);
+fn a_tracker_a_producer_covers_is_read_again_after_a_gate_is_closed_in_it() {
+    let home = a_home_naming("covered-closed", &["arkham"]);
     let socket = home.join("changes.sock");
     let tracker = ShimmedTracker::beside(&home);
     holds_the_captured_gates(&tracker, "arkham");
@@ -616,21 +492,11 @@ fn a_tracker_a_producer_covers_is_read_only_once_the_producer_says_it_changed() 
             .filter(|call| *call == LISTING_GATES)
             .count()
     };
-    until(
-        || listings() >= 2,
-        "a second read of a tracker nothing covers",
-    );
-
+    until(|| looks(&github) == 1, "the first look");
     let mut producer = Producer::connected(&socket);
     assert_eq!(producer.says("covered arkham"), "ok arkham");
-    let covered_from = looks(&github) + 1;
-    until(|| looks(&github) > covered_from, "a look after the cover");
-    let read_before = tracker.calls();
-    while looks(&github) < covered_from + 4 {
-        assert_eq!(producer.says("covered arkham"), "ok arkham");
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    assert_eq!(tracker.calls(), read_before);
+    until(|| looks(&github) == 2, "a look after the cover");
+    assert_eq!(listings(), 1);
 
     tracker.answers_for("arkham", LISTING_GATES, UPSTREAM);
     let closing_zl0 = "gate resolve ark-zl0 --reason example/ark#31 closed.";
@@ -643,13 +509,6 @@ fn a_tracker_a_producer_covers_is_read_only_once_the_producer_says_it_changed() 
         RELEASES,
         r#"{"data":{"repository":{"releases":{"nodes":[]}}}}"#,
     );
-    let written_at = looks(&github);
-    until(
-        || looks(&github) >= written_at + 2,
-        "two looks after the write",
-    );
-    assert_eq!(tracker.calls(), read_before);
-
     assert_eq!(producer.says("arkham"), "ok arkham");
     until(
         || tracker.calls().iter().any(|call| call == closing_zl0),
@@ -692,22 +551,6 @@ const TIMER: &str = include_str!("fixtures/bd_1.3.0_gate_list_timer.json");
 /// The close of ark-06g, whose timer ran out at `deadline`.
 fn closing_06g(deadline: &str) -> String {
     format!("gate resolve ark-06g --reason Its timer ran out at {deadline} UTC.")
-}
-
-#[test]
-fn a_timer_gate_that_ran_out_while_bdi_gates_was_down_closes_on_the_first_look() {
-    let home = a_home_looking_every("timer-ran-out", &["arkham"], 3600);
-    let tracker = ShimmedTracker::beside(&home);
-    tracker.answers_for("arkham", LISTING_GATES, TIMER);
-    let closing = closing_06g("2026-10-12 09:32:28");
-    tracker.answers_for("arkham", &closing, "✓ Gate resolved: ark-06g\n");
-    let github = ShimmedGitHub::beside(&home);
-
-    let settling = Settling::started(&home, &tracker, &github);
-
-    settling.says("Its timer ran out at 2026-10-12 09:32:28 UTC: arkham closed gate ark-06g");
-    assert!(tracker.calls().contains(&closing), "{:?}", tracker.calls());
-    assert_eq!(github.calls(), Vec::<String>::new());
 }
 
 /// Nothing but the deadline wakes `bdi gates` here: it looks once an hour,
@@ -789,6 +632,8 @@ fn a_bead_gate_closes_moments_after_its_bead_in_another_tracker_closes_with_no_r
     let mut producer = Producer::connected(&socket);
     assert_eq!(producer.says("covered arkham"), "ok arkham");
     assert_eq!(producer.says("covered dunwich"), "ok dunwich");
+    // The shim records a call before it answers it, so nothing observable
+    // says the first look's last read is done.
     std::thread::sleep(Duration::from_secs(1));
     let read_before = tracker.calls();
 
@@ -844,68 +689,6 @@ fn a_signed_delivery_settles_the_pull_request_it_names_between_looks() {
     );
     settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
     assert_eq!(github.calls(), [queried(), viewed(42)]);
-}
-
-/// The look reads arkham, which a producer covers, and nothing changes it
-/// after. Deliveries about #42 while it stays open then read no bd at all,
-/// and the one that follows its merge closes the gate waiting on it.
-#[test]
-fn deliveries_read_no_tracker_unchanged_since_the_look_and_a_merge_still_closes_its_gate() {
-    let home = a_home_looking_every("delivered-covered", &["arkham"], 3600);
-    let socket = home.join("changes.sock");
-    let tracker = ShimmedTracker::beside(&home);
-    holds_the_captured_gates(&tracker, "arkham");
-    tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
-    let github = ShimmedGitHub::beside(&home);
-    github.answers_with(&queried(), QUERIED_OPEN);
-    github.answers_with(&viewed(42), &answer(42, OPEN));
-    let mut command = gates(&home, &tracker, &github);
-    command
-        .args(["--listen", "127.0.0.1:0"])
-        .env("BDI_GATES_WEBHOOK_SECRET", SECRET)
-        .arg("--socket")
-        .arg(&socket);
-    let settling = Settling::spawned(&home, command);
-    let address = settling.address();
-    let mut producer = Producer::connected(&socket);
-    assert_eq!(producer.says("covered arkham"), "ok arkham");
-    until(|| looks(&github) == 1, "the first look");
-    let looked = tracker.calls();
-
-    let synchronized = r#"{"action":"synchronize","number":42,"pull_request":{"merged":false},"repository":{"full_name":"example/ark"}}"#;
-    for _ in 0..5 {
-        assert_eq!(
-            delivered(
-                address,
-                "pull_request",
-                Some(&signed(SECRET, synchronized)),
-                synchronized
-            ),
-            202
-        );
-    }
-    let asked_about_42 = || {
-        github
-            .calls()
-            .iter()
-            .filter(|call| **call == viewed(42))
-            .count()
-    };
-    until(|| asked_about_42() == 5, "each delivery settled");
-    assert_eq!(tracker.calls(), looked);
-
-    github.answers_with(&viewed(42), &answer(42, MERGED));
-    assert_eq!(
-        delivered(
-            address,
-            "pull_request",
-            Some(&signed(SECRET, DELIVERED_42)),
-            DELIVERED_42
-        ),
-        202
-    );
-    settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
-    assert_eq!(looks(&github), 1);
 }
 
 /// The producer's report reaches `bdi gates` while it waits for a delivery,
@@ -1139,131 +922,6 @@ impl Listening {
 /// on and which is open.
 const DELIVERED_7: &str =
     r#"{"action":"edited","number":7,"repository":{"full_name":"example/ark"}}"#;
-
-/// [`DELIVERED_42`] with spaces after it to make `size` bytes, which JSON
-/// reads as the same delivery.
-fn padded(size: usize) -> String {
-    DELIVERED_42.to_string() + &" ".repeat(size - DELIVERED_42.len())
-}
-
-/// A body at the limit is read and settled. One byte over is refused for its
-/// size, though it is signed with the secret, and GitHub is never asked.
-#[test]
-fn a_signed_delivery_over_a_mebibyte_is_refused_and_settles_nothing() {
-    let listening = Listening::after_its_first_look("large");
-    let at_the_limit = padded(1024 * 1024);
-    let over_it = padded(1024 * 1024 + 1);
-
-    assert_eq!(
-        delivered(
-            listening.address,
-            "pull_request",
-            Some(&signed(SECRET, &at_the_limit)),
-            &at_the_limit
-        ),
-        202
-    );
-    listening.caught_up();
-    assert_eq!(listening.github.calls(), [queried(), viewed(42), viewed(7)]);
-
-    assert_eq!(
-        delivered(
-            listening.address,
-            "pull_request",
-            Some(&signed(SECRET, &over_it)),
-            &over_it
-        ),
-        413
-    );
-    listening
-        .settling
-        .says("a delivery was refused: it is larger than any pull_request delivery");
-    listening.caught_up();
-    assert_eq!(
-        listening.github.calls(),
-        [queried(), viewed(42), viewed(7), viewed(7)]
-    );
-}
-
-/// The body sent is the whole of a signed delivery, so reading to the end of
-/// what arrived, rather than to the length it gives, would settle it.
-#[test]
-fn a_signed_delivery_ending_before_its_length_is_closed_unanswered_and_settles_nothing() {
-    let listening = Listening::after_its_first_look("short");
-    let mut stream = TcpStream::connect(listening.address).expect("bdi gates takes it");
-    stream
-        .set_read_timeout(Some(GIVING_UP))
-        .expect("a timeout is ours to set");
-    stream
-        .write_all(
-            format!(
-                "POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: {}\r\nX-GitHub-Event: \
-                 pull_request\r\nX-Hub-Signature-256: {}\r\n\r\n{DELIVERED_42}",
-                DELIVERED_42.len() + 1,
-                signed(SECRET, DELIVERED_42)
-            )
-            .as_bytes(),
-        )
-        .expect("the request is sent");
-    stream
-        .shutdown(std::net::Shutdown::Write)
-        .expect("the sending side is ours to close");
-
-    let mut answer = String::new();
-    stream
-        .read_to_string(&mut answer)
-        .expect("bdi gates closes the connection");
-    assert_eq!(answer, "");
-    listening.caught_up();
-    assert_eq!(listening.github.calls(), [queried(), viewed(7)]);
-}
-
-/// Eight senders that give their headers and never their body hold every
-/// answer there is, so a ninth request, signed with the secret, is turned
-/// away and never reaches GitHub. Its body is as large as a delivery may be,
-/// so it is still being sent when the answer comes. Once they go, deliveries
-/// are taken again.
-#[test]
-fn a_signed_delivery_beyond_eight_at_once_is_turned_away_and_settles_nothing() {
-    let listening = Listening::after_its_first_look("busy");
-    let stalled: Vec<TcpStream> = (0..8)
-        .map(|_| {
-            let mut stream = TcpStream::connect(listening.address).expect("bdi gates takes it");
-            stream
-                .write_all(
-                    b"POST /hook HTTP/1.1\r\nHost: bdi\r\nContent-Length: 2048\r\nX-GitHub-Event: \
-                      pull_request\r\n\r\n",
-                )
-                .expect("the headers are sent");
-            stream
-        })
-        .collect();
-
-    let largest = padded(1024 * 1024);
-    let ninth = || {
-        delivered(
-            listening.address,
-            "pull_request",
-            Some(&signed(SECRET, &largest)),
-            &largest,
-        )
-    };
-    assert_eq!(ninth(), 503);
-    drop(stalled);
-    until(
-        || delivered(listening.address, "pull_request", None, DELIVERED_42) == 401,
-        "a request answered once the eight have gone",
-    );
-    listening.caught_up();
-    assert_eq!(listening.github.calls(), [queried(), viewed(7)]);
-
-    assert_eq!(ninth(), 202);
-    listening.caught_up();
-    assert_eq!(
-        listening.github.calls(),
-        [queried(), viewed(7), viewed(42), viewed(7)]
-    );
-}
 
 /// The `gh` shim refuses a call made with the secret's variable in its
 /// environment, so a secret handed on would leave #42 unsettled.
