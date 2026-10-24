@@ -37,11 +37,11 @@ pub enum Anomaly {
 /// panes there is no pane fact to read either way.
 ///
 /// `pane_out_of_reach` is the same ignorance one bead at a time: the run
-/// answered for panes, and the pane this bead named is in a session that did
-/// not. It is asked per bead rather than per run because the sessions that
-/// did answer are still worth reading — a run that fell silent about every
-/// claim because one session hiccuped would throw away what it does know to
-/// avoid saying what it does not.
+/// answered for panes, and the pane or agent this bead named is in a session
+/// that did not. It is asked per bead rather than per run because the
+/// sessions that did answer are still worth reading — a run that fell silent
+/// about every claim because one session hiccuped would throw away what it
+/// does know to avoid saying what it does not.
 ///
 /// `seat_above` says a seat sits on a bead above this one in the tree, or on
 /// one whose pane the run could not ask about. A seat names its pane on the

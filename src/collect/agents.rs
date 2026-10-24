@@ -157,7 +157,7 @@ pub mod testing {
 
     use super::*;
     use crate::model::types::testing::A_SESSION;
-    use crate::model::types::PaneStatus;
+    use crate::model::types::{AgentSession, PaneStatus};
 
     /// What a fake provider calls itself, so a test can tell a snapshot built
     /// over one from a snapshot built over herdr.
@@ -203,6 +203,18 @@ pub mod testing {
     /// The same pane, saying what it is doing.
     pub fn titled(mut pane: Pane, title: &str) -> Pane {
         pane.title = Some(title.to_string());
+        pane
+    }
+
+    /// The same pane, with an agent in it that herdr names by `session`.
+    pub fn holding_agent(mut pane: Pane, session: &str) -> Pane {
+        pane.agent = Some("claude".to_string());
+        pane.agent_session = Some(AgentSession {
+            agent: "claude".to_string(),
+            kind: "id".to_string(),
+            source: "herdr:claude".to_string(),
+            value: session.to_string(),
+        });
         pane
     }
 
