@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 
 use crate::app::{Awaited, Wanted};
 use crate::config::Scope;
@@ -17,7 +17,7 @@ use crate::model::snapshot::{a_provider, Filter, ProviderState, Snapshot, Tracke
 /// enough that a test waiting in vain is not a hang.
 pub(in crate::tui) const A_MOMENT: Duration = Duration::from_secs(5);
 
-pub(in crate::tui) use crate::app::fixtures::{arkham, ferry};
+pub(in crate::tui) use crate::app::fixtures::{arkham, ferry, PATIENCE};
 
 /// A collection reading `wanted`, asked for at `asked_at`.
 ///
@@ -32,12 +32,6 @@ pub(in crate::tui) fn reading(wanted: Wanted, asked_at: DateTime<Utc>) -> Awaite
         patience: PATIENCE,
     }
 }
-
-/// How long the collections these tests build may go unanswered. A round
-/// number the instants are written against, rather than the configured
-/// default: what they assert is which mark a wait produces, not what the
-/// deadline is.
-pub(in crate::tui) const PATIENCE: TimeDelta = TimeDelta::seconds(30);
 
 /// A snapshot of one unremarkable tree. Nothing the loop does depends on
 /// what is in one, only on when it arrives.

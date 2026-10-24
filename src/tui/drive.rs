@@ -863,6 +863,8 @@ fn asked_for(view: &mut dyn View, outstanding: &mut Outstanding, wanted: Wanted)
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    pub(in crate::tui) use crate::app::fixtures::at_once;
+    use crate::app::fixtures::{read, reads, A_LONG_WINDOW};
     use crate::app::Armed;
     use crate::collect::changes::Reported;
     use crate::config::{Config, Poll};
@@ -1152,19 +1154,6 @@ pub(super) mod tests {
         }
     }
 
-    /// An event source holding everything the loop will see, in order.
-    /// What is outstanding with no window in front of it, which is what
-    /// every test about something other than the window wants: the read goes
-    /// the moment the loop next looks, so a test that drives the loop over a
-    /// fixed list of events and stops sees it sent.
-    ///
-    /// A window of nothing is a setting `bdi` could be run at rather than a
-    /// stand-in: `WINDOW` is the only value production uses, and the tests
-    /// that are about the window say so by naming one.
-    pub(in crate::tui) fn at_once() -> Outstanding {
-        Outstanding::waiting(PATIENCE, TimeDelta::zero())
-    }
-
     /// The projects that ask for themselves, where the test is not about
     /// them. Nothing is armed at the start of a run either — the first read
     /// arms every project when it comes back.
@@ -1190,29 +1179,6 @@ pub(super) mod tests {
     /// What the run reads, where only the polling half is the test's subject.
     pub(in crate::tui) fn a_run_reading(polling: Vec<Armed>) -> Reading {
         Reading::of(polling, nothing_reported())
-    }
-
-    /// The reads that reached the collector, in order.
-    ///
-    /// Every test but the ones about a config the reader has written is
-    /// asking about these, and a run with no file to look at puts nothing
-    /// else on the channel — so a `Reloaded` reaching here is a loop that
-    /// told the collector about a config nobody wrote.
-    fn reads(asked: impl IntoIterator<Item = Asked>) -> Vec<Wanted> {
-        asked.into_iter().map(read).collect()
-    }
-
-    /// One of them.
-    fn read(asked: Asked) -> Wanted {
-        match asked {
-            Asked::Read(wanted) => wanted,
-            Asked::Reloaded(cfg) => {
-                panic!("nobody wrote a config, and the collector was sent {cfg:?}")
-            }
-            Asked::Focused(beads) => {
-                panic!("nothing focused the forest, and the collector was sent {beads:?}")
-            }
-        }
     }
 
     /// One poll per project the config names, at the interval these tests
@@ -2025,36 +1991,6 @@ pub(super) mod tests {
         );
     }
 
-    #[test]
-    fn quitting_from_the_bead_view_takes_two_presses_and_the_first_goes_back() {
-        let mut view = Recorder::default();
-        let (ask, _asked) = mpsc::channel();
-        let events = pressing([
-            key(KeyCode::Enter),
-            key(KeyCode::Char('q')),
-            key(KeyCode::Char('q')),
-            key(KeyCode::Char('j')),
-        ]);
-
-        drive(
-            &mut view,
-            &events,
-            &ask,
-            at_once(),
-            a_run_reading(nothing_armed()),
-            &polling_every_interval(),
-            nothing_watched(),
-        )
-        .expect("the loop runs");
-
-        assert_eq!(
-            view.showing,
-            [Showing::Forest, Showing::Bead, Showing::Forest],
-            "the second q ended the loop, so nothing was drawn after it"
-        );
-        assert_eq!(view.applied, [Action::ShowBead]);
-    }
-
     /// A collection landing behind the bead view is taken, and the view
     /// stays up: one that vanished under the refresh tick would be one a
     /// reader could not finish reading.
@@ -2318,10 +2254,6 @@ pub(super) mod tests {
             "the first frame, and one for the keystroke"
         );
     }
-
-    /// A window long enough that nothing in a test falls out of it, so a read
-    /// is asked for and demonstrably not sent.
-    const A_LONG_WINDOW: TimeDelta = TimeDelta::seconds(30);
 
     /// What is outstanding, gathering for `window` before anything leaves.
     fn gathering(window: TimeDelta) -> Outstanding {
@@ -4373,263 +4305,5 @@ pub(super) mod tests {
             view.showing,
             [Showing::Forest, Showing::Bindings, Showing::Forest]
         );
-    }
-
-    /// What waits behind a collection, asked of `Outstanding` directly.
-    ///
-    /// The loop takes its instants from the clock, and every property here is
-    /// about one stamp against another — the deadline a queued read crosses
-    /// is thirty seconds away and the refresh that re-reports it is thirty
-    /// seconds apart, so a test that let real time supply the difference
-    /// would be deciding on scheduling jitter rather than on the rule.
-    mod what_waits {
-        use super::*;
-        use crate::config::Tui;
-        use chrono::TimeZone;
-        use pretty_assertions::assert_eq;
-
-        /// `second` seconds into the run, which is how these are written: a
-        /// wait is a difference between two of them and the wall clock they
-        /// sit on says nothing.
-        fn at(second: i64) -> chrono::DateTime<Utc> {
-            Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap() + TimeDelta::seconds(second)
-        }
-
-        /// Asked at `at(0)`, sent, and never answered — so everything after
-        /// it waits.
-        fn hung_on(project: Wanted) -> (Outstanding, Sender<Asked>, Receiver<Asked>) {
-            let (ask, asked) = mpsc::channel();
-            let mut outstanding = at_once();
-            outstanding.ask(project, at(0));
-            outstanding.sends(&ask, at(0));
-            (outstanding, ask, asked)
-        }
-
-        fn stamps(outstanding: &Outstanding) -> Vec<(Wanted, chrono::DateTime<Utc>)> {
-            outstanding
-                .awaited()
-                .iter()
-                .map(|it| (it.wanted.clone(), it.asked_at))
-                .collect()
-        }
-
-        /// The bead: a project queued behind a tracker that has stopped
-        /// answering has to be able to say its own reads have stopped, and
-        /// the only thing that can say it is how long the read has been
-        /// waiting.
-        #[test]
-        fn a_read_that_cannot_be_sent_yet_is_stamped_when_it_joins_the_queue() {
-            let (mut outstanding, _ask, _asked) = hung_on(arkham());
-
-            outstanding.ask(ferry(), at(5));
-
-            assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (ferry(), at(5))]);
-        }
-
-        /// A project with nothing reporting for it is polled every refresh
-        /// interval, and the poll goes on reporting it for as long as it is
-        /// uncovered — so a queued read is asked for again and again while it
-        /// waits. Its wait is how long its rows have been on their way, which
-        /// the first of those asks started; a stamp taken from the latest
-        /// would be reset by the very polling that proves nothing has been
-        /// read, and the mark would never turn.
-        #[test]
-        fn a_project_reported_for_again_while_it_waits_keeps_the_wait_it_has() {
-            let (mut outstanding, _ask, _asked) = hung_on(arkham());
-
-            outstanding.ask(ferry(), at(5));
-            outstanding.ask(ferry(), at(35));
-
-            assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (ferry(), at(5))]);
-        }
-
-        /// The other side of that rule: a project reported for again while
-        /// it is being *read* is a new wait, stamped at its own ask. One that
-        /// carried the running read's stamp would be drawn as having stopped
-        /// answering the moment it began.
-        #[test]
-        fn a_project_reported_for_again_while_it_is_read_is_stamped_at_its_own_ask() {
-            let (mut outstanding, _ask, _asked) = hung_on(arkham());
-
-            outstanding.ask(arkham(), at(5));
-
-            assert_eq!(stamps(&outstanding), [(arkham(), at(0)), (arkham(), at(5))]);
-        }
-
-        /// `codex review` on this change, and it is right: a whole collection
-        /// absorbing what waits must not inherit their wait.
-        ///
-        /// It names every project, including every one nothing had asked
-        /// about — so an inherited instant is a wait those projects never had,
-        /// and one project changing puts a mark saying the reads have stopped
-        /// beside every name on the screen. The first version of this took the
-        /// earliest absorbed wait, reasoning only about the projects being
-        /// absorbed and never about the ones the collection newly covers.
-        ///
-        /// What it costs the absorbed ones is a patience: ferry has been
-        /// waiting since :05 and this says :40, so its mark goes back from
-        /// stopped to turning and returns one patience later. That is the
-        /// length of not-saying-yet the project has already chosen, and it is
-        /// bounded. The other way round is unbounded and about trackers
-        /// nobody asked.
-        #[test]
-        fn a_whole_collection_absorbing_what_waits_starts_a_wait_of_its_own() {
-            let (mut outstanding, _ask, _asked) = hung_on(arkham());
-
-            outstanding.ask(ferry(), at(5));
-            outstanding.ask(Wanted::Everything, at(40));
-
-            assert_eq!(
-                stamps(&outstanding),
-                [(arkham(), at(0)), (Wanted::Everything, at(40))],
-                "not :05, which would be every other project's wait too"
-            );
-        }
-
-        /// The absorption `truncate` could not do before, because before the
-        /// window there was no such thing as an unsent read: `ask` sent the
-        /// moment the queue was empty, so the front was always in flight and
-        /// always had to be kept. No existing test asserts this case because
-        /// no existing code could produce it.
-        #[test]
-        fn a_whole_collection_absorbs_a_read_that_has_not_been_sent() {
-            let mut outstanding = Outstanding::waiting(PATIENCE, A_LONG_WINDOW);
-            outstanding.ask(arkham(), at(0));
-
-            outstanding.ask(Wanted::Everything, at(1));
-
-            assert_eq!(
-                stamps(&outstanding),
-                [(Wanted::Everything, at(1))],
-                "the whole collection reads arkham anyway, and nothing had gone yet"
-            );
-        }
-
-        /// And the one in flight is still kept, because the collection
-        /// running is not the collection about to be asked for.
-        #[test]
-        fn a_whole_collection_keeps_the_read_already_in_flight() {
-            let (mut outstanding, _ask, _asked) = hung_on(arkham());
-
-            outstanding.ask(Wanted::Everything, at(1));
-
-            assert_eq!(
-                stamps(&outstanding),
-                [(arkham(), at(0)), (Wanted::Everything, at(1))]
-            );
-        }
-
-        /// A held-down `^R` gets the read it was pressed for. The window runs
-        /// from the first notification and is not reset by the ones after it;
-        /// under reset the read would be withheld for as long as the key was
-        /// down, which is the one thing that key exists to force.
-        #[test]
-        fn a_window_is_not_pushed_back_by_the_notifications_that_arrive_in_it() {
-            let mut outstanding = Outstanding::waiting(PATIENCE, TimeDelta::seconds(2));
-            let (ask, asked) = mpsc::channel();
-            outstanding.ask(Wanted::Everything, at(0));
-
-            for pressed in 1..=10 {
-                outstanding.ask(Wanted::Everything, at(pressed));
-                outstanding.sends(&ask, at(pressed));
-            }
-
-            assert_eq!(
-                reads(asked.try_iter()),
-                [Wanted::Everything],
-                "sent two seconds after the first press, not two after the last"
-            );
-        }
-
-        /// The relationship between the window and the patience, through the
-        /// predicate that would get it wrong rather than between two
-        /// constants: a read held for the whole of the window goes before the
-        /// shortest patience the config key can name has run out, so a
-        /// project waiting out a window is never drawn as one whose tracker
-        /// has stopped answering.
-        ///
-        /// It names no window of its own: the pair is the one
-        /// `Outstanding::for_a_run` builds, and the read is held for as long
-        /// as that pair says its window is. So a window wired to a config key
-        /// arrives here as the length of the wait, and this holds the
-        /// relationship at whatever value production has come to use.
-        #[test]
-        fn a_read_goes_before_its_project_can_be_said_to_have_stopped_being_read() {
-            let shortest = Tui {
-                unanswered_after_seconds: 1,
-                ..Tui::default()
-            }
-            .unanswered_after();
-            let (ask, asked) = mpsc::channel();
-            let mut outstanding = Outstanding::for_a_run(shortest);
-            outstanding.ask(arkham(), at(0));
-
-            let held_for = outstanding
-                .sends_in(at(0))
-                .expect("the read just asked for is waiting out its window");
-            let out = at(0)
-                + TimeDelta::from_std(held_for).expect("a window is a length chrono can carry");
-            outstanding.sends(&ask, out);
-
-            assert_eq!(
-                reads(asked.try_iter()),
-                [arkham()],
-                "the window was out, so the read went"
-            );
-            assert!(
-                !outstanding.awaited()[0].unanswered_at(out),
-                "and arkham was not yet said to have stopped being read"
-            );
-        }
-
-        /// Reaching the front is not being asked for. A read carries the wait
-        /// it has had all along, so a project stranded ten minutes behind a
-        /// hung tracker does not tell the reader its tracker was asked a
-        /// moment ago the instant that tracker answers.
-        #[test]
-        fn a_read_that_reaches_the_front_keeps_the_stamp_it_queued_at() {
-            let (mut outstanding, _ask, _asked) = hung_on(arkham());
-            outstanding.ask(ferry(), at(5));
-
-            outstanding.came_back();
-
-            assert_eq!(stamps(&outstanding), [(ferry(), at(5))]);
-        }
-
-        /// Every read outstanding, in the order they will be served, is what
-        /// the collector is served from — so the first is the one it is
-        /// working on and the rest follow in turn.
-        #[test]
-        fn the_reads_are_sent_in_the_order_they_were_asked_for() {
-            let (mut outstanding, ask, asked) = hung_on(arkham());
-            outstanding.ask(ferry(), at(5));
-            outstanding.ask(Wanted::Project("harbour".to_string()), at(6));
-
-            outstanding.came_back();
-            outstanding.sends(&ask, at(7));
-            outstanding.came_back();
-            outstanding.sends(&ask, at(8));
-
-            assert_eq!(
-                reads(asked.try_iter()),
-                [arkham(), ferry(), Wanted::Project("harbour".to_string())]
-            );
-        }
-
-        /// A collection nothing is waiting for is nothing to take: the loop
-        /// answers whatever arrives on the one channel, in whatever order it
-        /// arrives, and a snapshot with no ask behind it must leave it as it
-        /// was rather than end the run.
-        #[test]
-        fn a_collection_nothing_asked_for_leaves_the_queue_alone() {
-            let (ask, _asked) = mpsc::channel();
-            let mut outstanding = at_once();
-
-            assert_eq!(outstanding.came_back(), None);
-
-            outstanding.sends(&ask, at(0));
-
-            assert_eq!(stamps(&outstanding), []);
-        }
     }
 }

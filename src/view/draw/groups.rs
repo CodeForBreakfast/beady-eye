@@ -245,6 +245,24 @@ mod tests {
         }
     }
 
+    /// The filter is the whole screen's, and `a` already stands in the foot's
+    /// keys whatever the forest holds, so the line over a project's hidden
+    /// trees offers no key of its own.
+    #[test]
+    fn the_key_that_lifts_the_filter_is_on_no_projects_line() {
+        let group = Group {
+            kind: GroupKind::HiddenTrees,
+            project: Some("grove".into()),
+            count: 1,
+            with_findings: 0,
+        };
+
+        assert_eq!(
+            Painted::of(group_line(&format!("  └─{SHUT}"), &group), 100, 1).rows()[0].trim_end(),
+            "  └─▸ 1 tree with no live agent"
+        );
+    }
+
     /// The failed and conflicted items in the bottom groups get their
     /// box-drawing the same way a bead does, so they are tree drawing too.
     #[test]

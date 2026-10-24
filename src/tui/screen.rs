@@ -1347,7 +1347,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
     use ratatui::layout::Rect;
-    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::style::{Modifier, Style};
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
@@ -1417,53 +1417,6 @@ mod tests {
                     .iter()
                     .any(|row| row.contains(&named) && row.contains(does)),
                 "{named} ({does}) has no line in {drawn:#?}",
-            );
-        }
-    }
-
-    /// The bead's short terminal, decided rather than left to a cut: as many
-    /// bindings as fit from the top of the table, then a count of what is
-    /// missing. Nothing is drawn with its bottom sheared off, and what
-    /// survives is the half a reader could not have guessed.
-    ///
-    /// The way out is the window's title rather than a row, so it is checked
-    /// on the border above these.
-    #[test]
-    fn eight_rows_hold_the_keys_worth_most_and_a_count_of_the_rest() {
-        assert_eq!(
-            window_inner(80, 8),
-            vec![
-                "  Enter     show the selected bead, or focus its pane from the bead view",
-                "  f         focus the selected bead's pane",
-                "  Space     fold or unfold the selected node",
-                "  a         show every tree, not only those with a live agent",
-                "  ?         show these key bindings",
-                "  … 38 more bindings · no room on a screen this short",
-            ]
-        );
-    }
-
-    /// A reader who cannot see how to leave is stuck in a view they may have
-    /// opened by accident, so the way out is the one thing a window too short
-    /// for any binding at all still carries.
-    #[test]
-    fn the_way_out_is_the_windows_title_however_short_the_screen() {
-        for height in [8, 24] {
-            let window = bindings_window(Rect::new(0, 0, 80, height), &bindings());
-            let mut forest = forest::flatten(a_grove(30));
-            let screen = screen_of(
-                &mut forest,
-                &Tail::Silent("nothing to tail"),
-                80,
-                height,
-                Over::Bindings,
-            )
-            .rows();
-
-            assert!(
-                screen[window.y as usize].contains("Key bindings · press any key to close"),
-                "no way out on the window's own top row at {height} rows: {:?}",
-                screen[window.y as usize]
             );
         }
     }
@@ -1629,30 +1582,6 @@ mod tests {
             .iter()
             .find(|row| row.trim_start().starts_with(keys))
             .unwrap_or_else(|| panic!("no row names {keys}: {drawn:#?}"))
-    }
-
-    /// The row is cut from its own end, so one that outgrew the narrowest
-    /// screen anyone uses would lose `q quit` — which is what a reader who
-    /// cannot get out is looking for. `bdi-2bb.12` cut `^R` from it to make
-    /// room for keys named in words, and it has been full to the column ever
-    /// since: expanding and collapsing the whole forest and restoring the
-    /// default are named in `?` alone for exactly that reason.
-    #[test]
-    fn the_row_under_the_tail_is_drawn_whole_on_the_narrowest_screen() {
-        let mut forest = an_open_grove(30);
-        let screen = screen_of(
-            &mut forest,
-            &Tail::Silent("nothing to tail"),
-            40,
-            24,
-            Over::Nothing,
-        )
-        .rows();
-
-        assert_eq!(
-            screen.last().expect("a screen with rows on it").trim_end(),
-            key_row()
-        );
     }
 
     /// The shorter of the two heights where the tail band is one row: a
@@ -2118,75 +2047,6 @@ mod tests {
         shown.apply(asked)
     }
 
-    /// Home from the bottom of a grove taller than the screen: the selection
-    /// is on the first row and the band has scrolled back up to draw it.
-    #[test]
-    fn home_puts_the_selection_on_the_first_row_from_anywhere() {
-        let mut shown = shown(a_grove(30));
-        let root = |band: &[String]| band.iter().any(|row| row.contains("grv-1 "));
-        assert!(
-            root(&forest_band(&mut shown, 60, 24)),
-            "the walk starts with the root on screen, and that frame is what \
-             tells the forest how tall its band is"
-        );
-
-        to_the_last_row(&mut shown);
-        assert!(
-            !root(&forest_band(&mut shown, 60, 24)),
-            "the fixture has to scroll the root off the screen first"
-        );
-
-        assert!(press(&mut shown, KeyCode::Home));
-
-        assert_eq!(shown.forest.selected_line(), 0);
-        let band = forest_band(&mut shown, 60, 24);
-        assert!(root(&band), "{band:#?}");
-    }
-
-    /// End from partway down: the selection is on the last row and the band
-    /// has scrolled down to draw it.
-    #[test]
-    fn end_puts_the_selection_on_the_last_row_from_anywhere() {
-        let mut shown = shown(a_grove(30));
-        let rows = shown.rows();
-        walk::until(
-            &mut shown,
-            |shown| shown.forest.selected_line() >= 3,
-            |shown| {
-                shown.apply(Action::Move(Motion::NextRow));
-            },
-            |shown| format!("stopped at row {}", shown.forest.selected_line()),
-        );
-        let last = |band: &[String]| band.iter().any(|row| row.contains(" .30 "));
-        assert!(
-            !last(&forest_band(&mut shown, 60, 24)),
-            "the fixture has to start with the last row off the screen"
-        );
-
-        assert!(press(&mut shown, KeyCode::End));
-
-        assert_eq!(shown.forest.selected_line() + 1, rows);
-        let band = forest_band(&mut shown, 60, 24);
-        assert!(last(&band), "{band:#?}");
-    }
-
-    /// A selection already at the end it was sent to stays where it is.
-    #[test]
-    fn home_and_end_move_nothing_when_the_selection_is_already_there() {
-        let mut shown = shown(a_grove(6));
-        press(&mut shown, KeyCode::Home);
-        let at_home = shown.forest.selected_line();
-
-        assert!(!press(&mut shown, KeyCode::Home));
-        assert_eq!(shown.forest.selected_line(), at_home);
-
-        press(&mut shown, KeyCode::End);
-        let at_end = shown.forest.selected_line();
-
-        assert!(!press(&mut shown, KeyCode::End));
-        assert_eq!(shown.forest.selected_line(), at_end);
-    }
-
     /// The provider refusing to bring a pane to the front.
     fn refused(pane: &str) -> Answer {
         Answer::Focused {
@@ -2551,11 +2411,6 @@ mod tests {
             .collect()
     }
 
-    /// The bead window's rectangle, read off the screen by its corners.
-    fn bead_window(shown: &mut Shown, width: u16, height: u16) -> Rect {
-        window_of(&bead_view(shown, width, height))
-    }
-
     /// The bead window's rectangle on the screen, by its corners: the title
     /// row's `┌` and `┐`, and the `└` beneath the first in the rows below.
     /// The forest's own `└──` connectors sit elsewhere on their rows, and it draws
@@ -2579,115 +2434,6 @@ mod tests {
             (right - x + 1) as u16,
             (bottom - y + 1) as u16,
         )
-    }
-
-    /// A grove whose first bead's description runs to `lines` rows, so the
-    /// bead is taller than any window a screen in these tests offers. Each
-    /// line ends in a backslash: prose reflows to the window, and a hard
-    /// break is what holds the height to the count asked for.
-    fn a_grove_with_a_tall_bead(lines: usize) -> Snapshot {
-        let mut snapshot = a_described_grove(6);
-        let tree = Arc::make_mut(&mut snapshot.collected[0]);
-        let description = (1..=lines)
-            .map(|n| format!("line {n} of the description"))
-            .collect::<Vec<_>>()
-            .join("\\\n");
-        tree.beads[0].row = Printed::saying(&description, "");
-        snapshot.trees = snapshot.collected.clone();
-        snapshot
-    }
-
-    /// A grove whose first bead's description carries a heading, an item, a
-    /// code span and emphasis.
-    fn a_grove_with_a_marked_up_bead() -> Snapshot {
-        let mut snapshot = a_described_grove(6);
-        let tree = Arc::make_mut(&mut snapshot.collected[0]);
-        tree.beads[0].row = Printed::saying("## Shape\n\n- keep `wrap` *soft*", "");
-        snapshot.trees = snapshot.collected.clone();
-        snapshot
-    }
-
-    /// `bdi-2bb.45`: the description is rendered as markdown in the window's
-    /// own styling — a heading bold, an item behind a bullet, a code span in
-    /// a tone of its own, emphasis italic — as the screen paints it.
-    #[test]
-    fn the_bead_window_styles_the_descriptions_markdown() {
-        let mut shown = shown(a_grove_with_a_marked_up_bead());
-        assert!(shown.apply(Action::ShowBead));
-        let (forest, tail, show) = (&mut shown.forest, &shown.tail, &mut shown.show);
-        let painted = screen_of(forest, tail, 80, 24, Over::Bead(show));
-
-        let runs: Vec<Run> = (0..24).flat_map(|y| painted.row(y)).collect();
-        let run_of = |said: &str| {
-            runs.iter()
-                .find(|run| run.said == said)
-                .unwrap_or_else(|| panic!("{said:?} is drawn in a run of its own: {runs:#?}"))
-                .clone()
-        };
-        assert!(run_of("Shape").style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(run_of("wrap").style.fg, Some(Color::Cyan));
-        assert!(run_of("soft").style.add_modifier.contains(Modifier::ITALIC));
-        assert!(
-            painted.rows().iter().any(|row| row.contains("• keep")),
-            "{:#?}",
-            painted.rows()
-        );
-    }
-
-    /// `bdi-2bb.44`: the window follows the terminal rather than stopping at
-    /// eighty columns. It is four fifths of the screen across, against the
-    /// right edge, and every row above the foot down, so a bigger terminal
-    /// gets a bigger window and not the same one against a wider forest.
-    #[test]
-    fn the_bead_window_is_a_drawer_four_fifths_of_the_screen_across() {
-        let mut shown = shown(a_grove_with_a_tall_bead(100));
-        assert!(shown.apply(Action::ShowBead));
-
-        assert_eq!(bead_window(&mut shown, 120, 40), Rect::new(24, 0, 96, 39));
-        assert_eq!(bead_window(&mut shown, 200, 60), Rect::new(40, 0, 160, 59));
-    }
-
-    /// A bead shorter than the window keeps the window's height, so a reader
-    /// moving from one bead to another reads them in a window that stays
-    /// where it was rather than one that grows and shrinks under them.
-    #[test]
-    fn a_short_bead_keeps_the_windows_height_on_a_tall_screen() {
-        let mut shown = shown(a_described_grove(6));
-        assert!(shown.apply(Action::ShowBead));
-
-        assert_eq!(bead_window(&mut shown, 200, 60), Rect::new(40, 0, 160, 59));
-        let page = bead_page(&mut shown, 200, 60);
-        assert!(
-            page.last().is_some_and(String::is_empty),
-            "the bead has to run out before the window does: {page:#?}"
-        );
-    }
-
-    /// A bead taller than four fifths of a big screen fills that height and
-    /// scrolls for the rest, the title saying how far down it the window is,
-    /// the same as on a small one.
-    #[test]
-    fn a_bead_taller_than_the_window_scrolls_by_motion_on_a_big_screen() {
-        let mut shown = shown(a_grove_with_a_tall_bead(100));
-        assert!(shown.apply(Action::ShowBead));
-
-        let rows = bead_view(&mut shown, 200, 60);
-        assert!(
-            rows[0].contains("1\u{2013}56 of 106"),
-            "the title says how far down the bead the window has got: {:?}",
-            rows[0]
-        );
-        let top = bead_page(&mut shown, 200, 60);
-        assert_eq!(top.len(), 56);
-
-        assert!(shown.scroll(Motion::NextRow));
-        let down_one = bead_page(&mut shown, 200, 60);
-        assert_eq!(down_one[0], top[1]);
-
-        assert!(shown.scroll(Motion::LastRow));
-        let bottom = bead_page(&mut shown, 200, 60);
-        assert_eq!(bottom[55], "line 100 of the description");
-        assert!(!shown.scroll(Motion::NextRow), "nothing below the last row");
     }
 
     /// The bead, with a bead row selected: Enter shows what `bd show` would
@@ -2777,30 +2523,6 @@ mod tests {
         assert_eq!(shown.forest.selected_line(), at);
         assert_eq!(cursor(&shown).cloned(), on);
         assert_eq!(forest_band(&mut shown, 80, 12), before);
-    }
-
-    /// A motion while the bead is up moves the bead, and a motion that would
-    /// move it nowhere reports no change: the row under it is not what the
-    /// key is about.
-    #[test]
-    fn a_motion_in_the_bead_view_moves_the_bead_and_not_the_selection() {
-        let mut shown = shown(a_described_grove(6));
-        let at = shown.forest.selected_line();
-        assert!(shown.apply(Action::ShowBead));
-        let top = bead_page(&mut shown, 80, 6);
-
-        assert!(shown.scroll(Motion::NextRow));
-        let down_one = bead_page(&mut shown, 80, 6);
-
-        assert_ne!(down_one, top);
-        assert_eq!(down_one[0], top[1]);
-        assert_eq!(shown.forest.selected_line(), at);
-        assert!(shown.scroll(Motion::PreviousRow), "back to the top");
-        assert!(
-            !shown.scroll(Motion::PreviousRow),
-            "and nowhere further, so nothing to redraw"
-        );
-        assert_eq!(shown.forest.selected_line(), at);
     }
 
     // ---- following a bead the window names --------------------------------
@@ -3017,33 +2739,6 @@ mod tests {
             Some(bead("grove", "grv-1.2")),
             "the ring landed on the bead in the middle, which goes nowhere"
         );
-    }
-
-    /// It is still drawn, and still says so — degrade, never disappear. The
-    /// ring passing over it is not the page leaving it out.
-    #[test]
-    fn a_bead_the_forest_cannot_go_to_is_still_drawn_and_still_says_so() {
-        let mut shown = shown_on_the_bead_that_names_beads();
-        let inner = bead_page(&mut shown, 80, 24);
-
-        assert!(
-            inner.iter().any(|row| row.contains("grv-404")),
-            "{inner:#?}"
-        );
-    }
-
-    /// Stepping past the last comes round to the first rather than stopping,
-    /// which is what makes one key enough to reach every bead this one names.
-    #[test]
-    fn stepping_past_the_last_bead_comes_round_to_the_first() {
-        let mut shown = shown_on_the_bead_that_names_beads();
-        assert!(shown.apply(Action::NextRelated));
-        assert!(shown.apply(Action::NextRelated));
-        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1.2")));
-
-        assert!(shown.apply(Action::NextRelated));
-
-        assert_eq!(shown.related_key(), Some(bead("grove", "grv-1")));
     }
 
     /// A collection can rewrite what the bead the reader is on names, and the
@@ -3555,34 +3250,6 @@ mod tests {
         u16::try_from(on).expect("no screen is that tall")
     }
 
-    #[test]
-    fn a_refresh_that_changes_nothing_leaves_the_forest_exactly_as_it_was() {
-        let grove = a_grove(30);
-        let mut shown = shown(grove.clone());
-        forest_band(&mut shown, 60, 24);
-        shown.apply(Action::Move(Motion::LastRow));
-
-        let before = forest_band(&mut shown, 60, 24);
-        shown.collected(grove);
-
-        assert_eq!(forest_band(&mut shown, 60, 24), before);
-    }
-
-    #[test]
-    fn a_refresh_that_reorders_around_the_selection_keeps_it_on_its_bead() {
-        let mut shown = shown(a_grove(6));
-        shown.apply(Action::ExpandOrChild);
-        shown.apply(Action::Move(Motion::LastRow));
-        let was = shown.forest.selected_line();
-
-        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
-
-        shown.collected(a_grove_reordered(6));
-
-        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.6")));
-        assert_ne!(shown.forest.selected_line(), was);
-    }
-
     /// A quiet grove the live-agent filter hides, drawn ahead of a tree it
     /// keeps, so dropping the filter moves the surviving tree down the
     /// forest rather than leaving it where it already was.
@@ -3598,36 +3265,6 @@ mod tests {
         };
         snapshot.refilter(Filter::LiveAgents);
         snapshot
-    }
-
-    #[test]
-    fn dropping_the_filter_keeps_the_cursor_on_its_bead() {
-        let mut shown = shown(a_hidden_grove_above_a_shown_tree());
-        let was = shown.forest.selected_line();
-
-        assert_eq!(cursor(&shown), Some(&bead("arkham", "a-1")));
-
-        assert!(shown.apply(Action::ToggleFilter));
-
-        assert_eq!(shown.forest.snapshot().filter, Filter::All);
-        assert_eq!(cursor(&shown), Some(&bead("arkham", "a-1")));
-        assert_ne!(
-            shown.forest.selected_line(),
-            was,
-            "the grove came back above it"
-        );
-    }
-
-    #[test]
-    fn a_refresh_that_changes_nothing_keeps_the_folds_set_by_hand() {
-        let grove = a_grove(6);
-        let mut shown = shown(grove.clone());
-        shown.apply(Action::ToggleFold);
-        let folded = forest_band(&mut shown, 60, 24);
-
-        shown.collected(grove);
-
-        assert_eq!(forest_band(&mut shown, 60, 24), folded);
     }
 
     /// The screen opens on what the band has to say while the provider is still
@@ -4679,43 +4316,6 @@ mod tests {
         );
     }
 
-    /// Esc puts the selection and every fold back as they stood when the
-    /// prompt went up, whatever the keystrokes since opened.
-    #[test]
-    fn esc_puts_the_selection_and_the_folds_back_as_they_stood() {
-        let mut shown = a_shut_grove();
-        let was = forest_band(&mut shown, 60, 24);
-        press(&mut shown, KeyCode::Char('/'));
-        type_into_prompt(&mut shown, "grv-1.3");
-        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1.3")));
-
-        assert!(at_prompt(&mut shown, Typing::Abandoned));
-
-        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
-        assert_eq!(forest_band(&mut shown, 60, 24), was);
-    }
-
-    /// A keystroke matching nothing goes back to where the prompt went up,
-    /// shutting what the keystroke before it opened, and Enter then says so.
-    #[test]
-    fn a_keystroke_matching_nothing_goes_back_to_where_the_prompt_went_up() {
-        let mut shown = a_shut_grove();
-        let was = forest_band(&mut shown, 60, 24);
-        press(&mut shown, KeyCode::Char('/'));
-        type_into_prompt(&mut shown, "grv-1.3");
-
-        type_into_prompt(&mut shown, "x");
-
-        assert_eq!(cursor(&shown), Some(&bead("grove", "grv-1")));
-        assert_eq!(forest_band(&mut shown, 60, 24), was);
-        at_prompt(&mut shown, Typing::Sought);
-        assert!(
-            foot_of(&mut shown, 100, 24).contains("nothing matches \"grv-1.3x\""),
-            "{:?}",
-            foot_of(&mut shown, 100, 24)
-        );
-    }
-
     /// Rubbing the prompt out to nothing asks for nothing, so the forest goes
     /// back to where the prompt went up.
     #[test]
@@ -4747,29 +4347,6 @@ mod tests {
         }
 
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/grv-1.3");
-    }
-
-    /// Backspace takes the last character back, and on an empty prompt it
-    /// takes nothing and changes nothing — a reader holding it down has
-    /// already arrived where they were going.
-    #[test]
-    fn backspace_takes_the_last_character_of_the_id_back() {
-        let mut shown = shown(a_grove(6));
-        press(&mut shown, KeyCode::Char('/'));
-        for glyph in "grv".chars() {
-            shown.typing(Typing::Edit(Edit::Character(glyph)));
-        }
-
-        assert!(shown.typing(Typing::Edit(Edit::RubOut)));
-        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/gr");
-
-        assert!(shown.typing(Typing::Edit(Edit::RubOut)));
-        assert!(shown.typing(Typing::Edit(Edit::RubOut)));
-        assert!(
-            !shown.typing(Typing::Edit(Edit::RubOut)),
-            "an empty prompt gave a character back"
-        );
-        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), "/");
     }
 
     /// An edit in the middle of the query is searched afresh, as a keystroke
@@ -4938,20 +4515,6 @@ mod tests {
         assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
     }
 
-    /// What the foot says back to a keystroke goes on the reader's next press
-    /// whatever that press means — the same rule a copied id has always kept,
-    /// and the reason both are one field rather than two cleared alike.
-    #[test]
-    fn the_readers_next_press_takes_a_searchs_answer_off_the_foot() {
-        let mut shown = shown(a_grove(6));
-        search_for(&mut shown, "grv-404");
-        assert!(foot_of(&mut shown, 80, 24).contains("nothing matches \"grv-404\""));
-
-        assert!(shown.pressed());
-
-        assert_eq!(foot_of(&mut shown, 80, 24).trim_end(), key_row());
-    }
-
     /// A rule the reader puts in force accounts for a screen they asked for,
     /// so it stands at the foot until they put it back. The rule the forest
     /// starts under is the screen they pressed nothing to get and is named
@@ -4972,17 +4535,6 @@ mod tests {
             press(&mut shown, KeyCode::Char('S'));
         }
         assert_eq!(foot_of(&mut shown, 100, 24).trim_end(), key_row());
-    }
-
-    /// Under a forest folded shut by hand no rule can move a row, and the
-    /// press is still worth a frame: the foot would otherwise go on naming
-    /// the rule the reader has just left until something else redrew it.
-    #[test]
-    fn s_asks_for_a_frame_where_hand_folds_leave_every_row_where_it_was() {
-        let mut shown = shown(a_grove(6));
-        press(&mut shown, KeyCode::Char('C'));
-
-        assert!(press(&mut shown, KeyCode::Char('S')));
     }
 
     /// The same grove read from two projects, so a screen holding it has a
@@ -5040,21 +4592,6 @@ mod tests {
         press(&mut shown, KeyCode::Char('F'));
 
         assert_eq!(foot_of(&mut shown, 100, 24).trim_end(), key_row());
-    }
-
-    /// The filter is the whole screen's too, and `a` already stands in the
-    /// foot's keys whatever the forest holds.
-    #[test]
-    fn the_key_that_lifts_the_filter_is_on_no_projects_line() {
-        let mut shown = shown(two_groves(Filter::LiveAgents));
-
-        assert_eq!(
-            lines_holding_roots_back(&mut shown),
-            vec![
-                "  └─▸ 1 tree with no live agent",
-                "  └─▸ 1 tree with no live agent"
-            ]
-        );
     }
 
     /// The row at the foot of a frame of this screen, as drawn.

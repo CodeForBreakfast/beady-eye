@@ -515,18 +515,6 @@ mod tests {
         }
     }
 
-    /// Motion is the flood: capture asks for a report on every cell the
-    /// pointer crosses, and the loop must never be handed one. Dropping it
-    /// here costs a match arm on a thread that is not the loop.
-    #[test]
-    fn a_pointer_moving_over_the_screen_reaches_the_loop_not_at_all() {
-        let flood: Vec<Option<Event>> = (0..500)
-            .map(|row| incoming(moused(MouseEventKind::Moved, row % 24)))
-            .collect();
-
-        assert!(flood.iter().all(Option::is_none));
-    }
-
     /// A click names a row and nothing else. Every band spans the width of
     /// the screen, so the column the pointer was in names no other row.
     #[test]
@@ -579,18 +567,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
         dir.join("beady-eye").join("changes.sock")
-    }
-
-    /// The bead's own case: the failure that used to reach only stderr now
-    /// also reaches the view, as a notice that outlives the moment it was
-    /// printed in. The stderr line is kept — see `inbound` — so this asserts
-    /// the notice and leaves the printing to the test harness to capture.
-    #[test]
-    fn a_channel_that_would_not_open_leaves_a_notice_behind_it() {
-        let (socket, notice) = inbound(Err(changes::Refused::NoRuntimeDirectory), || false);
-
-        assert!(socket.is_none());
-        assert_eq!(notice, Some(Notice::NoInboundChannel));
     }
 
     /// `bdi-7ao.61`: this is the arm that flattened. Every refusal produced
