@@ -156,7 +156,9 @@ pub fn build_tree(
                 watching: Watching::of(
                     said.and_then(|said| said.watching),
                     &bead.id,
-                    agent.as_ref().and_then(|agent| agent.agent_session.as_deref()),
+                    agent
+                        .as_ref()
+                        .and_then(|agent| agent.agent_session.as_deref()),
                 ),
                 agent,
                 orphaned_dependencies: orphaned,

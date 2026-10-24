@@ -22,6 +22,7 @@ use crate::model::join::{BeadKey, Conflict, JoinSource};
 use crate::model::snapshot::{FailedProject, TrackerFailure};
 use crate::model::tree::Unreachable;
 use crate::model::types::{PaneKey, PaneStatus, Status};
+use crate::model::watching::WatchingAgent;
 use crate::view::forest::Spine;
 use crate::view::lines::Section;
 use crate::view::{Freshness, Mark, Notice, Said};
@@ -608,6 +609,27 @@ pub fn pane_report(display_agent: Option<&str>, caption: Option<&str>) -> Option
         return None;
     }
     Some(said.join(" · "))
+}
+
+/// An agent watching a bead, named by what herdr reports of its pane, or by
+/// herdr's name for the agent where the pane reports nothing.
+pub fn watched_by(agent: &WatchingAgent) -> String {
+    let named = pane_report(agent.display_agent.as_deref(), agent.caption.as_deref())
+        .unwrap_or_else(|| agent.agent.clone());
+    format!("watched by {named}")
+}
+
+/// The agents watching a bead whose agent sessions herdr reports in no live
+/// pane, so there is nothing of them to name.
+pub fn watched_unreported(count: usize) -> String {
+    let agent = if count == 1 { "agent" } else { "agents" };
+    format!("watched by {count} {agent} herdr reports in no pane")
+}
+
+/// That nothing could say who watches a bead: no watcher answers for its
+/// project.
+pub fn watches_unknown() -> &'static str {
+    "who watches it is unknown"
 }
 
 /// An unattributed pane a claim named and the join would not honour, said on
@@ -2253,6 +2275,38 @@ mod tests {
             Some("writing the parser")
         );
         assert_eq!(pane_report(None, None), None);
+    }
+
+    fn watching_agent(display_agent: Option<&str>, caption: Option<&str>) -> WatchingAgent {
+        WatchingAgent {
+            agent: "claude".to_string(),
+            display_agent: display_agent.map(str::to_string),
+            caption: caption.map(str::to_string),
+        }
+    }
+
+    /// A watching agent is named by what herdr reports of it, as an
+    /// unattributed pane is, and by herdr's name for the agent where its
+    /// pane reports nothing.
+    #[test]
+    fn a_watching_agent_is_named_by_what_herdr_reports_of_it() {
+        assert_eq!(
+            watched_by(&watching_agent(Some("ferry crew"), Some("coiling rope"))),
+            "watched by ferry crew · coiling rope"
+        );
+        assert_eq!(watched_by(&watching_agent(None, None)), "watched by claude");
+    }
+
+    #[test]
+    fn watching_agents_herdr_reports_in_no_pane_are_counted() {
+        assert_eq!(
+            watched_unreported(1),
+            "watched by 1 agent herdr reports in no pane"
+        );
+        assert_eq!(
+            watched_unreported(2),
+            "watched by 2 agents herdr reports in no pane"
+        );
     }
 
     /// A bead the window holds whole is named and nothing more: there is

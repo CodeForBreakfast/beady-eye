@@ -233,6 +233,9 @@ impl Walk<'_> {
                         }
                     }
                 }
+                if row.watched {
+                    walked.cell(Span::styled(row::WATCHED.to_string(), palette::AGENT));
+                }
             }
             Cell::Anomalies => {
                 if let Some(anomalies) = row::anomaly_marker(&row.anomalies) {
@@ -471,6 +474,43 @@ mod tests {
             Painted::of(bead_line(&epic, BRANCH, &ids(3), &Layout::default()), 60, 1).rows();
 
         assert!(drawn[0].ends_with("3/8  ◍ wCM:p9 · working"), "{drawn:?}");
+    }
+
+    /// The mark says only that some agent besides the claim watches the
+    /// bead. Who it is is the bead window's to say, so the mark names nobody.
+    #[test]
+    fn a_row_another_agent_watches_is_marked_after_its_agent() {
+        let mut watched = row(&node("smt-4kd3p.2", "the noctalia widget", Status::Open));
+        watched.watched = true;
+        let mut staffed = watched.clone();
+        staffed.agent = Some(row::agent_marker(&a_pane()));
+
+        let drawn = |row: &Row| {
+            Painted::of(bead_line(row, BRANCH, &ids(3), &Layout::default()), 60, 1).rows()
+        };
+
+        let alone = drawn(&watched);
+        assert!(alone[0].ends_with(" ◉"), "{alone:?}");
+        assert!(!alone[0].contains(row::AGENT), "{alone:?}");
+        assert!(
+            drawn(&staffed)[0].ends_with("◍ wCM:p9 · working  ◉"),
+            "{:?}",
+            drawn(&staffed)
+        );
+    }
+
+    #[test]
+    fn a_row_nobody_else_watches_carries_no_mark() {
+        let unwatched = row(&node("smt-4kd3p.2", "the noctalia widget", Status::Open));
+
+        let drawn = Painted::of(
+            bead_line(&unwatched, BRANCH, &ids(3), &Layout::default()),
+            60,
+            1,
+        )
+        .rows();
+
+        assert!(!drawn[0].contains(row::WATCHED), "{drawn:?}");
     }
 
     /// A shut row is the only thing on the screen standing for the beads

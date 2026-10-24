@@ -75,6 +75,7 @@ coin one — and say so.**
 | `○ ◐ ● ✓ ❄` | beads (`bd list`'s legend) | open, in_progress, blocked, closed, deferred — glyph for glyph, because a glyph is terminology. `?` is `bdi`'s for a status bd has no legend for |
 | `◇` | beads (`format.StatusIcon`) | hooked. It is what bd draws beside a hooked row, though its printed legend leaves it out |
 | `⊙` | *coined* | pinned. bd's own mark is 📌, two cells wide where every other glyph is one |
+| `◉` | *coined* | watched: some agent besides the one on the claim is watching the bead (see *watching*). Neither project draws a watch |
 | agent, pane, session | herdr | the worker; its terminal; the server holding them. A bare *session* is herdr's server, except under *Waking a Claude Code session when a bead changes*, where it is the Claude Code session the plugin runs in |
 | agent session | herdr (`agent_session`) | the agent's own session, as herdr reports it for the pane the agent runs in. It names the agent wherever it runs, where a pane names only where it sits |
 | `display_agent`, `agent_status`, `state_labels` | herdr | read verbatim, never renamed |
@@ -2561,7 +2562,9 @@ itself.** It sends `watch-all` for each project it draws, builds its trees
 from the bead lines as it builds them from a read of its own, and draws each
 project's freshness from the freshness lines. Each freshness line has the
 view collect that project again, as a producer's line does, so a change
-reaches the screen as soon as it reaches the watcher. `^R` sends each
+reaches the screen as soon as it reaches the watcher. It takes which agent
+sessions watch each bead from the watching lines, and each of those has the
+view draw the project again too, though no read follows it. `^R` sends each
 project's name to the watcher on a connection of its own, which the watcher
 takes as it takes a producer's. The run starting sends none, because the
 watcher has already read every project. The view still asks the agent
@@ -3425,6 +3428,14 @@ and every conflict carries it in its own fields. herdr's state words are read
 verbatim except `blocked`, which is a TTY prompt waiting and one of three
 things this tool calls blocked, so it is said in full: *waiting at a prompt*.
 
+**The agent cell ends in `◉` where some agent besides the claim watches the
+bead.** A watch is an agent session the watcher names on the bead (see
+*Watching*), and a watch by the agent the join puts on the bead's claim adds
+no mark, because that agent is already on the row. The mark names nobody:
+who is watching is the bead window's to say, and a name here would spend the
+row's width on a second agent. A bead whose project no watcher answers for
+carries no mark, because nobody can say who watches it.
+
 **A line that stands for more than itself says how much of that is done** —
 the fraction rule in *Tree construction*. A shut closed line over unfinished
 work says how many beads, in words, beside the fraction saying it in
@@ -3653,6 +3664,17 @@ carry. In this order:
   on the clock with nothing written
 - the agent, with its state and its join caveat, as the forest's agent cell
   says them
+- each agent watching the bead besides its claim, on a row of its own as
+  *◉ watched by* what herdr reports of it: its `display_agent` and caption,
+  as an unattributed pane is named, or herdr's name for the agent where the
+  pane reports neither. The view finds the agent through the pane herdr
+  reports its agent session in, counting only a pane with a live agent,
+  because herdr keeps the session on a pane after its agent leaves. Agents
+  whose session herdr reports in no live pane are counted on one row, since
+  there is nothing of them to name. A pane id and an agent session id mean
+  nothing to a reader and are never said. Where no watcher answers for the
+  bead's project, because none is running or the view reads that project
+  itself, the row says *who watches it is unknown* rather than naming nobody
 - each anomaly, on a row of its own
 - the badges, with their links, separated as the forest separates them
 - the progress fraction, where the row has one

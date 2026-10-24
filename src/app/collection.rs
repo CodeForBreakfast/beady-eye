@@ -793,7 +793,10 @@ impl Collection {
         let watching: BTreeMap<&str, BTreeMap<String, Watchers>> = answered
             .iter()
             .filter_map(|(project, _)| {
-                Some((*project, watching::in_panes(trackers.watches(project)?, panes)))
+                Some((
+                    *project,
+                    watching::in_panes(trackers.watches(project)?, panes),
+                ))
             })
             .collect();
         let said: BTreeMap<&str, Said> = answered
@@ -1555,9 +1558,15 @@ mod tests {
     /// session, and the session herdr reports in no pane is counted.
     #[test]
     fn a_bead_is_watched_by_each_agent_herdr_reports_watching_it_but_its_claim() {
-        let keeper = running(titled(pane("w:p1", DUNWICH, PaneStatus::Working), "the dish"), "4f1c-keeper");
+        let keeper = running(
+            titled(pane("w:p1", DUNWICH, PaneStatus::Working), "the dish"),
+            "4f1c-keeper",
+        );
         let crew = running(
-            titled(named(pane("w:p3", DUNWICH, PaneStatus::Idle), "ferry crew"), "coiling rope"),
+            titled(
+                named(pane("w:p3", DUNWICH, PaneStatus::Idle), "ferry crew"),
+                "coiling rope",
+            ),
             "9a2e-ferryman",
         );
         let trackers = WatchedBy {
@@ -1565,9 +1574,14 @@ mod tests {
             watches: BTreeMap::from([
                 (
                     "dun-7.1".to_string(),
-                    ["4f1c-keeper", "9a2e-ferryman", "77d0-ghost"].map(str::to_string).into(),
+                    ["4f1c-keeper", "9a2e-ferryman", "77d0-ghost"]
+                        .map(str::to_string)
+                        .into(),
                 ),
-                ("dun-7.2".to_string(), ["4f1c-keeper"].map(str::to_string).into()),
+                (
+                    "dun-7.2".to_string(),
+                    ["4f1c-keeper"].map(str::to_string).into(),
+                ),
             ]),
         };
 
