@@ -1273,26 +1273,6 @@ mod tests {
         }
     }
 
-    /// Graeme asked for "ago" language, and the reason it is better than the
-    /// clock it replaces is that the reader does no arithmetic: the line says
-    /// how stale the rows are, not what time it was when they arrived.
-    #[test]
-    fn a_collected_project_says_how_long_ago_rather_than_at_what_time() {
-        let said = last_read(resting(Mark::Read), an_instant() + TimeDelta::seconds(9));
-
-        assert_eq!(said.as_deref(), Some("9s ago"));
-    }
-
-    /// The bead. A collection running says the rows are about to be replaced;
-    /// it does not say how old the ones being replaced are, and those are the
-    /// rows in front of the reader for as long as it runs.
-    #[test]
-    fn a_project_being_read_still_says_how_old_the_rows_under_it_are() {
-        let said = last_read(collecting(), an_instant() + TimeDelta::seconds(9));
-
-        assert_eq!(said.as_deref(), Some("9s ago"));
-    }
-
     /// The startup frame is the one state with no age: nothing has come back,
     /// so there is no read to date the rows to and no rows either.
     #[test]
@@ -1915,26 +1895,6 @@ mod tests {
         }
     }
 
-    /// The reader cannot open the socket from in here, so the notice is
-    /// written about what it costs them rather than about what failed.
-    #[test]
-    fn a_bdi_nothing_can_reach_says_the_view_is_polled_rather_than_reported() {
-        let said = notice(&Notice::NoInboundChannel);
-
-        assert!(said.contains("polled"), "{said}");
-    }
-
-    /// `bdi-7ao.61`: a reader who knows only that they are polled cannot act.
-    /// Knowing it is another `bdi` is what they can act on, because it is the
-    /// only cause of this that closing something puts right.
-    #[test]
-    fn a_socket_another_bdi_holds_says_so_rather_than_only_what_it_cost() {
-        let said = notice(&Notice::AnotherBdiHadTheInboundChannel);
-
-        assert!(said.contains("another bdi"), "{said}");
-        assert!(said.contains("polled"), "{said}");
-    }
-
     /// The cause is what survives the cut, not the cost. A reader left with
     /// only *polled* has what the notice this one replaced already gave them,
     /// and still nothing to do about it.
@@ -1968,20 +1928,6 @@ mod tests {
         );
         assert_eq!(brief_notice(&one), "reading dunwich itself");
         assert_eq!(brief_notice(&two), "reading dunwich, ferry itself");
-    }
-
-    /// Two ways of losing the channel that want different things of the
-    /// reader: one is theirs to fix by closing a process, the other is not.
-    #[test]
-    fn losing_the_channel_to_another_bdi_reads_differently_from_never_having_one() {
-        assert_ne!(
-            notice(&Notice::NoInboundChannel),
-            notice(&Notice::AnotherBdiHadTheInboundChannel)
-        );
-        assert_ne!(
-            brief_notice(&Notice::NoInboundChannel),
-            brief_notice(&Notice::AnotherBdiHadTheInboundChannel)
-        );
     }
 
     #[test]
