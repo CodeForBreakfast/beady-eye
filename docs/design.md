@@ -688,7 +688,10 @@ reports a claim it holds. Two cases still read the pane key:
   session for, such as one that is not Claude, on its bead. Its cost is the
   hole the session closes: a reused pane still inherits such an agent's claim.
 
-A session that several live panes hold awards none of them.
+A session that several live panes hold awards none of them. A pane's
+`display_agent` does not override either answer. A bead naming an agent
+session is never inferred onto a pane holding another agent, nor onto one of
+several panes holding its own.
 
 A bead naming only a pane joins by its pane. The pane key's own hole is a
 setup that does not write it. And it names the pane by id alone —

@@ -304,6 +304,7 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
     // The exact direction: the bead names its agent's session, or its pane.
     let mut claims: BTreeMap<PaneKey, BTreeMap<BeadKey, JoinSource>> = BTreeMap::new();
     let mut claimed_pane: BTreeMap<BeadKey, PaneKey> = BTreeMap::new();
+    let mut named_session: BTreeMap<BeadKey, &str> = BTreeMap::new();
     for tree in trees {
         for row in tree.rows {
             let bead = BeadKey {
@@ -311,6 +312,9 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
                 id: row.id.clone(),
             };
             let session = row.metadata.get(&cfg.join.agent_session_key);
+            if let Some(session) = session {
+                named_session.insert(bead.clone(), session.as_str());
+            }
             let holding_session = session
                 .and_then(|session| live_agents.get(session.as_str()))
                 .map_or(&[][..], Vec::as_slice);
@@ -448,6 +452,18 @@ pub fn resolve(trees: &[ProjectRows<'_>], listed: Listed<'_>, cfg: &Config) -> J
                 named_by_bead: claimed.clone(),
                 named_by_pane: only.clone(),
             });
+        }
+        // A bead naming its agent's session is not won by a pane holding
+        // another agent, nor by one of several panes holding its own.
+        if let Some(session) = named_session.get(&bead) {
+            let pane = live[&only];
+            let holders = live_agents.get(session).map_or(0, Vec::len);
+            if holders > 1
+                || (pane.agent_session_id().is_some()
+                    && pane.live_agent_session() != Some(*session))
+            {
+                continue;
+            }
         }
         // The exact direction wins where it resolved uncontested; the inferred
         // one only fills the gap it left.
@@ -1048,6 +1064,44 @@ mod tests {
         assert_eq!(joined.agents, BTreeMap::new());
         assert_eq!(joined.conflicts, vec![]);
         assert_eq!(loose(&live, &joined), vec!["w:p1"]);
+    }
+
+    /// A `/clear` leaves the pane's `display_agent` naming the bead, and the
+    /// new agent in the pane is still not the one the bead names.
+    #[test]
+    fn a_pane_naming_the_bead_does_not_win_it_while_holding_another_agent_session() {
+        let live = panes(
+            r#"{"pane_id":"w:p1","cwd":"/home/user/proj","agent_status":"working",
+                "agent":"claude","display_agent":"p-1",
+                "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude",
+                                 "value":"sess-later"}}"#,
+        );
+
+        let joined = join_one(
+            r#"{"agent_pane":"w:p1","agent_session":"sess-mine"}"#,
+            &live,
+        );
+
+        assert_eq!(joined.agents, BTreeMap::new());
+    }
+
+    /// Nothing says which of two panes holding one agent session is the
+    /// agent, and a `display_agent` on one of them does not either.
+    #[test]
+    fn a_pane_naming_the_bead_does_not_win_a_session_several_panes_hold() {
+        let live = panes(&format!(
+            "{},{}",
+            an_agent("w:p1", "sess-mine"),
+            an_agent("w:p2", "sess-mine").replacen(
+                r#""agent":"claude","#,
+                r#""agent":"claude","display_agent":"p-1","#,
+                1
+            )
+        ));
+
+        let joined = join_one(r#"{"agent_session":"sess-mine"}"#, &live);
+
+        assert_eq!(joined.agents, BTreeMap::new());
     }
 
     /// herdr keeps a pane's agent session after its agent has left, so the
