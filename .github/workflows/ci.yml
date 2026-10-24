@@ -43,7 +43,7 @@ concurrency:
 jobs:
   conventional-subject:
     name: conventional subject
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     # Only a pull request has a title. A push to main is the squash of one
     # that passed this, carrying the subject this already read.
@@ -70,7 +70,7 @@ jobs:
 
   flake-check:
     name: nix flake check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
       # Actions are pinned by commit because a tag is mutable and an action
