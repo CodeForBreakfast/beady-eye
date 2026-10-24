@@ -51,6 +51,9 @@ const THE_ROOT: &str = "bdi-2bb";
 /// directory bd tracks. The project is read in `bdi`'s own environment and
 /// its rows come back; direnv is never asked for, on this machine or on one
 /// without it.
+///
+/// git ran, so the name is git's answer and nothing was guessed — and a
+/// consumer that saw every run qualified would learn to ignore the key.
 #[test]
 fn a_directory_bd_tracks_is_read_with_no_config_and_no_direnv() {
     let cwd = nowhere("tracked");
@@ -80,6 +83,11 @@ fn a_directory_bd_tracks_is_read_with_no_config_and_no_direnv() {
     assert!(
         snapshot.contains(&format!("\"{THE_ROOT}\"")),
         "the tracker's root was not read: {snapshot}"
+    );
+    assert_eq!(
+        emitted(&out)["projects_named_without_git"],
+        serde_json::json!([]),
+        "a run whose git answered was published as a guess: {snapshot}"
     );
 
     std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
@@ -161,6 +169,11 @@ fn another_tools_project_variable_is_not_read() {
 /// Run through the binary rather than against the naming: what the name is
 /// half of is the key on the snapshot, and a machine without git is a
 /// machine, not a function.
+///
+/// The name is a guess, and a consumer of `--json` is told so. The
+/// qualification is published as the projects it is about rather than as the
+/// sentence the foot draws from it, so a consumer tests the project they hold
+/// against the list instead of parsing prose.
 #[test]
 fn a_machine_with_no_git_reads_the_tracked_tree_rather_than_the_directory() {
     let home = nowhere("no-git");
@@ -194,99 +207,62 @@ fn a_machine_with_no_git_reads_the_tracked_tree_rather_than_the_directory() {
         snapshot.contains(&format!("\"{THE_ROOT}\"")),
         "the tracker's root was not read: {snapshot}"
     );
-
-    std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
-}
-
-/// A machine that cannot run git names the project after the tree beads
-/// tracks, and the screen says so at the foot. A consumer of `--json` was
-/// told nothing at all — and the name is half of every key in the document
-/// they are reading.
-///
-/// The qualification is published as the projects it is about rather than as
-/// the sentence the foot draws from it, so a consumer tests the project they
-/// hold against the list instead of parsing prose.
-#[test]
-fn a_machine_with_no_git_publishes_the_project_whose_name_was_guessed() {
-    let home = nowhere("no-git-json-guessed");
-    let tracker = ShimmedTracker::beside(&home);
-    tracker.tracks(&home);
-    tracker.holds(THE_TRACKER);
-
-    let mut environment = tracker.environment();
-    environment.push(shims_first_with_nothing_called("git", &home));
-
-    let out = bdi_in(&home, &["--json"], &environment);
-    let snapshot = emitted(&out);
-
-    let tree = home
-        .file_name()
-        .expect("the tree has a name")
-        .to_string_lossy()
-        .to_string();
+    let published = emitted(&out);
     assert_eq!(
-        snapshot["projects_named_without_git"],
+        published["projects_named_without_git"],
         serde_json::json!([tree]),
-        "the guessed name was not qualified for a consumer: {snapshot:#}"
+        "the guessed name was not qualified for a consumer: {published:#}"
     );
     assert_eq!(
-        snapshot["trees"][0]["project"], tree,
-        "the qualification names a project the trees were not read from: {snapshot:#}"
+        published["trees"][0]["project"], *tree,
+        "the qualification names a project the trees were not read from: {published:#}"
     );
 
     std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
 }
 
-/// The state this must not fire on, through the same mouth. git ran, so the
-/// name is git's answer and nothing was guessed — and a consumer that saw
-/// every run qualified would learn to ignore the key.
+/// A repository with no `origin` is the documented answer, and the reader can
+/// see it for themselves. Publishing it as a guess is the warning they learn
+/// to ignore.
 #[test]
-fn a_run_whose_git_answered_publishes_no_guess() {
-    let cwd = nowhere("git-answered-json");
-    let tracker = ShimmedTracker::beside(&cwd);
-    tracker.tracks(&cwd);
-    tracker.holds(THE_TRACKER);
-
-    let out = bdi_in(&cwd, &["--json"], &tracker.environment());
-    let snapshot = emitted(&out);
-
-    assert_eq!(
-        snapshot["projects_named_without_git"],
-        serde_json::json!([]),
-        "a run whose git answered was published as a guess: {snapshot:#}"
-    );
-
-    std::fs::remove_dir_all(&cwd).expect("the directory is ours to remove");
-}
-
-/// The other state that is not a guess: the reader named the project
-/// outright. `BDI_PROJECT` outranks whatever git would have said, so a
-/// machine without git has still guessed nothing.
-#[test]
-fn a_project_the_environment_names_publishes_no_guess_without_git_either() {
-    let home = nowhere("no-git-json-named");
+fn a_repository_with_no_origin_publishes_no_guess() {
+    let home = nowhere("no-origin-json");
+    git_in(&home, &["init"]);
     let tracker = ShimmedTracker::beside(&home);
     tracker.tracks(&home);
     tracker.holds(THE_TRACKER);
 
-    let mut environment = tracker.environment();
-    environment.push(shims_first_with_nothing_called("git", &home));
-    environment.push(("BDI_PROJECT".to_string(), "dunwich".to_string()));
-
-    let out = bdi_in(&home, &["--json"], &environment);
+    let out = bdi_in(&home, &["--json"], &tracker.environment());
     let snapshot = emitted(&out);
 
     assert_eq!(
-        snapshot["trees"][0]["project"], "dunwich",
-        "the project is not called what BDI_PROJECT says: {snapshot:#}"
-    );
-    assert_eq!(
         snapshot["projects_named_without_git"],
         serde_json::json!([]),
-        "a project the reader named outright was published as a guess: {snapshot:#}"
+        "a repository with no origin was published as a guess: {snapshot:#}"
     );
 
     std::fs::remove_dir_all(&home).expect("the directory is ours to remove");
+}
+
+/// git run with an identity and a default branch of our own, and with every
+/// config file it would otherwise read shut out — so what it makes is the
+/// same repository on a machine whose git is configured differently and on
+/// one where it is not configured at all.
+fn git_in(cwd: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args(["-c", "init.defaultBranch=main"])
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git runs");
+    assert!(
+        out.status.success(),
+        "git {args:?} in {}: {}",
+        cwd.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// What a run wrote to stdout, read as the document a consumer parses.

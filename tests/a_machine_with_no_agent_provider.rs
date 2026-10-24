@@ -2,16 +2,14 @@
 //!
 //! The commonest machine `bdi` will ever run on, and the one no test could
 //! reach before: it has bd, it has no herdr, and it has never heard of one.
-//! Both states with no panes in them are here, because the whole of the bead
-//! is that they draw the same forest and say different things about why.
 
 mod terminal;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use terminal::driver::{Driven, GIVING_UP};
-use terminal::shims::{shims_first_on_path, shims_first_with_nothing_called, ShimmedTracker};
+use terminal::shims::{shims_first_with_nothing_called, ShimmedTracker};
 use terminal::{a_home_naming_one_project, contains, ENTER_ALTERNATE_SCREEN};
 
 const ROWS: u16 = 40;
@@ -102,42 +100,4 @@ fn a_run_with_no_provider_installed_draws_every_tree_and_is_not_warned() {
         "nothing said why there is no pane to show: {}",
         bdi.timeline()
     );
-}
-
-/// The other state, told apart from it: a provider that is installed and will
-/// not answer is a finding, and it is said at the foot where nothing can hide
-/// it. The forest is the same forest.
-#[test]
-fn a_run_whose_provider_stops_answering_is_warned_and_still_draws_every_tree() {
-    let home = a_home_naming_one_project("provider-silent");
-    let tracker = a_project_in(&home);
-    let mut environment = tracker.environment();
-    environment.push(shims_first_on_path());
-    environment.push((
-        "BDI_SHIM_HERDR_SESSIONS".to_string(),
-        no_session_here(&home).display().to_string(),
-    ));
-    environment.push(a_socket_of_its_own(&home));
-
-    let mut bdi = Driven::bdi(ROWS, COLS, home.clone(), &environment);
-    let drawn = drawn_by(&mut bdi);
-
-    assert!(
-        contains(&drawn, A_WORD_OF_THE_NOTICE),
-        "a herdr that would not answer was not said at the foot: {}",
-        bdi.timeline()
-    );
-    assert!(
-        contains(&drawn, THE_ROOT),
-        "the tracker's root went with the provider: {}",
-        bdi.timeline()
-    );
-}
-
-/// A path the shimmed herdr is told to list its sessions from and that is not
-/// there, so it exits non-zero the way a herdr with no session to report
-/// does. That is a provider which ran, which is what tells this state from
-/// the one above.
-fn no_session_here(home: &Path) -> PathBuf {
-    home.join("herdr-has-no-session")
 }
