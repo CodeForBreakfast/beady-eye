@@ -25,8 +25,13 @@ pub enum Watch {
     /// `watch <project>`, or `watch-all <project>`, which starts from the
     /// closed beads too.
     Project { project: String, closed_too: bool },
-    /// `watch <project> <id>`.
-    Bead { project: String, id: String },
+    /// `watch <project> <id>`, or `watch <project> <id> <agent_session>`, which
+    /// says that agent session is watching the bead.
+    Bead {
+        project: String,
+        id: String,
+        agent_session: Option<String>,
+    },
 }
 
 /// Why a watch line was not served.
@@ -35,7 +40,7 @@ pub enum Watch {
 pub enum Refusal {
     /// A project the watcher does not read.
     UnknownProject,
-    /// A `watch` or `watch-all` in none of the four forms.
+    /// A `watch` or `watch-all` in none of the five forms.
     Malformed,
 }
 
@@ -61,6 +66,12 @@ pub fn asked(line: &str) -> Option<Result<Watch, Refusal>> {
         (WATCH, [project, id]) => Watch::Bead {
             project: project.to_string(),
             id: id.to_string(),
+            agent_session: None,
+        },
+        (WATCH, [project, id, agent_session]) => Watch::Bead {
+            project: project.to_string(),
+            id: id.to_string(),
+            agent_session: Some(agent_session.to_string()),
         },
         (WATCH | WATCH_ALL, _) => return Some(Err(Refusal::Malformed)),
         _ => return None,
@@ -186,6 +197,12 @@ impl Interest {
         lines
     }
 
+    /// Whether this is a view's `watch-all`, and so is told which agent
+    /// sessions watch each bead.
+    pub fn watches_all(&self) -> bool {
+        self.closed_too
+    }
+
     /// Whether this watches bead `id`, and so is sent bd's records about it.
     pub fn covers(&self, id: &str) -> bool {
         self.whole || self.named.contains(id)
@@ -243,6 +260,12 @@ fn bead_line(project: &str, held: &Held) -> String {
 
 fn gone_line(project: &str, id: &str) -> String {
     json!({ "line": "gone", "project": project, "id": id }).to_string()
+}
+
+/// The agent sessions watching bead `id`, every one of them.
+pub fn watching_line(project: &str, id: &str, agent_sessions: &BTreeSet<String>) -> String {
+    json!({ "line": "watching", "project": project, "id": id, "agent_sessions": agent_sessions })
+        .to_string()
 }
 
 /// One of bd's event records, passed on as bd printed it.
@@ -350,6 +373,7 @@ mod tests {
         Watch::Bead {
             project: "dunwich".to_string(),
             id: id.to_string(),
+            agent_session: None,
         }
     }
 
@@ -370,11 +394,19 @@ mod tests {
     }
 
     #[test]
-    fn each_of_the_four_forms_is_a_watch() {
+    fn each_of_the_five_forms_is_a_watch() {
         assert_eq!(asked("watch\n"), Some(Ok(Watch::Everything)));
         assert_eq!(asked("watch dunwich"), Some(Ok(project(false))));
         assert_eq!(asked("watch-all dunwich"), Some(Ok(project(true))));
         assert_eq!(asked("watch dunwich dun-1"), Some(Ok(bead("dun-1"))));
+        assert_eq!(
+            asked("watch dunwich dun-1 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            Some(Ok(Watch::Bead {
+                project: "dunwich".to_string(),
+                id: "dun-1".to_string(),
+                agent_session: Some("5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".to_string()),
+            }))
+        );
     }
 
     #[test]
@@ -382,7 +414,8 @@ mod tests {
         for line in [
             "watch-all",
             "watch-all dunwich dun-1",
-            "watch dunwich dun-1 dun-2",
+            "watch-all dunwich dun-1 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952",
+            "watch dunwich dun-1 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952 c47e02b6-9d51-4a83-b6f2-08ac5e13d740",
         ] {
             assert_eq!(asked(line), Some(Err(Refusal::Malformed)), "{line}");
         }

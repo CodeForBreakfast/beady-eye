@@ -6,7 +6,7 @@
 //! and never asks which source told it, so a source can be replaced without
 //! anything that watches or delivers changing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufWriter, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -165,6 +165,9 @@ struct Consumer {
     /// The connection, to hang up on where it falls behind.
     connection: UnixStream,
     interests: BTreeMap<String, Interest>,
+    /// The agent sessions this connection's watches on single beads named, by
+    /// the bead's project and id.
+    agent_sessions: BTreeMap<(String, String), BTreeSet<String>>,
 }
 
 impl Consumer {
@@ -227,9 +230,10 @@ impl Hold {
         };
 
         let project = answer.project;
-        self.consumers.retain(|_, consumer| {
+        let mut behind = Vec::new();
+        for (&id, consumer) in &mut self.consumers {
             let Some(interest) = consumer.interests.get_mut(&project) else {
-                return true;
+                continue;
             };
             let mut lines: Vec<String> = records
                 .iter()
@@ -240,13 +244,15 @@ impl Hold {
                 })
                 .map(|record| watching::event_line(&project, record))
                 .collect();
-            standing
-                .told(&project, interest, replaced)
-                .is_none_or(|told| {
-                    lines.extend(told);
-                    consumer.tells(lines)
-                })
-        });
+            let Some(told) = standing.told(&project, interest, replaced) else {
+                continue;
+            };
+            lines.extend(told);
+            if !consumer.tells(lines) {
+                behind.push(id);
+            }
+        }
+        self.hang_up(behind);
     }
 
     /// A connection that will watch beads, sent its lines on `telling`.
@@ -257,6 +263,7 @@ impl Hold {
             telling,
             connection,
             interests: BTreeMap::new(),
+            agent_sessions: BTreeMap::new(),
         };
         self.consumers.insert(id, consumer);
         id
@@ -280,30 +287,124 @@ impl Hold {
                 vec![project]
             }
         };
+        let watched: Vec<(String, BTreeMap<String, BTreeSet<String>>)> = projects
+            .iter()
+            .map(|project| ((*project).clone(), self.agent_sessions_in(project)))
+            .collect();
+        let newly_watching = match watch {
+            Watch::Bead {
+                project,
+                id,
+                agent_session: Some(agent_session),
+            } => (!self
+                .agent_sessions_watching(project, id)
+                .contains(agent_session))
+            .then_some((project, id, agent_session)),
+            _ => None,
+        };
         let Some(connection) = self.consumers.get_mut(&consumer) else {
             return Ok(());
         };
 
         let mut lines = Vec::new();
-        for project in projects {
+        for (project, watched) in watched {
             let interest = connection.interests.entry(project.clone()).or_default();
             interest.widen(watch, at);
             lines.extend(
-                self.projects[project]
-                    .told(project, interest, true)
+                self.projects[&project]
+                    .told(&project, interest, true)
                     .into_iter()
                     .flatten(),
             );
+            if interest.watches_all() {
+                lines.extend(watched.iter().map(|(id, agent_sessions)| {
+                    watching::watching_line(&project, id, agent_sessions)
+                }));
+            }
         }
         if !lines.is_empty() && !connection.tells(lines) {
-            self.consumers.remove(&consumer);
+            self.hang_up(vec![consumer]);
+            return Ok(());
+        }
+
+        if let Watch::Bead {
+            project,
+            id,
+            agent_session: Some(agent_session),
+        } = watch
+        {
+            let bead = (project.clone(), id.clone());
+            connection
+                .agent_sessions
+                .entry(bead)
+                .or_default()
+                .insert(agent_session.clone());
+        }
+        if let Some((project, id, _)) = newly_watching {
+            let behind = self.tell_views_who_watches(project, id);
+            self.hang_up(behind);
         }
         Ok(())
     }
 
     /// Stop telling a connection that has gone.
     pub fn forget(&mut self, consumer: u64) {
-        self.consumers.remove(&consumer);
+        self.hang_up(vec![consumer]);
+    }
+
+    /// Stop telling each of `consumers`, and tell every view of each bead
+    /// that an agent session no longer watches because of it.
+    fn hang_up(&mut self, mut consumers: Vec<u64>) {
+        while let Some(consumer) = consumers.pop() {
+            let Some(gone) = self.consumers.remove(&consumer) else {
+                continue;
+            };
+            for ((project, id), agent_sessions) in gone.agent_sessions {
+                if !agent_sessions.is_subset(&self.agent_sessions_watching(&project, &id)) {
+                    consumers.extend(self.tell_views_who_watches(&project, &id));
+                }
+            }
+        }
+    }
+
+    /// Every bead in `project` that an agent session is watching, with those
+    /// agent sessions.
+    fn agent_sessions_in(&self, project: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let mut watched: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for consumer in self.consumers.values() {
+            for ((of, id), agent_sessions) in &consumer.agent_sessions {
+                if of == project {
+                    watched
+                        .entry(id.clone())
+                        .or_default()
+                        .extend(agent_sessions.iter().cloned());
+                }
+            }
+        }
+        watched
+    }
+
+    fn agent_sessions_watching(&self, project: &str, id: &str) -> BTreeSet<String> {
+        self.agent_sessions_in(project)
+            .remove(id)
+            .unwrap_or_default()
+    }
+
+    /// Tell every view watching all of `project` which agent sessions now watch
+    /// bead `id`, and hand back the connections too far behind to be told.
+    fn tell_views_who_watches(&self, project: &str, id: &str) -> Vec<u64> {
+        let line = watching::watching_line(project, id, &self.agent_sessions_watching(project, id));
+        let mut behind = Vec::new();
+        for (&consumer, view) in &self.consumers {
+            let watches_all = view
+                .interests
+                .get(project)
+                .is_some_and(Interest::watches_all);
+            if watches_all && !view.tells(vec![line.clone()]) {
+                behind.push(consumer);
+            }
+        }
+        behind
     }
 
     /// What the watcher holds of `project`, where a source has said anything
@@ -713,6 +814,7 @@ mod tests {
             &Watch::Bead {
                 project: "ferry".to_string(),
                 id: "fer-1".to_string(),
+                agent_session: None,
             },
             now(),
         );
@@ -747,6 +849,7 @@ mod tests {
         Watch::Bead {
             project: "dunwich".to_string(),
             id: id.to_string(),
+            agent_session: None,
         }
     }
 
@@ -865,6 +968,217 @@ mod tests {
         assert!(hold.consumers.is_empty());
     }
 
+    // ---- which agent sessions watch a bead --------------------------------
+
+    fn from_agent_session(id: &str, agent_session: &str) -> Watch {
+        Watch::Bead {
+            project: "dunwich".to_string(),
+            id: id.to_string(),
+            agent_session: Some(agent_session.to_string()),
+        }
+    }
+
+    fn watching_all_of_dunwich() -> Watch {
+        Watch::Project {
+            project: "dunwich".to_string(),
+            closed_too: true,
+        }
+    }
+
+    /// Each watching line sent so far, as the bead it names and its agent
+    /// sessions.
+    fn who_watches(told: &Receiver<Vec<String>>) -> Vec<(String, Vec<String>)> {
+        told.try_iter()
+            .flatten()
+            .filter_map(|line| {
+                let line: serde_json::Value = serde_json::from_str(&line).expect("JSON");
+                (line["line"] == "watching").then(|| {
+                    let agent_sessions = serde_json::from_value(line["agent_sessions"].clone())
+                        .expect("agent_sessions");
+                    (
+                        line["id"].as_str().expect("an id").to_string(),
+                        agent_sessions,
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn agent_sessions(of: &[&str]) -> Vec<String> {
+        of.iter().map(ToString::to_string).collect()
+    }
+
+    /// A hold reading dunwich, and a view already watching all of it.
+    fn a_view() -> (Hold, Connection) {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1", "dun-2"]));
+        let view = connected(&mut hold, 16);
+        hold.watch(view.consumer, &watching_all_of_dunwich(), now())
+            .expect("dunwich is read");
+        let _ = kinds(&view.told);
+        (hold, view)
+    }
+
+    #[test]
+    fn a_view_starting_is_told_every_bead_an_agent_session_already_watches() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1", "dun-2"]));
+        let named = connected(&mut hold, 4);
+        hold.watch(
+            named.consumer,
+            &from_agent_session("dun-2", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        let view = connected(&mut hold, 4);
+
+        hold.watch(view.consumer, &watching_all_of_dunwich(), now())
+            .expect("dunwich is read");
+
+        assert_eq!(
+            who_watches(&view.told),
+            [(
+                "dun-2".to_string(),
+                agent_sessions(&["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"])
+            )]
+        );
+    }
+
+    /// A watch on the whole project, or on every project, is not a view's,
+    /// and is not told which agent sessions watch each bead.
+    #[test]
+    fn only_a_watch_all_is_told_which_agent_sessions_watch() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        let project = connected(&mut hold, 4);
+        hold.watch(project.consumer, &watching_dunwich(), now())
+            .expect("dunwich is read");
+        let everything = connected(&mut hold, 4);
+        hold.watch(everything.consumer, &Watch::Everything, now())
+            .expect("dunwich is read");
+        let named = connected(&mut hold, 4);
+
+        hold.watch(
+            named.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+
+        assert_eq!(who_watches(&project.told), []);
+        assert_eq!(who_watches(&everything.told), []);
+        assert_eq!(who_watches(&named.told), []);
+    }
+
+    #[test]
+    fn a_view_is_told_every_agent_session_watching_a_bead() {
+        let (mut hold, view) = a_view();
+        let first = connected(&mut hold, 4);
+        let second = connected(&mut hold, 4);
+
+        hold.watch(
+            first.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        hold.watch(
+            second.consumer,
+            &from_agent_session("dun-1", "c47e02b6-9d51-4a83-b6f2-08ac5e13d740"),
+            now(),
+        )
+        .expect("dunwich is read");
+        hold.forget(first.consumer);
+
+        assert_eq!(
+            who_watches(&view.told),
+            [
+                (
+                    "dun-1".to_string(),
+                    agent_sessions(&["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"])
+                ),
+                (
+                    "dun-1".to_string(),
+                    agent_sessions(&[
+                        "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952",
+                        "c47e02b6-9d51-4a83-b6f2-08ac5e13d740"
+                    ])
+                ),
+                (
+                    "dun-1".to_string(),
+                    agent_sessions(&["c47e02b6-9d51-4a83-b6f2-08ac5e13d740"])
+                ),
+            ]
+        );
+    }
+
+    /// An agent session named again, on its own connection or another, changes
+    /// nothing a view is told, until the last connection naming it goes.
+    #[test]
+    fn a_view_is_told_only_when_the_agent_sessions_watching_change() {
+        let (mut hold, view) = a_view();
+        let first = connected(&mut hold, 4);
+        let second = connected(&mut hold, 4);
+
+        hold.watch(
+            first.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        hold.watch(
+            first.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        hold.watch(
+            second.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        hold.forget(first.consumer);
+        let still_watched = who_watches(&view.told);
+        hold.forget(second.consumer);
+
+        assert_eq!(
+            still_watched,
+            [(
+                "dun-1".to_string(),
+                agent_sessions(&["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"])
+            )]
+        );
+        assert_eq!(
+            who_watches(&view.told),
+            [("dun-1".to_string(), agent_sessions(&[]))]
+        );
+    }
+
+    /// A connection that fell behind no longer watches, so its agent session
+    /// stops watching too.
+    #[test]
+    fn an_agent_session_whose_connection_is_hung_up_on_stops_watching() {
+        let (mut hold, view) = a_view();
+        let named = connected(&mut hold, 1);
+        hold.watch(
+            named.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        let _ = who_watches(&view.told);
+
+        hold.take(said("dunwich", Said::Vouched { at: later(10) }));
+        hold.take(said("dunwich", Said::Vouched { at: later(20) }));
+
+        assert_eq!(
+            who_watches(&view.told),
+            [("dun-1".to_string(), agent_sessions(&[]))]
+        );
+        assert!(!hold.consumers.contains_key(&named.consumer));
+    }
+
     // ---- bd's events -------------------------------------------------------
 
     fn record(seq: u64, op: &str, id: &str) -> serde_json::Value {
@@ -947,6 +1261,7 @@ mod tests {
         let (mut hold, connection) = watching_a_journal(&Watch::Bead {
             project: "dunwich".to_string(),
             id: "dun-2".to_string(),
+            agent_session: None,
         });
 
         hold.take(journalled(
