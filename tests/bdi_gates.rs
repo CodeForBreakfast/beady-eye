@@ -632,6 +632,9 @@ fn a_bead_gate_closes_moments_after_its_bead_in_another_tracker_closes_with_no_r
     let mut producer = Producer::connected(&socket);
     assert_eq!(producer.says("covered arkham"), "ok arkham");
     assert_eq!(producer.says("covered dunwich"), "ok dunwich");
+    // The shim records a call before it answers it, so nothing observable
+    // says the first look's last read is done.
+    std::thread::sleep(Duration::from_secs(1));
     let read_before = tracker.calls();
 
     tracker.answers_for(
