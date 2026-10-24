@@ -36,7 +36,7 @@ fn what_bdi_wrote_while_no_test_was_waiting_was_read_anyway() {
     let bdi = Driven::bdi(ROWS, COLS, home, &[]);
 
     let started = Instant::now();
-    while started.elapsed() < LONG_ENOUGH {
+    while started.elapsed() < LONG_ENOUGH && !contains(&bdi.everything(), ENTER_ALTERNATE_SCREEN) {
         std::thread::sleep(Duration::from_millis(50));
     }
 
