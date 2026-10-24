@@ -621,6 +621,7 @@ that did answer are drawn as they would be had it never existed.
 |---|---|
 | `pane_id` | the pane's id within its session, e.g. `wCM:p9` |
 | `cwd` | resolves the pane to a project root |
+| `agent_session` | the agent's session as herdr reports it: an object of `agent`, `kind`, `source` and `value`, absent when herdr has none |
 | `display_agent` | the bead id an agent stamped |
 | `title` | the agent's one-line "what I am doing" |
 | `state_labels` | per-state text, shown for the state the pane is in |

@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::collect::agents::Agents;
 use crate::collect::run::{Env, RunFailure, Runner};
-use crate::model::types::{Pane, PaneKey, PaneStatus};
+use crate::model::types::{AgentSession, Pane, PaneKey, PaneStatus};
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -70,6 +70,8 @@ struct Agent {
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
+    agent_session: Option<AgentSession>,
+    #[serde(default)]
     display_agent: Option<String>,
     #[serde(default)]
     title: Option<String>,
@@ -90,6 +92,7 @@ impl Agent {
             self.agent_status,
         );
         pane.agent = self.agent;
+        pane.agent_session = self.agent_session;
         pane.display_agent = self.display_agent;
         pane.title = self.title;
         pane.state_labels = self.state_labels;
@@ -256,6 +259,36 @@ mod tests {
         assert_eq!(p.title, None);
         assert_eq!(p.state_labels, BTreeMap::new());
         assert_eq!(p.caption(), None);
+    }
+
+    #[test]
+    fn a_pane_keeps_the_agent_session_herdr_reports() {
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
+
+        assert_eq!(
+            pane(&panes, "wG:p6").agent_session,
+            Some(AgentSession {
+                agent: "claude".to_string(),
+                kind: "id".to_string(),
+                source: "herdr:claude".to_string(),
+                value: "86b40e17-52c9-4d70-a3e5-14f806db9c27".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_pane_herdr_reports_no_agent_session_for_has_none() {
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
+
+        assert_eq!(pane(&panes, "wG:p1").agent_session, None);
+    }
+
+    #[test]
+    fn an_agent_session_of_another_kind_is_kept_as_that_kind() {
+        let panes = parse_agent_list(A_SESSION, FIXTURE).unwrap();
+        let session = pane(&panes, "wH:p1").agent_session.clone();
+
+        assert_eq!(session.map(|s| s.kind), Some("path".to_string()));
     }
 
     #[test]
