@@ -1792,6 +1792,23 @@ path = "/srv/work/dunwich"
         );
     }
 
+    /// Configured and not running is the ordinary state of a machine whose
+    /// watcher is being restarted.
+    #[test]
+    fn a_watcher_configured_and_not_running_leaves_the_project_to_be_read_for_itself() {
+        let at = a_socket("watched-not-running");
+        let own = own_trackers();
+        let cfg = projects();
+        let through = through(&at, &own, A_MOMENT);
+
+        through
+            .of(project(&cfg, "dunwich"))
+            .map(|tracker| ids(tracker.as_ref()))
+            .expect("read for itself");
+
+        assert!(!own.tracker("dunwich").asked().is_empty());
+    }
+
     /// A watcher reading the project another way, one refusing it, and one
     /// not saying how it reads it each leave it to this run to read itself.
     #[test]
