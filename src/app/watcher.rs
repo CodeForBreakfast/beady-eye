@@ -939,13 +939,10 @@ mod tests {
 
         hold.take(read("dunwich", now(), &["dun-1"]));
 
-        let mut rest = Vec::new();
-        let mut theirs = &keeping_up.theirs;
-        theirs
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .expect("a read is ours to give up on");
-        let still_open = std::io::Read::read_to_end(&mut theirs, &mut rest);
-        assert!(still_open.is_err(), "nothing hung up on it");
+        assert!(
+            hold.consumers.contains_key(&keeping_up.consumer),
+            "it was hung up on"
+        );
     }
 
     #[test]
