@@ -4378,9 +4378,14 @@ and a second line"
           # bdi asks bd where the tracker is. The worktree-listing test builds
           # a repository and adds a worktree to it, so git has to be here too.
           # One test runs a `jq` filter README documents.
+          #
+          # cargo test runs one test binary at a time, so the run costs the sum
+          # of every binary. nextest runs every test of every binary at once,
+          # and costs about the slowest. It runs no doctests, so cargo still
+          # does.
           test = checkOf "test" artifacts.dev
-            [ beads.packages.${system}.bd pkgs.git pkgs.jq ]
-            "cargo test";
+            [ beads.packages.${system}.bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
+            "cargo nextest run && cargo test --doc";
           unbuilt-checks-test = unbuiltChecksTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
