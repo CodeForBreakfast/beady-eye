@@ -563,7 +563,8 @@ mod tests {
     /// Every direction the join can award an agent from. See
     /// [`every_failure_kind`].
     pub(super) fn every_join_source() -> impl Iterator<Item = JoinSource> {
-        std::iter::successors(Some(JoinSource::AgentPane), |source| match source {
+        std::iter::successors(Some(JoinSource::AgentSession), |source| match source {
+            JoinSource::AgentSession => Some(JoinSource::AgentPane),
             JoinSource::AgentPane => Some(JoinSource::DisplayAgent),
             JoinSource::DisplayAgent => None,
         })

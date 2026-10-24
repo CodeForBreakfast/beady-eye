@@ -3240,6 +3240,7 @@ mod tests {
                     pane_status: PaneStatus::Working,
                     title: None,
                     source: JoinSource::AgentPane,
+                    agent_session: None,
                 });
             }
         }

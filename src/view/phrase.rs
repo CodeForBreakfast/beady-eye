@@ -726,7 +726,7 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
 /// bead named is confirmed, one a pane's free text named is not.
 pub fn join_caveat(source: JoinSource) -> Option<&'static str> {
     match source {
-        JoinSource::AgentPane => None,
+        JoinSource::AgentSession | JoinSource::AgentPane => None,
         JoinSource::DisplayAgent => Some("inferred, not confirmed"),
     }
 }

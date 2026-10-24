@@ -370,6 +370,7 @@ fn the_agent_records_which_direction_of_the_join_resolved_it() {
             "pane_status": "working",
             "title": "the dish",
             "source": "agent_pane",
+            "agent_session": null,
         }),
         "the bead named its pane"
     );
@@ -377,6 +378,90 @@ fn the_agent_records_which_direction_of_the_join_resolved_it() {
         node(tree, "dun-7.2")["agent"]["source"],
         "display_agent",
         "the pane named its bead"
+    );
+}
+
+/// A bead naming its agent's session is drawn against the pane herdr reports
+/// that session in, and the agent says both: the session it was joined by,
+/// and the pane it was found in. The pane the bead names is the one the agent
+/// left, and now holds another agent.
+#[test]
+fn an_agent_joined_by_its_session_names_the_session_and_the_pane_it_was_found_in() {
+    let resumed = Canned::default().herdr_holding(
+        r#"{"id":"cli:agent:list","result":{"agents":[
+          {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"idle","agent":"claude",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-later"}},
+          {"pane_id":"w:p4","cwd":"/srv/work/dunwich","agent_status":"working","agent":"claude",
+           "title":"the dish, resumed",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-dish"}}
+        ]}}"#,
+    );
+    let tracker = dunwich_holding(
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"in_progress",
+             "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
+             "metadata":{"agent_pane":"w:p1","agent_session":"sess-dish"}}]"#,
+    );
+
+    let emitted = emit(&resumed, &dunwich_with(tracker), Filter::LiveAgents);
+
+    assert_eq!(
+        node(&emitted["trees"][0], "dun-7")["agent"],
+        json!({
+            "pane": {"session": "default", "id": "w:p4"},
+            "pane_status": "working",
+            "title": "the dish, resumed",
+            "source": "agent_session",
+            "agent_session": "sess-dish",
+        })
+    );
+    assert_eq!(emitted["conflicts"], json!([]));
+}
+
+/// The anomaly rules read the agent rather than the pane. A claim whose
+/// agent session no live pane holds has lost its agent even though the pane
+/// it names is alive, and a closed bead whose agent is still running in
+/// another pane has outlived it.
+#[test]
+fn the_anomaly_rules_follow_the_agent_session_rather_than_the_pane() {
+    let herdr = Canned::default().herdr_holding(
+        r#"{"id":"cli:agent:list","result":{"agents":[
+          {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"idle","agent":"claude",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-later"}},
+          {"pane_id":"w:p4","cwd":"/srv/work/dunwich","agent_status":"done","agent":"claude",
+           "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"sess-mast"}}
+        ]}}"#,
+    );
+    let tracker = dunwich_holding(
+        r#"[{"id":"dun-7","title":"lift the ground station","status":"in_progress",
+             "priority":1,"issue_type":"epic","updated_at":"2026-08-29T09:00:00Z",
+             "metadata":{"agent_pane":"w:p1","agent_session":"sess-dish"}},
+            {"id":"dun-7.2","title":"survey the mast","status":"closed","parent":"dun-7",
+             "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+             "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z",
+             "metadata":{"agent_pane":"w:p2","agent_session":"sess-mast"}}]"#,
+    );
+
+    let emitted = emit(&herdr, &dunwich_with(tracker), Filter::LiveAgents);
+    let tree = &emitted["trees"][0];
+
+    assert_eq!(node(tree, "dun-7")["agent"], Value::Null);
+    assert_eq!(
+        node(tree, "dun-7")["anomalies"],
+        json!([{"rule": "orphan-claim"}])
+    );
+    assert_eq!(node(tree, "dun-7.2")["agent"]["pane"]["id"], "w:p4");
+    assert_eq!(
+        node(tree, "dun-7.2")["anomalies"],
+        json!([{"rule": "stale-pane"}])
+    );
+    assert_eq!(
+        emitted["unattributed"]
+            .as_array()
+            .expect("unattributed is an array")
+            .iter()
+            .map(|pane| pane["pane"]["id"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("w:p1")]
     );
 }
 

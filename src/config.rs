@@ -679,6 +679,7 @@ pub struct Anomalies {
 #[serde(default, deny_unknown_fields)]
 pub struct Join {
     pub pane_key: String,
+    pub agent_session_key: String,
 }
 
 /// How a setup marks the beads that deliver work through a pull request.
@@ -958,6 +959,7 @@ impl Default for Join {
     fn default() -> Self {
         Self {
             pane_key: "agent_pane".to_string(),
+            agent_session_key: "agent_session".to_string(),
         }
     }
 }
@@ -1469,6 +1471,7 @@ stale_claim_days = 7
 
 [join]
 pane_key = "herdr_pane"
+agent_session_key = "seat_session"
 
 [changes]
 socket = "/var/folders/T/beady-eye/changes.sock"
@@ -1635,6 +1638,7 @@ path = "/home/user/dev/cinder"
         );
         assert_eq!(cfg.anomalies.stale_claim_days, 7);
         assert_eq!(cfg.join.pane_key, "herdr_pane");
+        assert_eq!(cfg.join.agent_session_key, "seat_session");
         assert_eq!(
             cfg.changes.socket,
             Some(PathBuf::from("/var/folders/T/beady-eye/changes.sock"))
@@ -2022,6 +2026,7 @@ path = "/home/user/dev/kadath"
         assert!(cfg.badges.is_empty());
         assert_eq!(cfg.anomalies.stale_claim_days, 30);
         assert_eq!(cfg.join.pane_key, "agent_pane");
+        assert_eq!(cfg.join.agent_session_key, "agent_session");
         assert_eq!(cfg.changes.socket, None);
         assert_eq!(cfg.watcher.socket, None);
         assert_eq!(cfg.changes.covered_for_seconds, 60);
