@@ -662,6 +662,22 @@ pub(super) mod tests {
         );
     }
 
+    /// The forest's row is cut from its own end, so one that outgrew the
+    /// narrowest screen anyone uses would lose `q quit` — which is what a
+    /// reader who cannot get out is looking for. Expanding and collapsing the
+    /// whole forest and restoring the default are named in `?` alone for
+    /// exactly that reason.
+    #[test]
+    fn the_forests_row_fits_forty_columns() {
+        let row = key_row();
+
+        assert!(
+            row.chars().count() <= 40,
+            "{} columns: {row:?}",
+            row.chars().count()
+        );
+    }
+
     /// `Esc` first, because a reader who cannot see how to leave is stuck in
     /// a view they may have opened by accident.
     #[test]

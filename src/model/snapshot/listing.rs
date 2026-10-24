@@ -580,3 +580,266 @@ fn unread_trees(snapshot: &Snapshot) -> Vec<UnreadTree<'_>> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collect::bd::parse_shared_beads;
+    use crate::model::edges::relations;
+    use crate::model::join::Joined;
+    use crate::model::snapshot::tests::{cfg, now, snapshot};
+    use crate::model::snapshot::{build_tree, said_by, ProviderState, Readiness};
+    use crate::model::tree::Nesting;
+    use pretty_assertions::assert_eq;
+
+    /// celephais's beads. The archive's two children and a grandchild hang
+    /// under it, and the second child, a bug, waits on the bead outside it.
+    const CELEPHAIS: &str = r#"[
+      {"id":"cel-1","title":"the work of cel-1","status":"open","priority":2,
+       "issue_type":"epic","description":"what cel-1 is for"},
+      {"id":"cel-1.1","title":"the work of cel-1.1","status":"open","priority":2,
+       "issue_type":"task","labels":["human","urgent"],"assignee":"ward",
+       "description":"what cel-1.1 is for",
+       "dependencies":[{"depends_on_id":"cel-1","type":"parent-child"}]},
+      {"id":"cel-1.1.1","title":"the work of cel-1.1.1","status":"open","priority":2,
+       "issue_type":"task","labels":["human"],"description":"what cel-1.1.1 is for",
+       "dependencies":[{"depends_on_id":"cel-1.1","type":"parent-child"}]},
+      {"id":"cel-1.2","title":"the work of cel-1.2","status":"open","priority":2,
+       "issue_type":"bug","assignee":"ward","description":"what cel-1.2 is for",
+       "dependencies":[{"depends_on_id":"cel-1","type":"parent-child"},
+                       {"depends_on_id":"cel-2","type":"blocks"}]},
+      {"id":"cel-2","title":"the work of cel-2","status":"open","priority":2,
+       "issue_type":"task","labels":["urgent"],"description":"what cel-2 is for"}
+    ]"#;
+
+    /// celephais read as two trees, with bd answering every bead ready but
+    /// the bug.
+    fn celephais() -> Snapshot {
+        let beads = parse_shared_beads(CELEPHAIS).expect("the rows parse");
+        let readiness = Readiness {
+            ready: ["cel-1", "cel-1.1", "cel-1.1.1", "cel-2"]
+                .map(String::from)
+                .into(),
+            blocked_by: BTreeMap::new(),
+        };
+        let relations = relations(&beads);
+        let said = said_by("celephais", &readiness, &relations);
+        let nesting = Nesting::of(&beads);
+        snapshot(
+            ["cel-1", "cel-2"]
+                .into_iter()
+                .map(|root| {
+                    build_tree(
+                        "celephais",
+                        &nesting.assemble(root).expect("the rows assemble"),
+                        &Joined::default(),
+                        &said,
+                        ProviderState::Answering,
+                        &cfg(),
+                        now(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn celephais_key(id: &str) -> BeadKey {
+        BeadKey {
+            project: "celephais".to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    /// The listing of celephais's beads, kept as `only` says.
+    fn listed(only: &Only, brief: bool) -> serde_json::Value {
+        serde_json::to_value(Listing::of(&celephais(), only, brief)).unwrap()
+    }
+
+    /// The listing of the ready list as it draws celephais: nothing in
+    /// progress, then the grandchild and the bead outside the archive. The
+    /// first child is urgent, but the list leaves it out for its own open
+    /// child.
+    fn ready_listed(only: &Only, brief: bool) -> serde_json::Value {
+        let snapshot = celephais();
+        let drawn = |ids: &[&str]| -> Vec<&Node> {
+            ids.iter()
+                .map(|id| {
+                    snapshot
+                        .node(&celephais_key(id))
+                        .expect("the bead was read")
+                })
+                .collect()
+        };
+        let sections = [drawn(&[]), drawn(&["cel-1.1.1", "cel-2"])];
+        serde_json::to_value(ReadyListing::of(&snapshot, sections, only, brief)).unwrap()
+    }
+
+    fn ids_in<'a>(written: &'a serde_json::Value, section: &str) -> Vec<&'a str> {
+        written[section]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bead| bead["id"].as_str().unwrap())
+            .collect()
+    }
+
+    fn beneath(id: &str) -> Only {
+        Only {
+            beneath: Some(celephais_key(id)),
+            ..Only::default()
+        }
+    }
+
+    #[test]
+    fn nothing_asked_trims_nothing() {
+        let written = listed(&Only::default(), false);
+
+        assert_eq!(
+            ids_in(&written, "beads"),
+            ["cel-1", "cel-1.1", "cel-1.1.1", "cel-1.2", "cel-2"]
+        );
+    }
+
+    #[test]
+    fn type_keeps_the_beads_of_that_type() {
+        let written = listed(
+            &Only {
+                issue_type: Some("bug".to_string()),
+                ..Only::default()
+            },
+            false,
+        );
+
+        assert_eq!(ids_in(&written, "beads"), ["cel-1.2"]);
+    }
+
+    #[test]
+    fn assignee_keeps_the_beads_assigned_to_them() {
+        let written = listed(
+            &Only {
+                assignee: Some("ward".to_string()),
+                ..Only::default()
+            },
+            false,
+        );
+
+        assert_eq!(ids_in(&written, "beads"), ["cel-1.1", "cel-1.2"]);
+    }
+
+    /// As `bd ready --parent`: every bead beneath the parent at any depth,
+    /// and not the parent itself.
+    #[test]
+    fn parent_keeps_the_beads_beneath_it_at_any_depth() {
+        let written = listed(&beneath("cel-1"), false);
+        assert_eq!(
+            ids_in(&written, "beads"),
+            ["cel-1.1", "cel-1.1.1", "cel-1.2"]
+        );
+        let under_the_child = listed(&beneath("cel-1.1"), false);
+        assert_eq!(ids_in(&under_the_child, "beads"), ["cel-1.1.1"]);
+    }
+
+    /// Trimming chooses which beads are written and never what is written of
+    /// them: the bug still waits on the bead the trim left out.
+    #[test]
+    fn a_trimmed_bead_reads_as_ready_as_it_did_untrimmed() {
+        let untrimmed = listed(&Only::default(), false);
+        let trimmed = listed(
+            &Only {
+                issue_type: Some("bug".to_string()),
+                ..Only::default()
+            },
+            false,
+        );
+
+        assert_eq!(trimmed["beads"][0]["ready"], false);
+        assert_eq!(trimmed["beads"][0], untrimmed["beads"][3]);
+    }
+
+    /// The trims narrow the ready list and never add to it: the first child
+    /// is urgent, but the ready list left it out.
+    #[test]
+    fn the_trims_combine_with_ready_and_with_each_other() {
+        let ready = ready_listed(
+            &Only {
+                labels: vec!["urgent".to_string()],
+                ..Only::default()
+            },
+            false,
+        );
+        assert_eq!(ids_in(&ready, "in_progress"), Vec::<&str>::new());
+        assert_eq!(ids_in(&ready, "ready"), ["cel-2"]);
+
+        let both = listed(
+            &Only {
+                labels: vec!["human".to_string()],
+                ..beneath("cel-1")
+            },
+            false,
+        );
+        assert_eq!(ids_in(&both, "beads"), ["cel-1.1", "cel-1.1.1"]);
+    }
+
+    /// Each bead names the bead it hangs beneath by its project and id, so a
+    /// reader can place it in its tree, and a root names none.
+    #[test]
+    fn each_bead_names_its_parent() {
+        let written = listed(&Only::default(), false);
+        let parents: Vec<_> = written["beads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bead| (bead["id"].as_str().unwrap(), &bead["parent"]))
+            .collect();
+
+        let celephais = |id: &str| serde_json::json!({"project": "celephais", "id": id});
+        assert_eq!(
+            parents,
+            [
+                ("cel-1", &serde_json::Value::Null),
+                ("cel-1.1", &celephais("cel-1")),
+                ("cel-1.1.1", &celephais("cel-1.1")),
+                ("cel-1.2", &celephais("cel-1")),
+                ("cel-2", &serde_json::Value::Null),
+            ]
+        );
+        let ready = ready_listed(&Only::default(), false);
+        assert_eq!(ready["ready"][0]["parent"], celephais("cel-1.1"));
+    }
+
+    /// As `bd ready --brief`: every bead is written without its
+    /// description, and with everything else it says.
+    #[test]
+    fn brief_leaves_each_description_out() {
+        let nothing = Only::default();
+        for (full, brief, sections) in [
+            (
+                listed(&nothing, false),
+                listed(&nothing, true),
+                &["beads"][..],
+            ),
+            (
+                ready_listed(&nothing, false),
+                ready_listed(&nothing, true),
+                &["in_progress", "ready"],
+            ),
+        ] {
+            for section in sections {
+                let mut described = full[section].as_array().unwrap().clone();
+                for bead in &mut described {
+                    bead.as_object_mut().unwrap().remove("description");
+                }
+                assert_eq!(brief[section], serde_json::json!(described), "{section}");
+            }
+            assert!(
+                full["beads"]
+                    .as_array()
+                    .into_iter()
+                    .chain(full["ready"].as_array())
+                    .flatten()
+                    .all(|bead| bead["description"].is_string()),
+                "{full}"
+            );
+        }
+    }
+}
