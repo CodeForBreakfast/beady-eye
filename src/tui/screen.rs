@@ -1298,6 +1298,8 @@ impl View for Screen {
 
 #[cfg(test)]
 mod tests {
+    mod fold_keys;
+
     use super::*;
     use crate::app::Wanted;
     use crate::collect::run::{FailureKind, RunFailure};
