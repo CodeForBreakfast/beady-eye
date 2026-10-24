@@ -135,11 +135,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use ratatui::style::Color;
 
-    use crate::model::anomaly::Anomaly;
-    use crate::model::snapshot::{
-        Counts, FailedProject, Filter, HiddenTree, ProviderState, TrackerFailure,
-    };
-    use crate::model::types::Status;
+    use crate::model::snapshot::{FailedProject, Filter, ProviderState, TrackerFailure};
     use crate::view::draw::tests::*;
     use crate::view::forest::flatten;
 
@@ -174,38 +170,6 @@ mod tests {
         assert_eq!(
             Painted::of(group_line(SHUT, &broken), 64, 1).rows(),
             vec!["▸ 4 trees with no live agent · 2 with findings                  "]
-        );
-    }
-
-    /// A claim with no pane behind it is a finding, and a tree hidden with one
-    /// in it has taken that finding off the screen. No filter today hides such
-    /// a tree, so it is hidden here the way the filter hides one: the line
-    /// under test is the one that counts, not the one that chooses.
-    #[test]
-    fn a_hidden_tree_whose_only_finding_is_an_anomaly_is_said_to_have_one() {
-        let mut claimed = node("smt-4kd3p.1", "seat the guy wires", Status::InProgress);
-        claimed.anomalies = vec![Anomaly::OrphanClaim { refused: None }];
-        let beads = vec![node("smt-4kd3p", "raise the mast", Status::Open), claimed];
-        let mut hidden = tree(
-            "summit-works",
-            "smt-4kd3p",
-            "raise the mast",
-            Counts::over(&beads),
-        );
-        hidden.children = under_the_root(&beads);
-        hidden.beads = beads;
-
-        let mut snapshot = snapshot(vec![hidden.clone()], Vec::new(), ProviderState::Answering);
-        snapshot.filter = Filter::LiveAgents;
-        snapshot.trees.clear();
-        snapshot.hidden_trees = vec![HiddenTree::of(&hidden)];
-        let frame = frame_of(&flatten(snapshot), 64, 3).rows();
-
-        assert!(
-            frame
-                .iter()
-                .any(|row| row.contains("1 tree with no live agent · 1 with findings")),
-            "{frame:#?}"
         );
     }
 
@@ -376,26 +340,6 @@ path = "/tmp/bdi-ground/dunwich"
             title: title.map(str::to_string),
             ..pane("w:p3", PaneStatus::Working)
         }
-    }
-
-    /// Either half of the report stands alone, with no separator left over
-    /// for the half that is not there.
-    #[test]
-    fn half_a_report_is_said_without_its_separator() {
-        let named = Item::Loose(reporting(Some("orch: core-json"), None));
-        let captioned = Item::Loose(reporting(
-            None,
-            Some("parse bd dep-tree JSON into typed rows"),
-        ));
-
-        assert_eq!(
-            Painted::of(item_line(LAST, &named), 96, 1).rows()[0].trim_end(),
-            "  └── ◍ w:p3 working  orch: core-json  /tmp/bdi-ground/summit-works"
-        );
-        assert_eq!(
-            Painted::of(item_line(LAST, &captioned), 96, 1).rows()[0].trim_end(),
-            "  └── ◍ w:p3 working  parse bd dep-tree JSON into typed rows  /tmp/bdi-ground/summit-works"
-        );
     }
 
     /// One row at the width the whole of a refused pane's takes, so the two

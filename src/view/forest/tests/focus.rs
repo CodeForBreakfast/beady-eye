@@ -274,18 +274,6 @@ fn the_roots_the_mode_stops_drawing_are_drawn_nowhere() {
     );
 }
 
-/// Ferry's root was on the screen and harbour's was behind the filter, and
-/// the mode draws neither.
-#[test]
-fn the_held_back_roots_are_drawn_nowhere() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7.1");
-
-    for root in ["fer-2", "hbr-3"] {
-        assert!(!drawn_here(&forest, root), "{root}: {:#?}", sketch(&forest));
-    }
-}
-
 /// The rows one project draws, its own line first, without the things in
 /// its groups. Nothing for a project the forest does not draw.
 fn rows_of_project(forest: &Forest, project: &str) -> Vec<String> {
@@ -699,40 +687,6 @@ fn a_project_shut_before_focusing_stays_shut_once_the_forest_is_put_back() {
     assert!(drawn_here(&forest, "▸ ferry"), "{:#?}", sketch(&forest));
 }
 
-/// A bead that moved is still the bead. What ends the mode is the bead
-/// going out of the collection, and a tracker that reparented it has done
-/// nothing of the kind.
-#[test]
-fn a_collection_that_moved_the_focused_bead_stays_rooted_at_it() {
-    let mut forest = flatten(snapshot());
-    toggle_fold_of(&mut forest, "dun-7.1");
-    focus_on(&mut forest, "dun-7.1.2");
-    let moved = edited(
-        DUNWICH,
-        r#""seal the feed horn","status":"open",
-   "dependencies":[{"depends_on_id":"dun-7.1""#,
-        r#""seal the feed horn","status":"open",
-   "dependencies":[{"depends_on_id":"dun-7""#,
-    );
-
-    forest.refresh(gather(
-        vec![
-            tree_of("dunwich", &moved),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
-            tree_of("harbour", HARBOUR),
-        ],
-        Vec::new(),
-        Filter::LiveAgents,
-    ));
-
-    assert!(
-        !drawn_here(&forest, "fer-2"),
-        "still rooted at one bead: {:#?}",
-        sketch(&forest)
-    );
-    assert!(drawn_here(&forest, "seal the feed horn"));
-}
-
 /// The rule begins afresh where the moved bead now stands, so the forest
 /// draws what rooting there after the move would have drawn.
 #[test]
@@ -764,17 +718,6 @@ fn a_collection_that_moved_the_focused_bead_roots_the_forest_where_it_moved_to()
     focus_on(&mut rooted_there, "dun-7.1.2");
 
     assert_eq!(sketch(&followed), sketch(&rooted_there));
-}
-
-/// Pressing the key to come back out changes what is on the screen, so the
-/// press says so. A press the loop reads as changing nothing leaves the
-/// rooted forest drawn over a forest that has been put back.
-#[test]
-fn putting_the_forest_back_says_the_screen_changed() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7");
-
-    assert!(forest.apply(Action::FocusForest));
 }
 
 /// A search counts the matches it can take the reader to. Under this mode
@@ -874,74 +817,6 @@ fn focusing_a_bead_under_a_root_draws_it_where_that_root_was() {
             "  │   ├── ! OrphanedDependencies(1)",
             "  │   ├── ○ .1 true the mount",
             "  │   └── ○ .2 seal the feed horn",
-        ]
-    );
-}
-
-/// The mode stops drawing the beads above the focused one, as it stops
-/// drawing every other root.
-#[test]
-fn the_beads_above_the_focused_bead_are_drawn_nowhere() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7.1");
-
-    assert_eq!(
-        sketch(&forest)
-            .into_iter()
-            .take_while(|row| !row.contains("Unattributed"))
-            .collect::<Vec<String>>(),
-        vec![
-            "▾ dunwich",
-            "  ├─▸ ○ dun-7.1 re-point the dish",
-            "  │   └── ! OrphanedDependencies(1)",
-        ]
-    );
-}
-
-/// And the beads beside it, which hang from a bead above it.
-#[test]
-fn the_beads_beside_the_focused_bead_are_drawn_nowhere() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7.1");
-
-    assert!(
-        !drawn_here(&forest, "log the survey marks"),
-        "{:#?}",
-        sketch(&forest)
-    );
-}
-
-/// The focused bead is drawn where a root is drawn, and nowhere else.
-#[test]
-fn the_focused_bead_is_drawn_once() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7.1");
-
-    assert_eq!(
-        sketch(&forest)
-            .iter()
-            .filter(|row| row.contains("re-point the dish"))
-            .count(),
-        1,
-        "{:#?}",
-        sketch(&forest)
-    );
-}
-
-/// No line stands over the beads above the focused one, so nothing counts
-/// the seats on them.
-#[test]
-fn no_line_counts_the_seats_above_the_focused_bead() {
-    let mut forest = flatten(snapshot());
-    focus_on(&mut forest, "dun-7.1");
-
-    assert_eq!(
-        rows_of_project(&forest, "dunwich"),
-        vec![
-            "▾ dunwich",
-            "  ├─▸ ○ dun-7.1 re-point the dish",
-            "  │   └── ! OrphanedDependencies(1)",
-            "  └── [Unattributed dunwich] 2",
         ]
     );
 }

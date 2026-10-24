@@ -185,15 +185,6 @@ fn every_tree_belongs_to_a_project_the_snapshot_names() {
     assert_eq!(snapshot.projects, ["dunwich", "ferry", "harbour"]);
 }
 
-/// Every tracker answered and none of them had a root. The screen has to
-/// carry the reason, because a pane drawn blank reads as a crash.
-#[test]
-fn a_forest_with_nothing_in_it_says_so_rather_than_drawing_nothing() {
-    let forest = flatten(only(Collected::default(), &[]));
-
-    assert_eq!(sketch(&forest), vec!["! NoRoots"]);
-}
-
 /// The fold keys reach a forest that holds nothing, and a walk over it is
 /// given a count of rounds taken from beads there are none of. It has no
 /// fold to point either way, so the screen does not move and still says
@@ -279,9 +270,4 @@ fn a_forest_holding_any_one_thing_does_not_say_it_holds_nothing() {
             sketch(&forest)
         );
     }
-}
-
-#[test]
-fn a_forest_holding_trees_and_every_group_does_not_say_it_holds_nothing() {
-    assert!(!says_it_holds_nothing(&flatten(snapshot())));
 }

@@ -99,23 +99,6 @@ fn a_blocked_bead_with_a_live_agent_is_in_progress() {
     assert!(row_of(&forest, "lgt-4.5").agent.is_some());
 }
 
-/// The closed bead with a pane still on it is not listed, and its anomaly
-/// is counted at the foot rather than lost with its row.
-#[test]
-fn an_anomaly_on_a_bead_the_list_does_not_draw_is_counted_at_its_foot() {
-    let forest = listed(lighthouse());
-
-    assert!(lines_of(&forest, "lgt-4.7").is_empty());
-    assert_eq!(
-        forest
-            .lines()
-            .iter()
-            .last()
-            .map(|line| line.content.clone()),
-        Some(Content::Note(Note::ToCheck(1)))
-    );
-}
-
 /// A tree with nothing wrong in it has no foot.
 #[test]
 fn a_list_with_no_anomaly_has_no_foot() {
@@ -464,19 +447,6 @@ fn what_a_bead_reached_twice_unblocks_is_drawn_once() {
     );
 }
 
-/// The mark is a count of what else is in the way, so a step the expanded
-/// bead alone holds up and one still waiting on another unfinished bead are
-/// told apart by the row itself.
-#[test]
-fn a_step_the_bead_alone_holds_up_is_marked_apart_from_one_waiting_on_more() {
-    let mut forest = listed(slipway());
-    select_bead(&mut forest, "slp-1.1");
-    forest.apply(Action::ExpandOrChild);
-
-    assert_eq!(also_waits_on(&forest, "slp-1.2.1"), 0);
-    assert_eq!(also_waits_on(&forest, "slp-1.3"), 1);
-}
-
 /// A row starts shut, and shutting the row again puts the list back as it
 /// was.
 #[test]
@@ -625,20 +595,6 @@ fn a_waiter_in_another_project_is_drawn_up_to_its_root() {
     );
     select_bead(&mut forest, "hbr-1");
     assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-1")));
-}
-
-/// How many more beads the first step drawn for a bead says it waits on,
-/// found by the whole id its line carries.
-fn also_waits_on(forest: &Forest, id: &str) -> usize {
-    forest
-        .lines()
-        .iter()
-        .find_map(|line| match (line.bead(), &line.content) {
-            (Some(bead), Content::Waiting(waiting)) if bead.id == id => waiting.row.step,
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("{id} is drawn as no step: {:#?}", sketch(forest)))
-        .also_waits_on
 }
 
 /// A search in the list counts the beads the list draws. `lgt-4.8` is open

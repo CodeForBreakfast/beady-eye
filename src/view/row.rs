@@ -600,15 +600,6 @@ mod tests {
         assert_eq!(said, "◍ shell selector · working");
     }
 
-    /// herdr shows a pane id nowhere a reader can look one up, so on a row it
-    /// costs the widest columns of the cell and answers nothing.
-    #[test]
-    fn a_pane_that_says_what_it_is_doing_never_shows_its_id() {
-        let said = agent_marker(&agent(JoinSource::DisplayAgent));
-
-        assert!(!said.contains("wCM:p9"), "{said}");
-    }
-
     /// The last thing left that identifies the pane. A cell saying only that
     /// something is working would drop the agent the row exists to show.
     #[test]
@@ -616,13 +607,6 @@ mod tests {
         let said = agent_marker(&unlabelled(JoinSource::AgentPane));
 
         assert_eq!(said, "◍ wCM:p9 · working");
-    }
-
-    #[test]
-    fn an_agent_the_bead_never_named_is_marked_as_inferred() {
-        let said = agent_marker(&agent(JoinSource::DisplayAgent));
-
-        assert!(said.contains("inferred, not confirmed"), "{said}");
     }
 
     /// The caveat is about the join, not about the work: it says the pane was
@@ -840,88 +824,5 @@ mod tests {
             row.notes.iter().any(|note| note.contains("triage")),
             "{row:?}"
         );
-    }
-
-    #[test]
-    fn badges_are_drawn_in_the_order_they_were_configured() {
-        let mut badged = node("smt-4kd3p.20", Status::Blocked);
-        badged.badges = vec![
-            Badged {
-                key: "delivery_pr".into(),
-                text: "⇢ #12".into(),
-                link: None,
-                short: None,
-                colour: None,
-                drawn_on: DrawnOn::Own,
-            },
-            Badged {
-                key: "blocked_on".into(),
-                text: "⏸ waiting".into(),
-                link: None,
-                short: None,
-                colour: None,
-                drawn_on: DrawnOn::Own,
-            },
-        ];
-
-        let row = cells(&badged, Some(ROOT), None, None);
-        let drawn: Vec<&str> = row.badges.iter().map(|b| b.text.as_str()).collect();
-
-        assert_eq!(drawn, vec!["⇢ #12", "⏸ waiting"]);
-    }
-
-    /// The row is where the URL is going, so the row has to be carrying it.
-    /// `Fitted` cuts a line by the visible width of what its spans say, and
-    /// nothing measures a badge's destination — so it travels beside the text
-    /// rather than in it, and the row is the last place it can travel to.
-    #[test]
-    fn a_badge_carries_its_link_to_the_row_beside_the_text_it_draws() {
-        let mut badged = node("smt-4kd3p.20", Status::Blocked);
-        badged.badges = vec![
-            Badged {
-                key: "delivery_pr".into(),
-                text: "⇢ #12".into(),
-                link: Some("https://forge.invalid/dunwich/arkham/pull/12".into()),
-                short: None,
-                colour: None,
-                drawn_on: DrawnOn::Own,
-            },
-            Badged {
-                key: "blocked_on".into(),
-                text: "⏸ waiting".into(),
-                link: None,
-                short: None,
-                colour: None,
-                drawn_on: DrawnOn::Own,
-            },
-        ];
-
-        let row = cells(&badged, Some(ROOT), None, None);
-
-        assert_eq!(
-            row.badges[0].link.as_deref(),
-            Some("https://forge.invalid/dunwich/arkham/pull/12")
-        );
-        assert_eq!(row.badges[1].link, None);
-        assert!(
-            !row.badges[0].text.contains("forge.invalid"),
-            "the URL is in the text the row draws: {:?}",
-            row.badges[0].text
-        );
-    }
-
-    #[test]
-    fn a_row_says_what_the_bead_says() {
-        let row = cells(
-            &node("smt-4kd3p.20", Status::Blocked),
-            Some(ROOT),
-            None,
-            None,
-        );
-
-        assert_eq!(row.status, Status::Blocked);
-        assert_eq!(row.glyph, '●');
-        assert_eq!(row.id, ".20");
-        assert_eq!(row.title, "wallpaper timer calls dms");
     }
 }

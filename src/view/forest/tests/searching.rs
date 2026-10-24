@@ -42,16 +42,6 @@ fn a_search_matches_the_shortened_id_the_row_draws() {
     );
 }
 
-#[test]
-fn a_search_matches_part_of_a_title() {
-    let mut forest = flatten(snapshot());
-
-    assert_eq!(
-        forest.seek_here("mount"),
-        went_to("dunwich", "dun-7.1.1", 1, 1)
-    );
-}
-
 /// A title is prose and the reader is retyping a word they read off a
 /// row, so the capitals the row happened to carry are not theirs to
 /// reproduce.

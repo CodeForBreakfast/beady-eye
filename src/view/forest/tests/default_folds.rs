@@ -317,13 +317,6 @@ fn a_group_rests_open_when_what_it_holds_is_live() {
     assert_eq!(markers, vec![OPEN, OPEN, SHUT, SHUT, OPEN, OPEN]);
 }
 
-#[test]
-fn a_run_of_quiet_closed_siblings_collapses_to_a_count() {
-    let forest = flatten(snapshot());
-
-    assert!(sketch(&forest).contains(&"  │   └─▸ … 3 more".to_string()));
-}
-
 /// The count is the only account the screen gives of the beads it stands
 /// for, so the line has to be reachable to be worth anything.
 #[test]

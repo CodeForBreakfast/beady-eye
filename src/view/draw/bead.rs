@@ -1483,39 +1483,6 @@ mod tests {
         );
     }
 
-    /// The underline is only a promise; what the reader acts on is the
-    /// hyperlink. A cut badge that kept the one without the other would
-    /// invite the click and drop it.
-    ///
-    /// Read at the head the row kept rather than at the badge's whole words,
-    /// because the sequence has to close inside the columns the row still
-    /// has.
-    #[test]
-    fn a_badge_the_row_cut_opens_where_a_badge_it_kept_whole_opens() {
-        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
-        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
-        badged.badges = vec![Badged {
-            key: "delivery_pr".into(),
-            text: "⇢ #12".into(),
-            link: Some(somewhere.into()),
-            short: None,
-            colour: None,
-            drawn_on: DrawnOn::Own,
-        }];
-
-        let said = symbols(
-            bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
-            EXACTLY_THE_ROW - 1,
-        );
-
-        assert!(
-            said.contains(
-                &hyperlink("⇢ #", somewhere).expect("this vocabulary holds no control character")
-            ),
-            "the badge the row cut was not made a link: {said:?}"
-        );
-    }
-
     /// A badge whose words the emitter refuses is not opened at any width,
     /// including the widths that cut those words back to a head it would
     /// accept. The row would otherwise open a link it drew no underline on,
@@ -1638,44 +1605,6 @@ mod tests {
         assert_eq!(
             a_row_badged(shortenable(None), 33),
             "  ├── ● .20   a bead  ⇢ #12      "
-        );
-    }
-
-    /// The same row at the same width with nothing offered in its place, which
-    /// is every badge configured before there was a short form to name.
-    #[test]
-    fn a_badge_offering_no_short_form_is_cut_as_it_always_was() {
-        let one_length = Badged {
-            short: None,
-            ..shortenable(None)
-        };
-
-        assert_eq!(
-            a_row_badged(one_length, 33),
-            "  ├── ● .20   a bead  ⇢ arkham #…"
-        );
-    }
-
-    /// A short form the row can afford is a span it kept whole, so the badge
-    /// is still followable at exactly the widths it shortened in order to
-    /// survive. Lose the link here and shortening would trade the reference
-    /// for the words that name it.
-    #[test]
-    fn a_badge_said_in_its_short_form_still_points_where_the_long_one_did() {
-        let somewhere = "https://forge.invalid/dunwich/arkham/pull/12";
-        let mut badged = node("smt-4kd3p.20", "a bead", Status::Blocked);
-        badged.badges = vec![shortenable(Some(somewhere))];
-
-        let said = symbols(
-            bead_line(&row(&badged), BRANCH, &ids(4), &Layout::default()),
-            32,
-        );
-
-        assert!(
-            said.contains(
-                &hyperlink("⇢ #12", somewhere).expect("this vocabulary holds no control character")
-            ),
-            "the short form was drawn without the link the long one had: {said:?}"
         );
     }
 

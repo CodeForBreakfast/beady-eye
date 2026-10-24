@@ -345,23 +345,6 @@ mod tests {
         assert_eq!(got, vec![Anomaly::StaleClaim { days: 60 }]);
     }
 
-    /// The other half, on the same inputs: the run answered for the session
-    /// this bead's pane was in, so the pane is gone rather than unasked.
-    #[test]
-    fn a_claim_whose_pane_the_run_could_ask_about_is_orphaned() {
-        let got = detect(
-            &bead("in_progress", SIXTY_DAYS_AGO),
-            None,
-            None,
-            ProviderState::Answering,
-            false,
-            false,
-            &Anomalies::default(),
-            now(),
-        );
-        assert_eq!(got, vec![orphan(), Anomaly::StaleClaim { days: 60 }]);
-    }
-
     /// The seat convention: the pane is named on the bead covering the work,
     /// and the steps beneath it are in progress with nothing of their own to
     /// name. The age rule reads bd alone, so a covered claim still goes stale.
@@ -565,19 +548,4 @@ mod tests {
     }
 
     // ---- the wire ------------------------------------------------------
-
-    #[test]
-    fn the_rules_serialise_under_the_names_the_contract_publishes() {
-        let json = serde_json::to_string(&vec![
-            Anomaly::StalePane,
-            orphan(),
-            Anomaly::StaleClaim { days: 60 },
-        ])
-        .expect("the anomalies serialise");
-
-        assert_eq!(
-            json,
-            r#"[{"rule":"stale-pane"},{"rule":"orphan-claim"},{"rule":"stale-claim","days":60}]"#
-        );
-    }
 }

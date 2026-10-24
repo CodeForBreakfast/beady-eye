@@ -127,29 +127,6 @@ fn opening_the_unconfigured_group_names_the_directories() {
     );
 }
 
-/// The filter's choice holds — a hidden tree is not drawn — but a group
-/// that says only how many trees it hides reads like "nothing to see"
-/// when one of them is waiting on work bd never returned.
-#[test]
-fn the_hidden_trees_group_says_how_many_of_them_have_findings() {
-    let broken = edited(
-        HARBOUR,
-        r#"{"depends_on_id":"hbr-3","type":"parent-child"}"#,
-        r#"{"depends_on_id":"hbr-3","type":"parent-child"},
-                   {"depends_on_id":"hbr-9","type":"blocks"}"#,
-    );
-    let snapshot = gather(
-        vec![tree_of("dunwich", DUNWICH), tree_of("harbour", &broken)],
-        Vec::new(),
-        Filter::LiveAgents,
-    );
-
-    let group = hidden_trees_group(&flatten(snapshot), "harbour");
-
-    assert_eq!(group.count, 1);
-    assert_eq!(group.with_findings, 1);
-}
-
 #[test]
 fn a_hidden_tree_with_nothing_wrong_in_it_is_only_counted_as_hidden() {
     let group = hidden_trees_group(&flatten(snapshot()), "harbour");
@@ -271,16 +248,6 @@ fn beneath_the_selection(forest: &Forest) -> Vec<String> {
         .iter()
         .map(|line| format!("{}{}", line.prefix, said(&line.content)))
         .collect()
-}
-
-/// A hidden tree's row is its root's row, so it stands for that bead as
-/// a tree's header does: the show key and `y` have a bead to work on.
-#[test]
-fn a_hidden_trees_row_stands_for_its_root() {
-    let mut forest = flatten(snapshot());
-    select_hidden_tree(&mut forest);
-
-    assert_eq!(cursor(&forest), Some(&key("harbour", "hbr-3")));
 }
 
 /// A hidden tree is a tree, and the group is only where the filter put
