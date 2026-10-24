@@ -9,6 +9,7 @@ mod canned;
 mod terminal;
 
 mod a_shim_refuses_rather_than_hand_the_call_on;
+mod an_open_gate_with_no_open_blocker_is_ready;
 mod conflict_directions;
 mod forest_order;
 mod one_beads_dependency_tree;

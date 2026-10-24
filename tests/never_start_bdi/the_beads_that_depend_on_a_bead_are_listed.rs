@@ -75,8 +75,14 @@ path = "/srv/work/dunwich"
 fn dependents_of(project: &str, id: &str) -> Value {
     let cfg = Config::from_toml(BOTH_PROJECTS).expect("the config parses");
     let trackers = Fakes::default()
-        .with("arkham", Fake::holding(parse_beads(ARKHAM).expect("the rows parse")))
-        .with("dunwich", Fake::holding(parse_beads(DUNWICH).expect("the rows parse")));
+        .with(
+            "arkham",
+            Fake::holding(parse_beads(ARKHAM).expect("the rows parse")),
+        )
+        .with(
+            "dunwich",
+            Fake::holding(parse_beads(DUNWICH).expect("the rows parse")),
+        );
     let herdr = Canned::default().herdr_holding(r#"{"result":{"agents":[]}}"#);
     let snapshot = beady_eye::app::run(
         &cfg,
