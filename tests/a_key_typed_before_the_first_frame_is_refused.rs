@@ -27,7 +27,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::{Duration, Instant};
 
 use terminal::driver::Driven;
-use terminal::{a_home_whose_config_does_not_parse, said_by};
+use terminal::{a_home_whose_config_does_not_parse, row_of, rows_of, said_by};
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -61,4 +61,41 @@ fn a_key_typed_before_the_first_frame_is_refused_at_once() {
         took < A_REFUSAL_TAKES,
         "the driver took {took:?} to refuse the key, which is a deadline rather than a refusal"
     );
+}
+
+/// A frame as `bdi` writes one: each run of text is preceded by a cursor move,
+/// and a styled run arrives in pieces, so a row's words are never on the wire
+/// together. A tree's header is the second row and a bead of it the third. The
+/// window over them says that bead again on the sixth.
+const A_FRAME: &[u8] = b"\x1b[1;1Hgrove\
+    \x1b[2;1H\x1b[34mgrv-1\x1b[0m\x1b[2;9HEvery outside program\
+    \x1b[3;1H\x1b[34mgrv-1.1\x1b[0m\x1b[3;11HChange sources\
+    \x1b[5;1H\x1b[34m\xe2\x94\x8c grv-1.1\x1b[0m\
+    \x1b[6;2Hgrv-1.1\x1b[6;11HChange sources";
+
+/// The row a word was drawn on is read back off the frame, for words that
+/// reached the wire in two pieces as much as for whole ones. The pty tests
+/// press on rows read this way, so a reading that is quietly wrong makes all
+/// of them green by construction.
+#[test]
+fn the_rows_read_off_a_frame_are_the_rows_it_drew_on() {
+    assert_eq!(row_of(A_FRAME, "grove".as_bytes()), Some(0));
+    assert_eq!(row_of(A_FRAME, "Every outside".as_bytes()), Some(1));
+    assert_eq!(row_of(A_FRAME, "grv-1   Every".as_bytes()), Some(1));
+    assert_eq!(row_of(A_FRAME, "no such words".as_bytes()), None);
+}
+
+/// And words drawn twice are read off no row at all. Handing back the first is
+/// the natural implementation and it hands back a plausible row, so a test
+/// built on it presses somewhere nobody chose.
+#[test]
+fn words_drawn_twice_are_read_off_no_row() {
+    let in_the_forest_and_in_the_window = "Change sources".as_bytes();
+
+    assert_eq!(
+        rows_of(A_FRAME, in_the_forest_and_in_the_window),
+        [2, 5],
+        "the words are not on two rows, so this says nothing"
+    );
+    assert_eq!(row_of(A_FRAME, in_the_forest_and_in_the_window), None);
 }
