@@ -1,0 +1,22 @@
+#!/bin/sh
+# A herdr that answers for the invented ground in $DEMO_GROUND/herdr and
+# refuses everything else, so the recording never reads a real session. The
+# first pane it reads out starts arkham's clock. A step the ground has made
+# due is taken just before the agents are listed, so the tracker bdi reads
+# next agrees with them.
+[ "${1:-}" = "--session" ] && shift 2
+case "${1:-} ${2:-}" in
+  "session list") exec cat "$DEMO_GROUND/herdr/sessions.json" ;;
+  "agent list")
+    if mv "$DEMO_GROUND/herdr/due" "$DEMO_GROUND/herdr/taking" 2>/dev/null; then
+      sh "$DEMO_GROUND/herdr/taking" && mv "$DEMO_GROUND/herdr/taking" "$DEMO_GROUND/herdr/taken"
+    fi
+    exec cat "$DEMO_GROUND/herdr/default.json" ;;
+  "agent read")
+    : >"$DEMO_GROUND/herdr/read"
+    for arg; do
+      [ -f "$DEMO_GROUND/herdr/visible.$arg" ] && exec cat "$DEMO_GROUND/herdr/visible.$arg"
+    done ;;
+esac
+echo "herdr stand-in: no answer for: $*" >&2
+exit 127
