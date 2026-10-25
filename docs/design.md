@@ -22,38 +22,31 @@ figure nobody can retire.
 ## The problem
 
 Work is tracked in [beads](https://github.com/gastownhall/beads) and done by
-coding agents running in terminal panes. Two systems hold the truth and neither
-holds all of it:
+coding agents running in terminal panes. With many agents at work at once, two
+things get hard.
 
-- **bd** knows the work — the tree of beads, the dependency edges, each bead's
-  status and who claimed it.
-- **herdr** knows the agents — which pane is alive and what it is doing.
+**The goals of the work drop out of sight.** Each agent works one bead, and
+the beads reach a person one at a time: a list, a `bd show`, a ready queue.
+What a bead is for lives in the edges above it, and nothing draws those edges
+as the work moves. That holds for a single project's work as much as for work
+that spans several.
 
-Nothing joins them, which costs two things.
-
-**No single view.** `bd graph` renders the tree but knows nothing about agents.
-`herdr agent list` knows the agents but nothing about the tree. To answer "what
-is left, what is done, and what is being worked on right now" you read two
-surfaces and hold the join in your head.
-
-**Drift between them is invisible.** Observed live while writing this design:
-
-| bead | bd says | herdr says |
-|---|---|---|
-| `smt-4kd3p.6` | closed | pane `wCM:p4` working |
-| `smt-4kd3p.11` | closed | pane `wCM:pB` working |
-| `smt-4kd3p.16` | in_progress | no pane carries this bead |
-
-The first two are agents that finished and never exited. The third is a claim
-with no visible agent — or an agent that has not identified itself yet, and
-**today those two are indistinguishable**. That is the specific thing this
-fixes.
+**What the agents are actually doing is hard to track.** bd knows the work —
+the tree of beads, the dependency edges, each bead's status and who claimed it.
+herdr knows the agents — which pane is alive and what it is doing. Nothing
+joins them. To answer "what is left, what is done, and what is being worked on
+right now" you read two surfaces and hold the join in your head.
 
 ## Goal
 
-A tree of work rooted at a bead, with each node annotated by the live agent
-working on it. The work is the spine; agents are an annotation that is absent on
-most rows.
+A tree of work rooted at a bead, so the goal each piece of work serves is
+always drawn above it, with each node annotated by the live agent working on
+it. The work is the spine; agents are an annotation that is absent on most
+rows.
+
+Joining the two also shows where they disagree, such as a closed bead whose
+agent's pane is still alive. The join reports each such case as an anomaly
+(see *Anomaly rules*).
 
 ## Terminology
 
