@@ -31,11 +31,12 @@ about, and each thing you let it see gives it more to do.
   on to the bead that waits. An issue closing, or a repository publishing its
   next release, ends a wait on it too.
 
-![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
+![An animation of bdi over two projects, arkham and dunwich. Each project's beads are drawn as trees under the goal they serve, each bead with its status glyph and its id, and beside the three beads being worked sits the agent working each one, named in green by what it is doing. The selection moves onto the refund bead, and the band under the trees shows what that agent's pane is saying. Then a new agent takes the bead to cut the live keys over, the search index's agent finishes its bead and takes the next, and the trees redraw as each happens. The selection moves onto the live keys bead, and the band shows what its new agent is saying.](docs/bdi-at-work.gif)
 
-This is arkham with herdr running: twelve beads in two trees, each under the
-goal it serves. Three of them have a live agent beside them, and the band under
-the trees is what the selected one's pane is saying.
+This is arkham and dunwich with herdr running. Each project's beads sit in
+trees under the goal they serve, and each agent is named beside the bead it
+works by what it is doing. As the agents move on, the trees redraw. The band
+under the trees is what the selected bead's pane is saying.
 
 All of this happens while you are looking elsewhere. Anything that can write to
 a bead can reach whoever watches that bead, and neither side needs to know the
