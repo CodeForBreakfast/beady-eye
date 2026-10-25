@@ -78,8 +78,7 @@ const NO_TERMINAL: u8 = 2;
 #[command(
     name = "bdi",
     version,
-    about = "Shows you, live, what every agent is doing across your projects, \
-             and tells agents and scripts when the beads they wait on change.",
+    about,
     args_conflicts_with_subcommands = true,
     after_help = WHICH_PROJECTS_A_RUN_READS
 )]
@@ -1451,7 +1450,7 @@ detached
     }
 
     #[test]
-    fn the_about_line_gives_the_view_and_the_notifications() {
+    fn the_about_line_leads_with_the_trees_then_the_agents() {
         let about = Cli::command()
             .get_about()
             .expect("bdi has an about")
@@ -1459,8 +1458,9 @@ detached
 
         assert_eq!(
             about,
-            "Shows you, live, what every agent is doing across your projects, \
-             and tells agents and scripts when the beads they wait on change."
+            "Draws the work in your beads trackers as trees, with what each agent \
+             is doing beside the bead it works. It also watches beads for whatever \
+             waits on them, and settles beads that wait on GitHub."
         );
     }
 
