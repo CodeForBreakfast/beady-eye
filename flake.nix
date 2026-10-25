@@ -1,5 +1,5 @@
 {
-  description = "beady-eye - a bead graph annotated with live herdr pane activity";
+  description = "Trees of work from beads trackers, with what each agent is doing on its bead";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -22,6 +22,8 @@
   outputs = { self, nixpkgs, flake-utils, beads, crane }:
     let
       cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+
+      flakeDescription = (import ./flake.nix).description;
 
       # Every check is built from a source tree, and nix hashes the whole of
       # the one it is handed. So a file in there that no check reads still
@@ -3389,7 +3391,7 @@ and a second line"
 
           cat <<EOF
           class Bdi < Formula
-            desc "Tree of work in flight: bead graphs annotated with the live agents working them"
+            desc "${flakeDescription}"
             homepage "https://github.com/CodeForBreakfast/beady-eye"
             license "Apache-2.0"
 
@@ -3539,7 +3541,7 @@ and a second line"
 
           cat > "$NIX_BUILD_TOP/expected.rb" <<'EOF'
           class Bdi < Formula
-            desc "Tree of work in flight: bead graphs annotated with the live agents working them"
+            desc "${flakeDescription}"
             homepage "https://github.com/CodeForBreakfast/beady-eye"
             license "Apache-2.0"
 

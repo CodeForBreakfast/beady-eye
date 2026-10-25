@@ -3,15 +3,22 @@
 ![A screen-printed cosmic-horror poster: a colossal eye with a red pupil hangs in a green-black sky, tentacles trailing away behind it, while a line of small robots below hauls a chain of glowing beads under its gaze.](docs/images/beady-eye-hero.png)
 
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
-tracker you point it at. It shows you, live, what every agent is doing across
-your projects, and it tells agents and scripts when the beads they wait on
-change. `bd` is all it needs. It will also look at whatever else you leave
-lying about, and each thing you let it see gives it more to do.
+tracker you point it at. It draws your work as trees, so the goals stay in view
+however many agents are at work on the pieces. Beside each bead it shows what
+the agent working it is actually doing. It also tells agents and scripts when
+the beads they wait on change, and settles the beads that wait on GitHub.
+`bd` is all it needs. It will also look at whatever else you leave lying
+about, and each thing you let it see gives it more to do.
 
-- **It shows you the work.** Each tracker's work is drawn as a tree, and a
+- **It keeps the goals in view.** Each tracker's work is drawn as a tree, with
+  a goal at the root and the work it waits on beneath it. With a lot of agents
+  at work it is easy to lose sight of what they are working towards, and the
+  tree keeps it in sight, whether the work sits in one project or several. A
   bead waiting on another project's work has that work drawn beneath it,
-  whichever tracker holds it. Add [herdr](https://herdr.dev), and beside every
-  bead an agent has claimed sits the live pane that agent is in.
+  whichever tracker holds it.
+- **It shows you what the agents are doing.** Add [herdr](https://herdr.dev),
+  and beside every bead an agent has claimed sits the live pane that agent is
+  in. Under the trees is the tail of what the selected bead's pane is saying.
 - **It tells whoever is watching.** `bdi watch` keeps watch over every tracker
   at once, and tells anything connected to it the moment a bead it watches
   changes. Add Claude Code with the beady-eye plugin, and a session is told
@@ -26,11 +33,9 @@ lying about, and each thing you let it see gives it more to do.
 
 ![A bdi screen: the arkham project over twelve beads in two trees, each bead drawn with its status glyph and its id in that status's colour, three of them with a green agent marker and pane id beside them, one warning that a bead is claimed with no pane behind it, three panes below that no bead claims, and a band at the foot showing what is on the selected bead's pane.](docs/bdi-frame.svg)
 
-This is arkham with herdr running. Three of its beads have a live agent beside
-them, and the band at the foot is what the selected one's pane is saying.
-`ark-5` is what else falls out of watching beads and herdr at once: beads says
-an agent claimed it, herdr has no pane for that agent, and the eye says so. It
-has seen a pane die on a Tuesday before.
+This is arkham with herdr running: twelve beads in two trees, each under the
+goal it serves. Three of them have a live agent beside them, and the band under
+the trees is what the selected one's pane is saying.
 
 All of this happens while you are looking elsewhere. Anything that can write to
 a bead can reach whoever watches that bead, and neither side needs to know the
@@ -180,6 +185,15 @@ A bead held by an open pull request's gate is listed `in_delivery` instead,
 and a ready bead whose pull request has merged is listed `delivered`, to close
 rather than start. Each names its `pull_requests`.
 
+## Being seen
+
+The eye draws only what it can find. An agent that wants to be found tells
+the bead which pane it is in. One that does not still toils, but toils among
+the unaccounted-for below the trees, and no amount of staring will move it up.
+
+[docs/agents.md](docs/agents.md) is addressed to the agent rather than to you.
+Hand it over, and let it fold the lines into whatever it already obeys.
+
 ## Several trackers
 
 A config file opens the eye on all of them:
@@ -233,6 +247,12 @@ $ bdi --json --all --all-projects | jq --arg project dunwich --arg id dun-7 '
      | {project, id, status}]
     | unique'
 ```
+
+[docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
+what a bead carries, credentials, extra roots, intervals, the light theme, and
+the socket you can poke to say a tracker changed so the eye stops polling it.
+
+## Watching
 
 `bdi watch` reads every configured project and holds what it read, polling as
 the eye does and taking the same reports on a socket of its own. Run one per
@@ -321,10 +341,6 @@ never told of a change:
 $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
 ```
 
-[docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
-what a bead carries, credentials, extra roots, intervals, the light theme, and
-the socket you can poke to say a tracker changed so the eye stops polling it.
-
 ## Writing back
 
 beady-eye writes to a tracker in two ways.
@@ -411,15 +427,6 @@ in the gate's own tracker or in another project the config names. Where a
 producer covers the bead's tracker, the gate closes moments after the producer
 says that tracker changed.
 
-## Being seen
-
-The eye draws only what it can find. An agent that wants to be found tells
-the bead which pane it is in. One that does not still toils, but toils among
-the unaccounted-for below the trees, and no amount of staring will move it up.
-
-[docs/agents.md](docs/agents.md) is addressed to the agent rather than to you.
-Hand it over, and let it fold the lines into whatever it already obeys.
-
 ## What it needs
 
 - **Linux or macOS.** Unix sockets and unix signals. Windows would need a
@@ -430,8 +437,10 @@ Hand it over, and let it fold the lines into whatever it already obeys.
   password, and it reaches bd in `BEADS_DOLT_PASSWORD`, from your shell or from
   a project's `credential_command`.
 - **herdr, for the agents.** Without it you get the trees and the claims, and
-  every tree is drawn. With it you get the point: which claim has a live pane
-  behind it, which pane toils on nothing any bead has heard of, and the tail.
+  every tree is drawn. With it you see what each agent is doing: the live pane
+  beside each bead an agent claimed, and the tail of what it is saying. It also
+  shows a claim with no pane behind it, and a pane that toils on nothing any
+  bead has heard of.
   With `bdi` on your `PATH`, a binding in herdr's config opens it as a popup
   on the focused pane's project, and `q` puts it away again:
 
