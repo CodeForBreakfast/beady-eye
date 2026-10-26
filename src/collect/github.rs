@@ -177,13 +177,7 @@ pub fn open_pull_requests_headed_by(
         "repos/{}/{}/commits/{sha}/pulls?per_page=100",
         repo.owner, repo.name
     );
-    let mut args = vec!["api", &path];
-    if let Some(host) = repo.host {
-        args.extend(["--hostname", host]);
-    }
-    let out = runner.run("gh", &args, None, &Env::new())?;
-    let listed: Vec<PullRequestAt> =
-        serde_json::from_str(&out).map_err(|e| RunFailure::parse("gh", e))?;
+    let listed: Vec<PullRequestAt> = rest(runner, repo, &path)?;
     Ok(listed
         .into_iter()
         .filter(|pull_request| {
@@ -228,7 +222,126 @@ pub struct Run {
 /// only by its node id.
 pub fn workflow_run(runner: &dyn Runner, repo: &Repository, id: u64) -> Result<Run, RunFailure> {
     let path = format!("repos/{}/{}/actions/runs/{id}", repo.owner, repo.name);
-    let mut args = vec!["api", &path];
+    rest(runner, repo, &path)
+}
+
+/// What Actions lists of a commit's workflow runs, cut to what this reads.
+#[derive(Deserialize)]
+struct WorkflowRuns {
+    total_count: usize,
+    workflow_runs: Vec<WorkflowRun>,
+}
+
+/// One workflow run as REST gives it. GitHub gives a conclusion once the run
+/// has completed, and says when it finished only as when it was last updated.
+#[derive(Deserialize)]
+struct WorkflowRun {
+    name: Option<String>,
+    workflow_id: u64,
+    conclusion: Option<String>,
+    run_started_at: Option<DateTime<Utc>>,
+    updated_at: Option<DateTime<Utc>>,
+}
+
+/// What GitHub combines of a commit's statuses: the latest for each context.
+#[derive(Deserialize)]
+struct CombinedStatus {
+    total_count: usize,
+    statuses: Vec<CommitStatus>,
+}
+
+#[derive(Deserialize)]
+struct CommitStatus {
+    state: String,
+    created_at: Option<DateTime<Utc>>,
+}
+
+/// The checks on commit `sha` in `repo`, read from its workflow runs and its
+/// commit statuses, which GitHub lets a token read that it refuses check
+/// runs to. They are given in the shape GraphQL answers `statusCheckRollup`,
+/// each run as a check run of its workflow, and null where the commit has
+/// neither. `sha` goes into the path, so the caller has checked it is
+/// hexadecimal.
+///
+/// The rollup fails where any run or status failed, as GitHub combines
+/// statuses, is pending where none failed and any has not finished, and
+/// succeeds otherwise.
+pub fn checks_without_check_runs(
+    runner: &dyn Runner,
+    repo: &Repository,
+    sha: &str,
+) -> Result<Value, RunFailure> {
+    // ponytail: the latest hundred runs and statuses only. totalCount says
+    // there were more, which the events reading checks already allow for.
+    // Follow the pages if a commit ever has more.
+    let (owner, name) = (repo.owner, repo.name);
+    let runs: WorkflowRuns = rest(
+        runner,
+        repo,
+        &format!("repos/{owner}/{name}/actions/runs?head_sha={sha}&per_page=100"),
+    )?;
+    let statuses: CombinedStatus = rest(
+        runner,
+        repo,
+        &format!("repos/{owner}/{name}/commits/{sha}/status?per_page=100"),
+    )?;
+    if runs.workflow_runs.is_empty() && statuses.statuses.is_empty() {
+        return Ok(Value::Null);
+    }
+    let finished_well = |conclusion: &str| matches!(conclusion, "success" | "neutral" | "skipped");
+    let failed = runs
+        .workflow_runs
+        .iter()
+        .any(|run| run.conclusion.as_deref().is_some_and(|c| !finished_well(c)))
+        || statuses
+            .statuses
+            .iter()
+            .any(|status| matches!(status.state.as_str(), "failure" | "error"));
+    let going = runs
+        .workflow_runs
+        .iter()
+        .any(|run| run.conclusion.is_none())
+        || statuses
+            .statuses
+            .iter()
+            .any(|status| status.state == "pending");
+    let state = match (failed, going) {
+        (true, _) => "FAILURE",
+        (false, true) => "PENDING",
+        (false, false) => "SUCCESS",
+    };
+    let nodes = runs
+        .workflow_runs
+        .into_iter()
+        .map(|run| {
+            serde_json::json!({
+                "name": run.name,
+                "checkSuite": {"app": null, "workflowRun": {"workflow": {"id": run.workflow_id}}},
+                "completedAt": run.conclusion.is_some().then_some(run.updated_at).flatten(),
+                "conclusion": run.conclusion.map(|conclusion| conclusion.to_uppercase()),
+                "startedAt": run.run_started_at,
+            })
+        })
+        .chain(statuses.statuses.into_iter().map(|status| {
+            serde_json::json!({
+                "state": status.state.to_uppercase(),
+                "createdAt": status.created_at,
+            })
+        }))
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "state": state,
+        "contexts": {"totalCount": runs.total_count + statuses.total_count, "nodes": nodes},
+    }))
+}
+
+/// What GitHub answers REST's `path` with in `repo`, read as `T`.
+fn rest<T: serde::de::DeserializeOwned>(
+    runner: &dyn Runner,
+    repo: &Repository,
+    path: &str,
+) -> Result<T, RunFailure> {
+    let mut args = vec!["api", path];
     if let Some(host) = repo.host {
         args.extend(["--hostname", host]);
     }
@@ -842,6 +955,154 @@ mod tests {
         let runner = FakeRunner::default().with(&on_forge, RAN);
 
         assert!(workflow_run(&runner, &ark(Some("forge.invalid")), 4242).is_ok());
+    }
+
+    const RUNS_OF_SHA: &str = "gh api repos/example/ark/actions/runs?head_sha=5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff&per_page=100";
+    const STATUSES_OF_SHA: &str =
+        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/status?per_page=100";
+
+    /// `runs` as Actions lists a commit's workflow runs, cut to a few of the
+    /// fields GitHub answers with.
+    fn runs_listed(runs: &[&str]) -> String {
+        format!(
+            r#"{{"total_count":{},"workflow_runs":[{}]}}"#,
+            runs.len(),
+            runs.join(",")
+        )
+    }
+
+    /// `statuses` as GitHub combines a commit's statuses, with the combined
+    /// state GitHub gives a commit with none.
+    fn statuses_combined(statuses: &[&str]) -> String {
+        format!(
+            r#"{{"state":"pending","total_count":{},"statuses":[{}]}}"#,
+            statuses.len(),
+            statuses.join(",")
+        )
+    }
+
+    fn run(name: &str, conclusion: &str) -> String {
+        format!(
+            r#"{{"id":4242,"name":"{name}","workflow_id":99,"status":"completed","conclusion":{conclusion},"run_started_at":"2026-10-06T08:00:00Z","updated_at":"2026-10-06T08:05:00Z"}}"#
+        )
+    }
+
+    const RUNNING: &str = r#"{"id":4243,"name":"CI","workflow_id":99,"status":"in_progress","conclusion":null,"run_started_at":"2026-10-06T08:00:00Z","updated_at":"2026-10-06T08:01:00Z"}"#;
+
+    fn status(state: &str) -> String {
+        format!(r#"{{"state":"{state}","context":"lint","created_at":"2026-10-06T08:10:00Z"}}"#)
+    }
+
+    fn checks_of_sha(runs: &[&str], statuses: &[&str]) -> Result<Value, RunFailure> {
+        let runner = FakeRunner::default()
+            .with(RUNS_OF_SHA, &runs_listed(runs))
+            .with(STATUSES_OF_SHA, &statuses_combined(statuses));
+        checks_without_check_runs(&runner, &ark(None), SHA)
+    }
+
+    fn rollup_state(runs: &[&str], statuses: &[&str]) -> Value {
+        checks_of_sha(runs, statuses).expect("both read")["state"].clone()
+    }
+
+    #[test]
+    fn a_failed_run_or_status_fails_the_checks_whatever_else_is_still_going() {
+        let (failed, error) = (run("CI", r#""failure""#), status("error"));
+        let (passed, success) = (run("CI", r#""success""#), status("success"));
+
+        assert_eq!(rollup_state(&[&failed, RUNNING], &[&success]), "FAILURE");
+        assert_eq!(rollup_state(&[&passed, RUNNING], &[&error]), "FAILURE");
+        assert_eq!(rollup_state(&[&passed], &[&status("failure")]), "FAILURE");
+    }
+
+    #[test]
+    fn checks_with_a_run_or_status_still_going_and_none_failed_are_pending() {
+        let passed = run("CI", r#""success""#);
+
+        assert_eq!(rollup_state(&[&passed, RUNNING], &[]), "PENDING");
+        assert_eq!(rollup_state(&[&passed], &[&status("pending")]), "PENDING");
+    }
+
+    #[test]
+    fn checks_whose_every_run_and_status_finished_well_pass() {
+        let runs = [
+            run("CI", r#""success""#),
+            run("Docs", r#""skipped""#),
+            run("Lint", r#""neutral""#),
+        ];
+        let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
+
+        assert_eq!(rollup_state(&runs, &[&status("success")]), "SUCCESS");
+        assert_eq!(rollup_state(&[], &[&status("success")]), "SUCCESS");
+    }
+
+    /// As GraphQL has a commit with no checks, where GitHub combines no
+    /// statuses as pending.
+    #[test]
+    fn a_commit_with_no_runs_and_no_statuses_has_no_checks() {
+        assert_eq!(checks_of_sha(&[], &[]), Ok(Value::Null));
+    }
+
+    /// Each run and status as GraphQL gives a check run and a commit status,
+    /// so the events reading checks read them alike.
+    #[test]
+    fn runs_and_statuses_are_given_as_graphql_gives_check_runs_and_statuses() {
+        let checks = checks_of_sha(
+            &[&run("CI", r#""cancelled""#), RUNNING],
+            &[&status("success")],
+        )
+        .expect("both read");
+
+        assert_eq!(
+            checks["contexts"],
+            serde_json::json!({
+                "totalCount": 3,
+                "nodes": [
+                    {
+                        "name": "CI",
+                        "checkSuite": {"app": null, "workflowRun": {"workflow": {"id": 99}}},
+                        "conclusion": "CANCELLED",
+                        "startedAt": "2026-10-06T08:00:00Z",
+                        "completedAt": "2026-10-06T08:05:00Z"
+                    },
+                    {
+                        "name": "CI",
+                        "checkSuite": {"app": null, "workflowRun": {"workflow": {"id": 99}}},
+                        "conclusion": null,
+                        "startedAt": "2026-10-06T08:00:00Z",
+                        "completedAt": null
+                    },
+                    {"state": "SUCCESS", "createdAt": "2026-10-06T08:10:00Z"}
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn a_commits_runs_and_statuses_are_asked_of_the_host_its_repository_is_on() {
+        let on_forge = |argv: &str| format!("{argv} --hostname forge.invalid");
+        let runner = FakeRunner::default()
+            .with(&on_forge(RUNS_OF_SHA), &runs_listed(&[]))
+            .with(&on_forge(STATUSES_OF_SHA), &statuses_combined(&[]));
+
+        assert!(checks_without_check_runs(&runner, &ark(Some("forge.invalid")), SHA).is_ok());
+    }
+
+    #[test]
+    fn a_commit_whose_runs_or_statuses_github_refuses_fails_as_gh_said() {
+        let refused = || exited(FailureKind::Unavailable);
+        let runs_refused = FakeRunner::default()
+            .failing(RUNS_OF_SHA, refused())
+            .with(STATUSES_OF_SHA, &statuses_combined(&[]));
+        let statuses_refused = FakeRunner::default()
+            .with(RUNS_OF_SHA, &runs_listed(&[]))
+            .failing(STATUSES_OF_SHA, refused());
+
+        for runner in [runs_refused, statuses_refused] {
+            assert_eq!(
+                checks_without_check_runs(&runner, &ark(None), SHA),
+                Err(refused())
+            );
+        }
     }
 
     #[test]
