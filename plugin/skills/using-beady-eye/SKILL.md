@@ -1,6 +1,6 @@
 ---
 name: using-beady-eye
-description: Use when a session waits on a bead it cannot move itself, such as a question it asked, another agent's work or a pull request merging, and when a `<channel source="beady-eye">` block arrives. Covers what to watch, how to read a change, what to do when the watcher is down, and unwatching a bead once the session is done waiting on it.
+description: Use to subscribe to a bead's changes instead of sleeping and re-reading it, when a session waits on a bead it cannot move itself, such as a question it asked, another agent's work or a pull request merging, and when a `<channel source="beady-eye">` block arrives. Covers what to watch, how to read a change, what to do when the watcher is down, and unwatching a bead once the session is done waiting on it.
 ---
 
 # Using beady-eye
