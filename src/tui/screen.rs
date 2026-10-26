@@ -1378,6 +1378,8 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::style::{Modifier, Style};
     use std::collections::BTreeMap;
+    use std::os::fd::AsRawFd;
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
 
     /// What the bindings window has inside its border, one string per row,
@@ -4820,5 +4822,51 @@ mod tests {
             "the row above the tail is still the forest's"
         );
         assert!(rows[bands.keys.y as usize].contains("q quit"));
+    }
+
+    /// What the fixture below leaves with once its panic has come back to it.
+    const THE_PANIC_CAME_BACK: i32 = 17;
+
+    /// A panic once the terminal has gone runs `bdi`'s panic hook, and every
+    /// write that hook makes fails. The panic still comes back rather than
+    /// aborting `bdi`. The fixture runs in a process of its own, since a
+    /// panic hook and the standard streams belong to the whole process.
+    #[test]
+    fn a_panic_once_the_terminal_has_gone_does_not_abort() {
+        let ran = Command::new(std::env::current_exe().expect("this binary has a path"))
+            .args([
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "tui::screen::tests::panicking_once_the_terminal_has_gone",
+            ])
+            .output()
+            .expect("this binary runs");
+
+        assert_eq!(
+            ran.status.code(),
+            Some(THE_PANIC_CAME_BACK),
+            "the panic did not come back: {}",
+            ran.status
+        );
+    }
+
+    #[test]
+    #[ignore = "the subject of a_panic_once_the_terminal_has_gone_does_not_abort, which runs it"]
+    fn panicking_once_the_terminal_has_gone() {
+        let (reader, gone) = std::io::pipe().expect("a pipe is ours to open");
+        drop(reader);
+        for stream in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+            assert_ne!(unsafe { libc::dup2(gone.as_raw_fd(), stream) }, -1);
+        }
+        put_the_terminal_back_on_a_panic();
+
+        let panicked = std::panic::catch_unwind(|| panic!("a panic once the terminal has gone"));
+
+        std::process::exit(if panicked.is_err() {
+            THE_PANIC_CAME_BACK
+        } else {
+            1
+        });
     }
 }
