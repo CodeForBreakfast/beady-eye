@@ -15,7 +15,7 @@ use ratatui::crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
 };
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{Clear, ClearType};
+use ratatui::crossterm::terminal::{enable_raw_mode, Clear, ClearType, EnterAlternateScreen};
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
@@ -971,7 +971,7 @@ impl Shown {
 ///
 /// The terminal is on the alternate screen, in raw mode and reporting the
 /// mouse for as long as this lives, so dropping it puts the terminal back
-/// however the loop ended. `ratatui::init` hooks panics as well, and `Drop`
+/// however the loop ended. A panic hook puts it back as well, and `Drop`
 /// runs as the panic unwinds, so a crash does not leave a wedged tty behind
 /// either. A signal arrives as an event the loop returns on, so it is the
 /// same drop again rather than a second way of restoring anything.
@@ -997,7 +997,10 @@ impl Screen {
         drawing: Drawing,
         started: DateTime<Utc>,
     ) -> anyhow::Result<Self> {
-        let terminal = ratatui::try_init()?;
+        put_the_terminal_back_on_a_panic();
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
@@ -1046,6 +1049,21 @@ impl Screen {
     pub(super) fn list_ready(&mut self) {
         self.shown.apply(Action::ToggleReadyList);
     }
+}
+
+/// Put the terminal back before a panic is reported, so the report lands on
+/// the reader's screen rather than on the alternate one.
+///
+/// This replaces the hook `ratatui::init` installs. That hook's `restore`
+/// reports a failure on stderr and panics when the report fails too, which
+/// it does once the terminal has gone, and a panic inside a panic hook
+/// aborts.
+fn put_the_terminal_back_on_a_panic() {
+    let reports_a_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = ratatui::try_restore();
+        reports_a_panic(info);
+    }));
 }
 
 /// The search prompt: what has been typed into it, and where the search
@@ -1167,7 +1185,9 @@ impl PutBack for CrosstermBackend<Stdout> {
         // returning.
         leaving::leave_by_the_deadline();
         let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
-        ratatui::restore();
+        // Not `restore`, which panics reporting a failure on a terminal that
+        // has gone.
+        let _ = ratatui::try_restore();
         leaving::hand_over_what_was_written();
     }
 }

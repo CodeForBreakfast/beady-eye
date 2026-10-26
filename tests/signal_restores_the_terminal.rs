@@ -6,6 +6,7 @@
 //! shell underneath comes back unusable. These tests kill a real `bdi` on a
 //! real pty and read what it wrote on the way out.
 
+use std::os::unix::process::ExitStatusExt;
 use std::time::Duration;
 
 mod terminal;
@@ -57,6 +58,25 @@ fn an_interrupt_puts_the_terminal_back() {
 #[test]
 fn a_hangup_puts_the_terminal_back() {
     assert_restored_after(libc::SIGHUP, "SIGHUP");
+}
+
+/// Closing a pane takes the terminal with it. `bdi` is hung up on, and every
+/// write it makes after that fails, putting the terminal back included. None
+/// of those failures may abort `bdi`.
+#[test]
+fn a_terminal_that_goes_leaves_bdi_to_exit_without_aborting() {
+    let mut bdi = Driven::bdi(ROWS, COLS, a_home_naming_one_project("gone"), &[]);
+    bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
+
+    let exited = bdi.hang_up(LONG_ENOUGH_TO_DIE).unwrap_or_else(|| {
+        panic!("bdi was still running {LONG_ENOUGH_TO_DIE:?} after its terminal went")
+    });
+
+    assert_eq!(
+        exited.signal(),
+        None,
+        "bdi died of a signal after its terminal went: {exited}"
+    );
 }
 
 /// Run `bdi` on a pty until it is drawing, signal it, and assert it handed
