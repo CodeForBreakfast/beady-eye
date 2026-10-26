@@ -605,9 +605,29 @@ export const makeWatches: Effect.Effect<
     })
   })
 
-  /** Each project whose tracker the watcher cannot reach, and whether the
-   * session has been told. */
-  const unreachable = new Map<string, { told: boolean }>()
+  /** Each project whose tracker the watcher cannot reach, why, whether it
+   * has been a minute, and whether the session has been told. */
+  const unreachable = new Map<string, { why: string; due: boolean; told: boolean }>()
+
+  /** Tell the session of the outage in `project` once it has been a minute
+   * and the session keeps a watch there, where it has not been told. */
+  const tellUnreachable = (project: ProjectName) =>
+    Effect.suspend(() => {
+      const outage = unreachable.get(project)
+      const beads = [...watches.values()]
+        .filter((watch) => isAccepted(watch) && watch.bead.project === project)
+        .map(({ bead }) => bead)
+      if (outage === undefined || !outage.due || outage.told || beads.length === 0) {
+        return Effect.void
+      }
+      outage.told = true
+      return tell(
+        trackerUnreachable(project, outage.why, beads),
+        Effect.sync(() => {
+          outage.told = false
+        }),
+      )
+    })
 
   const trackerIn = (freshness: Freshness, project: ProjectName) =>
     Effect.gen(function* () {
@@ -619,21 +639,13 @@ export const makeWatches: Effect.Effect<
         return
       }
       if (known !== undefined) return
-      const outage = { told: false }
+      const outage = { why, due: false, told: false }
       unreachable.set(project, outage)
       yield* inAMinute(
         Effect.suspend(() => {
-          const beads = [...watches.values()]
-            .filter((watch) => isAccepted(watch) && watch.bead.project === project)
-            .map(({ bead }) => bead)
-          if (unreachable.get(project) !== outage || beads.length === 0) return Effect.void
-          outage.told = true
-          return tell(
-            trackerUnreachable(project, why, beads),
-            Effect.sync(() => {
-              outage.told = false
-            }),
-          )
+          if (unreachable.get(project) !== outage) return Effect.void
+          outage.due = true
+          return tellUnreachable(project)
         }),
       )
     })
@@ -757,7 +769,7 @@ export const makeWatches: Effect.Effect<
             )
             if (Result.isSuccess(kept)) {
               watch.acceptance = { is: 'accepted' }
-              return
+              return yield* tellUnreachable(watch.bead.project)
             }
             forget(watch)
             return yield* refuse(
