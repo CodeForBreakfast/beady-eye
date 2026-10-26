@@ -17,6 +17,7 @@ import {
   Scope,
 } from 'effect'
 import {
+  AgentSessionKey,
   BeadId,
   ProjectName,
   StatusWord,
@@ -60,19 +61,37 @@ const malformedBeforeAgentSessions = (line: string) => {
   return (first === 'watch' && rest.length > 2) || (first === 'watch-all' && rest.length !== 1)
 }
 
-/** A watcher of the test's own, handing over each connection with the lines
- * it asked. One `predatingAgentSessions` answers a line naming an agent
- * session as `bdi` 0.36.0 does, and hands the connection over once it is
- * asked a line it serves, with every line it was asked. */
-export const aWatcherAt = async (at: string, { predatingAgentSessions = false } = {}) => {
+/** Connections handed over in the order they arrive. */
+const aLine = () => {
   const arrived: Connection[] = []
   const waiting: ((connection: Connection) => void)[] = []
-  const held: Socket[] = []
-  const handOver = (accepted: Connection) => {
-    const waiter = waiting.shift()
-    if (waiter) waiter(accepted)
-    else arrived.push(accepted)
+  return {
+    handOver: (accepted: Connection) => {
+      const waiter = waiting.shift()
+      if (waiter) waiter(accepted)
+      else arrived.push(accepted)
+    },
+    next: () =>
+      new Promise<Connection>((resolve) => {
+        const accepted = arrived.shift()
+        if (accepted) resolve(accepted)
+        else waiting.push(resolve)
+      }),
   }
+}
+
+/** A watcher of the test's own, handing over each connection with the lines
+ * it asked. A connection watching every project, which a session opens to
+ * follow the work it holds, is handed over apart from the rest. One
+ * `predatingAgentSessions` answers a line naming an agent session as `bdi`
+ * 0.36.0 does, and hands the connection over once it is asked a line it
+ * serves, with every line it was asked. */
+export const aWatcherAt = async (at: string, { predatingAgentSessions = false } = {}) => {
+  const beads = aLine()
+  const everyProject = aLine()
+  const held: Socket[] = []
+  const handOver = (accepted: Connection) =>
+    (accepted.asked === 'watch\n' ? everyProject : beads).handOver(accepted)
   const server: Server = createServer((connection) => {
     held.push(connection)
     connection.setEncoding('utf8')
@@ -109,12 +128,9 @@ export const aWatcherAt = async (at: string, { predatingAgentSessions = false } 
       server.close()
       for (const connection of held) connection.destroy()
     },
-    next: () =>
-      new Promise<Connection>((resolve) => {
-        const accepted = arrived.shift()
-        if (accepted) resolve(accepted)
-        else waiting.push(resolve)
-      }),
+    next: beads.next,
+    /** The next connection watching every project. */
+    nextEveryProject: everyProject.next,
   }
 }
 
@@ -134,9 +150,11 @@ export const watchesReading = async (
     makeWatches.pipe(
       Scope.provide(scope),
       Effect.provide(
-        Layer.mergeAll(WatcherLocation.namedIn(config), WatchedProjects.namedIn(config)).pipe(
-          Layer.provideMerge(fileSystem),
-        ),
+        Layer.mergeAll(
+          WatcherLocation.namedIn(config),
+          WatchedProjects.namedIn(config),
+          AgentSessionKey.namedIn(config),
+        ).pipe(Layer.provideMerge(fileSystem)),
       ),
       timing === undefined ? identity : Effect.provideService(WatcherTiming, timing),
       Effect.provideService(

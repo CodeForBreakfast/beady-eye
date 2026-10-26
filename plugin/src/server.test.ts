@@ -109,6 +109,7 @@ test('the bundle tells a session what its tools are for, how a change reads and 
   }
   expect(instructions).toContain('<channel source="beady-eye"')
   expect(instructions).toMatch(/lasts until `unwatch`/)
+  expect(instructions).toMatch(/holds is watched without asking/)
   expect(instructions).toMatch(/restart/)
   expect(instructions).toContain('watches="unreadable"')
   expect(instructions).toContain('watches="unkept"')

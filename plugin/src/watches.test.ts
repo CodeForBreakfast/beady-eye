@@ -20,6 +20,7 @@ import {
   aPrivateDirectory,
   aProject,
   aWatcherAt,
+  type Connection,
   cleanUp,
   cleanUpAfterEach,
   said,
@@ -556,11 +557,22 @@ test('unwatch refuses a bead the session does not watch, or watches in several p
   })
 })
 
+/** The connections made to `watcher` that ask it for anything but every
+ * project, which a session asks for to follow the work it holds. */
+const beadConnectionsTo = (watcher: Awaited<ReturnType<typeof aWatcherAt>>) => {
+  const connections = { counted: 0 }
+  watcher.server.on('connection', (connection) =>
+    connection.once('data', (asked) => {
+      if (String(asked) !== 'watch\n') connections.counted++
+    }),
+  )
+  return connections
+}
+
 test("a bead's id or project with a space in it is refused, and never reaches the watcher", async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
-  let connections = 0
-  watcher.server.on('connection', () => connections++)
+  const connections = beadConnectionsTo(watcher)
   const use = await aServer(place)
 
   for (const tool of ['watch', 'unwatch']) {
@@ -577,7 +589,7 @@ test("a bead's id or project with a space in it is refused, and never reaches th
       })
     }
   }
-  expect(connections).toBe(0)
+  expect(connections.counted).toBe(0)
 })
 
 test('a kept watch whose project or id is not one word is not watched', async () => {
@@ -594,8 +606,7 @@ test('a kept watch whose project or id is not one word is not watched', async ()
       JSON.stringify([bead]),
     )
     const watcher = await aWatcherAt(place.at as string)
-    let connections = 0
-    watcher.server.on('connection', () => connections++)
+    const connections = beadConnectionsTo(watcher)
     const use = await aServer(place)
 
     expect(await use('watching')).toEqual({
@@ -603,7 +614,7 @@ test('a kept watch whose project or id is not one word is not watched', async ()
       refused: false,
     })
     await Bun.sleep(Duration.toMillis(timing.firstPause) * 5)
-    expect(connections).toBe(0)
+    expect(connections.counted).toBe(0)
   }
 })
 
@@ -661,10 +672,10 @@ test("calls that arrive together all see the session's watches restored", async 
 })
 
 /** Give the session a kept file holding `content`. */
-const aKeptFile = ({ directory }: Place, content: string) => {
+const aKeptFile = ({ directory }: Place, content: string, under: SessionId = session) => {
   const watches = join(directory, 'beady-eye', 'watches')
   mkdirSync(watches, { recursive: true })
-  const file = join(watches, `${session}.json`)
+  const file = join(watches, `${under}.json`)
   writeFileSync(file, content)
   return file
 }
@@ -926,6 +937,21 @@ test("a bead's status changing wakes the session with the old and new status", a
   const { use, connection } = await aWatchedBead()
 
   connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await use.nextMessage()).toEqual(started)
+})
+
+test('a row an older bd printed with null in place of its type, metadata and dependencies is read', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(
+    said(
+      theBead({
+        row: { status: 'in_progress', issue_type: null, metadata: null, dependencies: null },
+      }),
+      freshness('summit-works'),
+    ),
+  )
 
   expect(await use.nextMessage()).toEqual(started)
 })
@@ -1870,4 +1896,244 @@ test('a tracker outage the session could not be told of is not told as over', as
   connection.write(said(startedLine, freshness('summit-works')))
 
   expect((await nextNews(watches))?.block).toMatchObject({ is: 'bead', status: 'in_progress' })
+})
+
+/** A bead line for `id` in summit-works, open and not ready, with `row`'s
+ * fields in place of its own. */
+const aRow = (id: string, row: Record<string, unknown> = {}) => ({
+  line: 'bead',
+  project: 'summit-works',
+  ready: false,
+  blocked_by: [],
+  bd: { ready: false, blocked_by: [] },
+  row: { id, title: `the bead ${id}`, status: 'open', comment_count: 0, ...row },
+})
+
+/** The row of a bead the session holds, and of one it has let go. */
+const holding = { status: 'in_progress', metadata: { agent_session: session } }
+const letGo = { status: 'in_progress', metadata: {} }
+
+/** Settles once `check` holds, failing the test where it never does. */
+const until = async (check: () => unknown) => {
+  for (let tries = 0; tries < 200; tries++) {
+    if (await check()) return
+    await Bun.sleep(10)
+  }
+  throw new Error('it never came to hold')
+}
+
+const closes = (connection: Connection['connection']) =>
+  new Promise((resolve) => connection.once('close', resolve))
+
+/** A session whose server has learned its id, and the connection on which
+ * the watcher tells it of every project. */
+const aSessionFollowingWork = async (place: Place = aPlace()) => {
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServer(place)
+  await use('watching')
+  const everyProject = await watcher.nextEveryProject()
+  return { place, watcher, use, everyProject: everyProject.connection }
+}
+
+test('a bead naming the session is watched without the session asking, until the session lets it go', async () => {
+  const { place, watcher, use, everyProject } = await aSessionFollowingWork()
+
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection, asked } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+
+  expect(asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
+  await until(async () => (await use('watching')).text?.includes('in_progress'))
+  expect((await use('watching')).text).toBe(
+    `The watcher is answering.\n- ${watched}: "the bead smt-4kd3p.20", in_progress, not ready`,
+  )
+  await until(() => keptFile(place)[0]?.held === true)
+
+  const closed = closes(connection)
+  everyProject.write(said(aRow('smt-4kd3p.20', letGo), freshness('summit-works')))
+  await closed
+  await until(() => kept(place).length === 0)
+  expect(await use('watching')).toEqual({ text: 'This session watches no beads.', refused: false })
+})
+
+test('a bead naming the session under the key the bdi config gives is the one watched', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  const use = await aServerReading(
+    place,
+    `[watcher]\nsocket = ${JSON.stringify(place.at)}\n[[projects]]\nname = "summit-works"\n[join]\nagent_session_key = "seat_session"\n`,
+  )
+  await use('watching')
+  const everyProject = await watcher.nextEveryProject()
+
+  everyProject.connection.write(
+    said(
+      aRow('smt-4kd3p.13', holding),
+      aRow('smt-4kd3p.20', { metadata: { seat_session: session } }),
+      freshness('summit-works'),
+    ),
+  )
+
+  expect((await watcher.next()).asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
+  await Bun.sleep(50)
+  expect((await use('watching')).text).not.toContain('smt-4kd3p.13')
+})
+
+test("a session holding a step its pull request's gate waits on hears the review, CI and merge news", async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  const step = aRow('smt-4kd3p.21', holding)
+  const gate = aRow('smt-4kd3p.22', {
+    issue_type: 'gate',
+    dependencies: [{ depends_on_id: 'smt-4kd3p.21', type: 'blocks' }],
+  })
+  const work = aRow('smt-4kd3p.20', {
+    status: 'blocked',
+    dependencies: [
+      { depends_on_id: 'smt-4kd3p', type: 'parent-child' },
+      { depends_on_id: 'smt-4kd3p.22', type: 'blocks' },
+    ],
+  })
+
+  everyProject.write(said(step, gate, work, aRow('smt-4kd3p.23'), freshness('summit-works')))
+  const connections = new Map<string, Connection['connection']>()
+  for (let opened = 0; opened < 3; opened++) {
+    const { connection, asked } = await watcher.next()
+    connections.set(asked, connection)
+  }
+  const on = (id: string) =>
+    connections.get(`watch summit-works ${id} ${session}\n`) as Connection['connection']
+  on('smt-4kd3p.21').write(said(step, freshness('summit-works')))
+  on('smt-4kd3p.22').write(said(gate, freshness('summit-works')))
+  on('smt-4kd3p.20').write(said(work, freshness('summit-works')))
+  await until(async () => !(await use('watching')).text?.includes('not heard of yet'))
+
+  expect([...connections.keys()].sort()).toEqual(
+    ['smt-4kd3p.20', 'smt-4kd3p.21', 'smt-4kd3p.22'].map(
+      (id) => `watch summit-works ${id} ${session}\n`,
+    ),
+  )
+  const reviewed = { ...commented('bdi gates', 'Pull request example/ark#7 was reviewed.') }
+  on('smt-4kd3p.20').write(
+    said(reviewed, { ...work, row: { ...work.row, comment_count: 1 } }, journalled),
+  )
+  expect((await use.nextMessage()).content).toBe(
+    `${watched}, "the bead smt-4kd3p.20", has changed.\n- "bdi gates" commented: "Pull request example/ark#7 was reviewed."`,
+  )
+  on('smt-4kd3p.22').write(
+    said(
+      aRow('smt-4kd3p.22', { ...gate.row, status: 'closed', close_reason: 'merged' }),
+      freshness('summit-works'),
+    ),
+  )
+  expect((await use.nextMessage()).meta).toEqual({
+    project: 'summit-works',
+    id: 'smt-4kd3p.22',
+    status: 'closed',
+    ready: 'false',
+  })
+})
+
+test('a bead the session holds that closes is told of, then let go', async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await until(async () => (await use('watching')).text?.includes('in_progress'))
+
+  const closedRow = aRow('smt-4kd3p.20', { ...holding, status: 'closed' })
+  everyProject.write(said(closedRow, freshness('summit-works')))
+  await Bun.sleep(50)
+  expect((await use('watching')).text).toContain(watched)
+  const hungUp = closes(connection)
+  connection.write(said(closedRow, freshness('summit-works')))
+
+  expect((await use.nextMessage()).content).toContain('Its status went from in_progress to closed.')
+  await hungUp
+})
+
+test('a bead the session asked to watch stays watched once it lets the bead go', async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+
+  expect((await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })).refused).toBe(false)
+  everyProject.write(said(aRow('smt-4kd3p.20', letGo), freshness('summit-works')))
+  await Bun.sleep(50)
+
+  expect((await use('watching')).text).toContain(watched)
+})
+
+test('unwatching a bead the session holds leaves it watched while the session holds it', async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await use('watch', { id: 'smt-4kd3p.20', project: 'summit-works' })
+
+  expect(await use('unwatch', { id: 'smt-4kd3p.20' })).toEqual({
+    text: `${watched} stays watched while it is part of the work this session holds.`,
+    refused: false,
+  })
+  const hungUp = closes(connection)
+  everyProject.write(said(aRow('smt-4kd3p.20', letGo), freshness('summit-works')))
+  await hungUp
+})
+
+test('a server started again lets go of a bead the session held and has since let go', async () => {
+  const place = aPlace()
+  const before = await aSessionFollowingWork(place)
+  before.everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  ;(await before.watcher.next()).connection.write(
+    said(aRow('smt-4kd3p.20', holding), freshness('summit-works')),
+  )
+  await until(() => keptFile(place)[0]?.told !== undefined)
+  await before.use.exit()
+
+  const after = await aServer(place)
+  await after('watching')
+  const restored = await before.watcher.next()
+  const everyProject = await before.watcher.nextEveryProject()
+  restored.connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const hungUp = closes(restored.connection)
+  everyProject.connection.write(said(aRow('smt-4kd3p.20', letGo), freshness('summit-works')))
+
+  await hungUp
+  await until(() => kept(place).length === 0)
+})
+
+test('a bead the session held that closed while the watch on every project was away is let go once it is back', async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await until(async () => (await use('watching')).text?.includes('in_progress'))
+
+  everyProject.destroy()
+  const closedRow = aRow('smt-4kd3p.20', { ...holding, status: 'closed' })
+  connection.write(said(closedRow, freshness('summit-works')))
+  expect((await use.nextMessage()).content).toContain('Its status went from in_progress to closed.')
+  const hungUp = closes(connection)
+  const back = await watcher.nextEveryProject()
+  back.connection.write(said(freshness('summit-works')))
+
+  await hungUp
+})
+
+test('a session resumed into an id that asked to watch a bead it holds keeps watching once it lets the bead go', async () => {
+  const place = aPlace()
+  const { watcher, use, everyProject } = await aSessionFollowingWork(place)
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await until(() => keptFile(place)[0]?.held === true)
+  aKeptFile(place, JSON.stringify([{ project: 'summit-works', id: 'smt-4kd3p.20' }]), cleared)
+
+  await use('watching', { session_id: cleared })
+  const resumed = await watcher.nextEveryProject()
+  resumed.connection.write(said(aRow('smt-4kd3p.20', letGo), freshness('summit-works')))
+  await Bun.sleep(50)
+
+  expect((await use('watching', { session_id: cleared })).text).toContain(watched)
+  expect(keptFile(place, cleared)[0]?.held).toBeUndefined()
 })
