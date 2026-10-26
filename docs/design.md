@@ -2625,8 +2625,8 @@ bead, has no way to learn that the bead changed short of asking again. The
 watcher already knows, and an agent session cannot hold a connection to it
 open between turns. So the beady-eye plugin holds the connection for it: a
 Claude Code plugin, shipped from this repository, that watches the beads a
-session names and puts each change into the session as a message, which wakes
-the session if it is idle.
+session names and the work it holds, and puts each change into the session as
+a message, which wakes the session if it is idle.
 
 **The plugin is a consumer like any other.** It connects to the watcher on its
 own machine and sends the lines *Watching* describes. `bdi` knows nothing of
@@ -2681,7 +2681,8 @@ call to one of its tools, since the hook is the only thing that tells it.
 
 **A session is told how to use the plugin.** The server sends MCP
 instructions that every session loading the plugin receives: what the three
-tools do, how a change reads, and that a watch lasts until `unwatch`. The
+tools do, how a change reads, that a watch it asks for lasts until `unwatch`,
+and that the work it holds is watched without asking. The
 plugin also ships a `using-beady-eye` skill, which a session loads when it
 waits on a bead or a change arrives, on what to watch, how to act on a change,
 and when to unwatch. When a particular setup's agents should watch a bead is
@@ -2770,9 +2771,40 @@ A new id moves the session's watches to the file named for it. The plugin
 watches again what that file already keeps, as a resumed conversation has its
 own, and writes the two together there. The old id's file keeps what it held. They stay watched, and the next `watch` or
 `unwatch` that is kept keeps them too.
-A watch ends when the session unwatches the bead, and not when the bead
-closes, because a closed bead can reopen. The server exits when the session
-closes its input, and every watch's connection closes with it.
+A watch the session asked for ends when the session unwatches the bead, and
+not when the bead closes, because a closed bead can reopen. The server exits
+when the session closes its input, and every watch's connection closes with it.
+
+### Watching the work a session holds
+
+**A session watches the work it holds without asking.** An agent that has
+taken a bead wants to hear of a change to it rather than sleep and read it
+again, and having to ask is one more step to forget. So once the plugin knows
+its session's id, it opens one more connection, sends a bare `watch`, and reads
+every project's beads that are not closed and each change after. A bead that
+names the session under `[join]`'s `agent_session_key`, which is `agent_session`
+unless the config says otherwise, is work the session holds. That is the key a
+view joins a bead to its agent by, so the plugin learns nothing a setup has not
+already named.
+
+**The work held reaches as far as its pull request's news.** `bdi gates` puts a
+pull request's reviews, checks and close on the beads its gate directly blocks,
+and an agent delivering through a formula holds a step the gate waits on, not a
+bead the gate blocks. So the work held is each bead naming the session that is
+not closed, each gate that is one of those beads or that one of them blocks,
+and each bead such a gate blocks. The plugin watches each of them as though
+the session had asked, with a connection of its own naming the session. The
+merge arrives as the gate closing.
+
+**A watch on work held ends when the session lets the work go.** That is the
+bead ceasing to name the session, or closing. A bead that closes is let go
+only once its own connection has said so, so the session hears of the close
+before the watch ends. A bead the session also asked for with `watch` stays
+watched, and `unwatch` on a bead the work still holds leaves it watched and
+says why. The session's file marks each watch it never asked for as `held`, so
+a server started again lets go of work the session let go of meanwhile. The
+connection watching every project is answered again from scratch whenever it
+connects, so a bead that closed while it was away is let go once it is back.
 
 ### What wakes the session
 
