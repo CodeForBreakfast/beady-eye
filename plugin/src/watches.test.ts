@@ -672,10 +672,10 @@ test("calls that arrive together all see the session's watches restored", async 
 })
 
 /** Give the session a kept file holding `content`. */
-const aKeptFile = ({ directory }: Place, content: string) => {
+const aKeptFile = ({ directory }: Place, content: string, under: SessionId = session) => {
   const watches = join(directory, 'beady-eye', 'watches')
   mkdirSync(watches, { recursive: true })
-  const file = join(watches, `${session}.json`)
+  const file = join(watches, `${under}.json`)
   writeFileSync(file, content)
   return file
 }
@@ -937,6 +937,21 @@ test("a bead's status changing wakes the session with the old and new status", a
   const { use, connection } = await aWatchedBead()
 
   connection.write(said(startedLine, freshness('summit-works')))
+
+  expect(await use.nextMessage()).toEqual(started)
+})
+
+test('a row an older bd printed with null in place of its type, metadata and dependencies is read', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(
+    said(
+      theBead({
+        row: { status: 'in_progress', issue_type: null, metadata: null, dependencies: null },
+      }),
+      freshness('summit-works'),
+    ),
+  )
 
   expect(await use.nextMessage()).toEqual(started)
 })
@@ -2103,4 +2118,22 @@ test('a bead the session held that closed while the watch on every project was a
   back.connection.write(said(freshness('summit-works')))
 
   await hungUp
+})
+
+test('a session resumed into an id that asked to watch a bead it holds keeps watching once it lets the bead go', async () => {
+  const place = aPlace()
+  const { watcher, use, everyProject } = await aSessionFollowingWork(place)
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await until(() => keptFile(place)[0]?.held === true)
+  aKeptFile(place, JSON.stringify([{ project: 'summit-works', id: 'smt-4kd3p.20' }]), cleared)
+
+  await use('watching', { session_id: cleared })
+  const resumed = await watcher.nextEveryProject()
+  resumed.connection.write(said(aRow('smt-4kd3p.20', letGo), freshness('summit-works')))
+  await Bun.sleep(50)
+
+  expect((await use('watching', { session_id: cleared })).text).toContain(watched)
+  expect(keptFile(place, cleared)[0]?.held).toBeUndefined()
 })

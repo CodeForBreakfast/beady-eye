@@ -110,12 +110,14 @@ const Row = Schema.Struct({
   status: StatusWord,
   comment_count: Schema.optional(CommentCount),
   close_reason: Schema.optional(Schema.String),
-  issue_type: Schema.optional(Schema.String),
+  issue_type: Schema.optional(Schema.NullOr(Schema.String)),
   /** bd keeps whatever JSON it was given, so its shape is read where it is
    * used rather than taken for a protocol the plugin does not know. */
   metadata: Schema.optional(Schema.Unknown),
   dependencies: Schema.optional(
-    Schema.Array(Schema.Struct({ depends_on_id: Schema.String, type: Schema.String })),
+    Schema.NullOr(
+      Schema.Array(Schema.Struct({ depends_on_id: Schema.String, type: Schema.String })),
+    ),
   ),
 })
 

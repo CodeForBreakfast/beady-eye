@@ -452,8 +452,8 @@ const workHeld = (
 ): Bead[] =>
   [...rows].flatMap(([project, beads]) => {
     const blockedBy = (id: BeadId) =>
-      [...beads.values()].filter(({ dependencies = [] }) =>
-        dependencies.some(({ type, depends_on_id }) => type === 'blocks' && depends_on_id === id),
+      [...beads.values()].filter(({ dependencies }) =>
+        dependencies?.some(({ type, depends_on_id }) => type === 'blocks' && depends_on_id === id),
       )
     return [...beads.values()]
       .filter((row) => row.status !== 'closed' && namesSession(row, key, session))
@@ -800,7 +800,10 @@ export const makeWatches: Effect.Effect<
       )
       for (const { told: lastTold, held, project, id } of kept) {
         const bead = { project, id }
-        if (!watches.has(keyOf(bead))) start(bead, { is: 'accepted' }, held !== true, lastTold)
+        const asked = held !== true
+        const watching = watches.get(keyOf(bead))
+        if (watching === undefined) start(bead, { is: 'accepted' }, asked, lastTold)
+        else watching.asked ||= asked
       }
       file = path
       const unkept = Arr.differenceWith((one: Bead, other: Bead) => keyOf(one) === keyOf(other))(
