@@ -110,7 +110,17 @@ const Row = Schema.Struct({
   status: StatusWord,
   comment_count: Schema.optional(CommentCount),
   close_reason: Schema.optional(Schema.String),
+  issue_type: Schema.optional(Schema.String),
+  /** bd keeps whatever JSON it was given, so its shape is read where it is
+   * used rather than taken for a protocol the plugin does not know. */
+  metadata: Schema.optional(Schema.Unknown),
+  dependencies: Schema.optional(
+    Schema.Array(Schema.Struct({ depends_on_id: Schema.String, type: Schema.String })),
+  ),
 })
+
+/** A bead as its tracker has it, in the fields this plugin reads. */
+export type Row = typeof Row.Type
 
 /** One of bd's event records. Only a comment's record carries a comment. */
 const EventRecord = Schema.Struct({
@@ -181,6 +191,12 @@ const WatcherSection = Schema.Struct({
 
 const ProjectsSection = Schema.Struct({
   projects: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String }))),
+})
+
+const JoinSection = Schema.Struct({
+  join: Schema.optionalKey(
+    Schema.Struct({ agent_session_key: Schema.optionalKey(Schema.NonEmptyString) }),
+  ),
 })
 
 /** Why `parse` refused the text, on one line. */
@@ -263,6 +279,29 @@ export class WatchedProjects extends Context.Service<
         const fs = yield* FileSystem.FileSystem
         return {
           list: projectsNamedIn(config).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+        }
+      }),
+    )
+}
+
+/** The metadata key on a bead that names the agent session working it, read
+ * again each time the plugin learns its session. */
+export class AgentSessionKey extends Context.Service<
+  AgentSessionKey,
+  { readonly read: Effect.Effect<string, ConfigUnreadable> }
+>()('beady-eye/AgentSessionKey') {
+  /** The `[join]` `agent_session_key` the bdi config at `config` names, or
+   * bdi's own default. */
+  static readonly namedIn = (config: string) =>
+    Layer.effect(
+      AgentSessionKey,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        return {
+          read: readIn(config, JoinSection).pipe(
+            Effect.map(({ join }) => join?.agent_session_key ?? 'agent_session'),
+            Effect.provideService(FileSystem.FileSystem, fs),
+          ),
         }
       }),
     )
@@ -481,16 +520,22 @@ export const watchBead = (
 ): Stream.Stream<Heard, never, WatcherLocation | FileSystem.FileSystem> =>
   Stream.switchMap(sessions, (session) => watchBeadAs(bead, session))
 
-const watchBeadAs = (bead: Bead, session: SessionId | undefined) =>
+const watchBeadAs = (bead: Bead, session: SessionId | undefined) => {
+  const plain = watchLine(bead)
+  const asking = session === undefined ? plain : `${plain} ${session}`
+  const olderWatcher: AskInstead = ({ asked, reason }) =>
+    asking !== plain && asked === asking && reason === 'malformed' ? plain : undefined
+  return heardOver(asking, olderWatcher)
+}
+
+/** What a connection asking `asking` hears, connecting again with a growing
+ * pause whenever it is down. */
+const heardOver = (asking: string, instead?: AskInstead) =>
   Stream.unwrap(
     Effect.gen(function* () {
       const timing = yield* WatcherTiming
       const failures = yield* Ref.make(0)
-      const plain = watchLine(bead)
-      const asking = session === undefined ? plain : `${plain} ${session}`
-      const olderWatcher: AskInstead = ({ asked, reason }) =>
-        asking !== plain && asked === asking && reason === 'malformed' ? plain : undefined
-      const connection = answersIn(talkTo([asking], olderWatcher)).pipe(
+      const connection = answersIn(talkTo([asking], instead)).pipe(
         Stream.tap((batch) => (batch.is === 'answer' ? Ref.set(failures, 0) : Effect.void)),
         Stream.mapError(({ why }) => why),
         Stream.result,
@@ -501,6 +546,15 @@ const watchBeadAs = (bead: Bead, session: SessionId | undefined) =>
       return connection.pipe(Stream.concat(Stream.fromEffectDrain(pause)), Stream.forever)
     }),
   )
+
+/** What a connection to the watcher that watches every project it reads
+ * hears, starting from each project's beads that are not closed, connecting
+ * again with a growing pause whenever it is down. */
+export const watchEveryProject: Stream.Stream<
+  Heard,
+  never,
+  WatcherLocation | FileSystem.FileSystem
+> = heardOver('watch')
 
 /** What one project answered when asked about a bead: it holds the bead, the
  * bead has gone from it, the watcher has not read it yet, its tracker is

@@ -7,6 +7,12 @@ description: Use when a session waits on a bead it cannot move itself, such as a
 
 ## What to watch
 
+The work the session holds is already watched. A bead naming the session in
+its `agent_session` metadata is watched until it stops naming the session or
+closes. So is each gate it is or blocks, and each bead that gate blocks, which
+carries the pull request's reviews, checks and close. Watch it yourself only
+to keep watching it once you let it go.
+
 Watch a bead when the session's next step waits on a change to it that someone
 else makes:
 
@@ -82,6 +88,8 @@ the watcher can.
 
 ## Unwatching
 
-A watch outlives the bead closing and the session restarting, so nothing ends it
-but `unwatch`. Once the session no longer waits on a bead, unwatch it. Before a
-session ends, run `watching` and unwatch every bead it is done with.
+A watch you asked for outlives the bead closing and the session restarting, so
+nothing ends it but `unwatch`. Once the session no longer waits on a bead,
+unwatch it. Before a session ends, run `watching` and unwatch every bead it is
+done with. A bead watched because the session holds it needs no unwatching:
+letting the work go ends the watch.

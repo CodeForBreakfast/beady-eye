@@ -29,6 +29,7 @@ import {
   SubscriptionRef,
 } from 'effect'
 import {
+  AgentSessionKey,
   type AnswerLine,
   askAbout,
   type Batch,
@@ -41,6 +42,7 @@ import {
   type Heard,
   type ProjectAnswer,
   type ProjectName,
+  type Row,
   type Said,
   type SessionId,
   StatusWord,
@@ -48,6 +50,7 @@ import {
   type WatcherLocation,
   WatcherTiming,
   watchBead,
+  watchEveryProject,
 } from './watcher'
 
 /** What a tool says back, and whether it refused what it was asked. */
@@ -151,6 +154,9 @@ interface Watch {
   readonly bead: Bead
   readonly known: Known
   acceptance: Acceptance
+  /** Whether the session asked for the watch, rather than holding the work
+   * the bead is part of. */
+  asked: boolean
   /** Done once the watcher has answered, been found down, or the watch has
    * stopped. */
   readonly firstHeard: Deferred.Deferred<void>
@@ -165,7 +171,13 @@ const watchesDirectory = Config.NonEmptyString('XDG_STATE_HOME').pipe(
 )
 
 const KeptWatches = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ ...Bead.fields, told: Schema.optional(Told) })),
+  Schema.Array(
+    Schema.Struct({
+      ...Bead.fields,
+      told: Schema.optional(Told),
+      held: Schema.optionalKey(Schema.Literal(true)),
+    }),
+  ),
 )
 
 /** The bead a bead or gone line names. */
@@ -426,6 +438,34 @@ const describe = ({ known: { standing } }: Watch): string =>
     }),
   )
 
+const namesSession = ({ metadata }: Row, key: string, session: SessionId) =>
+  Predicate.isObject(metadata) && Predicate.hasProperty(metadata, key) && metadata[key] === session
+
+/** The beads the work `session` holds asks it to watch: each bead that is
+ * not closed and names the session under `key`, and each gate that is one of
+ * those beads or that one of them blocks, with the beads that gate blocks.
+ * `bdi gates` puts a pull request's news on those last beads. */
+const workHeld = (
+  rows: ReadonlyMap<ProjectName, ReadonlyMap<BeadId, Row>>,
+  key: string,
+  session: SessionId,
+): Bead[] =>
+  [...rows].flatMap(([project, beads]) => {
+    const blockedBy = (id: BeadId) =>
+      [...beads.values()].filter(({ dependencies = [] }) =>
+        dependencies.some(({ type, depends_on_id }) => type === 'blocks' && depends_on_id === id),
+      )
+    return [...beads.values()]
+      .filter((row) => row.status !== 'closed' && namesSession(row, key, session))
+      .flatMap((held) => {
+        const gates = [held, ...blockedBy(held.id)].filter(
+          ({ issue_type }) => issue_type === 'gate',
+        )
+        return [held, ...gates.flatMap((gate) => [gate, ...blockedBy(gate.id)])]
+      })
+      .map(({ id }) => ({ project, id }))
+  })
+
 export interface Watches {
   /** Take the session's id where it is a new one, watch again what the
    * session watched under it, and move every watch to it. `/clear` and
@@ -438,16 +478,18 @@ export interface Watches {
   readonly news: Stream.Stream<News>
 }
 
-/** A session's watches, each held until `unwatch` or until the scope closes,
- * which keeps what is on disk. A bead named without a project is looked for
- * in each of the watched projects. */
+/** A session's watches, each held until `unwatch`, or until the session lets
+ * go of the work it held, or until the scope closes, which keeps what is on
+ * disk. A bead named without a project is looked for in each of the watched
+ * projects. */
 export const makeWatches: Effect.Effect<
   Watches,
   never,
-  WatcherLocation | WatchedProjects | FileSystem.FileSystem | Scope.Scope
+  WatcherLocation | WatchedProjects | AgentSessionKey | FileSystem.FileSystem | Scope.Scope
 > = Effect.gen(function* () {
   const timing = yield* WatcherTiming
   const projects = yield* WatchedProjects
+  const sessionKey = yield* AgentSessionKey
   const scope = yield* Effect.scope
   const fs = yield* FileSystem.FileSystem
   const directory = yield* Effect.orDie(watchesDirectory)
@@ -598,7 +640,7 @@ export const makeWatches: Effect.Effect<
 
   /** Watch `bead`. It is not an Effect, so a caller that finds the bead
    * unwatched starts it before any other call can look. */
-  const start = (bead: Bead, acceptance: Acceptance, told?: Told) => {
+  const start = (bead: Bead, acceptance: Acceptance, asked: boolean, told?: Told) => {
     const known: Known = {
       standing: told ?? { is: 'unheard' },
       told,
@@ -633,7 +675,7 @@ export const makeWatches: Effect.Effect<
         }
         if (said?.block.is === 'refusal') yield* Queue.offer(news, said)
         yield* tellBackOnceAllAre
-      })
+      }).pipe(Effect.andThen(letGoOnceSettled(bead, known)))
     const hear = (heard: Heard) =>
       Result.match(heard, { onSuccess: hearBatch, onFailure: goDown }).pipe(
         Effect.andThen(Deferred.succeed(firstHeard, undefined)),
@@ -645,6 +687,7 @@ export const makeWatches: Effect.Effect<
       bead,
       known,
       acceptance,
+      asked,
       firstHeard,
       connection,
     }
@@ -677,10 +720,11 @@ export const makeWatches: Effect.Effect<
     Effect.suspend(() => {
       const path = file
       if (path === undefined) return Effect.void
-      const beads = kept.map(({ bead: { project, id }, known }) => ({
+      const beads = kept.map(({ bead: { project, id }, known, asked }) => ({
         project,
         id,
         told: known.told,
+        ...(asked ? {} : { held: true as const }),
       }))
       const written = `${path}.new`
       return fs.makeDirectory(directory, { recursive: true }).pipe(
@@ -754,8 +798,9 @@ export const makeWatches: Effect.Effect<
         Effect.catchReason('PlatformError', 'NotFound', () => Effect.succeed([])),
         Effect.catch((unread) => Effect.as(setAside(path, unread.message), [])),
       )
-      for (const { told: lastTold, ...bead } of kept) {
-        if (!watches.has(keyOf(bead))) start(bead, { is: 'accepted' }, lastTold)
+      for (const { told: lastTold, held, project, id } of kept) {
+        const bead = { project, id }
+        if (!watches.has(keyOf(bead))) start(bead, { is: 'accepted' }, held !== true, lastTold)
       }
       file = path
       const unkept = Arr.differenceWith((one: Bead, other: Bead) => keyOf(one) === keyOf(other))(
@@ -765,6 +810,91 @@ export const makeWatches: Effect.Effect<
       if (unkept.length === 0) return
       yield* persist.pipe(
         Effect.catch((unkeptBecause) => tell(watchesUnkept(unkeptBecause.message, unkept))),
+      )
+    })
+
+  /** Each project's beads as the watch on every project last heard them. */
+  const rows = new Map<ProjectName, Map<BeadId, Row>>()
+  /** The beads the work the session holds asks it to watch. */
+  let wanted = new Set<string>()
+  let following: Fiber.Fiber<void> | undefined
+
+  /** Stop watching the beads the session no longer holds and did not ask
+   * for, and keep that. Stopping is forked, because the fiber letting a bead
+   * go can be the bead's own connection. */
+  const letGo = (gone: readonly Watch[]) =>
+    gone.length === 0
+      ? Effect.void
+      : Effect.forEach(gone, stop, { discard: true }).pipe(
+          Effect.andThen(Effect.ignore(persist)),
+          Effect.forkIn(scope),
+        )
+
+  /** Whether the session is done with a watch it did not ask for: the work
+   * it holds no longer asks for the bead, and either the bead's connection
+   * has heard it close or go, or the watch on every project has heard it
+   * open. A bead that closed is let go only once its own connection has said
+   * so, so the session is told of the close. */
+  const doneWith = ({ bead, asked, known: { standing } }: Watch) => {
+    if (asked || wanted.has(keyOf(bead))) return false
+    if (standing.is === 'gone' || (standing.is === 'bead' && standing.status === 'closed')) {
+      return true
+    }
+    const row = rows.get(bead.project)?.get(bead.id)
+    return row !== undefined && row.status !== 'closed'
+  }
+
+  const letGoOnceSettled = (bead: Bead, known: Known) =>
+    Effect.suspend(() => {
+      const watch = watches.get(keyOf(bead))
+      return watch?.known === known && doneWith(watch) ? letGo([watch]) : Effect.void
+    })
+
+  /** Watch each bead the work held asks for, and let go of each the session
+   * is done with. */
+  const followWork = (key: string, held: SessionId) =>
+    Effect.suspend(() => {
+      const work = workHeld(rows, key, held)
+      wanted = new Set(work.map(keyOf))
+      const started = work.filter((bead) => {
+        if (watches.has(keyOf(bead))) return false
+        start(bead, { is: 'accepted' }, false)
+        return true
+      })
+      const gone = [...watches.values()].filter(doneWith)
+      if (gone.length > 0) return letGo(gone)
+      return started.length > 0 ? Effect.ignore(persist) : Effect.void
+    })
+
+  const hearWork = (key: string, held: SessionId) => (heard: Heard) =>
+    Effect.suspend(() => {
+      if (Result.isFailure(heard)) {
+        rows.clear()
+        return Effect.void
+      }
+      const batch = heard.success
+      if (batch.is === 'refused') return Effect.void
+      for (const said of batch.lines) {
+        const beads = rows.get(said.project) ?? new Map<BeadId, Row>()
+        rows.set(said.project, beads)
+        if (said.line === 'bead') beads.set(said.row.id, said.row)
+        if (said.line === 'gone') beads.delete(said.id)
+      }
+      return followWork(key, held)
+    })
+
+  /** Watch every project for the work `held` holds, in place of the session
+   * it held before. */
+  const followWorkHeldBy = (held: SessionId) =>
+    Effect.gen(function* () {
+      const was = following
+      following = undefined
+      if (was !== undefined) yield* Fiber.interrupt(was)
+      rows.clear()
+      const key = yield* sessionKey.read.pipe(Effect.option)
+      if (Option.isNone(key)) return
+      following = withTheWatcher(
+        watchEveryProject.pipe(Stream.runForEach(hearWork(key.value, held))),
       )
     })
 
@@ -832,13 +962,14 @@ export const makeWatches: Effect.Effect<
           if (given === undefined || given === (yield* SubscriptionRef.get(session))) return
           yield* SubscriptionRef.set(session, given)
           yield* restore(given)
+          yield* followWorkHeldBy(given)
         }),
       ),
 
     watch: (id, project) =>
       Effect.gen(function* () {
         const bead = { project: project ?? (yield* projectHolding(id)), id }
-        const watch = watches.get(keyOf(bead)) ?? start(bead, { is: 'unaccepted' })
+        const watch = watches.get(keyOf(bead)) ?? start(bead, { is: 'unaccepted' }, true)
         yield* Deferred.await(watch.firstHeard)
         if (watch.acceptance.is === 'unaccepted') {
           yield* watchable(watch).pipe(
@@ -851,6 +982,10 @@ export const makeWatches: Effect.Effect<
           )
         }
         yield* accept(watch)
+        if (!watch.asked) {
+          watch.asked = true
+          yield* Effect.ignore(persist)
+        }
         const { connection, standing } = watch.known
         const down = downBecause(connection)
         if (down === undefined) {
@@ -877,6 +1012,13 @@ export const makeWatches: Effect.Effect<
         if (matching.length > 1) {
           return yield* refuse(
             `This session watches ${id} in more than one project: ${matching.map(({ bead }) => bead.project).join(', ')}. Name its project.`,
+          )
+        }
+        if (wanted.has(keyOf(only.bead))) {
+          only.asked = false
+          yield* Effect.ignore(persist)
+          return told(
+            `${named(only.bead)} stays watched while it is part of the work this session holds.`,
           )
         }
         yield* keeping.withPermit(
