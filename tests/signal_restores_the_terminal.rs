@@ -40,6 +40,9 @@ const MOUSE_OFF: [(&str, &[u8]); 5] = [
 /// markers around every paste as text.
 const BRACKETED_PASTE_OFF: &[u8] = b"\x1b[?2004l";
 
+/// The exit code of a Rust program whose main thread panicked.
+const A_PANIC: i32 = 101;
+
 /// Long enough for a process that is going to die to have died.
 const LONG_ENOUGH_TO_DIE: Duration = Duration::from_secs(10);
 
@@ -62,20 +65,28 @@ fn a_hangup_puts_the_terminal_back() {
 
 /// Closing a pane takes the terminal with it. `bdi` is hung up on, and every
 /// write it makes after that fails, putting the terminal back included. None
-/// of those failures may abort `bdi`.
+/// of those failures may abort `bdi` or panic it.
+///
+/// Leaving with a failure is allowed: a frame that fails to draw before the
+/// hangup is read ends the loop with that error.
 #[test]
 fn a_terminal_that_goes_leaves_bdi_to_exit_without_aborting() {
     let mut bdi = Driven::bdi(ROWS, COLS, a_home_naming_one_project("gone"), &[]);
     bdi.read_until(ENTER_ALTERNATE_SCREEN, GIVING_UP);
 
-    let exited = bdi.hang_up(LONG_ENOUGH_TO_DIE).unwrap_or_else(|| {
-        panic!("bdi was still running {LONG_ENOUGH_TO_DIE:?} after its terminal went")
+    let exited = bdi.hang_up(LEAVES_WITHIN).unwrap_or_else(|| {
+        panic!("bdi was still running {LEAVES_WITHIN:?} after its terminal went")
     });
 
     assert_eq!(
         exited.signal(),
         None,
         "bdi died of a signal after its terminal went: {exited}"
+    );
+    assert_ne!(
+        exited.code(),
+        Some(A_PANIC),
+        "bdi panicked after its terminal went"
     );
 }
 

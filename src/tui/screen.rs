@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{self, Stdout};
+use std::mem::ManuallyDrop;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -980,7 +981,7 @@ impl Shown {
 /// screen on a buffer: `showing` is the one way to a screen on the reader's
 /// terminal.
 pub(super) struct Screen<B: PutBack = CrosstermBackend<Stdout>> {
-    terminal: Terminal<B>,
+    terminal: ManuallyDrop<Terminal<B>>,
     shown: Shown,
 }
 
@@ -1004,7 +1005,7 @@ impl Screen {
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
-            terminal,
+            terminal: ManuallyDrop::new(terminal),
             shown: Shown::of(
                 snapshot,
                 panes,
@@ -1170,6 +1171,14 @@ compile_error!(
 impl<B: PutBack> Drop for Screen<B> {
     fn drop(&mut self) {
         self.terminal.backend_mut().put_back();
+        // `Terminal`'s own drop shows a cursor it hid, and panics reporting a
+        // failure on a terminal that has gone. So the cursor is shown here,
+        // and a terminal that would not show it is left undropped.
+        if self.terminal.show_cursor().is_ok() {
+            // SAFETY: this is `Screen`'s drop, so nothing uses the terminal
+            // after it.
+            unsafe { ManuallyDrop::drop(&mut self.terminal) };
+        }
     }
 }
 
@@ -3821,7 +3830,9 @@ mod tests {
     #[test]
     fn a_background_written_under_a_running_bdi_reaches_the_band() {
         let mut screen = Screen {
-            terminal: Terminal::new(TestBackend::new(60, 12)).expect("a test backend"),
+            terminal: ManuallyDrop::new(
+                Terminal::new(TestBackend::new(60, 12)).expect("a test backend"),
+            ),
             shown: shown(a_grove(2)),
         };
         let dark = the_bands_sentence_style(&mut screen);

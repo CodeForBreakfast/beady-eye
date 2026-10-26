@@ -18,6 +18,7 @@ use crate::tui::drive::tests::{
 use crate::tui::drive::{drive, Event};
 use crate::tui::fixtures::A_MOMENT;
 use ratatui::backend::TestBackend;
+use std::mem::ManuallyDrop;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Instant;
@@ -101,7 +102,9 @@ impl Run {
         );
         let panes = Asking::default();
         let screen = Screen {
-            terminal: Terminal::new(TestBackend::new(COLS, self.rows)).expect("a test backend"),
+            terminal: ManuallyDrop::new(
+                Terminal::new(TestBackend::new(COLS, self.rows)).expect("a test backend"),
+            ),
             shown: Shown::of(
                 awaiting,
                 Box::new(panes.clone()),

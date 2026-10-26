@@ -62,18 +62,18 @@ fn a_beads_document_whose_reader_has_gone_is_not_a_failure() {
 fn assert_reader_gone_is_not_a_failure(named: &str, args: &[&str]) {
     let home = configured(named);
 
-    let mut running = Command::new(env!("CARGO_BIN_EXE_bdi"))
+    let (reader, writer) = std::io::pipe().expect("a pipe is ours to open");
+    drop(reader);
+    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
         .args(args)
         .current_dir(&home)
         .env("HOME", &home)
         .env_remove("BEADS_DIR")
         .env_remove("BDI_PROJECT")
-        .stdout(Stdio::piped())
+        .stdout(writer)
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .expect("bdi runs");
-    drop(running.stdout.take());
-    let out = running.wait_with_output().expect("bdi is ours to wait for");
     let said = String::from_utf8_lossy(&out.stderr).to_string();
 
     assert!(!said.contains("panicked"), "got: {said}");
