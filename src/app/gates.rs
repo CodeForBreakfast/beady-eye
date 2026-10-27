@@ -1128,7 +1128,7 @@ mod tests {
         let Settling { found, github } = looked(&runner, &[project("arkham")], &Gates::default());
 
         let why = format!(
-            "GitHub would not let gh read commits: Resource not accessible by personal access \
+            "GitHub would not let gh read the checks on its head commit: Resource not accessible by personal access \
              token, nor would it let gh read the workflow runs and commit statuses of a1b2c3: {}",
             unavailable("gh")
         );

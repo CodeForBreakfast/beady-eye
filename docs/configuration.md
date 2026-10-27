@@ -1174,7 +1174,7 @@ dunwich/arkham#18 was commented on inline: arkham told ark-7mw
 dunwich/arkham#18 has a new head: arkham told ark-7mw
 kadath: its gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
-dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token, nor would it let gh read the workflow runs and commit statuses of 5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff: gh exited 1 for a reason bdi cannot place
+dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read the checks on its head commit: Resource not accessible by personal access token, nor would it let gh read the workflow runs and commit statuses of 5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff: gh exited 1 for a reason bdi cannot place
 arkham: gate ark-6pp cannot be settled: it names no repo
 dunwich/arkham#41: GitHub refused it for the rate limit of the login gh runs as, so GitHub is asked nothing more until the limit resets at 2026-01-01 00:30:00 UTC
 ```

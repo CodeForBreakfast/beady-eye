@@ -135,14 +135,16 @@ pub fn pull_requests(
             let fields = answered.remove(&alias).flatten().ok_or_else(|| {
                 RunFailure::parse("gh", format!("the answer has no pull request #{number}"))
             })?;
+            let mut refused: Vec<Refusal> = Vec::new();
+            for (_, refusal) in refusals.iter().filter(|(refused, _)| *refused == alias) {
+                if !refused.iter().any(|seen| seen.field == refusal.field) {
+                    refused.push(refusal.clone());
+                }
+            }
             Ok(Observed {
                 state: state(&fields)?,
                 fields,
-                refused: refusals
-                    .iter()
-                    .filter(|(refused, _)| *refused == alias)
-                    .map(|(_, refusal)| refusal.clone())
-                    .collect(),
+                refused,
             })
         })
         .collect())
@@ -792,6 +794,31 @@ mod tests {
             ]
         );
         assert_eq!(states(Ok(each)), Ok(vec![State::Open, State::Merged]));
+    }
+
+    /// An answer as gh prints it before exiting 1, measured on gh 2.102.0
+    /// for a fine-grained token with *Commit statuses* but no permission for
+    /// check runs: the rollup's state and count, each of its nodes null, and
+    /// an error for each.
+    const CHECK_RUNS_REFUSED_ON_7: &str = r#"{"data":{"repository":{"pr7":{"state":"OPEN","isDraft":true,"commits":{"nodes":[{"commit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff","statusCheckRollup":{"state":"FAILURE","contexts":{"totalCount":2,"nodes":[null,null]}}}}]}},"pr42":{"state":"MERGED","isDraft":false,"mergeCommit":{"oid":"0badc0de0badc0de0badc0de0badc0de0badc0de"}}}},"errors":[{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup","contexts","nodes",0],"extensions":{"saml_failure":false,"ip_allow_list_failure":false},"locations":[{"line":1,"column":217}],"message":"Resource not accessible by personal access token"},{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup","contexts","nodes",1],"extensions":{"saml_failure":false,"ip_allow_list_failure":false},"locations":[{"line":1,"column":217}],"message":"Resource not accessible by personal access token"}]}"#;
+
+    #[test]
+    fn a_field_github_refused_in_several_places_is_handed_back_once() {
+        let runner = FakeRunner::default().failing_having_printed(
+            &format!("gh api graphql -f owner=example -f name=ark -f {QUERY}"),
+            CHECK_RUNS_REFUSED_ON_7,
+            exited(FailureKind::Unavailable),
+        );
+
+        let each = queried(&runner, None).expect("the answer is read for what it holds");
+
+        assert_eq!(
+            each[0].as_ref().expect("#7 read").refused,
+            [Refusal {
+                field: "commits".to_string(),
+                why: "Resource not accessible by personal access token".to_string(),
+            }]
+        );
     }
 
     /// An error about anything larger than one pull request's field, beside

@@ -435,7 +435,8 @@ fn outcomes(
         {
             Some(refusal) => Err(format!(
                 "GitHub would not let gh read {}: {}",
-                refusal.field, refusal.why
+                pr_events::refused_named(&refusal.field),
+                refusal.why
             )),
             None => (event.outcome)(pr, observed)
                 .map_err(|e| format!("GitHub answered its fields in a way bdi cannot read: {e}")),
@@ -2545,6 +2546,22 @@ mod tests {
         )
     }
 
+    /// #7, open with `fields`, as GitHub answers a token it lets read commit
+    /// statuses and refuses check runs: the rollup with its state and its two
+    /// checks null, and an error naming each.
+    fn check_runs_refused_on_7(fields: &str) -> String {
+        let error = |node: u8| {
+            format!(
+                r#"{{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup","contexts","nodes",{node}],"message":"Resource not accessible by personal access token"}}"#
+            )
+        };
+        format!(
+            r#"{{"data":{{"repository":{{"pr7":{{{fields},"commits":{{"nodes":[{{"commit":{{"oid":"a1b2c3","statusCheckRollup":{{"state":"FAILURE","contexts":{{"totalCount":2,"nodes":[null,null]}}}}}}}}]}}}}}}}},"errors":[{},{}]}}"#,
+            error(0),
+            error(1)
+        )
+    }
+
     /// #42 merged, as [`MERGED`] has it, without its braces.
     const MERGED_FIELDS: &str = r#""state":"MERGED","isDraft":false,"mergeCommit":{"oid":"5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff"}"#;
 
@@ -2554,7 +2571,7 @@ mod tests {
             .into_iter()
             .map(|happening| Unseen {
                 happening,
-                why: "GitHub would not let gh read commits: Resource not accessible by personal \
+                why: "GitHub would not let gh read the checks on its head commit: Resource not accessible by personal \
                       access token"
                     .to_string(),
             })
@@ -2607,21 +2624,49 @@ mod tests {
         )
     }
 
+    /// #7 open, with GitHub refusing the token the check runs on its head and
+    /// letting it read the head's commit statuses.
+    fn open_7_check_runs_refused(runner: FakeRunner) -> FakeRunner {
+        runner.failing_having_printed(
+            &viewed(7),
+            &check_runs_refused_on_7(r#""state":"OPEN","isDraft":true,"mergeCommit":null"#),
+            unavailable("gh"),
+        )
+    }
+
     /// A fine-grained token has no permission for check runs, so on a private
     /// repository GitHub refuses it the checks, and lets it read the head's
     /// workflow runs and commit statuses instead.
     #[test]
     fn checks_github_refuses_the_token_are_told_from_the_heads_runs_and_statuses() {
-        for (conclusion, telling, told) in [
+        for (conclusion, telling, told, refusing) in [
             (
                 "failure",
                 checks_failed_telling as fn(&str, &str, &str) -> String,
                 failing_checks as fn(&str, Done) -> Act,
+                open_7_checks_refused as fn(FakeRunner) -> FakeRunner,
             ),
-            ("success", checks_passed_telling, passing_checks),
+            (
+                "success",
+                checks_passed_telling,
+                passing_checks,
+                open_7_checks_refused,
+            ),
+            (
+                "failure",
+                checks_failed_telling,
+                failing_checks,
+                open_7_check_runs_refused,
+            ),
+            (
+                "success",
+                checks_passed_telling,
+                passing_checks,
+                open_7_check_runs_refused,
+            ),
         ] {
             let runner = ran(
-                open_7_checks_refused(captured(FakeRunner::default(), "arkham")),
+                refusing(captured(FakeRunner::default(), "arkham")),
                 conclusion,
             )
             .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
