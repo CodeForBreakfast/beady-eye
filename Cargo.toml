@@ -1,6 +1,6 @@
 [package]
 name = "beady-eye"
-version = "0.37.0"
+version = "0.37.1-rc.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Draws the work in your beads trackers as trees, with what each agent is doing beside the bead it works. It also watches beads for whatever waits on them, and settles beads that wait on GitHub."
