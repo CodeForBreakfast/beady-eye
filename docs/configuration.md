@@ -229,9 +229,9 @@ A stream that drops, or says nothing for 30 seconds, is followed again from
 the last record the watcher read. Where bd has pruned the journal past that
 record, the watcher reads the project in full once and follows the stream
 from the journal's end. Nothing polls the project while its stream is down,
-so once nothing has vouched for it for `covered_for_seconds`, its consumers
-see it as stale and the beads already sent stand as the last known. A project
-naming no `serve` is polled as `poll` says.
+so once nothing has vouched for it for `covered_for_seconds`, the watcher
+tells its consumers it has lapsed, and the beads already sent stand as the
+last known. A project naming no `serve` is polled as `poll` says.
 
 ### A project with no checkout
 

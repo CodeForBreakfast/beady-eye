@@ -826,6 +826,39 @@ fn a_dropped_stream_is_resumed_after_the_last_record_the_watcher_read() {
     stopped(watcher);
 }
 
+/// Nothing polls a project while its stream is down, so only the watcher
+/// can tell a consumer that the beads it holds are no longer vouched for.
+#[test]
+fn a_stream_down_past_covered_for_seconds_has_its_consumers_told_the_project_lapsed() {
+    let mut serve = BdServe::listening();
+    let settings = format!("{}[changes]\ncovered_for_seconds = 1\n", serve.named());
+    let (home, _tracker, watcher) = a_watcher_over("watch-stream-lapsed", &settings, |_| {});
+    serve.answers_the_head(7);
+    serve.opens_the_stream_after(7);
+    let mut consumer = Consumer::connected_to(&watching_at(&home));
+    let first = consumer.sends("watch arkham").hears_an_answer();
+    assert_eq!(first.last().expect("a freshness line")["lapsed"], false);
+
+    serve.hangs_up();
+    let lapsed = loop {
+        let line = consumer.hears().expect("the watcher stays up");
+        if line["line"] == "freshness" && line["lapsed"] == true {
+            break line;
+        }
+    };
+    serve.opens_the_stream_after(7);
+    let resumed = loop {
+        let line = consumer.hears().expect("the watcher stays up");
+        if line["line"] == "freshness" {
+            break line;
+        }
+    };
+
+    assert_eq!(resumed["lapsed"], false);
+    assert!(resumed["as_of"].as_str() > lapsed["as_of"].as_str());
+    stopped(watcher);
+}
+
 /// No record says what was written while the stream could not reach it, so
 /// the project is read in full, and the consumer is sent what that read finds.
 #[test]

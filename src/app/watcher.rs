@@ -87,6 +87,10 @@ pub enum Said {
     /// stand as the last known, and as old as when they were last vouched
     /// for.
     Unreachable(TrackerFailure),
+    /// Nothing has vouched for the project for `[changes]
+    /// covered_for_seconds`, and nothing polls it. The beads held already
+    /// stand as the last known until a read or a vouch comes.
+    Lapsed,
 }
 
 /// Where the watcher's answers come from.
@@ -111,6 +115,8 @@ pub struct Standing {
     pub read_at: Option<DateTime<Utc>>,
     /// Why the last attempt to reach the tracker failed, where it did.
     pub unreachable: Option<TrackerFailure>,
+    /// Whether the project has lapsed since it was last vouched for.
+    pub lapsed: bool,
     /// How the watcher's config reaches the tracker.
     pub reach: Reach,
     /// Whether the project's event records are sent.
@@ -141,6 +147,7 @@ impl Standing {
             &self.reach,
             self.as_of,
             self.unreachable.as_ref(),
+            self.lapsed,
             &self.events,
         ));
         Some(lines)
@@ -213,9 +220,14 @@ impl Hold {
                 standing.as_of = standing.as_of.max(Some(at));
                 standing.read_at = Some(at);
                 standing.unreachable = None;
+                standing.lapsed = false;
             }
-            Said::Vouched { at } => standing.as_of = standing.as_of.max(Some(at)),
+            Said::Vouched { at } => {
+                standing.as_of = standing.as_of.max(Some(at));
+                standing.lapsed = false;
+            }
             Said::Unreachable(failure) => standing.unreachable = Some(failure),
+            Said::Lapsed => standing.lapsed = true,
         }
         let records = match answer.journal {
             Some(Journal::Read(records)) => {
