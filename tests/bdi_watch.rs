@@ -9,6 +9,7 @@
 mod terminal;
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -668,4 +669,178 @@ fn a_watcher_a_test_abandons_is_killed() {
         .status()
         .expect("kill runs");
     assert!(!still_there.success(), "watcher {pid} outlived its test");
+}
+
+/// A tracker's `bd serve`, which the test speaks for.
+struct BdServe {
+    listener: TcpListener,
+    streaming: Option<TcpStream>,
+}
+
+impl BdServe {
+    fn listening() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port is ours to take");
+        listener
+            .set_nonblocking(true)
+            .expect("an accept is ours to give up on");
+        Self {
+            listener,
+            streaming: None,
+        }
+    }
+
+    /// The project entry's line naming where this listens.
+    fn named(&self) -> String {
+        let at = self.listener.local_addr().expect("the port is bound");
+        format!("serve = \"{at}\"\n")
+    }
+
+    /// The path the watcher's next request asks for, and the connection to
+    /// answer it on.
+    fn asked(&self) -> (String, TcpStream) {
+        let giving_up = Instant::now() + GIVING_UP;
+        let connection = loop {
+            match self.listener.accept() {
+                Ok((connection, _)) => break connection,
+                Err(why) if why.kind() == ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < giving_up, "the watcher asked nothing");
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(why) => panic!("the watcher's connection is accepted ({why})"),
+            }
+        };
+        connection
+            .set_nonblocking(false)
+            .expect("the connection is ours to block on");
+        let mut request = BufReader::new(
+            connection
+                .try_clone()
+                .expect("the connection is ours to read"),
+        );
+        let mut asked = String::new();
+        request.read_line(&mut asked).expect("the request comes");
+        let mut header = String::new();
+        while header != "\r\n" {
+            header.clear();
+            request.read_line(&mut header).expect("the request ends");
+        }
+        let path = asked
+            .split(' ')
+            .nth(1)
+            .expect("a request line names its path")
+            .to_string();
+        (path, connection)
+    }
+
+    fn answers_the_head(&self, head: u64) {
+        let (path, mut connection) = self.asked();
+        assert_eq!(path, "/v0/beads/events?since=0&limit=1");
+        write!(
+            connection,
+            "HTTP/1.0 200 OK\r\n\r\n{{\"head\":{head},\"records\":[]}}"
+        )
+        .expect("the watcher reads the head");
+    }
+
+    fn opens_the_stream_after(&mut self, since: u64) {
+        let (path, mut connection) = self.asked();
+        assert_eq!(path, format!("/v0/beads/events:watch?since={since}"));
+        write!(
+            connection,
+            "HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\n\r\nretry: 3000\n\n"
+        )
+        .expect("the watcher reads the stream");
+        self.streaming = Some(connection);
+    }
+
+    fn sends(&mut self, frame: &str) {
+        self.streaming
+            .as_mut()
+            .expect("a stream is open")
+            .write_all(frame.as_bytes())
+            .expect("the watcher reads the stream");
+    }
+
+    fn hangs_up(&mut self) {
+        self.streaming = None;
+    }
+}
+
+/// A watcher following arkham's stream from the journal's head at 7, and a
+/// consumer watching arkham.
+fn a_watcher_following_a_stream(named: &str) -> (BdServe, ShimmedTracker, Watcher, Consumer) {
+    let mut serve = BdServe::listening();
+    let (home, tracker, watcher) = a_watcher_over(named, &serve.named(), |_| {});
+    serve.answers_the_head(7);
+    serve.opens_the_stream_after(7);
+    let mut consumer = Consumer::connected_to(&watching_at(&home));
+    consumer.sends("watch arkham").hears_an_answer();
+    (serve, tracker, watcher, consumer)
+}
+
+/// Every answer `consumer` hears until one sends `id` closed.
+fn until_told_closed(consumer: &mut Consumer, id: &str) {
+    loop {
+        let answer = consumer.hears_an_answer();
+        let closed = answer.iter().any(|line| {
+            line["line"] == "bead" && line["row"]["id"] == id && line["row"]["status"] == "closed"
+        });
+        if closed {
+            return;
+        }
+    }
+}
+
+/// The record stands for a write by any bd client, on this machine or
+/// another: the stream is the tracker's journal, whoever wrote to it. The
+/// project names no `poll`, so nothing reads it on a clock before the test
+/// is over.
+#[test]
+fn a_write_on_a_projects_stream_reaches_a_consumer_with_no_poll_behind_it() {
+    let (mut serve, tracker, watcher, mut consumer) = a_watcher_following_a_stream("watch-stream");
+
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.9")
+    }));
+    serve.sends("id: 8\ndata: {\"seq\":8}\n\n");
+
+    until_told_closed(&mut consumer, "dun-0tp.9");
+    let out = stopped(watcher);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+#[test]
+fn a_dropped_stream_is_resumed_after_the_last_record_the_watcher_read() {
+    let (mut serve, tracker, watcher, mut consumer) =
+        a_watcher_following_a_stream("watch-stream-dropped");
+    serve.sends("id: 8\ndata: {\"seq\":8}\n\n");
+
+    serve.hangs_up();
+    serve.opens_the_stream_after(8);
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.9")
+    }));
+    serve.sends("id: 9\ndata: {\"seq\":9}\n\n");
+
+    until_told_closed(&mut consumer, "dun-0tp.9");
+    stopped(watcher);
+}
+
+/// No record says what was written while the stream could not reach it, so
+/// the project is read in full, and the consumer is sent what that read finds.
+#[test]
+fn a_stream_the_journal_was_pruned_under_is_read_in_full_and_followed_from_its_head() {
+    let (mut serve, tracker, watcher, mut consumer) =
+        a_watcher_following_a_stream("watch-stream-pruned");
+
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.9")
+    }));
+    serve.sends("event: truncated\ndata: {\"code\":\"events_journal_truncated\",\"head\":31}\n\n");
+    serve.hangs_up();
+    serve.answers_the_head(31);
+
+    until_told_closed(&mut consumer, "dun-0tp.9");
+    serve.opens_the_stream_after(31);
+    stopped(watcher);
 }

@@ -23,6 +23,7 @@ use crate::collect::discovery;
 use crate::collect::environment::{self, EnvironmentCache};
 use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
+use crate::collect::stream;
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
 use crate::config::{Config, Delivery, Poll};
@@ -671,7 +672,8 @@ fn arming(polling: Polling) -> Arming {
 }
 
 /// `bdi watch`: every configured project read and held until a signal says
-/// stop, with producers' reports taken on the watcher's own socket.
+/// stop, with each project's bd serve stream followed where its entry names
+/// one, and producers' reports taken on the watcher's own socket.
 ///
 /// The config is read once. Replacing what the watcher reads is a restart.
 fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
@@ -705,6 +707,14 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
         )
     }))));
     let (heard_by, heard) = mpsc::channel();
+    for project in cfg.read() {
+        if let Some(serving) = project.serve {
+            let (project, report) = (project.name.clone(), heard_by.clone());
+            std::thread::spawn(move || {
+                stream::follow(&project, serving, &report, stream::BD_SERVE)
+            });
+        }
+    }
     let at = changes::where_the_watcher_is(socket.or_else(|| cfg.watcher.socket.clone()));
     let serving = (Arc::clone(&held), reported.clone());
     let producing = heard_by.clone();
@@ -1710,6 +1720,7 @@ detached
             prefix: None,
             poll,
             events_journal: false,
+            serve: None,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }

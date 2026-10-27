@@ -1962,14 +1962,12 @@ kept the removed label.
 
 `bdi` watches as well as polls. Anything that already knows a tracker changed
 can say so, and the project it names is read then rather than at its next
-interval. `bdi` ships the socket and the protocol; what produces for it is the
-setup's business, and deliberately none of `bdi`'s. A built-in watcher for bd,
-Dolt or git is exactly the coupling to one setup's organisation this project
-forbids — and the one real producer measured, a Dolt binlog consumer, needs a
-replication user and a server-unique id that a DB-scoped tenant cannot have,
-and receives every tenant's rows on one stream. An interface fits every setup:
-a Dolt trigger, a git hook, a bd wrapper, a `bd serve` event stream, a systemd
-path unit, a cron comparing a head hash, someone typing the line.
+interval. `bdi` ships the socket and the protocol, and an interface fits every
+setup: a Dolt trigger, a git hook, a bd wrapper, a systemd path unit, a cron
+comparing a head hash, someone typing the line. The one producer `bdi` builds
+in is bd's own: `bdi watch` follows the event stream of each tracker whose
+project names its `bd serve`, since that stream is beads' interface for
+exactly this and carries every client's writes.
 
 **The socket.** A stream socket created mode `0600`, at
 `$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless the run is told a path — by

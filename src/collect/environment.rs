@@ -662,6 +662,7 @@ mod tests {
             prefix: None,
             poll: Default::default(),
             events_journal: false,
+            serve: None,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }
@@ -987,6 +988,7 @@ mod tests {
     fn a_project_keeping_the_journal_has_bd_keep_it() {
         let project = Project {
             events_journal: true,
+            serve: None,
             ..ambient_project()
         };
 
@@ -1061,6 +1063,7 @@ mod tests {
             prefix: None,
             poll: Default::default(),
             events_journal: false,
+            serve: None,
             badges: Vec::new(),
             worktrees: Vec::new(),
         };
@@ -1267,6 +1270,7 @@ mod tests {
             prefix: None,
             poll: Default::default(),
             events_journal: false,
+            serve: None,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }

@@ -1756,6 +1756,7 @@ mod tests {
             prefix: None,
             poll: Default::default(),
             events_journal: false,
+            serve: None,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }
@@ -2163,6 +2164,7 @@ mod tests {
         let runner = FakeRunner::default().with(&spelled("events tail --since 0"), JOURNAL);
         let claiming = Project {
             events_journal: true,
+            serve: None,
             ..ambient_project()
         };
         let reading = launched_with(&runner, Some("hunter2")).reading_journals();
