@@ -704,7 +704,9 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     for project in cfg.read() {
         if let Some(serving) = project.serve {
             let (project, report) = (project.name.clone(), heard_by.clone());
-            std::thread::spawn(move || stream::follow(&project, serving, &report, stream::BD_SERVE));
+            std::thread::spawn(move || {
+                stream::follow(&project, serving, &report, stream::BD_SERVE)
+            });
         }
     }
     let at = changes::where_the_watcher_is(socket.or_else(|| cfg.watcher.socket.clone()));

@@ -166,7 +166,9 @@ struct Response {
 /// which is how a stream ends anyway.
 fn get(at: SocketAddr, path: &str, timing: Timing) -> Option<Response> {
     let mut connection = TcpStream::connect_timeout(&at, timing.silent_after).ok()?;
-    connection.set_read_timeout(Some(timing.silent_after)).ok()?;
+    connection
+        .set_read_timeout(Some(timing.silent_after))
+        .ok()?;
     write!(connection, "GET {path} HTTP/1.0\r\nHost: {at}\r\n\r\n").ok()?;
     let mut body = BufReader::new(connection);
     let mut head = Vec::new();
@@ -277,7 +279,9 @@ mod tests {
         }
 
         fn answers(&mut self, status: &str, body: &str) -> &mut Self {
-            self.sends(&format!("HTTP/1.0 {status}\r\nContent-Type: text/plain\r\n\r\n{body}"))
+            self.sends(&format!(
+                "HTTP/1.0 {status}\r\nContent-Type: text/plain\r\n\r\n{body}"
+            ))
         }
 
         fn answers_with_head(&mut self, head: u64) {
@@ -307,7 +311,12 @@ mod tests {
         }
 
         fn hears_nothing_for(&self, quiet: Duration) {
-            match self.heard.as_ref().expect("the follower is heard").recv_timeout(quiet) {
+            match self
+                .heard
+                .as_ref()
+                .expect("the follower is heard")
+                .recv_timeout(quiet)
+            {
                 Err(RecvTimeoutError::Timeout) => {}
                 said => panic!("the follower said nothing, not {said:?}"),
             }
@@ -315,7 +324,10 @@ mod tests {
 
         /// Following arkham's stream from `since`, opened.
         fn streaming_from(&mut self, since: u64) {
-            assert_eq!(self.asked(), format!("/v0/beads/events:watch?since={since}"));
+            assert_eq!(
+                self.asked(),
+                format!("/v0/beads/events:watch?since={since}")
+            );
             self.answers("200 OK", A_STREAM_OPENING);
             assert_eq!(self.hears(), covered());
         }
@@ -354,7 +366,9 @@ mod tests {
         let mut serve = Serve::followed();
 
         let (_, host) = serve.asked_with_host();
-        serve.answers("200 OK", r#"{"head":7,"records":[]}"#).hangs_up();
+        serve
+            .answers("200 OK", r#"{"head":7,"records":[]}"#)
+            .hangs_up();
 
         assert_eq!(serve.hears(), changed(), "the full read");
         assert_eq!(host, serve.listener.local_addr().unwrap().to_string());
@@ -404,7 +418,8 @@ mod tests {
     }
 
     #[test]
-    fn a_resume_the_journal_cannot_serve_reads_the_project_in_full_once_and_follows_from_its_head() {
+    fn a_resume_the_journal_cannot_serve_reads_the_project_in_full_once_and_follows_from_its_head()
+    {
         let mut serve = Serve::followed();
         serve.answers_with_head(7);
         assert_eq!(serve.hears(), changed());
@@ -415,7 +430,10 @@ mod tests {
 
         assert_eq!(serve.asked(), "/v0/beads/events:watch?since=8");
         serve
-            .answers("410 Gone", r#"{"code":"events_journal_truncated","since":8,"floor":20,"head":31}"#)
+            .answers(
+                "410 Gone",
+                r#"{"code":"events_journal_truncated","since":8,"floor":20,"head":31}"#,
+            )
             .hangs_up();
         serve.answers_with_head(31);
 
@@ -424,7 +442,8 @@ mod tests {
     }
 
     #[test]
-    fn a_stream_the_journal_is_pruned_under_reads_the_project_in_full_once_and_follows_from_its_head() {
+    fn a_stream_the_journal_is_pruned_under_reads_the_project_in_full_once_and_follows_from_its_head(
+    ) {
         let mut serve = Serve::followed();
         serve.answers_with_head(7);
         assert_eq!(serve.hears(), changed());

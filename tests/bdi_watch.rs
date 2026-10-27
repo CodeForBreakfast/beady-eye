@@ -762,10 +762,11 @@ fn until_told_closed(consumer: &mut Consumer, id: &str) {
 /// is over.
 #[test]
 fn a_write_on_a_projects_stream_reaches_a_consumer_with_no_poll_behind_it() {
-    let (mut serve, tracker, watcher, mut consumer) =
-        a_watcher_following_a_stream("watch-stream");
+    let (mut serve, tracker, watcher, mut consumer) = a_watcher_following_a_stream("watch-stream");
 
-    tracker.holds(&the_described_subtree_with(|rows| closing(rows, "dun-0tp.9")));
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.9")
+    }));
     serve.sends("id: 8\ndata: {\"seq\":8}\n\n");
 
     until_told_closed(&mut consumer, "dun-0tp.9");
@@ -781,7 +782,9 @@ fn a_dropped_stream_is_resumed_after_the_last_record_the_watcher_read() {
 
     serve.hangs_up();
     serve.opens_the_stream_after(8);
-    tracker.holds(&the_described_subtree_with(|rows| closing(rows, "dun-0tp.9")));
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.9")
+    }));
     serve.sends("id: 9\ndata: {\"seq\":9}\n\n");
 
     until_told_closed(&mut consumer, "dun-0tp.9");
@@ -795,7 +798,9 @@ fn a_stream_the_journal_was_pruned_under_is_read_in_full_and_followed_from_its_h
     let (mut serve, tracker, watcher, mut consumer) =
         a_watcher_following_a_stream("watch-stream-pruned");
 
-    tracker.holds(&the_described_subtree_with(|rows| closing(rows, "dun-0tp.9")));
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.9")
+    }));
     serve.sends("event: truncated\ndata: {\"code\":\"events_journal_truncated\",\"head\":31}\n\n");
     serve.hangs_up();
     serve.answers_the_head(31);

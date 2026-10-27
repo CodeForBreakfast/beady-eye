@@ -5,7 +5,8 @@
 //! program it is, one for the environment each project's tracker is asked in,
 //! one for what it works out where nothing configured it, one for the pane
 //! text a tail shows, one for the socket a setup pokes to say a project's
-//! work changed, one for what a running watcher says of each tracker, one for
+//! work changed, one for a tracker's `bd serve` event stream, one for what a
+//! running watcher says of each tracker, one for
 //! the pull requests each tracker's gates wait on, one for what each thing a
 //! pull request does means to those gates, one for the gates waiting on an
 //! issue or a release, and one for GitHub's webhook deliveries about pull

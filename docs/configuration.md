@@ -216,6 +216,23 @@ ends, and sends none of it. Where bd has pruned the journal past a record the
 watcher had not yet read, the watcher tells each consumer once that the
 journal is unreadable, and then sends the records bd kept.
 
+**`serve`** is the address this project's `bd serve` listens on, written as
+`bd serve --addr` takes it: `serve = "127.0.0.1:8742"`. [The
+watcher](#running-the-watcher) then follows bd serve's event stream, which
+carries every write to the tracker, whichever bd client made it. A write is
+read within seconds, and the stream opening stands the project's poll down as
+a producer's `covered` line does. bd serve sends a heartbeat on a quiet stream
+every 20 seconds, and each one vouches for the project. The stream needs bd's
+events journal turned on where bd serve runs.
+
+A stream that drops, or says nothing for 30 seconds, is followed again from
+the last record the watcher read. Where bd has pruned the journal past that
+record, the watcher reads the project in full once and follows the stream
+from the journal's end. Nothing polls the project while its stream is down,
+so once nothing has vouched for it for `covered_for_seconds`, its consumers
+see it as stale and the beads already sent stand as the last known. A project
+naming no `serve` is polled as `poll` says.
+
 ### A project with no checkout
 
 A tracker on a Dolt server can be read from a machine holding no checkout of
@@ -753,10 +770,10 @@ a channel. [Telling `bdi` where to watch](#telling-bdi-where-to-watch) has
 the whole of it.
 
 `covered_for_seconds` is how long a project that does not poll is taken to be
-current after its last read, or after the last `covered` line naming it. Past
-that its mark turns to `?`. The default of 60 is three of the 20-second
-heartbeats a producer reading a Dolt event stream sends, so a late heartbeat
-does not read as a producer that has gone. A polled project never lapses.
+current after its last read, or after the last `covered` line or heartbeat
+naming it. Past that its mark turns to `?`. The default of 60 is three of the
+20-second heartbeats bd serve's event stream sends, so a late heartbeat does
+not read as a stream that has gone. A polled project never lapses.
 
 ## `[watcher]`
 
@@ -1003,11 +1020,15 @@ with whether it is ready and what blocks it. Its config is read once at
 startup, so an edit to the config takes effect at the next start. It runs
 nothing of herdr's.
 
-It has a socket of its own, apart from the one a view watches, and
-takes the same producer lines: a project's name, or `covered <project>`. A
-producer that should reach the watcher is pointed at
-`$XDG_RUNTIME_DIR/beady-eye/watcher.sock`, or at the path `[watcher]` names.
-A consumer watching beads connects to the same socket. The README has a worked
+It follows the event stream of each project whose entry names its
+[`serve`](#projects), and reads that project whenever the stream says it was
+written to. Run a `bd serve` for each such tracker, and the watcher needs
+nothing else to hear of a change.
+
+It has a socket of its own, apart from the one a view watches, at
+`$XDG_RUNTIME_DIR/beady-eye/watcher.sock` or the path `[watcher]` names. A
+consumer watching beads connects to it. It also takes the lines a view takes
+from a producer: a project's name, or `covered <project>`. The README has a worked
 one. The view, `bdi --json` and `bdi --beads` find the watcher at the same
 path and read through it, so a `[watcher]` socket is named once for all
 three. They read a project
