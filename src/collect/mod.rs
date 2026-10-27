@@ -22,6 +22,7 @@ pub mod herdr;
 pub mod panes;
 pub mod pr_events;
 pub mod run;
+pub mod stream;
 pub mod tracker;
 pub mod upstream;
 pub mod watched;

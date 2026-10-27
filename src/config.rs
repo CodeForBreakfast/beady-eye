@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -186,6 +187,11 @@ pub struct Project {
     /// `bdi`'s own writes are not the gap.
     #[serde(default)]
     pub events_journal: bool,
+    /// Where this tracker's `bd serve` listens, as `bd serve --addr` takes it,
+    /// so that `bdi watch` follows its event stream and hears of every write
+    /// to the tracker as it happens.
+    #[serde(default)]
+    pub serve: Option<SocketAddr>,
     /// Badges this project draws in place of the ones `[[badges]]` names, for
     /// the keys it names and no others.
     ///
@@ -1448,6 +1454,7 @@ path = "/home/user/dev/kadath"
 credential_command = "cat /home/user/dev/kadath/.beads-password"
 prefix = "kad"
 events_journal = true
+serve = "127.0.0.1:8742"
 
 [[projects.badges]]
 key    = "metadata.delivery_pr"
@@ -1531,6 +1538,7 @@ path = "/home/user/dev/kadath"
                     prefix: None,
                     poll: Default::default(),
                     events_journal: false,
+                    serve: None,
                     badges: Vec::new(),
                     worktrees: Vec::new(),
                 },
@@ -1547,6 +1555,7 @@ path = "/home/user/dev/kadath"
                     prefix: Some("kad".to_string()),
                     poll: Default::default(),
                     events_journal: true,
+                    serve: Some("127.0.0.1:8742".parse().unwrap()),
                     badges: vec![Badge {
                         when: Default::default(),
                         unless: Default::default(),
@@ -1885,6 +1894,7 @@ title = ["title", "badge.metadata.jira", "badges"]
             prefix: None,
             poll: Default::default(),
             events_journal: false,
+            serve: None,
             badges,
             worktrees: Vec::new(),
         }
@@ -1991,11 +2001,23 @@ path = "/home/user/dev/kadath"
         assert!(!said.contains("missing field"), "{said}");
     }
 
+    /// bd serve takes no host name either, so one written here could never
+    /// be where it listens.
+    #[test]
+    fn a_bd_serve_named_by_a_host_name_is_refused() {
+        let named = format!("{ONE_PROJECT}serve = \"localhost:8742\"\n");
+
+        let refused = Config::from_toml(&named).expect_err("a host name is not an address");
+
+        assert!(refused.to_string().contains("serve"), "{refused}");
+    }
+
     #[test]
     fn a_config_of_one_project_gets_every_default() {
         let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
 
         assert_eq!(cfg.projects[0].credential_command, None);
+        assert_eq!(cfg.projects[0].serve, None);
         assert_eq!(cfg.roots, Roots::default());
         assert!(cfg.badges.is_empty());
         assert_eq!(cfg.anomalies.stale_claim_days, 30);

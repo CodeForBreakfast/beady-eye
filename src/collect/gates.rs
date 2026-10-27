@@ -590,6 +590,7 @@ mod tests {
             prefix: None,
             poll: Default::default(),
             events_journal: false,
+            serve: None,
             badges: Vec::new(),
             worktrees: Vec::new(),
         }
