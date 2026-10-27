@@ -20,8 +20,9 @@
 #                            the database BEADS_DOLT_SERVER_DATABASE names
 #                            where that is set. A file
 #                            named for the call with `.refused` after it
-#                            refuses the call instead: it goes to stderr and
-#                            the shim exits 1, as bd does.
+#                            refuses the call instead, for every tracker or,
+#                            in a tracker's directory, for that one: it goes
+#                            to stderr and the shim exits 1, as bd does.
 #   BDI_SHIM_BD_UNANSWERED   file this appends each call it had no answer for
 #                            to, so a reader can tell a capture that was not
 #                            served from one that was served wrongly.
@@ -146,6 +147,12 @@ esac
 
 if [ -n "${BDI_SHIM_BD_ANSWERS:-}" ] && [ -f "$BDI_SHIM_BD_ANSWERS/$asked.refused" ]; then
   cat "$BDI_SHIM_BD_ANSWERS/$asked.refused" >&2
+  exit 1
+fi
+
+if [ -n "${BDI_SHIM_BD_ANSWERS:-}" ] && [ -n "$tracker" ] &&
+  [ -f "$BDI_SHIM_BD_ANSWERS/$tracker/$asked.refused" ]; then
+  cat "$BDI_SHIM_BD_ANSWERS/$tracker/$asked.refused" >&2
   exit 1
 fi
 
