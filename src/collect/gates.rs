@@ -295,7 +295,7 @@ fn settle_asked_together<'a>(
     asked.iter().zip(observed).map(move |(each, observed)| {
         let pr = &each.pull_request;
         let read = observed
-            .map(|observed| with_refused_checks_read(gh, pr, observed))
+            .and_then(|observed| with_refused_checks_read(gh, pr, observed))
             .map(|observed| outcomes(events, pr, &observed, said));
         settled(cli, projects, pr, read, Some(&each.waiting), told)
     })
@@ -305,21 +305,26 @@ fn settle_asked_together<'a>(
 /// is open, read instead from the head's workflow runs and commit statuses.
 /// GitHub refuses check runs to a fine-grained token, which has no permission
 /// for them, and lets it read those. Where GitHub refuses those too, the
-/// refusal stands and says so.
-fn with_refused_checks_read(gh: &dyn Runner, pr: &PullRequest, mut observed: Observed) -> Observed {
+/// refusal stands and says so, except for the rate limit, which stops the
+/// look as it would have for the pull request itself.
+fn with_refused_checks_read(
+    gh: &dyn Runner,
+    pr: &PullRequest,
+    mut observed: Observed,
+) -> Result<Observed, RunFailure> {
     let Some(at) = observed
         .refused
         .iter()
         .position(|refusal| pr_events::refuses_head_checks(&refusal.field))
     else {
-        return observed;
+        return Ok(observed);
     };
     let head = observed
         .fields
         .pointer_mut(pr_events::HEAD_CHECKED_AT)
         .and_then(serde_json::Value::as_object_mut);
     let Some(head) = head.filter(|_| observed.state == State::Open) else {
-        return observed;
+        return Ok(observed);
     };
     let Some(sha) = head
         .get("oid")
@@ -327,7 +332,7 @@ fn with_refused_checks_read(gh: &dyn Runner, pr: &PullRequest, mut observed: Obs
         .filter(|sha| !sha.is_empty() && sha.bytes().all(|b| b.is_ascii_hexdigit()))
         .map(str::to_string)
     else {
-        return observed;
+        return Ok(observed);
     };
     match github::repository(&pr.repo)
         .and_then(|repo| github::checks_without_check_runs(gh, &repo, &sha))
@@ -336,6 +341,7 @@ fn with_refused_checks_read(gh: &dyn Runner, pr: &PullRequest, mut observed: Obs
             head.insert("statusCheckRollup".to_string(), checks);
             observed.refused.remove(at);
         }
+        Err(failure) if failure.kind == FailureKind::RateLimited => return Err(failure),
         Err(failure) => {
             let refusal = &mut observed.refused[at];
             refusal.why = format!(
@@ -345,7 +351,7 @@ fn with_refused_checks_read(gh: &dyn Runner, pr: &PullRequest, mut observed: Obs
             );
         }
     }
-    observed
+    Ok(observed)
 }
 
 /// `pr` as GitHub has it, asked `fields` beside its state.
@@ -2567,7 +2573,7 @@ mod tests {
             .with(
                 RUNS_OF_A1B2C3,
                 &format!(
-                    r#"{{"total_count":1,"workflow_runs":[{{"name":"CI","workflow_id":99,"status":"completed","conclusion":"{conclusion}","run_started_at":"2026-10-06T08:30:00Z","updated_at":"2026-10-06T08:40:00Z"}}]}}"#
+                    r#"{{"total_count":1,"workflow_runs":[{{"id":4242,"name":"CI","workflow_id":99,"event":"pull_request","status":"completed","conclusion":"{conclusion}","run_started_at":"2026-10-06T08:30:00Z","updated_at":"2026-10-06T08:40:00Z"}}]}}"#
                 ),
             )
             .with(
@@ -2671,6 +2677,22 @@ mod tests {
                 unseen: refused_the_checks_and_the_runs()
             }
         );
+    }
+
+    /// The rate limit stops the look, as it would have had GitHub given it
+    /// for the pull request itself.
+    #[test]
+    fn checks_github_refuses_with_the_heads_runs_rate_limited_leave_the_pull_request_unread() {
+        let rate_limited = RunFailure {
+            kind: FailureKind::RateLimited,
+            ..unavailable("gh")
+        };
+        let runner = open_7_checks_refused(captured(FakeRunner::default(), "arkham"))
+            .failing(RUNS_OF_A1B2C3, rate_limited.clone());
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(settled, Settled::Unread(rate_limited));
     }
 
     /// gh prints GitHub's whole answer, then exits 1 for the error in it. The

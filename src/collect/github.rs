@@ -236,8 +236,10 @@ struct WorkflowRuns {
 /// has completed, and says when it finished only as when it was last updated.
 #[derive(Deserialize)]
 struct WorkflowRun {
+    id: u64,
     name: Option<String>,
     workflow_id: u64,
+    event: String,
     conclusion: Option<String>,
     run_started_at: Option<DateTime<Utc>>,
     updated_at: Option<DateTime<Utc>>,
@@ -263,17 +265,18 @@ struct CommitStatus {
 /// neither. `sha` goes into the path, so the caller has checked it is
 /// hexadecimal.
 ///
-/// The rollup fails where any run or status failed, as GitHub combines
-/// statuses, is pending where none failed and any has not finished, and
-/// succeeds otherwise.
+/// A workflow the commit triggered more than once for the same event is
+/// given by its latest run, which replaced the others. The rollup fails where
+/// any run or status failed, as GitHub combines statuses, is pending where
+/// none failed and any has not finished or was not read, and succeeds
+/// otherwise.
 pub fn checks_without_check_runs(
     runner: &dyn Runner,
     repo: &Repository,
     sha: &str,
 ) -> Result<Value, RunFailure> {
-    // ponytail: the latest hundred runs and statuses only. totalCount says
-    // there were more, which the events reading checks already allow for.
-    // Follow the pages if a commit ever has more.
+    // ponytail: the first hundred runs and statuses only, so a commit with
+    // more never passes. Follow the pages if a commit ever has more.
     let (owner, name) = (repo.owner, repo.name);
     let runs: WorkflowRuns = rest(
         runner,
@@ -288,19 +291,31 @@ pub fn checks_without_check_runs(
     if runs.workflow_runs.is_empty() && statuses.statuses.is_empty() {
         return Ok(Value::Null);
     }
+    let unread = runs.total_count > runs.workflow_runs.len()
+        || statuses.total_count > statuses.statuses.len();
+    let mut latest: BTreeMap<(u64, &str), u64> = BTreeMap::new();
+    for run in &runs.workflow_runs {
+        let id = latest.entry((run.workflow_id, &run.event)).or_default();
+        *id = (*id).max(run.id);
+    }
+    let latest: Vec<u64> = latest.into_values().collect();
+    let replaced = runs.workflow_runs.len() - latest.len();
+    let runs_count = runs.total_count.saturating_sub(replaced);
+    let runs: Vec<WorkflowRun> = runs
+        .workflow_runs
+        .into_iter()
+        .filter(|run| latest.contains(&run.id))
+        .collect();
     let finished_well = |conclusion: &str| matches!(conclusion, "success" | "neutral" | "skipped");
     let failed = runs
-        .workflow_runs
         .iter()
         .any(|run| run.conclusion.as_deref().is_some_and(|c| !finished_well(c)))
         || statuses
             .statuses
             .iter()
             .any(|status| matches!(status.state.as_str(), "failure" | "error"));
-    let going = runs
-        .workflow_runs
-        .iter()
-        .any(|run| run.conclusion.is_none())
+    let going = unread
+        || runs.iter().any(|run| run.conclusion.is_none())
         || statuses
             .statuses
             .iter()
@@ -311,7 +326,6 @@ pub fn checks_without_check_runs(
         (false, false) => "SUCCESS",
     };
     let nodes = runs
-        .workflow_runs
         .into_iter()
         .map(|run| {
             serde_json::json!({
@@ -331,7 +345,7 @@ pub fn checks_without_check_runs(
         .collect::<Vec<_>>();
     Ok(serde_json::json!({
         "state": state,
-        "contexts": {"totalCount": runs.total_count + statuses.total_count, "nodes": nodes},
+        "contexts": {"totalCount": runs_count + statuses.total_count, "nodes": nodes},
     }))
 }
 
@@ -983,11 +997,11 @@ mod tests {
 
     fn run(name: &str, conclusion: &str) -> String {
         format!(
-            r#"{{"id":4242,"name":"{name}","workflow_id":99,"status":"completed","conclusion":{conclusion},"run_started_at":"2026-10-06T08:00:00Z","updated_at":"2026-10-06T08:05:00Z"}}"#
+            r#"{{"id":4242,"name":"{name}","workflow_id":99,"event":"push","status":"completed","conclusion":{conclusion},"run_started_at":"2026-10-06T08:00:00Z","updated_at":"2026-10-06T08:05:00Z"}}"#
         )
     }
 
-    const RUNNING: &str = r#"{"id":4243,"name":"CI","workflow_id":99,"status":"in_progress","conclusion":null,"run_started_at":"2026-10-06T08:00:00Z","updated_at":"2026-10-06T08:01:00Z"}"#;
+    const RUNNING: &str = r#"{"id":4243,"name":"CI","workflow_id":99,"event":"pull_request","status":"in_progress","conclusion":null,"run_started_at":"2026-10-06T08:00:00Z","updated_at":"2026-10-06T08:01:00Z"}"#;
 
     fn status(state: &str) -> String {
         format!(r#"{{"state":"{state}","context":"lint","created_at":"2026-10-06T08:10:00Z"}}"#)
@@ -1014,6 +1028,55 @@ mod tests {
         assert_eq!(rollup_state(&[&passed], &[&status("failure")]), "FAILURE");
     }
 
+    /// A workflow the commit triggered again for the same event is judged by
+    /// its latest run alone, which replaced the earlier ones.
+    #[test]
+    fn a_workflow_run_again_for_the_same_event_is_judged_by_its_latest_run() {
+        let again = |id: u64, event: &str, conclusion: &str| {
+            format!(
+                r#"{{"id":{id},"name":"CI","workflow_id":99,"event":"{event}","status":"completed","conclusion":"{conclusion}","run_started_at":"2026-10-06T08:0{id}:00Z","updated_at":"2026-10-06T08:0{id}:30Z"}}"#
+            )
+        };
+        let (failed, passed) = (
+            again(1, "pull_request", "failure"),
+            again(2, "pull_request", "success"),
+        );
+        let checks = checks_of_sha(&[&passed, &failed], &[]).expect("both read");
+
+        assert_eq!(checks["state"], "SUCCESS");
+        assert_eq!(
+            checks["contexts"]["nodes"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let pushed = again(3, "push", "failure");
+        assert_eq!(rollup_state(&[&passed, &failed, &pushed], &[]), "FAILURE");
+    }
+
+    /// The runs and statuses past the first hundred are not read, so checks
+    /// that may hide a failure there are never said to pass.
+    #[test]
+    fn checks_with_more_runs_or_statuses_than_were_read_do_not_pass() {
+        let passed = run("CI", r#""success""#);
+        let more_runs = FakeRunner::default()
+            .with(
+                RUNS_OF_SHA,
+                &runs_listed(&[&passed]).replace(r#""total_count":1"#, r#""total_count":101"#),
+            )
+            .with(STATUSES_OF_SHA, &statuses_combined(&[]));
+        let more_statuses = FakeRunner::default()
+            .with(RUNS_OF_SHA, &runs_listed(&[&passed]))
+            .with(
+                STATUSES_OF_SHA,
+                &statuses_combined(&[&status("success")])
+                    .replace(r#""total_count":1"#, r#""total_count":101"#),
+            );
+
+        for runner in [more_runs, more_statuses] {
+            let checks = checks_without_check_runs(&runner, &ark(None), SHA).expect("both read");
+            assert_eq!(checks["state"], "PENDING");
+        }
+    }
+
     #[test]
     fn checks_with_a_run_or_status_still_going_and_none_failed_are_pending() {
         let passed = run("CI", r#""success""#);
@@ -1026,8 +1089,8 @@ mod tests {
     fn checks_whose_every_run_and_status_finished_well_pass() {
         let runs = [
             run("CI", r#""success""#),
-            run("Docs", r#""skipped""#),
-            run("Lint", r#""neutral""#),
+            run("Docs", r#""skipped""#).replace(r#""workflow_id":99"#, r#""workflow_id":98"#),
+            run("Lint", r#""neutral""#).replace(r#""workflow_id":99"#, r#""workflow_id":97"#),
         ];
         let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
 
