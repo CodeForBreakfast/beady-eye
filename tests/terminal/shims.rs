@@ -206,6 +206,12 @@ impl ShimmedTracker {
         std::fs::write(answer, text).expect("the answer is ours to write");
     }
 
+    /// Refuse `asked` for the tracker at a directory whose last component is
+    /// `tracker` and for no other, saying `said` on stderr and exiting 1.
+    pub fn refuses_for(&self, tracker: &str, asked: &str, said: &str) {
+        self.answers_for(tracker, &format!("{asked}.refused"), said);
+    }
+
     /// Answer as a direnv that has entered the directory would: these
     /// variables, spelled as `env -0` spells them.
     ///
