@@ -31,6 +31,9 @@ pub struct ReadingTrackers {
     /// flight is a read being made.
     asking: (Sender<Asked>, Receiver<Asked>),
     told: VecDeque<Answer>,
+    /// The projects the watcher has been told have lapsed, and not since
+    /// told otherwise.
+    lapsed: Vec<String>,
 }
 
 impl ReadingTrackers {
@@ -50,7 +53,24 @@ impl ReadingTrackers {
             reading,
             asking: mpsc::channel(),
             told: VecDeque::new(),
+            lapsed: Vec::new(),
         }
+    }
+
+    /// Tell the watcher of each project that has lapsed since it was last
+    /// told.
+    fn say_what_has_lapsed(&mut self, now: DateTime<Utc>) {
+        let lapsed = self.reading.lapsed(now);
+        for project in &lapsed {
+            if !self.lapsed.contains(project) {
+                self.told.push_back(Answer {
+                    project: project.clone(),
+                    said: Said::Lapsed,
+                    journal: None,
+                });
+            }
+        }
+        self.lapsed = lapsed;
     }
 
     /// Make the read whose turn has come, where one has.
@@ -98,6 +118,7 @@ impl ChangeSource for ReadingTrackers {
             while let Ok(heard) = self.heard.try_recv() {
                 self.take(heard);
             }
+            self.say_what_has_lapsed(Utc::now());
             if let Some(answer) = self.told.pop_front() {
                 return Some(answer);
             }
@@ -156,6 +177,27 @@ mod tests {
         every: Option<std::time::Duration>,
         trackers: Arc<Fakes>,
     ) -> (ReadingTrackers, Sender<Heard>) {
+        reading_with(
+            Armed::polling("dunwich".to_string(), every),
+            Armed::polling("ferry".to_string(), None),
+            trackers,
+        )
+    }
+
+    /// As [`reading`], with ferry lapsing `after` nothing has vouched for it.
+    fn ferry_lapsing(after: Duration) -> (ReadingTrackers, Sender<Heard>) {
+        reading_with(
+            Armed::polling("dunwich".to_string(), None),
+            Armed::polling("ferry".to_string(), None).lapsing_after(after),
+            trackers(),
+        )
+    }
+
+    fn reading_with(
+        dunwich: Armed,
+        ferry: Armed,
+        trackers: Arc<Fakes>,
+    ) -> (ReadingTrackers, Sender<Heard>) {
         let cfg = two_projects();
         let mut collection = Collection::default();
         let reads: Reads = Box::new(move |wanted, now| {
@@ -168,10 +210,7 @@ mod tests {
             )
         });
         let (tell, heard) = mpsc::channel();
-        let armed = vec![
-            Armed::polling("dunwich".to_string(), every),
-            Armed::polling("ferry".to_string(), None),
-        ];
+        let armed = vec![dunwich, ferry];
         let source = ReadingTrackers::new(
             reads,
             heard,
@@ -257,6 +296,28 @@ mod tests {
             }),
             "ferry's cover was never taken while polls kept coming due"
         );
+    }
+
+    #[test]
+    fn a_project_nothing_vouches_for_is_said_to_have_lapsed_once_until_something_does() {
+        let (mut source, tell) = ferry_lapsing(Duration::from_millis(50));
+        for _ in 0..2 {
+            source.next();
+        }
+
+        let lapsed = source.next().expect("an answer");
+        tell.send(Heard::Covered("ferry".to_string())).unwrap();
+        let vouched = source.next().expect("an answer");
+        let lapsed_again = source.next().expect("an answer");
+        drop(tell);
+
+        assert!([&lapsed, &vouched, &lapsed_again]
+            .iter()
+            .all(|answer| answer.project == "ferry"));
+        assert_eq!(lapsed.said, Said::Lapsed);
+        assert!(matches!(vouched.said, Said::Vouched { .. }));
+        assert_eq!(lapsed_again.said, Said::Lapsed);
+        assert_eq!(source.next(), None, "a lapse is said once");
     }
 
     #[test]
