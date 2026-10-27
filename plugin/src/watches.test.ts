@@ -135,8 +135,12 @@ interface Message {
   readonly meta: Record<string, string>
 }
 
-const keptFile = ({ directory }: Place, under: SessionId = session) =>
-  JSON.parse(readFileSync(join(directory, 'beady-eye', 'watches', `${under}.json`), 'utf8'))
+/** What the session's file keeps, which is nothing until it is first
+ * written. */
+const keptFile = ({ directory }: Place, under: SessionId = session) => {
+  const path = join(directory, 'beady-eye', 'watches', `${under}.json`)
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : []
+}
 
 /** The beads the session's file keeps. */
 const kept = (place: Place, under: SessionId = session) =>
@@ -1817,6 +1821,34 @@ test('a tracker outage the session was told of goes with its last watch', async 
     project: 'summit-works',
     tracker: 'unreachable',
   })
+})
+
+test('a tracker unreachable for a minute before its watch is kept wakes the session once it is', async () => {
+  const place = aPlace()
+  const watcher = await aWatcherAt(place.at as string)
+  /** The minute starts on the watch's first answer, before the write that
+   * keeps the watch, so a write that first waits a minute ends after it. */
+  const writtenAfterAMinute = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (fs) => ({
+      ...fs,
+      writeFileString: (path: string, data: string) =>
+        Effect.sleep(timing.quietFor).pipe(Effect.andThen(fs.writeFileString(path, data))),
+    })),
+  ).pipe(Layer.provide(NodeFileSystem.layer))
+  const { watches } = await someWatches(
+    place.directory,
+    place.at,
+    ['summit-works'],
+    timing,
+    writtenAfterAMinute,
+  )
+  await Effect.runPromise(watches.learn(session))
+  const answer = Effect.runPromise(watches.watch(anId('smt-4kd3p.20'), aProject('summit-works')))
+  ;(await watcher.next()).connection.write(said(unreachable))
+  await answer
+
+  expect((await nextNews(watches))?.block).toMatchObject({ is: 'tracker', tracker: 'unreachable' })
 })
 
 test('an unwatched bead takes its minute with it', async () => {
