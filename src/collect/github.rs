@@ -261,9 +261,9 @@ struct CommitStatus {
 /// The checks on commit `sha` in `repo`, read from its workflow runs and its
 /// commit statuses, which GitHub lets a token read that it refuses check
 /// runs to. They are given in the shape GraphQL answers `statusCheckRollup`,
-/// each run as a check run of its workflow, and null where the commit has
-/// neither. `sha` goes into the path, so the caller has checked it is
-/// hexadecimal.
+/// each run as a check run of its workflow for its event, and null where the
+/// commit has neither. `sha` goes into the path, so the caller has checked
+/// it is hexadecimal.
 ///
 /// A workflow the commit triggered more than once for the same event is
 /// given by its latest run, which replaced the others. The rollup fails where
@@ -330,7 +330,7 @@ pub fn checks_without_check_runs(
         .map(|run| {
             serde_json::json!({
                 "name": run.name,
-                "checkSuite": {"app": null, "workflowRun": {"workflow": {"id": run.workflow_id}}},
+                "checkSuite": {"app": null, "workflowRun": {"event": run.event, "workflow": {"id": run.workflow_id}}},
                 "completedAt": run.conclusion.is_some().then_some(run.updated_at).flatten(),
                 "conclusion": run.conclusion.map(|conclusion| conclusion.to_uppercase()),
                 "startedAt": run.run_started_at,
@@ -1122,14 +1122,14 @@ mod tests {
                 "nodes": [
                     {
                         "name": "CI",
-                        "checkSuite": {"app": null, "workflowRun": {"workflow": {"id": 99}}},
+                        "checkSuite": {"app": null, "workflowRun": {"event": "push", "workflow": {"id": 99}}},
                         "conclusion": "CANCELLED",
                         "startedAt": "2026-10-06T08:00:00Z",
                         "completedAt": "2026-10-06T08:05:00Z"
                     },
                     {
                         "name": "CI",
-                        "checkSuite": {"app": null, "workflowRun": {"workflow": {"id": 99}}},
+                        "checkSuite": {"app": null, "workflowRun": {"event": "pull_request", "workflow": {"id": 99}}},
                         "conclusion": null,
                         "startedAt": "2026-10-06T08:00:00Z",
                         "completedAt": null

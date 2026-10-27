@@ -2566,14 +2566,29 @@ mod tests {
         "gh api repos/example/ark/actions/runs?head_sha=a1b2c3&per_page=100";
     const STATUSES_OF_A1B2C3: &str = "gh api repos/example/ark/commits/a1b2c3/status?per_page=100";
 
-    /// A head whose one workflow run, started after every captured gate was
-    /// made, ended with `conclusion`, and whose one commit status passed.
+    /// A run of the workflow CI for `event`, started after every captured
+    /// gate was made, that ended with `conclusion`.
+    fn ci_run(id: u64, event: &str, conclusion: &str) -> String {
+        format!(
+            r#"{{"id":{id},"name":"CI","workflow_id":99,"event":"{event}","status":"completed","conclusion":"{conclusion}","run_started_at":"2026-10-06T08:3{id}:00Z","updated_at":"2026-10-06T08:4{id}:00Z"}}"#
+        )
+    }
+
+    /// A head whose one workflow run ended with `conclusion`, and whose one
+    /// commit status passed.
     fn ran(runner: FakeRunner, conclusion: &str) -> FakeRunner {
+        ran_runs(runner, &[ci_run(1, "pull_request", conclusion)])
+    }
+
+    /// A head with workflow `runs`, and one commit status that passed.
+    fn ran_runs(runner: FakeRunner, runs: &[String]) -> FakeRunner {
         runner
             .with(
                 RUNS_OF_A1B2C3,
                 &format!(
-                    r#"{{"total_count":1,"workflow_runs":[{{"id":4242,"name":"CI","workflow_id":99,"event":"pull_request","status":"completed","conclusion":"{conclusion}","run_started_at":"2026-10-06T08:30:00Z","updated_at":"2026-10-06T08:40:00Z"}}]}}"#
+                    r#"{{"total_count":{},"workflow_runs":[{}]}}"#,
+                    runs.len(),
+                    runs.join(",")
                 ),
             )
             .with(
@@ -2638,6 +2653,41 @@ mod tests {
                 "{conclusion}"
             );
         }
+    }
+
+    /// A run for one event does not replace a run of the same workflow for
+    /// another, so a cancelled push stays a failure beside a later pull
+    /// request run that passed.
+    #[test]
+    fn a_cancelled_run_for_one_event_is_not_replaced_by_a_run_for_another() {
+        let runs = [
+            ci_run(1, "push", "cancelled"),
+            ci_run(2, "pull_request", "success"),
+        ];
+        let runner = ran_runs(
+            open_7_checks_refused(captured(FakeRunner::default(), "arkham")),
+            &runs,
+        )
+        .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+        .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+        .with(
+            &checks_failed_telling("arkham", "ark-2ud", "a1b2c3"),
+            "Comment added to ark-2ud\n",
+        )
+        .with(
+            &checks_failed_telling("arkham", "ark-45c", "a1b2c3"),
+            "Comment added to ark-45c\n",
+        );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            acts(settled),
+            [
+                failing_checks("ark-2ud", Done::Commented),
+                failing_checks("ark-45c", Done::Commented)
+            ]
+        );
     }
 
     /// Each event reading the checks, unseen for GitHub refusing them and
