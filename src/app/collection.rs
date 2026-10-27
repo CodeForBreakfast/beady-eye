@@ -4367,6 +4367,7 @@ prefix = "kad"
                     watcher::Said::Read { .. } => "read",
                     watcher::Said::Vouched { .. } => "vouched",
                     watcher::Said::Unreachable(_) => "unreachable",
+                    watcher::Said::Lapsed => "lapsed",
                 };
                 (answer.project.as_str(), said)
             })
