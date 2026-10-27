@@ -346,6 +346,41 @@ fn a_watcher_that_stops_closes_its_consumers_and_takes_no_more() {
     assert!(UnixStream::connect(watching_at(&home)).is_err());
 }
 
+/// What a consumer waiting on a deferred bead relies on: nothing is written
+/// when its date passes, and the watcher still sends it again, marked as
+/// having reached it.
+#[test]
+fn a_bead_whose_defer_until_passes_is_sent_again_marked_reached() {
+    let until = chrono::Utc::now() + chrono::Duration::seconds(2);
+    let deferred = the_described_subtree_with(|rows| {
+        let row = rows
+            .iter_mut()
+            .find(|row| row["id"] == "dun-0tp.9")
+            .expect("the capture holds the bead");
+        row["defer_until"] = json!(until);
+    });
+    let (home, _tracker, watcher) = a_watcher_over("watch-defer", NOT_POLLED, |tracker| {
+        tracker.holds(&deferred)
+    });
+    let mut consumer = Consumer::connected_to(&watching_at(&home));
+    consumer.sends("watch arkham dun-0tp.9");
+    let before = consumer.hears_an_answer();
+
+    let after = consumer.hears_an_answer();
+
+    stopped(watcher);
+    let reached = |answer: &[Value]| -> Vec<Value> {
+        answer
+            .iter()
+            .filter(|line| line["line"] == "bead")
+            .map(|line| line["defer_until_reached"].clone())
+            .collect()
+    };
+    assert_eq!(reached(&before), [json!(false)]);
+    assert_eq!(beads_in(&after), ["dun-0tp.9"]);
+    assert_eq!(reached(&after), [json!(true)]);
+}
+
 /// The journal's read past where it ended when the watcher first read it.
 const THE_JOURNAL_SINCE_IT_STARTED: &str = "events tail --since 0";
 
