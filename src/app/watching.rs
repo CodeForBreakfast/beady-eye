@@ -303,6 +303,7 @@ pub fn freshness_line(
     reach: &Reach,
     as_of: Option<DateTime<Utc>>,
     unreachable: Option<&TrackerFailure>,
+    lapsed: bool,
     events: &Events,
 ) -> String {
     let tracker = unreachable.map_or(TrackerState::Ok, |failure| {
@@ -313,6 +314,7 @@ pub fn freshness_line(
         "project": project,
         "as_of": as_of,
         "tracker": tracker,
+        "lapsed": lapsed,
         "events": events,
         "protocol": PROTOCOL,
         "reach": reach,
@@ -752,13 +754,19 @@ mod tests {
             ]),
             server: None,
         };
-        let line: Value =
-            serde_json::from_str(&freshness_line("dunwich", &reach, None, None, &Events::Off))
-                .expect("JSON");
+        let line: Value = serde_json::from_str(&freshness_line(
+            "dunwich",
+            &reach,
+            None,
+            None,
+            false,
+            &Events::Off,
+        ))
+        .expect("JSON");
 
         assert_eq!(
             line,
-            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "events": "off", "protocol": 1, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
+            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "lapsed": false, "events": "off", "protocol": 1, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
         );
     }
 

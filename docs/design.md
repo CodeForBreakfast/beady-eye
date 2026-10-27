@@ -2368,7 +2368,7 @@ watch is answered by the freshness line alone.
 **A freshness line** says how current a project's beads are:
 
 ```json
-{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "events": "ok", "protocol": 1, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
+{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "lapsed": false, "events": "ok", "protocol": 1, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
 ```
 
 It closes every answer the source gives for the project. It follows the beads
@@ -2381,7 +2381,11 @@ included, or the last covered line naming the project. `tracker` is `ok`, or
 `{ "unreachable": { "reason": "auth" } }` where the last attempt to reach the
 project failed. The reason is the object `--json` gives, so a `parse` reason
 carries `read` and `cause` beside its kind. The beads already sent then stand as the
-last known, and `as_of` says how old that is. A project that has never been
+last known, and `as_of` says how old that is. `lapsed` is `true` once a
+project that nothing polls has gone `[changes] covered_for_seconds` with
+nothing vouching for it, such as a project whose stream is down. The watcher
+sends the freshness line alone when that happens, and the next read or vouch
+sends one with `lapsed` back to `false`. A project that has never been
 read is sent no beads, and its `as_of` is `null`. `events` is explained under
 *bd's events*. `reach` is the `path` and `environment_command` the watcher's
 config gives the project, which together decide the tracker bd reaches, with
@@ -2454,7 +2458,8 @@ socket.
   is due every 20 seconds, belongs to a watcher that has wedged, and is
   treated as closed.
 - A watcher that is alive and cannot reach a tracker says so in the project's
-  freshness line, and does not report its beads unchanged. How old `as_of` may
+  freshness line, and does not report its beads unchanged. A project nothing
+  polls is said to have lapsed there too. Otherwise how old `as_of` may
   be before a consumer stops trusting it is the consumer's call, since only
   the consumer knows how long its question can wait.
 
