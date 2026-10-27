@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, setDefaultTimeout, test } from 'bun:test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -22,6 +22,8 @@ const bundle = `${pluginRoot}dist/server.js`
 const session = '6f1c2d3e-4a5b-4c6d-8e7f-901234567890'
 
 afterEach(cleanUpAfterEach)
+// A busy machine can take seconds to start node, which the bundle runs under.
+setDefaultTimeout(60_000)
 
 beforeAll(() => {
   const build = Bun.spawnSync(['bun', 'run', 'build'], { cwd: pluginRoot })

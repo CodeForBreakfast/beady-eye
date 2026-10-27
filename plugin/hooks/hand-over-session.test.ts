@@ -1,4 +1,7 @@
-import { expect, test } from 'bun:test'
+import { expect, setDefaultTimeout, test } from 'bun:test'
+
+// A busy machine can take seconds to start node, which the hook runs under.
+setDefaultTimeout(60_000)
 
 const hook = new URL('./hand-over-session.ts', import.meta.url).pathname
 

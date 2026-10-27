@@ -46,8 +46,14 @@ const timing: Timing = {
   wedgedAfter: Duration.millis(200),
   firstPause: Duration.millis(10),
   longestPause: Duration.millis(40),
-  answeredWithin: Duration.millis(100),
+  answeredWithin: Duration.seconds(30),
   quietFor: Duration.millis(300),
+}
+/** A deadline short enough to wait out, for a test about the deadline. */
+const answeringWithin = {
+  ...timing,
+  wedgedAfter: Duration.seconds(5),
+  answeredWithin: Duration.seconds(2),
 }
 
 afterEach(cleanUpAfterEach)
@@ -675,14 +681,14 @@ test('a word the watcher would not split is read, but a byte order mark is still
 const answers = (each: Record<string, ProjectAnswer>) =>
   new Map(Object.entries(each).map(([project, answer]) => [aProject(project), answer]))
 
-const asking = (path: string | undefined, projects: readonly string[]) =>
+const asking = (path: string | undefined, projects: readonly string[], timed = timing) =>
   run(
     askAbout(
       anId('smt-4kd3p.20'),
       projects.map((project) => aProject(project)),
     ).pipe(
       Effect.catchTag('WatcherDown', ({ why }) => Effect.succeed(why)),
-      at(path),
+      at(path, timed),
     ),
   )
 
@@ -780,13 +786,13 @@ test('asking about a bead stops waiting in time, and names the projects that did
   const path = join(aPrivateDirectory(), 'watcher.sock')
   const watcher = await aWatcherAt(path)
 
-  const answer = asking(path, ['summit-works', 'harbour'])
+  const answer = asking(path, ['summit-works', 'harbour'], answeringWithin)
   const { connection } = await watcher.next()
   const hungUp = new Promise((resolve) => connection.on('close', resolve))
   connection.write(said(beadLine, freshness))
   const alive = setInterval(
     () => connection.write(said({ line: 'alive' })),
-    Duration.toMillis(timing.answeredWithin) / 4,
+    Duration.toMillis(answeringWithin.answeredWithin) / 4,
   )
   cleanUp.push(() => clearInterval(alive))
 
