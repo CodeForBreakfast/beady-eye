@@ -2090,6 +2090,24 @@ test('a bead the session holds that closes is told of, then let go', async () =>
   await hungUp
 })
 
+test('a bead the session lets go of is told of its change of status, then let go', async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await until(async () => (await use('watching')).text?.includes('in_progress'))
+
+  const reopened = aRow('smt-4kd3p.20', { ...letGo, status: 'open' })
+  everyProject.write(said(reopened, freshness('summit-works')))
+  await Bun.sleep(50)
+  expect((await use('watching')).text).toContain(watched)
+  const hungUp = closes(connection)
+  connection.write(said(reopened, freshness('summit-works')))
+
+  expect((await use.nextMessage()).content).toContain('Its status went from in_progress to open.')
+  await hungUp
+})
+
 test('a bead the session asked to watch stays watched once it lets the bead go', async () => {
   const { watcher, use, everyProject } = await aSessionFollowingWork()
   everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))

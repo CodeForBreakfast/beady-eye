@@ -2800,8 +2800,9 @@ the session had asked, with a connection of its own naming the session. The
 merge arrives as the gate closing.
 
 **A watch on work held ends when the session lets the work go.** That is the
-bead ceasing to name the session, or closing. A bead that closes is let go
-only once its own connection has said so, so the session hears of the close
+bead ceasing to name the session, or closing. Either way the bead is let go
+only once its own connection has heard the status that came with letting it
+go, so the session hears of the close, or of the bead going back to open,
 before the watch ends. A bead the session also asked for with `watch` stays
 watched, and `unwatch` on a bead the work still holds leaves it watched and
 says why. The session's file marks each watch it never asked for as `held`, so
