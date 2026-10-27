@@ -13,7 +13,7 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 
 use crate::collect::bd::{Cli, Settling};
-use crate::collect::github::{self, Observed};
+use crate::collect::github::{self, Observed, State};
 use crate::collect::pr_events::{self, Event, Outcome};
 use crate::collect::run::{FailureKind, RunFailure, Runner};
 use crate::collect::tracker::OpenFailure;
@@ -294,9 +294,64 @@ fn settle_asked_together<'a>(
     };
     asked.iter().zip(observed).map(move |(each, observed)| {
         let pr = &each.pull_request;
-        let read = observed.map(|observed| outcomes(events, pr, &observed, said));
+        let read = observed
+            .and_then(|observed| with_refused_checks_read(gh, pr, observed))
+            .map(|observed| outcomes(events, pr, &observed, said));
         settled(cli, projects, pr, read, Some(&each.waiting), told)
     })
+}
+
+/// `observed` with the checks GitHub refused on the head of `pr`, while it
+/// is open, read instead from the head's workflow runs and commit statuses.
+/// GitHub refuses check runs to a fine-grained token, which has no permission
+/// for them, and lets it read those. Where GitHub refuses those too, the
+/// refusal stands and says so, except for the rate limit, which stops the
+/// look as it would have for the pull request itself.
+fn with_refused_checks_read(
+    gh: &dyn Runner,
+    pr: &PullRequest,
+    mut observed: Observed,
+) -> Result<Observed, RunFailure> {
+    let Some(at) = observed
+        .refused
+        .iter()
+        .position(|refusal| pr_events::refuses_head_checks(&refusal.field))
+    else {
+        return Ok(observed);
+    };
+    let head = observed
+        .fields
+        .pointer_mut(pr_events::HEAD_CHECKED_AT)
+        .and_then(serde_json::Value::as_object_mut);
+    let Some(head) = head.filter(|_| observed.state == State::Open) else {
+        return Ok(observed);
+    };
+    let Some(sha) = head
+        .get("oid")
+        .and_then(serde_json::Value::as_str)
+        .filter(|sha| !sha.is_empty() && sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_string)
+    else {
+        return Ok(observed);
+    };
+    match github::repository(&pr.repo)
+        .and_then(|repo| github::checks_without_check_runs(gh, &repo, &sha))
+    {
+        Ok(checks) => {
+            head.insert("statusCheckRollup".to_string(), checks);
+            observed.refused.remove(at);
+        }
+        Err(failure) if failure.kind == FailureKind::RateLimited => return Err(failure),
+        Err(failure) => {
+            let refusal = &mut observed.refused[at];
+            refusal.why = format!(
+                "{}, nor would it let gh read the workflow runs and commit statuses of {sha}: \
+                 {failure}",
+                refusal.why
+            );
+        }
+    }
+    Ok(observed)
 }
 
 /// `pr` as GitHub has it, asked `fields` beside its state.
@@ -2506,9 +2561,195 @@ mod tests {
             .collect()
     }
 
+    /// The workflow runs and the commit statuses of the head a1b2c3, as the
+    /// runner spells asking for them.
+    const RUNS_OF_A1B2C3: &str =
+        "gh api repos/example/ark/actions/runs?head_sha=a1b2c3&per_page=100";
+    const STATUSES_OF_A1B2C3: &str = "gh api repos/example/ark/commits/a1b2c3/status?per_page=100";
+
+    /// A run of the workflow CI for `event`, started after every captured
+    /// gate was made, that ended with `conclusion`.
+    fn ci_run(id: u64, event: &str, conclusion: &str) -> String {
+        format!(
+            r#"{{"id":{id},"name":"CI","workflow_id":99,"event":"{event}","status":"completed","conclusion":"{conclusion}","run_started_at":"2026-10-06T08:3{id}:00Z","updated_at":"2026-10-06T08:4{id}:00Z"}}"#
+        )
+    }
+
+    /// A head whose one workflow run ended with `conclusion`, and whose one
+    /// commit status passed.
+    fn ran(runner: FakeRunner, conclusion: &str) -> FakeRunner {
+        ran_runs(runner, &[ci_run(1, "pull_request", conclusion)])
+    }
+
+    /// A head with workflow `runs`, and one commit status that passed.
+    fn ran_runs(runner: FakeRunner, runs: &[String]) -> FakeRunner {
+        runner
+            .with(
+                RUNS_OF_A1B2C3,
+                &format!(
+                    r#"{{"total_count":{},"workflow_runs":[{}]}}"#,
+                    runs.len(),
+                    runs.join(",")
+                ),
+            )
+            .with(
+                STATUSES_OF_A1B2C3,
+                r#"{"state":"success","total_count":1,"statuses":[{"state":"success","context":"lint","created_at":"2026-10-06T08:35:00Z"}]}"#,
+            )
+    }
+
+    /// #7 open, with GitHub refusing the token the checks on its head.
+    fn open_7_checks_refused(runner: FakeRunner) -> FakeRunner {
+        runner.failing_having_printed(
+            &viewed(7),
+            &checks_refused(&[(7, r#""state":"OPEN","isDraft":false,"mergeCommit":null"#)]),
+            unavailable("gh"),
+        )
+    }
+
+    /// A fine-grained token has no permission for check runs, so on a private
+    /// repository GitHub refuses it the checks, and lets it read the head's
+    /// workflow runs and commit statuses instead.
+    #[test]
+    fn checks_github_refuses_the_token_are_told_from_the_heads_runs_and_statuses() {
+        for (conclusion, telling, told) in [
+            (
+                "failure",
+                checks_failed_telling as fn(&str, &str, &str) -> String,
+                failing_checks as fn(&str, Done) -> Act,
+            ),
+            ("success", checks_passed_telling, passing_checks),
+        ] {
+            let runner = ran(
+                open_7_checks_refused(captured(FakeRunner::default(), "arkham")),
+                conclusion,
+            )
+            .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+            .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+            .with(
+                &telling("arkham", "ark-2ud", "a1b2c3"),
+                "Comment added to ark-2ud\n",
+            )
+            .with(
+                &telling("arkham", "ark-45c", "a1b2c3"),
+                "Comment added to ark-45c\n",
+            );
+
+            let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+            assert_eq!(
+                acts(settled),
+                [
+                    told("ark-2ud", Done::Commented),
+                    told("ark-45c", Done::Commented)
+                ],
+                "{conclusion}"
+            );
+            assert_eq!(
+                writes(&runner),
+                [
+                    telling("arkham", "ark-2ud", "a1b2c3"),
+                    telling("arkham", "ark-45c", "a1b2c3")
+                ],
+                "{conclusion}"
+            );
+        }
+    }
+
+    /// A run for one event does not replace a run of the same workflow for
+    /// another, so a cancelled push stays a failure beside a later pull
+    /// request run that passed.
+    #[test]
+    fn a_cancelled_run_for_one_event_is_not_replaced_by_a_run_for_another() {
+        let runs = [
+            ci_run(1, "push", "cancelled"),
+            ci_run(2, "pull_request", "success"),
+        ];
+        let runner = ran_runs(
+            open_7_checks_refused(captured(FakeRunner::default(), "arkham")),
+            &runs,
+        )
+        .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+        .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+        .with(
+            &checks_failed_telling("arkham", "ark-2ud", "a1b2c3"),
+            "Comment added to ark-2ud\n",
+        )
+        .with(
+            &checks_failed_telling("arkham", "ark-45c", "a1b2c3"),
+            "Comment added to ark-45c\n",
+        );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            acts(settled),
+            [
+                failing_checks("ark-2ud", Done::Commented),
+                failing_checks("ark-45c", Done::Commented)
+            ]
+        );
+    }
+
+    /// Each event reading the checks, unseen for GitHub refusing them and
+    /// then refusing the head's workflow runs.
+    fn refused_the_checks_and_the_runs() -> Vec<Unseen> {
+        refused_the_checks()
+            .into_iter()
+            .map(|unseen| Unseen {
+                why: format!(
+                    "{}, nor would it let gh read the workflow runs and commit statuses of \
+                     a1b2c3: {}",
+                    unseen.why,
+                    unavailable("gh")
+                ),
+                ..unseen
+            })
+            .collect()
+    }
+
+    /// The workflow runs of an open pull request's head, refused.
+    fn runs_refused(runner: FakeRunner) -> FakeRunner {
+        runner.failing(RUNS_OF_A1B2C3, unavailable("gh"))
+    }
+
+    #[test]
+    fn checks_github_refuses_along_with_the_heads_runs_are_unseen_saying_both() {
+        let runner = runs_refused(open_7_checks_refused(captured(
+            FakeRunner::default(),
+            "arkham",
+        )));
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            settled,
+            Settled::NothingNew {
+                unseen: refused_the_checks_and_the_runs()
+            }
+        );
+    }
+
+    /// The rate limit stops the look, as it would have had GitHub given it
+    /// for the pull request itself.
+    #[test]
+    fn checks_github_refuses_with_the_heads_runs_rate_limited_leave_the_pull_request_unread() {
+        let rate_limited = RunFailure {
+            kind: FailureKind::RateLimited,
+            ..unavailable("gh")
+        };
+        let runner = open_7_checks_refused(captured(FakeRunner::default(), "arkham"))
+            .failing(RUNS_OF_A1B2C3, rate_limited.clone());
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(settled, Settled::Unread(rate_limited));
+    }
+
     /// gh prints GitHub's whole answer, then exits 1 for the error in it. The
     /// refusal is what says the checks are unseen: the null it leaves reads
-    /// as a head with no checks at all.
+    /// as a head with no checks at all. A pull request no longer open has no
+    /// checks to tell, so its head's runs are not asked for.
     #[test]
     fn a_merge_settles_while_github_refuses_the_token_the_checks() {
         let runner = captured(FakeRunner::default(), "arkham")
@@ -2533,7 +2774,7 @@ mod tests {
             "arkham",
             &format!("gate resolve ark-eb1 --reason {APPROVED_REASON}"),
         );
-        let runner = captured(FakeRunner::default(), "arkham")
+        let runner = runs_refused(captured(FakeRunner::default(), "arkham"))
             .with(
                 &gate_list("arkham"),
                 &gate_list_with_42_awaiting("approved"),
@@ -2554,7 +2795,7 @@ mod tests {
             acted_and_unseen(settled),
             (
                 vec![act("ark-eb1", "is approved", Done::Resolved)],
-                refused_the_checks()
+                refused_the_checks_and_the_runs()
             )
         );
     }
@@ -2567,7 +2808,7 @@ mod tests {
             (41, r#""state":"OPEN","isDraft":true,"mergeCommit":null"#),
             (42, MERGED_FIELDS),
         ]);
-        let runner = captured(FakeRunner::default(), "arkham")
+        let runner = runs_refused(captured(FakeRunner::default(), "arkham"))
             .failing_having_printed(&queried(41..=42), &both, unavailable("gh"))
             .with(&resolving_42("arkham"), "");
 
@@ -2583,7 +2824,7 @@ mod tests {
         assert_eq!(
             first,
             Settled::NothingNew {
-                unseen: refused_the_checks()
+                unseen: refused_the_checks_and_the_runs()
             }
         );
         assert_eq!(

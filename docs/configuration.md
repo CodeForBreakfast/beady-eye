@@ -1141,10 +1141,14 @@ repository:
 | *Metadata* and *Pull requests* | whether a pull request is open, a draft, merged or closed, its approval, reviews, comments and conflicts, whether its head is behind its base, and the open pull requests a check suite or status delivery names | GitHub answers nothing about the repository's pull requests, so nothing in it is settled |
 | *Contents* | the merge commit, the head commit and the repository's releases | no merge is settled, no failing or passing checks are told, and no gh:release gate is settled |
 | *Issues* | whether an issue is open or closed | no gh:issue gate is settled |
-| *Actions* | whether a workflow run has finished, and how it ended | no gh:run gate is settled |
-| *Commit statuses* | the head commit's checks, GitHub Actions runs included | no failing or passing checks are told |
+| *Actions* | whether a workflow run has finished, and how it ended, and the head commit's workflow runs | no gh:run gate is settled, and where GitHub refuses the token check runs, no failing or passing checks are told |
+| *Commit statuses* | the head commit's checks | no failing or passing checks are told |
 
-A fine-grained token offers no *Checks* permission, and `bdi gates` needs none.
+A fine-grained token offers no *Checks* permission, so GitHub may refuse it
+the check runs on a head commit, as it does on a private repository. Then
+`bdi gates` reads the head commit's workflow runs and commit statuses instead,
+and tells failing and passing checks from those. A check run that an app other
+than GitHub Actions makes is not among them.
 
 A look asks about a repository's pull requests together, up to a
 hundred in one query, so what it spends of that account's rate limit grows with
@@ -1170,7 +1174,7 @@ dunwich/arkham#18 was commented on inline: arkham told ark-7mw
 dunwich/arkham#18 has a new head: arkham told ark-7mw
 kadath: its gates could not be read: the tracker did not answer
 dunwich/arkham#30: GitHub did not say where it stands, so no gate waiting on it was touched: gh exited 1 for a reason bdi cannot place
-dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token
+dunwich/arkham#18: bdi gates cannot see whether it has failing checks, so it acts on everything else and says this once for dunwich/arkham: GitHub would not let gh read commits: Resource not accessible by personal access token, nor would it let gh read the workflow runs and commit statuses of 5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff: gh exited 1 for a reason bdi cannot place
 arkham: gate ark-6pp cannot be settled: it names no repo
 dunwich/arkham#41: GitHub refused it for the rate limit of the login gh runs as, so GitHub is asked nothing more until the limit resets at 2026-01-01 00:30:00 UTC
 ```

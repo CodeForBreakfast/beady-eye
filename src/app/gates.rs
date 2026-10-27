@@ -1109,7 +1109,8 @@ mod tests {
     }
 
     /// gh prints GitHub's answer, then exits 1 for its refusing the checks on
-    /// #7, so GitHub answered the look and the merge of #42 is settled.
+    /// #7, and then the workflow runs of its head, so GitHub answered the
+    /// look and the merge of #42 is settled.
     #[test]
     fn a_look_github_refuses_one_field_of_says_which_event_it_cannot_see_and_settles_the_rest() {
         let refused = r#"{"data":{"repository":{
@@ -1118,10 +1119,19 @@ mod tests {
             "errors":[{"type":"FORBIDDEN","path":["repository","pr7","commits","nodes",0,"commit","statusCheckRollup"],"message":"Resource not accessible by personal access token"}]}"#;
         let runner = captured(FakeRunner::default(), "arkham")
             .failing_having_printed(&queried("ark"), refused, unavailable("gh"))
+            .failing(
+                "gh api repos/example/ark/actions/runs?head_sha=a1b2c3&per_page=100",
+                unavailable("gh"),
+            )
             .with(&resolving_42("arkham"), "");
 
         let Settling { found, github } = looked(&runner, &[project("arkham")], &Gates::default());
 
+        let why = format!(
+            "GitHub would not let gh read commits: Resource not accessible by personal access \
+             token, nor would it let gh read the workflow runs and commit statuses of a1b2c3: {}",
+            unavailable("gh")
+        );
         assert_eq!(
             found,
             [
@@ -1130,16 +1140,12 @@ mod tests {
                 Found::Unseen {
                     pull_request: pr(7),
                     happening: "has failing checks",
-                    why: "GitHub would not let gh read commits: Resource not accessible by \
-                          personal access token"
-                        .to_string(),
+                    why: why.clone(),
                 },
                 Found::Unseen {
                     pull_request: pr(7),
                     happening: "has passing checks",
-                    why: "GitHub would not let gh read commits: Resource not accessible by \
-                          personal access token"
-                        .to_string(),
+                    why,
                 },
                 settling("arkham"),
             ]

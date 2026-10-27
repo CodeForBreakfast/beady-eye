@@ -119,6 +119,21 @@ fn head_and_base_since(observed: &Observed) -> Result<Option<DateTime<Utc>>, ser
 /// event that reads them so that [`fields`] asks them once.
 const HEAD_CHECKS: &str = "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){totalCount nodes{...on CheckRun{name checkSuite{app{slug} workflowRun{workflow{id}}} conclusion startedAt completedAt} ...on StatusContext{state createdAt}}}}}}}";
 
+/// Where GraphQL answers the head commit [`HEAD_CHECKS`] reads, as a JSON
+/// pointer into a pull request's fields.
+pub const HEAD_CHECKED_AT: &str = "/commits/nodes/0/commit";
+
+/// Whether GitHub refusing the field it answers under `name` refuses the
+/// checks on the pull request's head commit.
+pub fn refuses_head_checks(name: &str) -> bool {
+    answered_under(HEAD_CHECKS) == name
+}
+
+/// The name GraphQL answers `field` under.
+fn answered_under(field: &str) -> &str {
+    field.split(['(', '{']).next().unwrap_or(field)
+}
+
 /// Every event `bdi gates` acts on.
 pub const EVENTS: &[Event] = &[
     ready_for_review::EVENT,
@@ -190,8 +205,8 @@ impl Event {
     /// Whether this event cannot be seen without the field GraphQL answers
     /// under `name`.
     pub fn needs(&self, name: &str) -> bool {
-        let answered_under = |field: &&str| field.split(['(', '{']).next() == Some(name);
-        self.fields.iter().any(&answered_under) && !self.optional.iter().any(answered_under)
+        let answers_name = |field: &&str| answered_under(field) == name;
+        self.fields.iter().any(&answers_name) && !self.optional.iter().any(answers_name)
     }
 }
 
