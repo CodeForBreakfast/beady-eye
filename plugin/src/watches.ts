@@ -848,15 +848,17 @@ export const makeWatches: Effect.Effect<
   /** Whether the session is done with a watch it did not ask for: the work
    * it holds no longer asks for the bead, and either the bead's connection
    * has heard it close or go, or the watch on every project has heard it
-   * open. A bead that closed is let go only once its own connection has said
-   * so, so the session is told of the close. */
+   * open and the bead's connection has heard the status that watch heard.
+   * The bead is let go only once its own connection has said so, so the
+   * session is told of the change of status that came with letting it go. */
   const doneWith = ({ bead, asked, known: { standing } }: Watch) => {
     if (asked || wanted.has(keyOf(bead))) return false
     if (standing.is === 'gone' || (standing.is === 'bead' && standing.status === 'closed')) {
       return true
     }
     const row = rows.get(bead.project)?.get(bead.id)
-    return row !== undefined && row.status !== 'closed'
+    if (row === undefined || row.status === 'closed') return false
+    return standing.is === 'refused' || (standing.is === 'bead' && standing.status === row.status)
   }
 
   const letGoOnceSettled = (bead: Bead, known: Known) =>

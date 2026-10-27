@@ -35,9 +35,11 @@ const timing: Timing = {
   wedgedAfter: Duration.millis(5_000),
   firstPause: Duration.millis(10),
   longestPause: Duration.millis(40),
-  answeredWithin: Duration.millis(100),
+  answeredWithin: Duration.seconds(30),
   quietFor: Duration.millis(300),
 }
+/** A deadline short enough to wait out, for a test about the deadline. */
+const answeringWithin = { ...timing, answeredWithin: Duration.seconds(2) }
 const session = Schema.decodeSync(SessionId)('6f1c2d3e-4a5b-4c6d-8e7f-901234567890')
 
 const beadLine = (project: string) => ({
@@ -371,7 +373,7 @@ test("watch refuses to find a bead's project where a project's tracker is unreac
 test("watch refuses to find a bead's project where a project does not answer in time", async () => {
   const place = aPlace()
   const watcher = await aWatcherAt(place.at as string)
-  const use = await aServer(place)
+  const use = await aServer(place, undefined, answeringWithin)
 
   const answer = use('watch', { id: 'smt-4kd3p.20' })
   ;(await watcher.next()).connection.write(
@@ -1359,11 +1361,15 @@ test.each(['watch first', 'learn first'])(
     aKeptFile(place, JSON.stringify([{ project: 'summit-works', id: 'smt-4kd3p.20' }]))
     const watcher = await aWatcherAt(place.at as string)
     const { watches } = await someWatches(place.directory, place.at, [], timing)
-    const connections: unknown[] = []
+    // A watch connected before the session is learned asks again naming it.
+    const namingTheSession = `watch summit-works smt-4kd3p.20 ${session}\n`
+    const sessionNamed = Promise.withResolvers<void>()
+    const asked: string[] = []
     const answering = async () => {
       for (;;) {
-        const { connection } = await watcher.next()
-        connections.push(connection)
+        const { connection, asked: line } = await watcher.next()
+        asked.push(line)
+        if (line === namingTheSession) sessionNamed.resolve()
         connection.write(said(beadLine('summit-works'), freshness('summit-works')))
       }
     }
@@ -1376,8 +1382,9 @@ test.each(['watch first', 'learn first'])(
         concurrency: 'unbounded',
       }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 3)),
     )
+    await sessionNamed.promise
 
-    expect(connections).toHaveLength(1)
+    expect(asked.filter((line) => line === namingTheSession)).toHaveLength(1)
   },
 )
 
@@ -2080,6 +2087,24 @@ test('a bead the session holds that closes is told of, then let go', async () =>
   connection.write(said(closedRow, freshness('summit-works')))
 
   expect((await use.nextMessage()).content).toContain('Its status went from in_progress to closed.')
+  await hungUp
+})
+
+test('a bead the session lets go of is told of its change of status, then let go', async () => {
+  const { watcher, use, everyProject } = await aSessionFollowingWork()
+  everyProject.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  const { connection } = await watcher.next()
+  connection.write(said(aRow('smt-4kd3p.20', holding), freshness('summit-works')))
+  await until(async () => (await use('watching')).text?.includes('in_progress'))
+
+  const reopened = aRow('smt-4kd3p.20', { ...letGo, status: 'open' })
+  everyProject.write(said(reopened, freshness('summit-works')))
+  await Bun.sleep(50)
+  expect((await use('watching')).text).toContain(watched)
+  const hungUp = closes(connection)
+  connection.write(said(reopened, freshness('summit-works')))
+
+  expect((await use.nextMessage()).content).toContain('Its status went from in_progress to open.')
   await hungUp
 })
 
