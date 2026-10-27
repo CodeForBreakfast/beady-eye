@@ -353,6 +353,37 @@ fn a_merged_pull_request_closes_the_gate_waiting_on_it() {
     assert_eq!(github.calls(), [queried()]);
 }
 
+/// What bd 1.3.0 says, exit 1, asked for the gates of a database on its
+/// server that holds no schema yet.
+const NO_SCHEMA: &str = r#"{
+  "error": "search issues: search issues: Error 1146 (HY000): table not found: issues",
+  "schema_version": 1
+}
+"#;
+
+/// dunwich is named first, so its tracker is asked and fails before
+/// arkham's is read. The poll is an hour, so both lines come from one look.
+#[test]
+fn a_tracker_with_no_schema_is_reported_and_the_other_trackers_gates_are_settled_on_that_look() {
+    let home = a_home_looking_every("no-schema", &["dunwich", "arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.refuses_for("dunwich", "gate list --limit 0 --json", NO_SCHEMA);
+    holds_the_captured_gates(&tracker, "arkham");
+    tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED);
+
+    let settling = Settling::started(&home, &tracker, &github);
+
+    settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
+    settling.says("dunwich: its gates could not be read: the tracker did not answer");
+    assert_eq!(
+        tracker.calls_for("dunwich"),
+        ["gate list --limit 0 --json"],
+        "dunwich was asked for its gates once, on the one look"
+    );
+}
+
 /// ark-zl0 waits on example/ark#31 closing, and ark-8dq on example/ark
 /// publishing a release after it was made, on 2026-10-12.
 const UPSTREAM: &str = include_str!("fixtures/bd_1.3.0_gate_list_upstream.json");
