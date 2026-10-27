@@ -353,6 +353,28 @@ fn a_merged_pull_request_closes_the_gate_waiting_on_it() {
     assert_eq!(github.calls(), [queried()]);
 }
 
+/// The look is an hour apart and no delivery is sent, so only the look a
+/// start runs can close the gate.
+#[test]
+fn a_pull_request_that_merged_while_bdi_gates_was_stopped_closes_its_gate_on_the_first_look_after_it_starts(
+) {
+    let home = a_home_looking_every("merged-while-stopped", &["arkham"], 3600);
+    let tracker = ShimmedTracker::beside(&home);
+    holds_the_captured_gates(&tracker, "arkham");
+    tracker.answers_for("arkham", RESOLVING_42, "✓ Gate resolved: ark-0i5\n");
+    let github = ShimmedGitHub::beside(&home);
+    github.answers_with(&queried(), QUERIED_OPEN);
+    let before = Settling::listening(&home, &tracker, &github);
+    until(|| looks(&github) == 1, "the first look");
+    drop(before);
+
+    github.answers_with(&queried(), QUERIED);
+    let after = Settling::listening(&home, &tracker, &github);
+
+    after.says("example/ark#42 merged: arkham closed gate ark-0i5");
+    assert_eq!(looks(&github), 2);
+}
+
 /// ark-zl0 waits on example/ark#31 closing, and ark-8dq on example/ark
 /// publishing a release after it was made, on 2026-10-12.
 const UPSTREAM: &str = include_str!("fixtures/bd_1.3.0_gate_list_upstream.json");
