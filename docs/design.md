@@ -1967,10 +1967,7 @@ setup: a Dolt trigger, a git hook, a bd wrapper, a systemd path unit, a cron
 comparing a head hash, someone typing the line. The one producer `bdi` builds
 in is bd's own: `bdi watch` follows the event stream of each tracker whose
 project names its `bd serve`, since that stream is beads' interface for
-exactly this and carries every client's writes. A Dolt binlog consumer, the
-other producer measured, needs a replication user and a server-unique id that
-a DB-scoped tenant cannot have, and receives every tenant's rows on one
-stream.
+exactly this and carries every client's writes.
 
 **The socket.** A stream socket created mode `0600`, at
 `$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless the run is told a path — by

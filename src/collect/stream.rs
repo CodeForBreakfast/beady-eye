@@ -6,12 +6,11 @@
 //! that nothing else has. So the debounce, the poll standing down and the
 //! lapse of a project nothing vouches for are the ones a producer gets.
 //!
-//! The stream is bd's journal pushed rather than polled. Each record carries
-//! its `seq` as the event id, and `since` resumes after it, so a dropped
-//! stream picks up where it was. A `since` the journal no longer reaches is
-//! refused with a 410 at connect, or ended with a `truncated` event once
-//! open, and the project is then read in full once and followed from the
-//! journal's head.
+//! Each record carries its journal `seq` as the event id, and `since`
+//! resumes after it, so a dropped stream picks up where it was. A `since` the
+//! journal no longer reaches is refused with a 410 at connect, or ended with
+//! a `truncated` event once open, and the project is then read in full once
+//! and followed from the journal's head.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -162,8 +161,7 @@ struct Response {
 
 /// Ask the bd serve at `at` for `path`.
 ///
-/// HTTP/1.0, so the body comes unchunked and ends when the connection does,
-/// which is how a stream ends anyway.
+/// HTTP/1.0, so the body comes unchunked and ends when the connection does.
 fn get(at: SocketAddr, path: &str, timing: Timing) -> Option<Response> {
     let mut connection = TcpStream::connect_timeout(&at, timing.silent_after).ok()?;
     connection
