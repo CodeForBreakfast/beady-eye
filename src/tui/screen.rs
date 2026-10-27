@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{self, Stdout};
+use std::mem::ManuallyDrop;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -15,7 +16,7 @@ use ratatui::crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
 };
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{Clear, ClearType};
+use ratatui::crossterm::terminal::{enable_raw_mode, Clear, ClearType, EnterAlternateScreen};
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
@@ -971,7 +972,7 @@ impl Shown {
 ///
 /// The terminal is on the alternate screen, in raw mode and reporting the
 /// mouse for as long as this lives, so dropping it puts the terminal back
-/// however the loop ended. `ratatui::init` hooks panics as well, and `Drop`
+/// however the loop ended. A panic hook puts it back as well, and `Drop`
 /// runs as the panic unwinds, so a crash does not leave a wedged tty behind
 /// either. A signal arrives as an event the loop returns on, so it is the
 /// same drop again rather than a second way of restoring anything.
@@ -980,7 +981,7 @@ impl Shown {
 /// screen on a buffer: `showing` is the one way to a screen on the reader's
 /// terminal.
 pub(super) struct Screen<B: PutBack = CrosstermBackend<Stdout>> {
-    terminal: Terminal<B>,
+    terminal: ManuallyDrop<Terminal<B>>,
     shown: Shown,
 }
 
@@ -997,11 +998,14 @@ impl Screen {
         drawing: Drawing,
         started: DateTime<Utc>,
     ) -> anyhow::Result<Self> {
-        let terminal = ratatui::try_init()?;
+        put_the_terminal_back_on_a_panic();
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        let terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         // Built before the mouse is asked for, so that a terminal which
         // refuses is still put back by the `Drop` this now has.
         let screen = Self {
-            terminal,
+            terminal: ManuallyDrop::new(terminal),
             shown: Shown::of(
                 snapshot,
                 panes,
@@ -1046,6 +1050,21 @@ impl Screen {
     pub(super) fn list_ready(&mut self) {
         self.shown.apply(Action::ToggleReadyList);
     }
+}
+
+/// Put the terminal back before a panic is reported, so the report lands on
+/// the reader's screen rather than on the alternate one.
+///
+/// This replaces the hook `ratatui::init` installs. That hook's `restore`
+/// reports a failure on stderr and panics when the report fails too, which
+/// it does once the terminal has gone, and a panic inside a panic hook
+/// aborts.
+fn put_the_terminal_back_on_a_panic() {
+    let reports_a_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = ratatui::try_restore();
+        reports_a_panic(info);
+    }));
 }
 
 /// The search prompt: what has been typed into it, and where the search
@@ -1152,6 +1171,14 @@ compile_error!(
 impl<B: PutBack> Drop for Screen<B> {
     fn drop(&mut self) {
         self.terminal.backend_mut().put_back();
+        // `Terminal`'s own drop shows a cursor it hid, and panics reporting a
+        // failure on a terminal that has gone. So the cursor is shown here,
+        // and a terminal that would not show it is left undropped.
+        if self.terminal.show_cursor().is_ok() {
+            // SAFETY: this is `Screen`'s drop, so nothing uses the terminal
+            // after it.
+            unsafe { ManuallyDrop::drop(&mut self.terminal) };
+        }
     }
 }
 
@@ -1167,7 +1194,9 @@ impl PutBack for CrosstermBackend<Stdout> {
         // returning.
         leaving::leave_by_the_deadline();
         let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
-        ratatui::restore();
+        // Not `restore`, which panics reporting a failure on a terminal that
+        // has gone.
+        let _ = ratatui::try_restore();
         leaving::hand_over_what_was_written();
     }
 }
@@ -1349,6 +1378,8 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::style::{Modifier, Style};
     use std::collections::BTreeMap;
+    use std::os::fd::AsRawFd;
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
 
     /// What the bindings window has inside its border, one string per row,
@@ -3801,7 +3832,9 @@ mod tests {
     #[test]
     fn a_background_written_under_a_running_bdi_reaches_the_band() {
         let mut screen = Screen {
-            terminal: Terminal::new(TestBackend::new(60, 12)).expect("a test backend"),
+            terminal: ManuallyDrop::new(
+                Terminal::new(TestBackend::new(60, 12)).expect("a test backend"),
+            ),
             shown: shown(a_grove(2)),
         };
         let dark = the_bands_sentence_style(&mut screen);
@@ -4789,5 +4822,51 @@ mod tests {
             "the row above the tail is still the forest's"
         );
         assert!(rows[bands.keys.y as usize].contains("q quit"));
+    }
+
+    /// What the fixture below leaves with once its panic has come back to it.
+    const THE_PANIC_CAME_BACK: i32 = 17;
+
+    /// A panic once the terminal has gone runs `bdi`'s panic hook, and every
+    /// write that hook makes fails. The panic still comes back rather than
+    /// aborting `bdi`. The fixture runs in a process of its own, since a
+    /// panic hook and the standard streams belong to the whole process.
+    #[test]
+    fn a_panic_once_the_terminal_has_gone_does_not_abort() {
+        let ran = Command::new(std::env::current_exe().expect("this binary has a path"))
+            .args([
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "tui::screen::tests::panicking_once_the_terminal_has_gone",
+            ])
+            .output()
+            .expect("this binary runs");
+
+        assert_eq!(
+            ran.status.code(),
+            Some(THE_PANIC_CAME_BACK),
+            "the panic did not come back: {}",
+            ran.status
+        );
+    }
+
+    #[test]
+    #[ignore = "the subject of a_panic_once_the_terminal_has_gone_does_not_abort, which runs it"]
+    fn panicking_once_the_terminal_has_gone() {
+        let (reader, gone) = std::io::pipe().expect("a pipe is ours to open");
+        drop(reader);
+        for stream in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+            assert_ne!(unsafe { libc::dup2(gone.as_raw_fd(), stream) }, -1);
+        }
+        put_the_terminal_back_on_a_panic();
+
+        let panicked = std::panic::catch_unwind(|| panic!("a panic once the terminal has gone"));
+
+        std::process::exit(if panicked.is_err() {
+            THE_PANIC_CAME_BACK
+        } else {
+            1
+        });
     }
 }
