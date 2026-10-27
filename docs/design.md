@@ -2334,18 +2334,23 @@ says which kind it is.
 **A bead line** is one bead as its tracker now has it:
 
 ```json
-{ "line": "bead", "project": "summit-works", "ready": false, "blocked_by": ["smt-4kd3p.13"], "bd": { "ready": false, "blocked_by": ["smt-4kd3p.13"] }, "row": { "id": "smt-4kd3p.20", "title": "the daily wallpaper timer calls dms", "status": "blocked", "parent": "smt-4kd3p", "dependencies": [ { "depends_on_id": "smt-4kd3p", "type": "parent-child" }, { "depends_on_id": "smt-4kd3p.13", "type": "blocks" } ], "labels": [], "metadata": { "stage": "review" }, "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z" } }
+{ "line": "bead", "project": "summit-works", "ready": false, "blocked_by": ["smt-4kd3p.13"], "bd": { "ready": false, "blocked_by": ["smt-4kd3p.13"] }, "defer_until_reached": false, "row": { "id": "smt-4kd3p.20", "title": "the daily wallpaper timer calls dms", "status": "blocked", "parent": "smt-4kd3p", "dependencies": [ { "depends_on_id": "smt-4kd3p", "type": "parent-child" }, { "depends_on_id": "smt-4kd3p.13", "type": "blocks" } ], "labels": [], "metadata": { "stage": "review" }, "comment_count": 3, "updated_at": "2026-08-30T10:21:02Z" } }
 ```
 
 `row` is bd's row whole, cut here to the fields this section names. `ready`
 and `blocked_by` are the values `--beads` gives, so a blocker in another
 project counts. `bd` holds the same two as bd itself gives them, from this one
 tracker. They sit beside the row and not in it, so nothing `bdi` adds can be
-taken for bd's or collide with a field a later bd adds.
+taken for bd's or collide with a field a later bd adds. `defer_until_reached`
+is true once the read the line comes from began at or after the row's
+`defer_until`, and false for a bead with none.
 
 A bead line is sent the first time a watch reaches a bead, which is how a
 consumer learns of one created after it connected, and again whenever the row,
-`ready`, `blocked_by` or `bd` differs from what that connection was last sent. A row
+`ready`, `blocked_by`, `bd` or `defer_until_reached` differs from what that
+connection was last sent. Nothing is written when a bead's `defer_until`
+passes, so the watcher reads the tracker again at that instant, and the bead
+is sent marked reached whether or not its readiness moved. A row
 differing only in `heartbeat_at` is not sent: a claim's heartbeat writes it and
 nothing a consumer acts on. A renewed `lease_expires_at` is sent, because a view
 reading through the watcher learns from it that the claim is still live.
