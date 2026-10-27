@@ -567,7 +567,7 @@ mod tests {
                 number,
             },
             happening,
-            why: "GitHub would not let gh read commits: Resource not accessible by personal \
+            why: "GitHub would not let gh read the checks on its head commit: Resource not accessible by personal \
                   access token"
                 .to_string(),
         }
@@ -580,7 +580,7 @@ mod tests {
             Some(
                 "example/ark#7: bdi gates cannot see whether it has failing checks, so it acts \
                  on everything else and says this once for example/ark: GitHub would not let gh \
-                 read commits: Resource not accessible by personal access token"
+                 read the checks on its head commit: Resource not accessible by personal access token"
             )
         );
     }

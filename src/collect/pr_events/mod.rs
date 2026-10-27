@@ -129,6 +129,16 @@ pub fn refuses_head_checks(name: &str) -> bool {
     answered_under(HEAD_CHECKS) == name
 }
 
+/// What GitHub refused in refusing the field it answers under `name`, as a
+/// reader of the log knows it.
+pub fn refused_named(name: &str) -> &str {
+    if refuses_head_checks(name) {
+        "the checks on its head commit"
+    } else {
+        name
+    }
+}
+
 /// The name GraphQL answers `field` under.
 fn answered_under(field: &str) -> &str {
     field.split(['(', '{']).next().unwrap_or(field)
