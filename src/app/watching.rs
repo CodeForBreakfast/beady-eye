@@ -106,6 +106,9 @@ pub struct Interest {
 #[derive(Debug)]
 struct Known {
     held: Held,
+    /// Whether the read it was last held from began at or after its
+    /// `defer_until`.
+    reached: bool,
     /// Whether the connection was sent it. A closed bead a `watch` started
     /// past is known untold, so a later change to it is still sent.
     told: bool,
@@ -158,18 +161,22 @@ impl Interest {
                 continue;
             }
             let starts_from = self.starts_from(id, held);
+            let reached = held.bead.defer_until.is_some_and(|until| until <= as_of);
             let (tell, told_before) = match self.known.get(id) {
                 None => (!starting || starts_from, false),
                 Some(known) => (
-                    differs(&known.held, held) || (!known.told && starts_from),
+                    differs(&known.held, held)
+                        || known.reached != reached
+                        || (!known.told && starts_from),
                     known.told,
                 ),
             };
             if tell {
-                lines.push(bead_line(project, held));
+                lines.push(bead_line(project, held, reached));
             }
             let known = Known {
                 held: held.clone(),
+                reached,
                 told: tell || told_before,
             };
             self.known.insert(id.clone(), known);
@@ -240,16 +247,18 @@ fn is_closed(held: &Held) -> bool {
 struct BeadLine<'a> {
     bd: &'a BeadReadiness,
     blocked_by: &'a [String],
+    defer_until_reached: bool,
     line: &'static str,
     project: &'a str,
     ready: bool,
     row: &'a Printed,
 }
 
-fn bead_line(project: &str, held: &Held) -> String {
+fn bead_line(project: &str, held: &Held, defer_until_reached: bool) -> String {
     serde_json::to_string(&BeadLine {
         bd: &held.bd,
         blocked_by: &held.blocked_by,
+        defer_until_reached,
         line: "bead",
         project,
         ready: held.ready,
@@ -536,7 +545,7 @@ mod tests {
 
         assert_eq!(
             line,
-            json!({ "line": "bead", "project": "dunwich", "ready": false, "blocked_by": ["fer-4"], "bd": { "ready": true, "blocked_by": [] }, "row": { "id": "dun-1", "title": "", "status": "open" } })
+            json!({ "line": "bead", "project": "dunwich", "ready": false, "blocked_by": ["fer-4"], "bd": { "ready": true, "blocked_by": [] }, "defer_until_reached": false, "row": { "id": "dun-1", "title": "", "status": "open" } })
         );
     }
 
@@ -591,6 +600,64 @@ mod tests {
         assert_eq!(
             said(&interest.catch_up("dunwich", &renewed)),
             ["bead dun-1"]
+        );
+    }
+
+    fn deferred_until(until: &str) -> BTreeMap<String, Held> {
+        let mut deferred = beads(&[("dun-1", "open")]);
+        let held = deferred.get_mut("dun-1").expect("held");
+        let mut row = held.bead.row.fields();
+        row.insert("defer_until".to_string(), json!(until));
+        held.bead = Arc::new(bead_of(row).expect("the row reads"));
+        deferred
+    }
+
+    fn at(when: &str) -> DateTime<Utc> {
+        when.parse().expect("a date")
+    }
+
+    fn reached(lines: &[String]) -> Vec<bool> {
+        lines
+            .iter()
+            .map(|line| {
+                let line: Value = serde_json::from_str(line).expect("each line is JSON");
+                line["defer_until_reached"]
+                    .as_bool()
+                    .expect("a bead line says whether its date is reached")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_bead_whose_defer_until_is_reached_is_sent_again_marked_reached() {
+        let mut interest = watching(&[project(false)]);
+        let deferred = deferred_until("2026-08-30T14:00:00Z");
+        let before = interest.catch_up_as_of("dunwich", &deferred, at("2026-08-30T13:59:00Z"));
+        let after = interest.catch_up_as_of("dunwich", &deferred, at("2026-08-30T14:00:00Z"));
+
+        assert_eq!(reached(&before), [false]);
+        assert_eq!(said(&after), ["bead dun-1"]);
+        assert_eq!(reached(&after), [true]);
+    }
+
+    #[test]
+    fn a_bead_whose_defer_until_was_reached_already_is_not_sent_again() {
+        let mut interest = watching(&[project(false)]);
+        let deferred = deferred_until("2026-08-30T14:00:00Z");
+        let first = interest.catch_up_as_of("dunwich", &deferred, at("2026-08-30T14:00:00Z"));
+        let later = interest.catch_up_as_of("dunwich", &deferred, at("2026-08-30T14:05:00Z"));
+
+        assert_eq!(reached(&first), [true]);
+        assert_eq!(said(&later), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_bead_deferred_nowhere_has_no_date_to_reach() {
+        let mut interest = watching(&[project(false)]);
+
+        assert_eq!(
+            reached(&interest.catch_up("dunwich", &beads(&[("dun-1", "open")]))),
+            [false]
         );
     }
 
