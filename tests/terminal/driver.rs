@@ -305,6 +305,35 @@ impl Driven {
         OutputStopped(slave)
     }
 
+    /// Close the terminal under `bdi`, as a multiplexer does when it reclaims
+    /// a pane, and wait up to `patience` for `bdi` to exit.
+    ///
+    /// The pty hangs up when the last master handle closes, and this holds
+    /// the only one. The drain shares it, so the drain stops first. The
+    /// master's fd is then pointed at `/dev/null` rather than closed, which
+    /// closes the master and leaves `self.terminal` an fd it can still close
+    /// on drop. Nothing `bdi` writes after this can be read.
+    pub fn hang_up(&mut self, patience: Duration) -> Option<ExitStatus> {
+        self.draining.store(false, Ordering::Relaxed);
+        if let Some(drain) = self.drain.take() {
+            let _ = drain.join();
+        }
+        let nothing = std::fs::File::open("/dev/null").expect("/dev/null opens");
+        assert_ne!(
+            unsafe { libc::dup2(nothing.as_raw_fd(), self.terminal.as_raw_fd()) },
+            -1,
+            "the master is ours to close"
+        );
+        let giving_up = Instant::now() + patience;
+        while Instant::now() < giving_up {
+            if let Some(exited) = self.child.try_wait().expect("bdi is ours to ask after") {
+                return Some(exited);
+            }
+            std::thread::sleep(A_GLANCE);
+        }
+        None
+    }
+
     /// How `bdi` exited, where it has, with whatever it wrote on the way out
     /// read.
     ///
