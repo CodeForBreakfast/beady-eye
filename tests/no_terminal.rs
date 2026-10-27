@@ -3,7 +3,7 @@
 //! written — and it is main's, so the test runs the binary.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 /// A directory holding a config that names one project, so `bdi` gets past
 /// config assembly and as far as the decision under test.
@@ -45,4 +45,37 @@ fn a_view_asked_for_down_a_pipe_says_it_needs_a_terminal() {
     assert!(said.contains("terminal"), "got: {said}");
     assert!(said.contains("--json"), "got: {said}");
     assert!(out.stdout.is_empty(), "bdi wrote to a pipe it had refused");
+}
+
+/// A reader that goes before `bdi` has written, as `jq` does when it exits
+/// early, leaves `bdi` nothing to write to and nothing worth saying about it.
+#[test]
+fn a_snapshot_whose_reader_has_gone_is_not_a_failure() {
+    assert_reader_gone_is_not_a_failure("json-reader-gone", &["--json"]);
+}
+
+#[test]
+fn a_beads_document_whose_reader_has_gone_is_not_a_failure() {
+    assert_reader_gone_is_not_a_failure("beads-reader-gone", &["--beads", "--brief"]);
+}
+
+fn assert_reader_gone_is_not_a_failure(named: &str, args: &[&str]) {
+    let home = configured(named);
+
+    let (reader, writer) = std::io::pipe().expect("a pipe is ours to open");
+    drop(reader);
+    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .args(args)
+        .current_dir(&home)
+        .env("HOME", &home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BDI_PROJECT")
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()
+        .expect("bdi runs");
+    let said = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(!said.contains("panicked"), "got: {said}");
+    assert!(out.status.success(), "{}; got: {said}", out.status);
 }

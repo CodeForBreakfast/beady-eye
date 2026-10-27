@@ -1,7 +1,7 @@
 //! What `bdi` does when it is run: the arguments it takes, the config those
 //! arguments resolve against, and whether the snapshot is drawn or printed.
 
-use std::io::{ErrorKind, IsTerminal};
+use std::io::{ErrorKind, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{mpsc, Arc, Mutex};
@@ -422,7 +422,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
             Utc::now(),
         );
         snapshot.narrow_to(&cfg.roots.named_beads());
-        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+        print_document(&serde_json::to_string_pretty(&snapshot)?)?;
         return Ok(ExitCode::SUCCESS);
     }
     if cli.each_bead {
@@ -434,17 +434,14 @@ pub fn run() -> anyhow::Result<ExitCode> {
             EnvironmentCache::here(),
             Utc::now(),
         );
-        println!(
-            "{}",
-            beads_document(
-                &snapshot,
-                cli.ready,
-                &cfg.roots.named_beads(),
-                &only,
-                cli.brief,
-                &cfg.delivery
-            )?
-        );
+        print_document(&beads_document(
+            &snapshot,
+            cli.ready,
+            &cfg.roots.named_beads(),
+            &only,
+            cli.brief,
+            &cfg.delivery,
+        )?)?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -582,6 +579,15 @@ fn read_for_each_bead(
         Filter::All,
         now,
     )
+}
+
+/// A reader that went before the document was written, as `jq` does when it
+/// exits early, is not a failure: nobody is left to read it.
+fn print_document(document: &str) -> std::io::Result<()> {
+    match writeln!(std::io::stdout(), "{document}") {
+        Err(gone) if gone.kind() == ErrorKind::BrokenPipe => Ok(()),
+        written => written,
+    }
 }
 
 /// What `bdi --beads` writes: the dependency trees of the beads `named`
