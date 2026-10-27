@@ -1,6 +1,6 @@
 id = "codeforbreakfast.beady-eye"
 name = "beady-eye"
-version = "0.37.0"
+version = "0.38.0"
 min_herdr_version = "0.9.1"
 platforms = ["linux", "macos"]
 description = "Opens bdi in a split beside the focused pane: the trees of work in that pane's project, with what each agent is doing beside its bead. Part of beady-eye."
