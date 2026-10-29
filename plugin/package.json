@@ -19,7 +19,7 @@
     "build": "bun build src/main.ts --target node --outfile dist/server.js"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.5",
+    "@effect/platform-node": "4.0.6",
     "@modelcontextprotocol/sdk": "1.32.1",
     "bun-types": "1.4.4",
     "effect": "4.0.5",
