@@ -21,7 +21,7 @@
   "devDependencies": {
     "@effect/platform-node": "4.0.5",
     "@modelcontextprotocol/sdk": "1.32.1",
-    "bun-types": "1.4.3",
+    "bun-types": "1.4.4",
     "effect": "4.0.5",
     "smol-toml": "1.9.1"
   },
