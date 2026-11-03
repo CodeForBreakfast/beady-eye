@@ -4156,7 +4156,7 @@ and a second line"
             dontFixup = true;
           };
 
-        pluginTools = [ pkgs.bun pkgs.biome effectTsc pkgs.nodejs ];
+        pluginTools = [ pkgs.bun pkgs.biome effectTsc pkgs.nodejs pkgs.ps ];
 
         pluginCheck = name: tools: command:
           pkgs.runCommand "beady-eye-plugin-${name}" { nativeBuildInputs = tools; } ''

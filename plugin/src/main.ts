@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { NodeFileSystem, NodeRuntime } from '@effect/platform-node'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { Config, Effect, Layer } from 'effect'
+import { Config, Effect, Layer, Stream } from 'effect'
+import { makeHandOver } from './hand-over'
 import { buildServer } from './server'
 import { AgentSessionKey, SessionId, WatchedProjects, WatcherLocation } from './watcher'
 import { makeWatches } from './watches'
@@ -33,8 +34,12 @@ const sessionCloses = (input: NodeJS.ReadableStream) =>
 NodeRuntime.runMain(
   Effect.gen(function* () {
     const watches = yield* makeWatches
+    const handOver = yield* makeHandOver
     yield* watches.learn(yield* bootSession)
-    yield* Effect.promise(() => buildServer(watches).connect(new StdioServerTransport()))
+    yield* Effect.forkScoped(Stream.runForEach(handOver.changes, watches.learn))
+    yield* Effect.promise(() =>
+      buildServer(watches, handOver.current).connect(new StdioServerTransport()),
+    )
     yield* sessionCloses(process.stdin)
   }).pipe(
     Effect.scoped,
@@ -43,7 +48,7 @@ NodeRuntime.runMain(
         WatcherLocation.namedIn(config),
         WatchedProjects.namedIn(config),
         AgentSessionKey.namedIn(config),
-      ).pipe(Layer.provideMerge(NodeFileSystem.layer)),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   ),
 )

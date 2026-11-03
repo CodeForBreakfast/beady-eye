@@ -7,7 +7,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { Data, Effect, Match, Option, Schema, Stream } from 'effect'
 import { version } from '../package.json'
-import { BeadId, ProjectName, SessionId } from './watcher'
+import { BeadId, ProjectName, type SessionId } from './watcher'
 import type { Answer, Block, Watches } from './watches'
 
 const aBead: Tool['inputSchema'] = {
@@ -82,7 +82,12 @@ const call = (
   return Effect.succeed({ text: `There is no tool ${name}.`, refused: true })
 }
 
-export const buildServer = (watches: Watches): Server => {
+/** A server for `watches`, which learns before each call the session id
+ * `handedOver` gives. */
+export const buildServer = (
+  watches: Watches,
+  handedOver: Effect.Effect<SessionId | undefined>,
+): Server => {
   const server = new Server(
     { name: 'beady-eye', version },
     { capabilities: { tools: {}, experimental: { 'claude/channel': {} } }, instructions },
@@ -101,9 +106,11 @@ export const buildServer = (watches: Watches): Server => {
   server.setRequestHandler(CallToolRequestSchema, ({ params }) => {
     const args = params.arguments ?? {}
     return Effect.runPromise(
-      watches
-        .learn(Option.getOrUndefined(Schema.decodeUnknownOption(SessionId)(args['session_id'])))
-        .pipe(Effect.andThen(call(watches, params.name, args)), Effect.map(answering)),
+      handedOver.pipe(
+        Effect.flatMap(watches.learn),
+        Effect.andThen(call(watches, params.name, args)),
+        Effect.map(answering),
+      ),
     )
   })
   return server
