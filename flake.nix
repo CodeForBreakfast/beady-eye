@@ -4389,13 +4389,19 @@ and a second line"
           # The tests run under a TMPDIR longer than any socket's path may be,
           # so a test that binds a socket under `std::env::temp_dir()` fails
           # here. The sandbox's own TMPDIR is short and would hide it.
+          #
+          # The tests that do bind one put it in /tmp. Linux's sandbox gives
+          # /tmp to a user the build cannot see, so `bdi` will not trust it with
+          # a socket, and there the sockets go in the build's own directory.
           test = checkOf "test" artifacts.dev
             [ beads.packages.${system}.bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
-            ''
+            (pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              export BDI_TEST_SOCKET_DIR="$TMPDIR/sockets"
+            '' + ''
               export TMPDIR="$TMPDIR/a-temporary-directory-named-at-such-length-that-no-unix-socket-path-fits-under-it-on-linux-or-on-macos"
               mkdir -p "$TMPDIR"
               cargo nextest run && cargo test --doc
-            '';
+            '');
           unbuilt-checks-test = unbuiltChecksTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,

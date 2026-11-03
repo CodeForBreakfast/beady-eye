@@ -872,11 +872,21 @@ pub mod testing {
     /// user's run with that id would otherwise find it in the way, as a Nix
     /// build on Darwin does, running as a `_nixbld` user against the same
     /// `/tmp`.
+    ///
+    /// `BDI_TEST_SOCKET_DIR` names a different directory, for a machine whose
+    /// `/tmp` `bdi` will not trust with a socket. Nix's Linux sandbox is one:
+    /// its `/tmp` belongs to a user the build cannot see, and others may write
+    /// there.
     pub fn socket_temp_dir() -> PathBuf {
-        let dir = PathBuf::from(format!("/tmp/bdi-{}", super::this_user()));
-        std::fs::create_dir_all(&dir).expect("a directory of this user's own under /tmp");
+        let dir = std::env::var_os(SOCKET_DIR).map_or_else(
+            || PathBuf::from(format!("/tmp/bdi-{}", super::this_user())),
+            PathBuf::from,
+        );
+        std::fs::create_dir_all(&dir).expect("a directory of this user's own for sockets");
         dir
     }
+
+    const SOCKET_DIR: &str = "BDI_TEST_SOCKET_DIR";
 }
 
 #[cfg(test)]
