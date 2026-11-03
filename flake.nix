@@ -4386,10 +4386,9 @@ and a second line"
           # and costs about the slowest. It runs no doctests, so cargo still
           # does.
           #
-          # The tests run under a TMPDIR as long as a contributor's can be. A
-          # socket's path must fit in about 104 bytes, so a test that binds one
-          # under `std::env::temp_dir()` fails here, where the sandbox's own
-          # TMPDIR is short enough to hide it.
+          # The tests run under a TMPDIR longer than any socket's path may be,
+          # so a test that binds a socket under `std::env::temp_dir()` fails
+          # here. The sandbox's own TMPDIR is short and would hide it.
           test = checkOf "test" artifacts.dev
             [ beads.packages.${system}.bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
             ''

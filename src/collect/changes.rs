@@ -865,9 +865,17 @@ pub mod testing {
     /// A socket's path has to fit in `sun_path`, which is 104 bytes on macOS
     /// and 108 on Linux. `TMPDIR` can take most of that before a test names
     /// anything: macOS's own runs to about 49 characters, and sandboxes often
-    /// set a longer one. `/tmp` leaves the test the whole of the room.
+    /// set a longer one. `/tmp` leaves the test nearly all of the room.
+    ///
+    /// Each user has a directory of their own there, because a test names its
+    /// home for itself and its process id and nothing removes it. Another
+    /// user's run with that id would otherwise find it in the way, as a Nix
+    /// build on Darwin does, running as a `_nixbld` user against the same
+    /// `/tmp`.
     pub fn socket_temp_dir() -> PathBuf {
-        PathBuf::from("/tmp")
+        let dir = PathBuf::from(format!("/tmp/bdi-{}", super::this_user()));
+        std::fs::create_dir_all(&dir).expect("a directory of this user's own under /tmp");
+        dir
     }
 }
 
