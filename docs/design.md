@@ -2683,7 +2683,8 @@ call would stop every call in auto mode.
 **Claude Code is the hook's parent, and the server's grandparent.** Measured on
 Claude Code 2.1.317, Claude Code runs the hook itself, with no shell between
 them. It starts the server through `npx`, so `npm exec` stands between them.
-The server lists the processes it runs under once, when it starts. It takes
+The server lists the processes it runs under with `ps` once, when it starts.
+Where `ps` cannot run, the server keeps the id from its environment. It takes
 the file of the nearest of them that has one, so a Claude Code started from
 inside another reads its own.
 
