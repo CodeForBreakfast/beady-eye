@@ -52,6 +52,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::Duration;
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 /// The terminal is on the alternate screen from here. Waited for rather than
 /// slept through: the screen opens in tens of milliseconds and every tracker
 /// is read after it, so a sleep long enough to be safe is a sleep spent
@@ -236,7 +238,7 @@ pub fn a_home_naming_one_project_settled(named: &str, settings: &str) -> PathBuf
 /// whose process gets the same id is handed this one with whatever the
 /// earlier run left in it.
 fn an_empty_home(named: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    let home = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     match std::fs::remove_dir_all(&home) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             panic!("the home an earlier run left is ours to clear: {error}")

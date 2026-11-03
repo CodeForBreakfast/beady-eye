@@ -28,6 +28,8 @@ mod terminal;
 
 use std::path::{Path, PathBuf};
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{a_home_naming_one_project_settled, Producer, THE_DESCRIBED_SUBTREE};
@@ -50,11 +52,11 @@ fn a_home_watching(named: &str, socket: &Path) -> PathBuf {
 
 #[test]
 fn two_runs_told_different_sockets_each_get_a_channel() {
-    let named_by_the_config = std::env::temp_dir().join(format!(
+    let named_by_the_config = socket_temp_dir().join(format!(
         "bdi-told-sockets-{}-config.sock",
         std::process::id()
     ));
-    let named_on_the_command_line = std::env::temp_dir().join(format!(
+    let named_on_the_command_line = socket_temp_dir().join(format!(
         "bdi-told-sockets-{}-command-line.sock",
         std::process::id()
     ));

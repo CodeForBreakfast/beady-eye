@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
 use beady_eye::collect::pr_events::{self, EVENTS};
 use chrono::{TimeDelta, Timelike, Utc};
 use hmac::{Hmac, KeyInit, Mac};
@@ -98,7 +99,7 @@ fn a_home_naming(named: &str, projects: &[&str]) -> PathBuf {
 
 /// A home as [`a_home_naming`] gives, looking every `seconds`.
 fn a_home_looking_every(named: &str, projects: &[&str], seconds: u64) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-gates-{named}-{}", std::process::id()));
+    let home = socket_temp_dir().join(format!("bdi-gates-{named}-{}", std::process::id()));
     let mut config = format!("[gates]\npoll_seconds = {seconds}\n");
     for project in projects {
         let path = home.join(project);
