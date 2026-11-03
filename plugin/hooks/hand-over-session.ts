@@ -1,41 +1,39 @@
 #!/usr/bin/env node
-// Claude Code runs this before each call to the plugin's tools, because an MCP
-// server is told neither the session it serves nor where that session runs.
-// The model never sees what it adds.
+// Claude Code runs this when a session starts, clears, resumes or compacts,
+// and before each call to the plugin's tools, because an MCP server is not
+// told the session it serves. It leaves the session's id where the server
+// reads it, and changes nothing about the call, so auto mode's review of the
+// call still covers what runs.
 
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { text } from 'node:stream/consumers'
+import { sessionFile, sessionsDirectory } from './session-file.ts'
 
-interface HookInput {
-  readonly session_id?: unknown
-  readonly cwd?: unknown
-  readonly tool_input?: unknown
-}
-
-const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0
-
-const handOver = (input: HookInput) => {
-  if (!nonEmpty(input.session_id)) return {}
-  const toolInput =
-    typeof input.tool_input === 'object' && input.tool_input !== null ? input.tool_input : {}
-  return {
-    updatedInput: {
-      ...toolInput,
-      session_id: input.session_id,
-      ...(nonEmpty(input.cwd) ? { cwd: input.cwd } : {}),
-    },
+const sessionOf = (stdin: string): string | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(stdin)
+    if (typeof parsed !== 'object' || parsed === null || !('session_id' in parsed)) return
+    const { session_id } = parsed
+    return typeof session_id === 'string' && session_id.length > 0 ? session_id : undefined
+  } catch {
+    return
   }
 }
 
-let input: HookInput = {}
-try {
-  const parsed: unknown = JSON.parse(await text(process.stdin))
-  if (typeof parsed === 'object' && parsed !== null) input = parsed
-} catch {
-  // A call the hook cannot read goes ahead unchanged rather than failing.
+const session = sessionOf(await text(process.stdin))
+if (session !== undefined) {
+  try {
+    const directory = sessionsDirectory(process.env)
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    // Claude Code runs the hook itself, so its parent is the process the
+    // server runs under too. A new file replaces the old whole, so the
+    // server never reads half an id.
+    const file = sessionFile(directory, process.ppid)
+    const writing = `${file}.${process.pid}`
+    writeFileSync(writing, session)
+    renameSync(writing, file)
+  } catch {
+    // A session whose id cannot be left goes ahead, and its server keeps the
+    // id it had.
+  }
 }
-
-process.stdout.write(
-  JSON.stringify({
-    hookSpecificOutput: { hookEventName: 'PreToolUse', ...handOver(input) },
-  }),
-)

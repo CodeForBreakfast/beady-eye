@@ -106,19 +106,25 @@ const serving = async ({ watches, close }: Awaited<ReturnType<typeof someWatches
     if (waiter) waiter(message)
     else messages.push(message)
   }
+  /** The id the plugin's hooks last left for the session. */
+  let handedOver: SessionId | undefined
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
-  await buildServer(watches).connect(serverSide)
+  await buildServer(
+    watches,
+    Effect.sync(() => handedOver),
+  ).connect(serverSide)
   await client.connect(clientSide)
   const exit = async () => {
     await close()
     await client.close()
   }
   cleanUp.push(exit)
-  const use = async (name: string, args: Record<string, string | undefined> = {}) => {
-    const result = await client.callTool({
-      name,
-      arguments: { session_id: session, ...args },
-    })
+  /** Call the tool `name` once the hooks have left `session_id`, which is
+   * the session's own id unless `given` names another or none. */
+  const use = async (name: string, given: Record<string, string | undefined> = {}) => {
+    const { session_id, ...args } = { session_id: session, ...given }
+    handedOver = session_id === undefined ? undefined : Schema.decodeSync(SessionId)(session_id)
+    const result = await client.callTool({ name, arguments: args })
     const [content] = result.content as { text: string }[]
     return { text: content?.text, refused: result.isError }
   }
@@ -872,17 +878,6 @@ test('every watch is accepted by a watcher predating agent sessions, restored on
     text: `Watching ${watched}: ${asWatched}.`,
     refused: false,
   })
-})
-
-test('a call whose session id is not one is served, and keeps nothing for the session', async () => {
-  const place = { ...aPlace(), at: undefined }
-  const use = await aServer(place)
-
-  const answer = await use('watching', { session_id: 'not a session id' })
-
-  expect(answer.refused).toBeFalsy()
-  const keeping = join(place.directory, 'beady-eye', 'watches')
-  expect(existsSync(keeping) ? readdirSync(keeping) : []).toEqual([])
 })
 
 /** The bead as `beadLine` has it in summit-works, with `changes` made to it. */

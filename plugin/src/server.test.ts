@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, setDefaultTimeout, test } from 'bun:test'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -20,6 +20,7 @@ import type { Block } from './watches'
 const pluginRoot = new URL('..', import.meta.url).pathname
 const bundle = `${pluginRoot}dist/server.js`
 const session = '6f1c2d3e-4a5b-4c6d-8e7f-901234567890'
+const cleared = '0e1d2c3b-4a59-4876-9543-210fedcba987'
 
 afterEach(cleanUpAfterEach)
 // A busy machine can take seconds to start node, which the bundle runs under.
@@ -63,7 +64,7 @@ const theBundle = async (
 
 test('the server sends a channel message to the session', async () => {
   const { watches } = await someWatches(aPrivateDirectory(), undefined, [])
-  const server = buildServer(watches)
+  const server = buildServer(watches, Effect.undefined)
   const client = new Client({ name: 'session', version: '0' })
   const received = new Promise<JSONRPCNotification>((resolve) => {
     client.fallbackNotificationHandler = async (notification) =>
@@ -121,13 +122,12 @@ test('a bundle started again under the session watches its beads before any tool
   const home = aPrivateDirectory()
   mkdirSync(join(home, 'run', 'beady-eye'), { recursive: true })
   const watcher = await aWatcherAt(join(home, 'run', 'beady-eye', 'watcher.sock'))
-  const first = await theBundle(home)
+  const first = await theBundle(home, { CLAUDE_CODE_SESSION_ID: session })
   const watching = first.callTool({
     name: 'watch',
     arguments: {
       id: 'smt-4kd3p.20',
       project: 'summit-works',
-      session_id: session,
     },
   })
   ;(await watcher.next()).connection.end()
@@ -157,13 +157,12 @@ test('a bundle started again under the session tells it of a bead that changed w
     events: 'off',
     protocol: 1,
   }
-  const first = await theBundle(home)
+  const first = await theBundle(home, { CLAUDE_CODE_SESSION_ID: session })
   const watching = first.callTool({
     name: 'watch',
     arguments: {
       id: 'smt-4kd3p.20',
       project: 'summit-works',
-      session_id: session,
     },
   })
   ;(await watcher.next()).connection.write(said(bead('blocked'), freshness))
@@ -231,11 +230,86 @@ test('a bundle reads the projects to look in from the bdi config', async () => {
 
   const watching = client.callTool({
     name: 'watch',
-    arguments: { id: 'smt-4kd3p.20', session_id: session },
+    arguments: { id: 'smt-4kd3p.20' },
   })
   const { connection, asked } = await watcher.next()
   connection.end()
   await watching
 
   expect(asked).toBe('watch harbour smt-4kd3p.20\n')
+})
+
+/** Leave `id` as the plugin's hooks do, for the Claude Code process `pid`. */
+const handOver = (home: string, pid: number, id: string) => {
+  const sessions = join(home, 'run', 'beady-eye', 'sessions')
+  mkdirSync(sessions, { recursive: true })
+  writeFileSync(join(sessions, `${pid}.writing`), id)
+  renameSync(join(sessions, `${pid}.writing`), join(sessions, String(pid)))
+}
+
+/** A bundle started as Claude Code starts it, by this process, watching
+ * smt-4kd3p.20 under `session`. */
+const aBundleWatching = async (home: string) => {
+  mkdirSync(join(home, 'run', 'beady-eye'), { recursive: true })
+  const watcher = await aWatcherAt(join(home, 'run', 'beady-eye', 'watcher.sock'))
+  const client = await theBundle(home, { CLAUDE_CODE_SESSION_ID: session })
+  const watching = client.callTool({
+    name: 'watch',
+    arguments: { id: 'smt-4kd3p.20', project: 'summit-works' },
+  })
+  const first = await watcher.next()
+  first.connection.end()
+  await watching
+  return { watcher, client, first }
+}
+
+test('a bundle learns of a cleared session from the id its hooks leave, before any tool is called', async () => {
+  const home = aPrivateDirectory()
+  const { watcher, first } = await aBundleWatching(home)
+
+  handOver(home, process.pid, cleared)
+
+  expect(first.asked).toBe(`watch summit-works smt-4kd3p.20 ${session}\n`)
+  expect((await watcher.next()).asked).toBe(`watch summit-works smt-4kd3p.20 ${cleared}\n`)
+})
+
+test('a call is served under the id the hooks left, though the bundle saw no change to it', async () => {
+  const home = aPrivateDirectory()
+  mkdirSync(join(home, 'run', 'beady-eye'), { recursive: true })
+  const watcher = await aWatcherAt(join(home, 'run', 'beady-eye', 'watcher.sock'))
+  handOver(home, process.pid, cleared)
+  const client = await theBundle(home, { CLAUDE_CODE_SESSION_ID: session })
+
+  const watching = client.callTool({
+    name: 'watch',
+    arguments: { id: 'smt-4kd3p.20', project: 'summit-works' },
+  })
+  const { connection, asked } = await watcher.next()
+  connection.end()
+  await watching
+
+  expect(asked).toBe(`watch summit-works smt-4kd3p.20 ${cleared}\n`)
+})
+
+test('the id is read from the nearest Claude Code process the bundle runs under', async () => {
+  const home = aPrivateDirectory()
+  const { watcher, client } = await aBundleWatching(home)
+  handOver(home, process.pid, cleared)
+  handOver(home, process.ppid, '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d')
+
+  await client.callTool({ name: 'watching', arguments: {} })
+
+  expect((await watcher.next()).asked).toBe(`watch summit-works smt-4kd3p.20 ${cleared}\n`)
+})
+
+test('a bundle whose hooks leave no session id serves its calls and keeps nothing for a session', async () => {
+  const home = aPrivateDirectory()
+  handOver(home, process.pid, 'not a session id')
+  const client = await theBundle(home)
+
+  const answer = await client.callTool({ name: 'watching', arguments: {} })
+
+  expect(answer.isError).toBeFalsy()
+  const keeping = join(home, 'state', 'beady-eye', 'watches')
+  expect(existsSync(keeping) ? readdirSync(keeping) : []).toEqual([])
 })
