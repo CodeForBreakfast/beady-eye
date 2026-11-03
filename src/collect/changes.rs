@@ -877,13 +877,18 @@ pub mod testing {
     /// `/tmp` `bdi` will not trust with a socket. Nix's Linux sandbox is one:
     /// its `/tmp` belongs to a user the build cannot see, and others may write
     /// there.
+    ///
+    /// The directory comes back resolved, because macOS's `/tmp` is a link
+    /// to `/private/tmp`. A test that starts `bdi` in a project under it
+    /// names the project by the path the operating system reports as `bdi`'s
+    /// working directory.
     pub fn socket_temp_dir() -> PathBuf {
         let dir = std::env::var_os(SOCKET_DIR).map_or_else(
             || PathBuf::from(format!("/tmp/bdi-{}", super::this_user())),
             PathBuf::from,
         );
         std::fs::create_dir_all(&dir).expect("a directory of this user's own for sockets");
-        dir
+        std::fs::canonicalize(&dir).expect("the directory just made resolves")
     }
 
     const SOCKET_DIR: &str = "BDI_TEST_SOCKET_DIR";
