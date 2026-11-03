@@ -2667,25 +2667,44 @@ a plugin's channel messages only to a session started with that channel
 allowed. Without it the plugin's tools still answer and no change arrives, so
 starting sessions that way is the setup's business, as starting the watcher is.
 
-**The server learns its session as commy's does.** Claude Code starts it with
-the session's id in `CLAUDE_CODE_SESSION_ID`, and a `PreToolUse` hook adds the
-id and working directory to each call to the plugin's tools, because MCP tells
-a server neither. The id is the one herdr reports as the pane's
-`agent_session`.
+**The server learns its session from the plugin's hooks.** Claude Code starts
+it with the session's id in `CLAUDE_CODE_SESSION_ID`, because MCP tells a
+server nothing of its session. The id is the one herdr reports as the pane's
+`agent_session`. The plugin's hook runs when a session starts, clears, resumes
+or compacts, and before each call to the plugin's tools. It writes the
+session's id to a file named for the process id of its parent, under
+`$XDG_RUNTIME_DIR/beady-eye/sessions/`, or under the temporary directory where
+that is unset. A new file replaces the old one whole.
+
+**The hook changes nothing about a call.** Auto mode refuses a call whose input
+a hook changed after auto mode reviewed it, so a hook that added the id to the
+call would stop every call in auto mode.
+
+**Claude Code is the hook's parent, and the server's grandparent.** Measured on
+Claude Code 2.1.317, Claude Code runs the hook itself, with no shell between
+them. It starts the server through `npx`, so `npm exec` stands between them.
+The server lists the processes it runs under once, when it starts. It takes
+the file of the nearest of them that has one, so a Claude Code started from
+inside another reads its own.
 
 **A running server's session can change its id.** Measured on Claude Code
-2.1.310:
+2.1.310, with the ids for `/clear` and `/resume` measured again on 2.1.317:
 
-| What the session does | Its server | The id the hook gives |
+| What the session does | Its server | The id the hook leaves |
 | --- | --- | --- |
 | `/clear` | keeps running, its environment still naming the old id | a new one |
 | `/resume` inside the session | keeps running, its environment still naming the old id | the resumed conversation's own |
 | `claude --resume <id>` | starts again, its environment naming `<id>` | `<id>` |
 | `/compact` | keeps running | unchanged |
 
-So the server takes each new id the hook gives as the session it serves now,
-and a running server learns of a `/clear` or a `/resume` at the session's next
-call to one of its tools, since the hook is the only thing that tells it.
+So the server takes each new id the hook leaves as the session it serves now.
+It reads the file whenever the file changes, so it learns of a `/clear` or a
+`/resume` at once, and the work the session holds under its new id is watched
+before any tool is called. It reads the file again before each call to one of
+its tools, so a call is served under the id the hook left just before it.
+A server starting reads no file, and takes the id in its environment, because a
+file can be left by a Claude Code that has gone and whose process id another
+has since taken.
 
 **A session is told how to use the plugin.** The server sends MCP
 instructions that every session loading the plugin receives: what the three
