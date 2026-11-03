@@ -1,5 +1,6 @@
 import { afterEach, expect, setDefaultTimeout, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { aPrivateDirectory, cleanUpAfterEach } from '../src/test-watcher'
 import hooks from './hooks.json'
@@ -11,11 +12,15 @@ setDefaultTimeout(60_000)
 const hook = new URL('./hand-over-session.ts', import.meta.url).pathname
 
 /** The hook, run as Claude Code runs it, as a child of this process. */
-const runHook = async (runtime: string, stdin: string) => {
+const runHook = async (
+  runtime: string,
+  stdin: string,
+  env: Record<string, string> = { XDG_RUNTIME_DIR: runtime },
+) => {
   const proc = Bun.spawn(['node', hook], {
     stdin: 'pipe',
     stdout: 'pipe',
-    env: { PATH: process.env['PATH'] ?? '', XDG_RUNTIME_DIR: runtime },
+    env: { PATH: process.env['PATH'] ?? '', ...env },
   })
   proc.stdin.write(stdin)
   await proc.stdin.end()
@@ -37,6 +42,19 @@ test('the hook leaves the session id in a file named for the process that ran it
     expect(readFileSync(join(sessions(runtime), String(process.pid)), 'utf8')).toBe(`${event}-id`)
   }
   expect(readdirSync(sessions(runtime))).toEqual([String(process.pid)])
+})
+
+test("with no runtime directory, the hook leaves the id in the temporary directory under the user's own name", async () => {
+  const temporary = aPrivateDirectory()
+
+  await runHook(temporary, JSON.stringify({ session_id: 'a1b2c3' }), { TMPDIR: temporary })
+
+  expect(
+    readFileSync(
+      join(temporary, `beady-eye-${userInfo().uid}`, 'sessions', String(process.pid)),
+      'utf8',
+    ),
+  ).toBe('a1b2c3')
 })
 
 test("the hook changes nothing about the call it runs before, so auto mode's review covers it", async () => {

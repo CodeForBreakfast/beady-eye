@@ -2673,8 +2673,10 @@ server nothing of its session. The id is the one herdr reports as the pane's
 `agent_session`. The plugin's hook runs when a session starts, clears, resumes
 or compacts, and before each call to the plugin's tools. It writes the
 session's id to a file named for the process id of its parent, under
-`$XDG_RUNTIME_DIR/beady-eye/sessions/`, or under the temporary directory where
-that is unset. A new file replaces the old one whole.
+`$XDG_RUNTIME_DIR/beady-eye/sessions/`. Where that is unset, the file goes in
+a directory named for the user's id inside the temporary directory, because
+other users can share the temporary directory. A new file replaces the old one
+whole.
 
 **The hook changes nothing about a call.** Auto mode refuses a call whose input
 a hook changed after auto mode reviewed it, so a hook that added the id to the
