@@ -709,6 +709,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::collect::changes::testing::socket_temp_dir;
     use crate::collect::tracker::testing::{Fake, Fakes};
     use crate::config::Config;
 
@@ -717,7 +718,7 @@ mod tests {
     const A_MOMENT: Duration = Duration::from_secs(5);
 
     fn a_socket(named: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let dir = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
         dir.join("watcher.sock")
