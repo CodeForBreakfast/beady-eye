@@ -854,6 +854,23 @@ pub fn answered(
     Some(answer.to_string())
 }
 
+/// Where a test puts a socket it binds.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use std::path::PathBuf;
+
+    /// The directory a test makes its socket's home under, in place of
+    /// `std::env::temp_dir()`.
+    ///
+    /// A socket's path has to fit in `sun_path`, which is 104 bytes on macOS
+    /// and 108 on Linux. `TMPDIR` can take most of that before a test names
+    /// anything: macOS's own runs to about 49 characters, and sandboxes often
+    /// set a longer one. `/tmp` leaves the test the whole of the room.
+    pub fn socket_temp_dir() -> PathBuf {
+        PathBuf::from("/tmp")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,7 +894,7 @@ mod tests {
     /// A directory of this test's own, so tests that bind sockets do not
     /// collide with each other or with a previous run.
     fn a_socket_path(named: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let dir = testing::socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
         dir.join("beady-eye").join("changes.sock")
@@ -889,7 +906,7 @@ mod tests {
     /// The directory under test sits inside one nobody else may enter, so a
     /// test that opens a directory up opens nothing up in `/tmp`.
     fn a_socket_in_a_directory_moded(named: &str, how: u32) -> PathBuf {
-        let around = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let around = testing::socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&around);
         std::fs::create_dir_all(&around).expect("a directory to keep the test's own in");
         std::fs::set_permissions(

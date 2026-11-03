@@ -26,6 +26,8 @@ mod terminal;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::{ShimmedHerdr, ShimmedTracker};
 use terminal::{a_socket_of_its_own, contains, row_of, ENTER_ALTERNATE_SCREEN};
@@ -106,7 +108,7 @@ fn a_session_with_one_pane(cwd: &str) -> String {
 
 /// A `HOME` whose config names one project and carries `settings`.
 fn a_home_settled(named: &str, settings: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    let home = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
     settling(&home, settings);
     home

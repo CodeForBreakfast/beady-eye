@@ -8,6 +8,8 @@ mod terminal;
 
 use std::path::{Path, PathBuf};
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 use terminal::a_socket_of_its_own;
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::{
@@ -28,7 +30,7 @@ const THE_REMEDY: &[u8] = "BDI_PROJECT".as_bytes();
 /// of being told what to draw. That is the only path the notice is on: a
 /// config file names its own projects, and discovery never runs.
 fn a_home_with_no_config(named: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    let home = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("the directory is ours to make");
     home

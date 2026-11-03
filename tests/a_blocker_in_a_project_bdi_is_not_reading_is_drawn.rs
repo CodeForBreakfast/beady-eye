@@ -10,6 +10,8 @@ mod terminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
 
@@ -36,7 +38,7 @@ const FERRYS_OTHER_TREE: &str = "caulk the hull";
 /// A `HOME` that is ferry's directory. Its config names ferry there and
 /// dunwich in a directory under it, with `dunwich_states` in dunwich's entry.
 fn a_home_where_dunwich(named: &str, dunwich_states: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    let home = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     for directory in ["dunwich", ".config/beady-eye"] {
         std::fs::create_dir_all(home.join(directory)).expect("the directory is ours to make");
     }

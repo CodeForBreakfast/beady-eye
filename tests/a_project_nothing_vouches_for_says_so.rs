@@ -19,6 +19,8 @@ mod terminal;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{a_home_naming_one_project_settled, rows_drawn, Producer, THE_DESCRIBED_SUBTREE};
@@ -81,7 +83,7 @@ fn age_in_seconds(line: &str) -> Option<u64> {
 
 #[test]
 fn a_project_nothing_vouches_for_says_so_until_something_covers_it() {
-    let socket = std::env::temp_dir().join(format!("bdi-lapses-{}.sock", std::process::id()));
+    let socket = socket_temp_dir().join(format!("bdi-lapses-{}.sock", std::process::id()));
     let home = a_home_that_does_not_poll(&socket);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);

@@ -2036,7 +2036,8 @@ kadath = ["kad-11"]
     /// machine is.
     #[test]
     fn a_listing_read_told_of_no_watcher_connects_to_none() {
-        let dir = std::env::temp_dir().join(format!("bdi-cli-{}", std::process::id()));
+        let dir = crate::collect::changes::testing::socket_temp_dir()
+            .join(format!("bdi-cli-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let socket = dir.join("watcher.sock");
         let _ = std::fs::remove_file(&socket);

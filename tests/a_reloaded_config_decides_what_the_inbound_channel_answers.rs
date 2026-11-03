@@ -43,6 +43,8 @@ mod terminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use beady_eye::collect::changes::testing::socket_temp_dir;
+
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{a_socket_of_its_own, contains, the_socket_under, Producer, THE_DESCRIBED_SUBTREE};
@@ -68,7 +70,7 @@ const A_RELOAD_AND_ITS_COLLECTION: Duration = Duration::from_secs(20);
 /// the run to itself, and a project added beside it would then be left out
 /// for that reason rather than for any reason this test is about.
 fn a_home_naming(named: &str, projects: &[&str]) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+    let home = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
     std::fs::create_dir_all(home.join(".config/beady-eye")).expect("the directory is ours to make");
     naming(&home, projects);
     home

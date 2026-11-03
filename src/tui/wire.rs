@@ -563,7 +563,8 @@ mod tests {
     /// A directory of this test's own, so a test that binds a socket does not
     /// collide with another run of the suite.
     fn a_socket_path(named: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let dir = crate::collect::changes::testing::socket_temp_dir()
+            .join(format!("bdi-{named}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
         dir.join("beady-eye").join("changes.sock")

@@ -4385,9 +4385,18 @@ and a second line"
           # of every binary. nextest runs every test of every binary at once,
           # and costs about the slowest. It runs no doctests, so cargo still
           # does.
+          #
+          # The tests run under a TMPDIR as long as a contributor's can be. A
+          # socket's path must fit in about 104 bytes, so a test that binds one
+          # under `std::env::temp_dir()` fails here, where the sandbox's own
+          # TMPDIR is short enough to hide it.
           test = checkOf "test" artifacts.dev
             [ beads.packages.${system}.bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
-            "cargo nextest run && cargo test --doc";
+            ''
+              export TMPDIR="$TMPDIR/a-temporary-directory-named-at-such-length-that-no-unix-socket-path-fits-under-it-on-linux-or-on-macos"
+              mkdir -p "$TMPDIR"
+              cargo nextest run && cargo test --doc
+            '';
           unbuilt-checks-test = unbuiltChecksTest;
 
           # cargo publish uploads only what Cargo.toml's include list selects,
