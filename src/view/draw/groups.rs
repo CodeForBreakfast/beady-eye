@@ -323,14 +323,15 @@ path = "/tmp/bdi-ground/dunwich"
         );
     }
 
-    /// `wG:p1` stamped nothing at all, and its row is the one it had.
+    /// `wG:p1` claims no bead, so its row carries only what herdr reports:
+    /// the terminal title it is drawing, and the directory it is in.
     #[test]
     fn a_pane_that_reported_nothing_keeps_the_row_it_had() {
         let frame = frame_over_the_capture();
 
         assert_eq!(
             row_naming(&frame, "wG:p1"),
-            "      ├── ◍ wG:p1 idle  /tmp/bdi-ground/dunwich"
+            "      ├── ◍ wG:p1 idle  ✳ Trailer syntax review  /tmp/bdi-ground/dunwich"
         );
     }
 
