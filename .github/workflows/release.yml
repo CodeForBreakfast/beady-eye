@@ -69,7 +69,7 @@ jobs:
   # with — they are not a release at all.
   detect:
     name: is this merge a release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # A candidate waits here for CI's verdict on the commit it is cut from.
     timeout-minutes: ${{ github.event.inputs.from == 'candidate' && 45 || 5 }}
     # Every line here sits at one indentation on purpose: a folded scalar
@@ -380,7 +380,7 @@ jobs:
   release:
     name: publish v${{ needs.detect.outputs.version }}
     needs: [detect, darwin-binaries, linux-binaries]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     # `contents` is the tag push and the Release; `actions` is CI's verdict,
     # which this job now waits for rather than re-deriving; `packages` is the
@@ -774,7 +774,7 @@ jobs:
     name: publish plugin-v${{ needs.detect.outputs.plugin_version }}
     needs: detect
     if: needs.detect.outputs.plugin_release == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     # npm trusts only a run in this environment, and the environment admits
     # only main and plugin-v* tags, the refs a release, a candidate and their
