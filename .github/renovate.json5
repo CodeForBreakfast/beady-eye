@@ -24,6 +24,21 @@
     enabled: true,
   },
 
+  // The nix manager reads the beads input only as a locked commit, so it
+  // never offers a newer tag. This moves the tag in flake.nix and leaves
+  // flake.lock alone, because a custom manager runs no lock update. CI refuses
+  // the stale lock until someone runs `nix flake update beads` on the branch.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^flake\\.nix$/"],
+      matchStrings: [
+        'beads\\.url = "github:(?<depName>gastownhall/beads)/(?<currentValue>v[^"]+)";',
+      ],
+      datasourceTemplate: "github-tags",
+    },
+  ],
+
   packageRules: [
     {
       // cargo has no install-time equivalent to align with, so this rule is
@@ -34,6 +49,12 @@
     },
     {
       matchUpdateTypes: ["minor", "major"],
+      automerge: false,
+      addLabels: ["renovate/needs-review"],
+    },
+    {
+      // Any bd release can change what bdi reads or writes, patch included.
+      matchPackageNames: ["gastownhall/beads"],
       automerge: false,
       addLabels: ["renovate/needs-review"],
     },

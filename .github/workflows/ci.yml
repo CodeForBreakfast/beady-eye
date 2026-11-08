@@ -92,6 +92,12 @@ jobs:
         with:
           determinate: false
 
+      # Every nix command after this one quietly relocks an input whose
+      # flake.lock entry no longer matches flake.nix, so the run would test
+      # inputs the commit does not pin. Renovate's beads bump arrives that way.
+      - name: flake.lock matches flake.nix
+        run: nix flake metadata --no-update-lock-file
+
       # The cache step below uploads the whole closure of every path the run
       # builds, writing it again even when the cache already holds it, and
       # GitHub throttles the burst. Once throttled it uploads nothing more that
