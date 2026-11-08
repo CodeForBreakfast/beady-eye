@@ -79,6 +79,18 @@ The flake pins bd as its `beads` input, by tag. Review a beads bump at every
 update type, a patch included, because a patch can change what bd prints and
 bdi parses it.
 
+**Relock first.** The pull request moves the tag in `flake.nix` and leaves
+`flake.lock` on the old commit, so CI refuses it until the lock moves too.
+
+```bash
+gh pr checkout <number>
+nix flake update beads
+git commit -am 'chore(deps): lock beads to <new tag>' && git push
+```
+
+Renovate stops rebasing a branch once someone else has pushed to it, so merge
+`main` into it yourself when `main` moves.
+
 **Read the changelog between the pinned tag and the new one.** The new tag's
 `CHANGELOG.md` holds every release since the pinned one. Read each section
 between the two, starting with its upgrade notes.
@@ -121,10 +133,8 @@ to the floor README states under *What it needs*, whatever the flake pins. So
 the fallback for a bd without `ready --brief` goes only once that floor rises
 past the bd it serves, and raising the floor is its own user-facing change.
 
-**Fix a break in the bump's own pull request.** Push the fix to Renovate's
-branch. Renovate then stops rebasing that branch, so merge `main` into it
-yourself when `main` moves. File each opportunity as its own bead, as step 5
-says.
+**Fix a break in the bump's own pull request,** on the same branch. File each
+opportunity as its own bead, as step 5 says.
 
 ## 4. Gate
 
