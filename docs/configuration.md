@@ -1445,7 +1445,7 @@ bd older than 1.3.0 also writes when it is asked to read: on finding
 itself newer than the bd that last opened a tracker, it rewrites
 `.beads/.local_version` and migrates the schema, before running whatever
 subcommand it was given. `--readonly` does not stop that, and under `--json` bd
-says nothing about it. bd 1.3.0, the version the flake pins, does neither under
+says nothing about it. bd 1.3.0 does neither under
 `--readonly`: it leaves the file alone, and refuses a store whose schema is
 behind it until a bd run without the flag migrates it.
 

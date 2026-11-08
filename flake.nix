@@ -12,7 +12,7 @@
     # schema, and 1.3.0 fails every issue read on a v53 server for want of its
     # `leases` table. So the pin and the tracker's schema move together — treat
     # it as a schema decision, not a version bump.
-    beads.url = "github:gastownhall/beads/v1.3.0";
+    beads.url = "github:gastownhall/beads/v1.3.2";
     # The dependency build is its own derivation here, and crane is what makes
     # one. It declares no inputs of its own, so it costs a lock entry and
     # nothing else.
