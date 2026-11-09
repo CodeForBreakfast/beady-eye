@@ -4119,7 +4119,7 @@ and a second line"
           dontFixup = true;
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          outputHash = "sha256-OYddcZ56xzDCzp/0OG+ECrVbo9Is0tsrRyAlgNcTp7M=";
+          outputHash = "sha256-rbtPHRZ13q/cV814xnSIGGFsrcN9QeuVlsveJFhqozU=";
         };
 
         # commy type-checks with Effect's build of tsc, which adds the Effect
