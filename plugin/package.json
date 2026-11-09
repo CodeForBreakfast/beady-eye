@@ -19,13 +19,13 @@
     "build": "bun build src/main.ts --target node --outfile dist/server.js"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.1.1",
+    "@effect/platform-node": "4.1.2",
     "@modelcontextprotocol/sdk": "1.32.2",
     "bun-types": "1.4.4",
-    "effect": "4.1.1",
+    "effect": "4.1.2",
     "smol-toml": "1.9.1"
   },
   "overrides": {
-    "@effect/platform-node-shared": "4.1.1"
+    "@effect/platform-node-shared": "4.1.2"
   }
 }
