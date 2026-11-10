@@ -48,6 +48,7 @@ mod searching;
 mod selecting;
 mod shut_over;
 mod viewport;
+mod views;
 
 /// Dunwich's tree as bd writes it. `dun-7.7` waits on a bead no row holds,
 /// so the tree reports it; `dun-7.1.2` is a node bd stopped at; `dun-7.4`
@@ -618,7 +619,8 @@ const PANES: &str = r#"{"result":{"agents":[
   {"pane_id":"w:pF","cwd":"/srv/spike","agent_status":"idle"}
 ]}}"#;
 
-/// The projects every fixture here is read from.
+/// The projects every fixture here is read from, and the views `views`
+/// opens.
 const CONFIG: &str = r#"
 [[projects]]
 name = "dunwich"
@@ -634,6 +636,23 @@ credential_command = "secret ferry"
 name = "harbour"
 path = "/srv/work/harbour"
 credential_command = "secret harbour"
+
+[[views]]
+name = "signing"
+
+[[views.select]]
+when = { labels = "signing" }
+unless = { labels = "held" }
+
+[[views]]
+name = "urgent"
+
+[[views.select]]
+when = { priority = "0" }
+
+[[views.select]]
+projects = ["harbour"]
+when = { issue_type = "bug" }
 "#;
 
 fn cfg() -> Config {

@@ -145,6 +145,7 @@ Keys to start with. `?` lists the lot.
 | `a` | every tree, not only the ones with a live agent |
 | `F` | only the selected bead and the work beneath it; again for the whole forest |
 | `r` | the ready list in place of the forest; again for the forest |
+| `v` | the next view your config names; past the last, the forest |
 | `/` `n` `N` | search ids and titles |
 | `y` | copy the bead id (OSC 52, so it survives ssh and a multiplexer) |
 | `^R` | read the trackers again now |
@@ -250,8 +251,9 @@ $ bdi --json --all --all-projects | jq --arg project dunwich --arg id dun-7 '
 ```
 
 [docs/configuration.md](docs/configuration.md) has the rest: badges drawn from
-what a bead carries, credentials, extra roots, intervals, the light theme, and
-the socket you can poke to say a tracker changed so the eye stops polling it.
+what a bead carries, views of the beads you choose across every project,
+credentials, extra roots, intervals, the light theme, and the socket you can
+poke to say a tracker changed so the eye stops polling it.
 
 ## Watching
 

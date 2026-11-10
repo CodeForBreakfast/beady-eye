@@ -649,6 +649,7 @@ fn answered(
                 | Action::CycleSpineForest
                 | Action::ToggleFilter
                 | Action::ToggleReadyList
+                | Action::NextView
                 | Action::ToggleTail
                 | Action::FocusForest
                 | Action::Search

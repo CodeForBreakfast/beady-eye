@@ -217,7 +217,7 @@ pub(super) fn fitted(
         Content::Scoped { project } => scoped_line(&line.prefix, project),
         Content::Section { section, count } => sentence(
             &line.prefix,
-            phrase::section(*section, *count),
+            phrase::section(section, *count),
             palette::HEADING,
         ),
     }
@@ -390,6 +390,7 @@ mod tests {
             created_by: None,
             assignee: None,
             labels: Vec::new(),
+            views: Vec::new(),
             created_at: None,
             updated_at: None,
             defer_until: None,
@@ -557,6 +558,7 @@ mod tests {
             out_of_focus: BTreeSet::new(),
             trees,
             projects,
+            views: Vec::new(),
             scope: Scope::default(),
             hidden_trees: Vec::new(),
             failed_projects: Vec::new(),

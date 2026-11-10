@@ -166,6 +166,7 @@ pub fn build_tree(
                 created_by: bead.created_by.clone(),
                 assignee: bead.assignee.clone(),
                 labels: bead.labels.clone(),
+                views: cfg.views_holding(own, bead),
                 created_at: bead.created_at,
                 updated_at: bead.updated_at,
                 defer_until: bead.defer_until,
@@ -325,6 +326,7 @@ pub fn build(
         read_at,
         speaks_until,
         projects: cfg.read().map(|p| p.name.clone()).collect(),
+        views: cfg.views.iter().map(|view| view.name.clone()).collect(),
         scope: cfg.scope.clone(),
     }
 }

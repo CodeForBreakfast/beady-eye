@@ -17,6 +17,9 @@ use crate::model::join::BeadKey;
 use crate::model::types::Bead;
 use crate::view::row::{Cell, Layout};
 
+mod views;
+pub use views::View;
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -26,6 +29,8 @@ pub struct Config {
     pub roots: Roots,
     #[serde(default)]
     pub badges: Vec<Badge>,
+    #[serde(default)]
+    pub views: Vec<View>,
     #[serde(default)]
     pub anomalies: Anomalies,
     #[serde(default)]
@@ -1017,6 +1022,7 @@ impl Config {
             projects,
             roots: Roots::default(),
             badges: Vec::new(),
+            views: Vec::new(),
             anomalies: Anomalies::default(),
             join: Join::default(),
             delivery: Delivery::default(),
@@ -1065,6 +1071,54 @@ impl Config {
                 .cloned(),
         );
         drawn
+    }
+
+    /// The names of the views listing `bead`, which `project`'s tracker
+    /// holds, in the order the config names them.
+    pub fn views_holding(&self, project: &str, bead: &Bead) -> Vec<String> {
+        self.views
+            .iter()
+            .filter(|view| view.holds(project, bead))
+            .map(|view| view.name.clone())
+            .collect()
+    }
+
+    fn refuse_views_that_cannot_list(&self) -> anyhow::Result<()> {
+        let mut seen = BTreeSet::new();
+        let repeated: BTreeSet<&str> = self
+            .views
+            .iter()
+            .map(|view| view.name.as_str())
+            .filter(|name| !seen.insert(*name))
+            .collect();
+        if !repeated.is_empty() {
+            anyhow::bail!(
+                "each view needs a name of its own, and these are used more than once: {}",
+                repeated.into_iter().collect::<Vec<_>>().join(", ")
+            );
+        }
+        for view in &self.views {
+            if view.select.is_empty() {
+                anyhow::bail!(
+                    "the view {} has no [[views.select]], so it would list nothing; give it one",
+                    view.name
+                );
+            }
+            if let Some(unknown) = view
+                .select
+                .iter()
+                .flat_map(|select| &select.projects)
+                .find(|named| !self.is_configured(named))
+            {
+                anyhow::bail!(
+                    "the view {} selects from {unknown}, but there is no project called \
+                     {unknown}; the configured projects are {}",
+                    view.name,
+                    names_of(&self.projects).join(", ")
+                );
+            }
+        }
+        Ok(())
     }
 
     /// The projects this run reads whose names git did not give.
@@ -1125,6 +1179,7 @@ impl Config {
                 );
             }
         }
+        cfg.refuse_views_that_cannot_list()?;
         let mut named: HashSet<&Cell> = HashSet::new();
         if let Some(twice) = cfg.row.cells().find(|cell| !named.insert(cell)) {
             anyhow::bail!("[row] names {twice} twice; name it in only one list");
@@ -1352,12 +1407,20 @@ fn names_of(projects: &[Project]) -> Vec<&str> {
     projects.iter().map(|p| p.name.as_str()).collect()
 }
 
+/// Whether every one of `when` matches `bead` and none of `unless` does.
+fn conditions_hold(
+    when: &BTreeMap<String, Pattern>,
+    unless: &BTreeMap<String, Pattern>,
+    bead: &Bead,
+) -> bool {
+    let matched = |(field, pattern): (&String, &Pattern)| pattern.matches_any(&bead.members(field));
+    when.iter().all(matched) && !unless.iter().any(matched)
+}
+
 impl Badge {
     /// Whether this badge's `when` and `unless` let it draw on `bead`.
     pub fn draws_on(&self, bead: &Bead) -> bool {
-        let matched =
-            |(field, pattern): (&String, &Pattern)| pattern.matches_any(&bead.members(field));
-        self.when.iter().all(matched) && !self.unless.iter().any(matched)
+        conditions_hold(&self.when, &self.unless, bead)
     }
 
     /// Render this badge for the value of its key on `bead`, or `None` if it

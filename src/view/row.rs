@@ -484,6 +484,7 @@ mod tests {
             created_by: None,
             assignee: None,
             labels: Vec::new(),
+            views: Vec::new(),
             created_at: None,
             updated_at: None,
             defer_until: None,

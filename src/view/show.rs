@@ -953,6 +953,7 @@ mod tests {
             created_by: Some("kim".to_string()),
             assignee: None,
             labels: Vec::new(),
+            views: Vec::new(),
             created_at: None,
             updated_at: None,
             defer_until: None,
