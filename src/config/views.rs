@@ -126,7 +126,11 @@ when = { priority = "0" }
             Vec::<String>::new()
         );
         assert_eq!(
-            holding(&cfg, "kadath", &bead(r#""labels":["waiting","reminder","rigging"]"#)),
+            holding(
+                &cfg,
+                "kadath",
+                &bead(r#""labels":["waiting","reminder","rigging"]"#)
+            ),
             Vec::<String>::new()
         );
     }

@@ -80,7 +80,11 @@ fn each_view_opens_in_turn_and_lists_only_what_it_selects() {
             || format!("{:?}\n{}", String::from_utf8_lossy(&screen), bdi.timeline());
 
         for said in [view, listed] {
-            assert!(drawn(said), "{said} is not on the screen: {}", what_bdi_drew());
+            assert!(
+                drawn(said),
+                "{said} is not on the screen: {}",
+                what_bdi_drew()
+            );
         }
         for bead in left_out {
             assert!(
