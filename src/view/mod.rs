@@ -96,9 +96,11 @@ pub enum Action {
     /// Show every tree, rather than only those with a live agent.
     ToggleFilter,
     /// Draw the ready list in place of the forest, or put the forest back.
+    /// In a view, list only its ready beads, or all of them again.
     ToggleReadyList,
     /// Draw the next view the config names in place of the forest, or put
-    /// the forest back after the last.
+    /// the forest back after the last, or the ready list where only ready
+    /// beads are listed.
     NextView,
     /// Hide the tail and give its rows to the forest, or bring it back.
     ToggleTail,

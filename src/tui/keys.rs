@@ -94,13 +94,13 @@ pub(super) const BINDINGS: &[Binding] = &[
     Binding {
         keys: &[alone(KeyCode::Char('r'), "r")],
         action: Action::ToggleReadyList,
-        does: "list the ready and in-progress beads, or put the forest back",
+        does: "list only ready beads, in the forest or a view; again for all",
         hint: None,
     },
     Binding {
         keys: &[alone(KeyCode::Char('v'), "v")],
         action: Action::NextView,
-        does: "open the next view, or put the forest back after the last",
+        does: "open the next view, keeping r; after the last, leave the views",
         hint: None,
     },
     Binding {

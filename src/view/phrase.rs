@@ -556,12 +556,14 @@ pub fn unread_trees(count: usize) -> String {
 }
 
 /// The heading over one of a list's sections, with how many beads it holds.
-/// A view's heading is the name the config gave it.
+/// A view's heading is the name the config gave it, saying when only its
+/// ready beads are listed.
 pub fn section(section: &Section, count: usize) -> String {
     let heading = match section {
         Section::Ready => "Ready",
         Section::InProgress => "In progress",
-        Section::View(name) => name,
+        Section::View { name, ready: false } => name,
+        Section::View { name, ready: true } => return format!("{name} · ready · {count}"),
     };
     format!("{heading} · {count}")
 }
@@ -2387,5 +2389,16 @@ mod tests {
     #[test]
     fn a_window_with_no_room_says_the_id_alone() {
         assert_eq!(bead_window_title("dun-7.1", 0, 0, 61), "dun-7.1");
+    }
+
+    #[test]
+    fn a_view_heading_says_when_only_its_ready_beads_are_listed() {
+        let view = |ready| Section::View {
+            name: "to sign".into(),
+            ready,
+        };
+
+        assert_eq!(section(&view(false), 5), "to sign · 5");
+        assert_eq!(section(&view(true), 3), "to sign · ready · 3");
     }
 }

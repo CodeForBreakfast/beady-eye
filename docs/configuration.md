@@ -519,6 +519,13 @@ the last view puts the forest back. A view lists the unfinished beads its
 conditions select, across every project the run reads. It shows each bead once,
 the most urgent first, and draws each row as the ready list does.
 
+`r` in a view lists only those of its beads the ready list would show. Those
+are the beads being worked or with a live agent, and the beads whose blockers
+have all closed, in any project the run reads, that have no open child. The
+heading then says so, as in `to sign · ready · 3`, and `r` again shows the whole
+view. `v` keeps `r` on as it steps through the views, and the press after the
+last view then puts the ready list back rather than the forest.
+
 | written | what it says | needed |
 |---|---|---|
 | `name` | what the view is called, and the heading it draws under | yes |

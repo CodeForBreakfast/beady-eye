@@ -144,8 +144,8 @@ Keys to start with. `?` lists the lot.
 | `f` | focus the selected bead's pane |
 | `a` | every tree, not only the ones with a live agent |
 | `F` | only the selected bead and the work beneath it; again for the whole forest |
-| `r` | the ready list in place of the forest; again for the forest |
-| `v` | the next view your config names; past the last, the forest |
+| `r` | the ready list in place of the forest, or in a view only its ready beads; again to undo |
+| `v` | the next view your config names, keeping `r` on; past the last, the forest or the ready list |
 | `/` `n` `N` | search ids and titles |
 | `y` | copy the bead id (OSC 52, so it survives ssh and a multiplexer) |
 | `^R` | read the trackers again now |

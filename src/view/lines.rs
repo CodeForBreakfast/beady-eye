@@ -197,8 +197,9 @@ pub enum Section {
     /// The beads in progress, and every unfinished bead with a live agent on
     /// it, ready or not.
     InProgress,
-    /// The unfinished beads the view the config names so lists.
-    View(String),
+    /// The unfinished beads the view the config names so lists, only those
+    /// the ready list would draw where `ready` is set.
+    View { name: String, ready: bool },
 }
 
 /// A project's own line: what it is and how much of it there is.
