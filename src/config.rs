@@ -18,7 +18,7 @@ use crate::model::types::Bead;
 use crate::view::row::{Cell, Layout};
 
 mod views;
-pub use views::{Select, View};
+pub use views::View;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
