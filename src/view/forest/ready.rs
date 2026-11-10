@@ -30,8 +30,12 @@ use super::way_to;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum List {
     Ready,
-    /// The view the config names so.
-    View(String),
+    /// The view the config names so, with only the beads the ready list
+    /// would draw where `ready` is set.
+    View {
+        name: String,
+        ready: bool,
+    },
 }
 
 /// Every line a list draws: each project's own line, saying how fresh its
@@ -52,7 +56,13 @@ pub(super) fn lay_out(
             let [in_progress, ready] = sections(&reached);
             vec![(Section::InProgress, in_progress), (Section::Ready, ready)]
         }
-        List::View(name) => vec![(Section::View(name.clone()), in_view(&reached, name))],
+        List::View { name, ready } => vec![(
+            Section::View {
+                name: name.clone(),
+                ready: *ready,
+            },
+            in_view(&reached, name, *ready),
+        )],
     };
 
     let mut lines: Vec<Node> = snapshot
@@ -166,13 +176,10 @@ fn sections<'r, 'a>(
     let mut in_progress = Vec::new();
     let mut ready = Vec::new();
     for (bead, tree, way) in reached.values() {
-        if bead.status.is_finished() {
-            continue;
-        }
-        if bead.status == Status::InProgress || bead.agent.is_some() {
-            in_progress.push((*bead, *tree, way));
-        } else if bead.ready && !waits_on_its_children(tree, way) {
-            ready.push((*bead, *tree, way));
+        match ready_section(bead, tree, way) {
+            Some(Section::InProgress) => in_progress.push((*bead, *tree, way)),
+            Some(_) => ready.push((*bead, *tree, way)),
+            None => {}
         }
     }
     for beads in [&mut in_progress, &mut ready] {
@@ -181,14 +188,30 @@ fn sections<'r, 'a>(
     [in_progress, ready]
 }
 
-/// The unfinished beads the view `name` lists, the most urgent first.
+/// Which of the ready list's sections draws a bead, if either.
+fn ready_section(bead: &Bead, tree: &Tree, way: &[usize]) -> Option<Section> {
+    if bead.status.is_finished() {
+        None
+    } else if bead.status == Status::InProgress || bead.agent.is_some() {
+        Some(Section::InProgress)
+    } else if bead.ready && !waits_on_its_children(tree, way) {
+        Some(Section::Ready)
+    } else {
+        None
+    }
+}
+
+/// The unfinished beads the view `name` lists, the most urgent first: only
+/// those the ready list would draw, where `ready` is set.
 fn in_view<'r, 'a>(
     reached: &'r BTreeMap<BeadKey, Reached<'a>>,
     name: &str,
+    ready: bool,
 ) -> Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)> {
     let mut listed: Vec<_> = reached
         .values()
         .filter(|(bead, ..)| !bead.status.is_finished() && bead.views.iter().any(|v| v == name))
+        .filter(|(bead, tree, way)| !ready || ready_section(bead, tree, way).is_some())
         .map(|(bead, tree, way)| (*bead, *tree, way))
         .collect();
     listed.sort_by(|a, b| next_first(a.0, b.0));

@@ -4102,9 +4102,15 @@ set cannot say "this or that" across two fields. That is why a view holds
 several sets and lists a bead that meets any one. A view never matches on a
 bead's edges, such as "has an open dependant", until someone asks for it.
 
+**Ready is a filter `r` carries across lists, not a condition.** The forest
+with it on is the ready list. A view with it on keeps only the beads the ready
+list would draw, decided by the same test, and its heading says `ready`. `v`
+keeps it on from view to view, and after the last view lands on the ready list.
+A view cannot start out filtered until pressing `r` each time proves tedious.
+
 Which views each bead is in is settled when the snapshot is built, as its
 badges are. A config read again without the view on screen puts the forest
-back.
+back, or the ready list where the filter was on.
 
 ### Keys
 

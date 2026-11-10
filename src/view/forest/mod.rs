@@ -641,9 +641,13 @@ impl Forest {
             // Laid out as it switches, so there is nothing left to compare:
             // the list and the trees are never the same screen.
             Action::ToggleReadyList => {
-                let next = match self.list {
+                let next = match self.list.clone() {
                     Some(List::Ready) => None,
-                    _ => Some(List::Ready),
+                    Some(List::View { name, ready }) => Some(List::View {
+                        name,
+                        ready: !ready,
+                    }),
+                    None => Some(List::Ready),
                 };
                 self.switch_to(next);
                 self.reveal();
@@ -865,21 +869,33 @@ impl Forest {
     }
 
     /// What the view key opens from here: the view after the one drawn, the
-    /// first from anywhere else, and the forest after the last. Nothing
-    /// where the config names no view.
+    /// first from anywhere else, and after the last the forest, or the ready
+    /// list where only ready beads are listed. Each view it opens lists only
+    /// ready beads where the list it leaves did. Nothing where the config
+    /// names no view.
     fn next_view(&self) -> Option<Option<List>> {
         let views = &self.snapshot.views;
         if views.is_empty() {
             return None;
         }
-        let at = match &self.list {
-            Some(List::View(name)) => views
-                .iter()
-                .position(|view| view == name)
-                .map_or(0, |at| at + 1),
-            _ => 0,
+        let (at, ready) = match &self.list {
+            Some(List::View { name, ready }) => (
+                views
+                    .iter()
+                    .position(|view| view == name)
+                    .map_or(0, |at| at + 1),
+                *ready,
+            ),
+            Some(List::Ready) => (0, true),
+            None => (0, false),
         };
-        Some(views.get(at).cloned().map(List::View))
+        Some(match views.get(at) {
+            Some(name) => Some(List::View {
+                name: name.clone(),
+                ready,
+            }),
+            None => ready.then_some(List::Ready),
+        })
     }
 
     /// Draw `list` in place of the trees, or the trees where it is none,
@@ -1671,9 +1687,9 @@ impl Forest {
     /// and a caller asking whether the screen moved can compare the two sets
     /// without duplicating either.
     fn lay_out(&mut self) -> Drawn {
-        if let Some(List::View(name)) = &self.list {
+        if let Some(List::View { name, ready }) = &self.list {
             if !self.snapshot.views.contains(name) {
-                self.list = None;
+                self.list = ready.then_some(List::Ready);
             }
         }
         if let Some(list) = self.list.clone() {
