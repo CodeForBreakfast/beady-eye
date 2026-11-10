@@ -555,12 +555,13 @@ pub fn unread_trees(count: usize) -> String {
     format!("{count} {tree} could not be read")
 }
 
-/// The heading over one of the ready list's sections, with how many beads it
-/// holds.
-pub fn section(section: Section, count: usize) -> String {
+/// The heading over one of a list's sections, with how many beads it holds.
+/// A view's heading is the name the config gave it.
+pub fn section(section: &Section, count: usize) -> String {
     let heading = match section {
         Section::Ready => "Ready",
         Section::InProgress => "In progress",
+        Section::View(name) => name,
     };
     format!("{heading} · {count}")
 }

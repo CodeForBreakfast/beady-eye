@@ -98,6 +98,12 @@ pub(super) const BINDINGS: &[Binding] = &[
         hint: None,
     },
     Binding {
+        keys: &[alone(KeyCode::Char('v'), "v")],
+        action: Action::NextView,
+        does: "open the next view, or put the forest back after the last",
+        hint: None,
+    },
+    Binding {
         keys: &[alone(KeyCode::Char('s'), "s")],
         action: Action::CycleSpine,
         does: "cycle which copy of a bead opens, under the selected node",
@@ -551,6 +557,7 @@ pub(super) mod tests {
             Action::CycleSpineForest,
             Action::ToggleFilter,
             Action::ToggleReadyList,
+            Action::NextView,
             Action::ToggleTail,
             Action::Focus,
             Action::FocusForest,
@@ -589,6 +596,7 @@ pub(super) mod tests {
                 | Action::CycleSpineForest
                 | Action::ToggleFilter
                 | Action::ToggleReadyList
+                | Action::NextView
                 | Action::ToggleTail
                 | Action::Focus
                 | Action::FocusForest
@@ -838,6 +846,7 @@ pub(super) mod tests {
             (key(KeyCode::Char('y')), Action::CopyId),
             (key(KeyCode::Char('a')), Action::ToggleFilter),
             (key(KeyCode::Char('r')), Action::ToggleReadyList),
+            (key(KeyCode::Char('v')), Action::NextView),
             (key(KeyCode::Char('s')), Action::CycleSpine),
             (key(KeyCode::Char('S')), Action::CycleSpineForest),
             (key(KeyCode::Char('F')), Action::FocusForest),

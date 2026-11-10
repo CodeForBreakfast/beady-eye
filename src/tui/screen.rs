@@ -1530,6 +1530,7 @@ mod tests {
                 "  a         show every tree, not only those with a live agent",
                 "  ?         show these key bindings",
                 "  r         list the ready and in-progress beads, or put the forest back",
+                "  v         open the next view, or put the forest back after the last",
                 "  s         cycle which copy of a bead opens, under the selected node",
                 "  S         cycle which copy of a bead opens, across the whole forest",
                 "  F         draw the selected bead as the only root, or put the forest back",
@@ -1696,6 +1697,7 @@ mod tests {
             created_by: None,
             assignee: None,
             labels: Vec::new(),
+            views: Vec::new(),
             created_at: None,
             updated_at: None,
             defer_until: None,
@@ -1761,6 +1763,7 @@ mod tests {
             collected: trees,
             out_of_focus: BTreeSet::new(),
             projects: vec!["grove".to_string()],
+            views: Vec::new(),
             scope: Scope::default(),
         }
     }

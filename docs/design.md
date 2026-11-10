@@ -4073,6 +4073,39 @@ function, so they cannot disagree about what is free to start. It covers every
 tree read, as the unrooted list does. A bead named beside it is refused,
 because the dependency tree's document already gives that tree's ready beads.
 
+### Views
+
+A reader who wants every bead across their projects that matches something of
+their own has, besides the ready list, only search and the live-agent filter.
+What that something is differs from one setup to the next, so `bdi` lets the
+config say it. A view is a name and some sets of conditions, and it lists the
+unfinished beads that meet any one set. `v` opens the first view in place of
+the forest and then each next view, and after the last it puts the forest back.
+
+```
+dunwich  ✓ 9s ago
+harbour  ✓ 9s ago
+to sign · 2
+▸ ○ dun-7.1  sign for the dish
+▸ ○ hbr-1.1  sign the berth lease
+```
+
+**A view is the ready list with other sections.** It covers what the ready
+list covers. It draws each bead once, on its shallowest way down. It sorts its
+beads as the ready list does. Its rows expand to show what they unblock, and
+its foot reports the same things.
+
+**The conditions are the badges' grammar.** A set is a `when` and an `unless`
+over a bead's own fields, read as a badge reads them, plus an optional list of
+the projects it takes beads from. Within a set every `when` must match, so one
+set cannot say "this or that" across two fields. That is why a view holds
+several sets and lists a bead that meets any one. A view never matches on a
+bead's edges, such as "has an open dependant", until someone asks for it.
+
+Which views each bead is in is settled when the snapshot is built, as its
+badges are. A config read again without the view on screen puts the forest
+back.
+
 ### Keys
 
 The row under the tail names the handful of bindings worth a permanent line,
@@ -4106,6 +4139,7 @@ The bindings are vim-like, with the arrows as aliases:
 | `a` | show every tree, not only those with a live agent |
 | `?` | show these key bindings |
 | `r` | list the ready and in-progress beads, or put the forest back |
+| `v` | open the next view, or put the forest back after the last |
 | `s` | cycle which copy of a bead opens, under the selected node |
 | `S` | cycle which copy of a bead opens, across the whole forest |
 | `F` | draw the selected bead as the only root, or put the forest back |

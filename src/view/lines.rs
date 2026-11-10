@@ -189,14 +189,16 @@ pub struct Waiting {
     pub up: Vec<BeadKey>,
 }
 
-/// One of the ready list's two sections, in the order it draws them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One section of a list drawn in place of the trees.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Section {
-    /// The beads bd answers ready, less the ones in the other section.
+    /// The beads bd answers ready, less the ones in progress.
     Ready,
     /// The beads in progress, and every unfinished bead with a live agent on
     /// it, ready or not.
     InProgress,
+    /// The unfinished beads the view the config names so lists.
+    View(String),
 }
 
 /// A project's own line: what it is and how much of it there is.

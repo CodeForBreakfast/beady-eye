@@ -28,6 +28,7 @@ use facts::{Facts, TreeFacts};
 use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
 pub use ready::ready_list;
+use ready::List;
 use search::{Listed, Matches, Sought, Walked};
 pub use spine::Spine;
 
@@ -116,9 +117,9 @@ pub struct Forest {
     /// Which cells a bead's row draws, and in what order: what the lines'
     /// identity widths are measured over.
     layout: row::Layout,
-    /// Whether the ready list is drawn in place of the trees. The reader's,
-    /// so a refresh keeps it as it keeps the folds.
-    ready_list: bool,
+    /// The list drawn in place of the trees, where one is. The reader's, so
+    /// a refresh keeps it as it keeps the folds.
+    list: Option<List>,
     /// The ready list's rows the reader has expanded to what they unblock.
     /// Apart from `folds`, because expanding a bead in the forest means what
     /// must finish first, and the list draws each bead once, so the bead
@@ -146,7 +147,7 @@ pub fn flatten(snapshot: Snapshot) -> Forest {
         named_at_launch: false,
         searched: None,
         layout: row::Layout::default(),
-        ready_list: false,
+        list: None,
         unblocking: BTreeSet::new(),
     };
     forest.lay_out();
@@ -596,7 +597,7 @@ impl Forest {
             | Action::ExpandForest
             | Action::CollapseForest
             | Action::RestoreDefault
-                if self.ready_list =>
+                if self.list.is_some() =>
             {
                 self.fold_the_list(action);
                 true
@@ -640,7 +641,19 @@ impl Forest {
             // Laid out as it switches, so there is nothing left to compare:
             // the list and the trees are never the same screen.
             Action::ToggleReadyList => {
-                self.toggle_ready_list();
+                let next = match self.list {
+                    Some(List::Ready) => None,
+                    _ => Some(List::Ready),
+                };
+                self.switch_to(next);
+                self.reveal();
+                return true;
+            }
+            Action::NextView => {
+                let Some(next) = self.next_view() else {
+                    return false;
+                };
+                self.switch_to(next);
                 self.reveal();
                 return true;
             }
@@ -848,18 +861,36 @@ impl Forest {
     /// Whether the ready list is drawn in place of the trees.
     #[cfg(test)]
     pub fn is_ready_list(&self) -> bool {
-        self.ready_list
+        self.list == Some(List::Ready)
     }
 
-    /// Draw the ready list in place of the trees, or the trees in place of
-    /// the list, keeping the selection on the bead it was on. The list finds
-    /// the bead by its key as it lays itself out, and the forest opens out to
-    /// wherever it draws the bead.
-    fn toggle_ready_list(&mut self) {
+    /// What the view key opens from here: the view after the one drawn, the
+    /// first from anywhere else, and the forest after the last. Nothing
+    /// where the config names no view.
+    fn next_view(&self) -> Option<Option<List>> {
+        let views = &self.snapshot.views;
+        if views.is_empty() {
+            return None;
+        }
+        let at = match &self.list {
+            Some(List::View(name)) => views
+                .iter()
+                .position(|view| view == name)
+                .map_or(0, |at| at + 1),
+            _ => 0,
+        };
+        Some(views.get(at).cloned().map(List::View))
+    }
+
+    /// Draw `list` in place of the trees, or the trees where it is none,
+    /// keeping the selection on the bead it was on. A list finds the bead by
+    /// its key as it lays itself out, and the forest opens out to wherever it
+    /// draws the bead.
+    fn switch_to(&mut self, list: Option<List>) {
         let on = self.place().map(|place| place.key().clone());
-        self.ready_list = !self.ready_list;
+        self.list = list;
         self.lay_out();
-        if let (false, Some(key)) = (self.ready_list, on) {
+        if let (None, Some(key)) = (&self.list, on) {
             self.go_to(&key);
         }
     }
@@ -1038,7 +1069,7 @@ impl Forest {
     /// it unblocks, and any other line's as the forest's folds hold it.
     fn point(&mut self, handle: Handle, open: bool) {
         match handle {
-            Handle::Bead(place) if self.ready_list => {
+            Handle::Bead(place) if self.list.is_some() => {
                 let bead = place.key().clone();
                 if open {
                     self.unblocking.insert(bead);
@@ -1189,7 +1220,7 @@ impl Forest {
         }
         // The list has no folds, and opening the forest's behind it would
         // show on the reader's return.
-        if !self.ready_list {
+        if self.list.is_none() {
             self.folds.shut_what_the_last_step_opened();
             for over in self.folds_over(place) {
                 self.folds.open_for_a_step(over);
@@ -1463,7 +1494,7 @@ impl Forest {
     /// In the ready list they are the beads its rows draw, so a search lands
     /// on a bead the list shows or finds nothing.
     fn matches(&self, sought: Sought) -> Matches<'_> {
-        if self.ready_list {
+        if self.list.is_some() {
             let rows = self.lines.iter().filter_map(Self::place_of_a_bead);
             return Matches::Listed(Listed::of(&self.snapshot, rows.collect(), &sought));
         }
@@ -1640,8 +1671,13 @@ impl Forest {
     /// and a caller asking whether the screen moved can compare the two sets
     /// without duplicating either.
     fn lay_out(&mut self) -> Drawn {
-        if self.ready_list {
-            return self.lay_out_ready_list();
+        if let Some(List::View(name)) = &self.list {
+            if !self.snapshot.views.contains(name) {
+                self.list = None;
+            }
+        }
+        if let Some(list) = self.list.clone() {
+            return self.lay_out_list(&list);
         }
         self.settle_cursor();
         let rooted = self.rooted();
@@ -1673,8 +1709,9 @@ impl Forest {
     /// The ready list's lines in place of the trees', with the selection on
     /// the bead it was holding wherever the list draws that bead, and on the
     /// nearest line where the list draws it nowhere.
-    fn lay_out_ready_list(&mut self) -> Drawn {
+    fn lay_out_list(&mut self, list: &List) -> Drawn {
         let drawn = ready::lay_out(
+            list,
             &self.snapshot,
             &self.facts,
             &self.rooted(),
@@ -1766,7 +1803,7 @@ impl Forest {
             }
             // Only laying the list out finds one again, and where it does not,
             // the selection falls back to the row the step was expanded from.
-            Handle::Waiting(_) => self.ready_list,
+            Handle::Waiting(_) => self.list.is_some(),
         }
     }
 

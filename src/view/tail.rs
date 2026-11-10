@@ -329,6 +329,7 @@ mod tests {
             created_by: None,
             assignee: None,
             labels: Vec::new(),
+            views: Vec::new(),
             created_at: None,
             updated_at: None,
             defer_until: None,
@@ -397,6 +398,7 @@ mod tests {
             collected: vec![tree],
             out_of_focus: BTreeSet::new(),
             projects: vec!["dunwich".to_string()],
+            views: Vec::new(),
             scope: Scope::default(),
         }
     }

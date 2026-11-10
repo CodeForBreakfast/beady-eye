@@ -331,6 +331,10 @@ pub struct Node {
     pub assignee: Option<String>,
     #[serde(skip)]
     pub labels: Vec<String>,
+    /// The names of the configured views that list this bead. Not part of
+    /// the JSON contract.
+    #[serde(skip)]
+    pub views: Vec<String>,
     #[serde(skip)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(skip)]
@@ -638,6 +642,10 @@ pub struct Snapshot {
     /// ever sees.
     #[serde(skip)]
     pub projects: Vec<String>,
+    /// The name of every view the config defines, in the order it names
+    /// them. Not part of the JSON contract.
+    #[serde(skip)]
+    pub views: Vec<String>,
     /// Which of the configured projects this run reads, and what chose
     /// them. The view says so on the screen where the directory chose, and
     /// nothing where the reader typed the scope. Not part of the JSON
@@ -691,6 +699,7 @@ impl Snapshot {
             read_at: BTreeMap::new(),
             speaks_until: BTreeMap::new(),
             projects,
+            views: Vec::new(),
             scope,
         }
     }

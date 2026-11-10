@@ -97,6 +97,9 @@ pub enum Action {
     ToggleFilter,
     /// Draw the ready list in place of the forest, or put the forest back.
     ToggleReadyList,
+    /// Draw the next view the config names in place of the forest, or put
+    /// the forest back after the last.
+    NextView,
     /// Hide the tail and give its rows to the forest, or bring it back.
     ToggleTail,
     /// Focus the selected bead's pane in herdr.

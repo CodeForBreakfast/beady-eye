@@ -60,6 +60,7 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         collected: vec![tree],
         out_of_focus: BTreeSet::new(),
         projects: vec!["arkham".to_string()],
+        views: Vec::new(),
         scope: Scope::default(),
     }
 }

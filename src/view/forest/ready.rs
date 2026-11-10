@@ -26,10 +26,19 @@ use super::facts::Facts;
 use super::layout::{project_drawn, Rooted};
 use super::way_to;
 
-/// Every line the ready list draws: each project's own line, saying how
-/// fresh its rows are, then the two sections, then what the list leaves out.
-/// A row in `unblocking` is drawn expanded to what its bead holds up.
+/// A list drawn in place of the trees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum List {
+    Ready,
+    /// The view the config names so.
+    View(String),
+}
+
+/// Every line a list draws: each project's own line, saying how fresh its
+/// rows are, then its sections, then what the list leaves out. A row in
+/// `unblocking` is drawn expanded to what its bead holds up.
 pub(super) fn lay_out(
+    list: &List,
     snapshot: &Snapshot,
     facts: &Facts,
     rooted: &[Rooted],
@@ -38,7 +47,13 @@ pub(super) fn lay_out(
 ) -> Drawn {
     let (covered, unread) = covered(snapshot, rooted);
     let reached = each_once(&covered);
-    let [in_progress, ready] = sections(&reached);
+    let sections = match list {
+        List::Ready => {
+            let [in_progress, ready] = sections(&reached);
+            vec![(Section::InProgress, in_progress), (Section::Ready, ready)]
+        }
+        List::View(name) => vec![(Section::View(name.clone()), in_view(&reached, name))],
+    };
 
     let mut lines: Vec<Node> = snapshot
         .projects
@@ -63,7 +78,7 @@ pub(super) fn lay_out(
         facts,
         waiters: waiters(snapshot),
     };
-    for (section, beads) in [(Section::InProgress, in_progress), (Section::Ready, ready)] {
+    for (section, beads) in sections {
         lines.push(drawn(said(Content::Section {
             section,
             count: beads.len(),
@@ -164,6 +179,20 @@ fn sections<'r, 'a>(
         beads.sort_by(|a, b| next_first(a.0, b.0));
     }
     [in_progress, ready]
+}
+
+/// The unfinished beads the view `name` lists, the most urgent first.
+fn in_view<'r, 'a>(
+    reached: &'r BTreeMap<BeadKey, Reached<'a>>,
+    name: &str,
+) -> Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)> {
+    let mut listed: Vec<_> = reached
+        .values()
+        .filter(|(bead, ..)| !bead.status.is_finished() && bead.views.iter().any(|v| v == name))
+        .map(|(bead, tree, way)| (*bead, *tree, way))
+        .collect();
+    listed.sort_by(|a, b| next_first(a.0, b.0));
+    listed
 }
 
 /// Each bead the covered trees reach, once, with the tree and the way down

@@ -1,6 +1,5 @@
 //! Views: lists of beads a setup names and defines, each opened in place of
-//! the forest. What a view holds is the setup's to say, so `bdi` reads its
-//! conditions and nothing else into it.
+//! the forest.
 
 use std::collections::BTreeMap;
 

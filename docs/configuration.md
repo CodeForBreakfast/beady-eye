@@ -511,6 +511,55 @@ unknown field `path`, expected one of `key`, `match`, `when`, `unless`, `render`
 in `projects.badges`
 ```
 
+## `[[views]]`
+
+A view is a list of beads that you name and define. `v` opens the first view in
+place of the forest. Each later press opens the next view, and the press after
+the last view puts the forest back. A view lists the unfinished beads its
+conditions select, across every project the run reads. It shows each bead once,
+the most urgent first, and draws each row as the ready list does.
+
+| written | what it says | needed |
+|---|---|---|
+| `name` | what the view is called, and the heading it draws under | yes |
+| `select` | the sets of conditions a bead can meet to be in the view | yes |
+
+Each `[[views.select]]` is one set of conditions. A bead is in the view when it
+meets any one of them:
+
+| written | what it says | needed |
+|---|---|---|
+| `projects` | the projects whose beads this select takes; every project where it names none | no |
+| `when` | fields of the bead that must each match a pattern | no |
+| `unless` | fields of the bead that keep it out where any one matches | no |
+
+`when` and `unless` read a bead exactly as a badge's do. A list such as
+`labels` matches where any one of its members does. So `unless = { labels =
+"held" }` keeps out a bead labelled `held`, whatever other labels it carries. A
+select with neither takes every unfinished bead of its projects.
+
+```toml
+[[views]]
+name = "to sign"
+
+[[views.select]]
+when = { labels = "signing|countersigning" }
+
+[[views.select]]
+projects = ["dunwich"]
+when   = { labels = "reminder" }
+unless = { labels = "held" }
+
+[[views]]
+name = "urgent"
+
+[[views.select]]
+when = { priority = "0" }
+```
+
+A view matches only a bead's own fields, never the beads it waits on or the
+beads that wait on it.
+
 ## Badging the systems you reference
 
 `bdi` draws one reference with no badge configured: the pull request a beads
