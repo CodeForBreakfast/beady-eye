@@ -83,8 +83,8 @@ when = { labels = "signed|countersigned" }
 
 [[views.select]]
 projects = ["kadath"]
-when = { labels = "reminder" }
-unless = { labels = "waiting" }
+when = { labels = "survey" }
+unless = { labels = "held" }
 
 [[views]]
 name = "urgent"
@@ -102,7 +102,7 @@ when = { priority = "0" }
             vec!["on the desk"]
         );
         assert_eq!(
-            holding(&cfg, "kadath", &bead(r#""labels":["reminder"]"#)),
+            holding(&cfg, "kadath", &bead(r#""labels":["survey"]"#)),
             vec!["on the desk"]
         );
         assert_eq!(
@@ -122,14 +122,14 @@ when = { priority = "0" }
         let cfg = configured(TWO_VIEWS).expect("the config parses");
 
         assert_eq!(
-            holding(&cfg, "kadath", &bead(r#""labels":["reminder","waiting"]"#)),
+            holding(&cfg, "kadath", &bead(r#""labels":["survey","held"]"#)),
             Vec::<String>::new()
         );
         assert_eq!(
             holding(
                 &cfg,
                 "kadath",
-                &bead(r#""labels":["waiting","reminder","rigging"]"#)
+                &bead(r#""labels":["held","survey","rigging"]"#)
             ),
             Vec::<String>::new()
         );
@@ -140,7 +140,7 @@ when = { priority = "0" }
         let cfg = configured(TWO_VIEWS).expect("the config parses");
 
         assert_eq!(
-            holding(&cfg, "arkham", &bead(r#""labels":["reminder"]"#)),
+            holding(&cfg, "arkham", &bead(r#""labels":["survey"]"#)),
             Vec::<String>::new()
         );
     }

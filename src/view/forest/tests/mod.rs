@@ -642,7 +642,7 @@ name = "signing"
 
 [[views.select]]
 when = { labels = "signing" }
-unless = { labels = "waiting" }
+unless = { labels = "held" }
 
 [[views]]
 name = "urgent"

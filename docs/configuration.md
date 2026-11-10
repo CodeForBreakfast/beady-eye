@@ -547,7 +547,7 @@ when = { labels = "signing|countersigning" }
 
 [[views.select]]
 projects = ["dunwich"]
-when   = { labels = "reminder" }
+when   = { labels = "survey" }
 unless = { labels = "held" }
 
 [[views]]

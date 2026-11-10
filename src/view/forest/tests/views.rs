@@ -14,7 +14,7 @@ const HARBOUR_SIGNING: &str = r#"[
    "issue_type":"task","labels":["signing"],
    "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]},
   {"id":"hbr-1.2","title":"sign the pilotage terms","status":"open","priority":1,
-   "issue_type":"task","labels":["signing","waiting"],
+   "issue_type":"task","labels":["signing","held"],
    "dependencies":[{"depends_on_id":"hbr-1","type":"parent-child"}]},
   {"id":"hbr-1.3","title":"clear the silted channel","status":"open","priority":0,
    "issue_type":"task",
