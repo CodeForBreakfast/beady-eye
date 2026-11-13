@@ -69,12 +69,20 @@ struct Agent {
     cwd: PathBuf,
     #[serde(default)]
     agent: Option<String>,
+    /// herdr's name for the agent in the pane. What used to be called
+    /// `display_agent` on the wire; the name is the lane's identity.
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     agent_session: Option<AgentSession>,
+    /// What the pane last drew across its top row. herdr calls it
+    /// `terminal_title`; `title` is kept for a provider that still sends one.
     #[serde(default)]
     display_agent: Option<String>,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    terminal_title: Option<String>,
     #[serde(default)]
     state_labels: BTreeMap<String, String>,
     agent_status: PaneStatus,
@@ -92,9 +100,10 @@ impl Agent {
             self.agent_status,
         );
         pane.agent = self.agent;
+        pane.name = self.name;
         pane.agent_session = self.agent_session;
         pane.display_agent = self.display_agent;
-        pane.title = self.title;
+        pane.title = self.title.or(self.terminal_title);
         pane.state_labels = self.state_labels;
         pane
     }
@@ -256,9 +265,34 @@ mod tests {
         let p = pane(&panes, "wG:p1");
 
         assert_eq!(p.display_agent, None);
-        assert_eq!(p.title, None);
+        assert_eq!(p.name, None);
         assert_eq!(p.state_labels, BTreeMap::new());
-        assert_eq!(p.caption(), None);
+        // The pane names no agent, but herdr still says what it is drawing.
+        assert_eq!(p.title.as_deref(), Some("✳ Trailer syntax review"));
+    }
+
+    #[test]
+    fn a_pane_takes_its_name_and_title_from_herdrs_current_fields() {
+        // herdr 0.9.5 names the agent in `name` and the top row in
+        // `terminal_title`; the older `display_agent` and `title` are gone,
+        // and serde used to default them to None, leaving every lane blank.
+        let panes = parse_agent_list(
+            A_SESSION,
+            r#"{"result":{"agents":[
+                {"pane_id":"w1:p1","cwd":"/work/x","agent_status":"working",
+                 "agent":"pi","name":"synomone-leader",
+                 "terminal_title":"pi - synomone","terminal_title_stripped":"pi - synomone",
+                 "agent_session":{"agent":"pi","kind":"path","source":"herdr:pi",
+                                  "value":"/sessions/x.jsonl"}}]}}"#,
+        )
+        .expect("parses");
+
+        let p = pane(&panes, "w1:p1");
+        assert_eq!(p.name.as_deref(), Some("synomone-leader"));
+        assert_eq!(p.title.as_deref(), Some("pi - synomone"));
+        assert_eq!(p.caption(), Some("pi - synomone"));
+        // A lane's name is not a claim about a bead; display_agent stays empty.
+        assert_eq!(p.display_agent, None);
     }
 
     #[test]
