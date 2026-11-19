@@ -55,7 +55,9 @@ cut each of them rather than dropping the small ones.
   they matter, each led by a bold headline that says what happens, not what was
   built. Say what a reader has to do about it, only when they have something to
   do or may assume from the change that they do. Where a reader has nothing to
-  do and would assume nothing, say nothing about it.
+  do and would assume nothing, say nothing about it. Where you do say a reader
+  has nothing to do, say what the nothing is about, such as "there is nothing to
+  do beyond upgrading". A bare "There is nothing to do." is not clear enough.
 - **Upgrading** — only when a reader has to do something or something they rely
   on now behaves differently. Leave the section out otherwise.
 - **Maintenance** — one line for the whole of it, however many commits it
