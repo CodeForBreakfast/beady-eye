@@ -339,6 +339,7 @@ fn with_refused_checks_read(
     {
         Ok(checks) => {
             head.insert("statusCheckRollup".to_string(), checks);
+            head.remove("checkSuites");
             observed.refused.remove(at);
         }
         Err(failure) if failure.kind == FailureKind::RateLimited => return Err(failure),
@@ -2699,6 +2700,44 @@ mod tests {
                 "{conclusion}"
             );
         }
+    }
+
+    /// The runs read after GitHub refused the check runs are newer than the
+    /// suites it answered beside them, so a suite it last saw queued does not
+    /// hold back a pass the runs say finished.
+    #[test]
+    fn checks_read_from_the_runs_are_not_held_back_by_the_suites_read_before_them() {
+        let queued_suite = r#""checkSuites":{"totalCount":1,"nodes":[{"status":"QUEUED","workflowRun":{"databaseId":1}}]},"statusCheckRollup""#;
+        let answer = check_runs_refused_on_7(r#""state":"OPEN","isDraft":true,"mergeCommit":null"#)
+            .replacen(r#""statusCheckRollup""#, queued_suite, 1);
+        let runner = ran(
+            captured(FakeRunner::default(), "arkham").failing_having_printed(
+                &viewed(7),
+                &answer,
+                unavailable("gh"),
+            ),
+            "success",
+        )
+        .with(&comments_on("arkham", "ark-2ud"), NO_COMMENTS)
+        .with(&comments_on("arkham", "ark-45c"), NO_COMMENTS)
+        .with(
+            &checks_passed_telling("arkham", "ark-2ud", "a1b2c3"),
+            "Comment added to ark-2ud\n",
+        )
+        .with(
+            &checks_passed_telling("arkham", "ark-45c", "a1b2c3"),
+            "Comment added to ark-45c\n",
+        );
+
+        let settled = settled(&runner, &[project("arkham")], &pr(7));
+
+        assert_eq!(
+            acts(settled),
+            [
+                passing_checks("ark-2ud", Done::Commented),
+                passing_checks("ark-45c", Done::Commented)
+            ]
+        );
     }
 
     /// A run for one event does not replace a run of the same workflow for

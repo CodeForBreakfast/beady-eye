@@ -117,7 +117,7 @@ fn head_and_base_since(observed: &Observed) -> Result<Option<DateTime<Utc>>, ser
 
 /// The checks on the pull request's head commit, selected alike by every
 /// event that reads them so that [`fields`] asks them once.
-const HEAD_CHECKS: &str = "commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(last:100){totalCount nodes{...on CheckRun{name checkSuite{app{slug} workflowRun{workflow{id}}} conclusion startedAt completedAt} ...on StatusContext{state createdAt}}}}}}}";
+const HEAD_CHECKS: &str = "commits(last:1){nodes{commit{oid checkSuites(first:100){totalCount nodes{status workflowRun{databaseId}}} statusCheckRollup{state contexts(last:100){totalCount nodes{...on CheckRun{name checkSuite{app{slug} workflowRun{workflow{id}}} conclusion startedAt completedAt} ...on StatusContext{state createdAt}}}}}}}";
 
 /// Where GraphQL answers the head commit [`HEAD_CHECKS`] reads, as a JSON
 /// pointer into a pull request's fields.
