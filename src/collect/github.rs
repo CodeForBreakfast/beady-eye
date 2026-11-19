@@ -1113,6 +1113,12 @@ mod tests {
     }
 
     #[test]
+    fn a_run_not_yet_started_holds_back_a_status_that_passed() {
+        let queued = RUNNING.replace("in_progress", "queued");
+        assert_eq!(rollup_state(&[&queued], &[&status("success")]), "PENDING");
+    }
+
+    #[test]
     fn checks_whose_every_run_and_status_finished_well_pass() {
         let runs = [
             run("CI", r#""success""#),
