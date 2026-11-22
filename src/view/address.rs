@@ -329,9 +329,12 @@ impl Asked {
     }
 
     /// The address of the forest with no bead shown, with the folds this
-    /// page has.
-    pub fn closing(&self) -> String {
-        format!("/{}", self.query(None))
+    /// page has, landing on the row of the bead at `shown` where there is
+    /// one. `listed` is whether the rows are a list's.
+    pub fn closing(&self, shown: Option<&Place>, listed: bool) -> String {
+        let landing =
+            shown.map_or_else(String::new, |place| format!("#{}", row_name(place, listed)));
+        format!("/{}{landing}", self.query(None))
     }
 
     /// The address of the page drawing `list` in place of the trees, or the
@@ -493,12 +496,27 @@ pub fn fold_name(line: &Line, listed: bool) -> Option<String> {
             group.project.as_deref().map(encoded).unwrap_or_default()
         ),
         Content::Elided { under, .. } => format!("e:{}", placed(under)),
-        _ if listed => {
-            let key = line.place.as_ref()?.key();
-            format!("u:{}:{}", encoded(&key.project), encoded(&key.id))
-        }
-        _ => format!("b:{}", placed(line.place.as_ref()?)),
+        _ => row_name(line.place.as_ref()?, listed),
     })
+}
+
+/// The anchor `line` is drawn with on the page: a bead's own row is known by
+/// its bead whether or not it folds, and any other line by its fold's name.
+pub fn line_name(line: &Line, listed: bool) -> Option<String> {
+    match &line.content {
+        Content::Bead(_) => line.place.as_ref().map(|place| row_name(place, listed)),
+        _ => fold_name(line, listed),
+    }
+}
+
+/// What the row of the bead at `place` is known by, in a list where `listed`.
+fn row_name(place: &Place, listed: bool) -> String {
+    if listed {
+        let key = place.key();
+        format!("u:{}:{}", encoded(&key.project), encoded(&key.id))
+    } else {
+        format!("b:{}", placed(place))
+    }
 }
 
 /// A place as the beads stepped through to reach it, from its tree's root.
