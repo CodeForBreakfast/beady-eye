@@ -482,7 +482,9 @@ aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c
 /// only in its change is not shown again. A hidden page lets its connection
 /// go, and asks again from the change it last heard once it is shown, so
 /// pages left in the background hold none of the few connections a browser
-/// makes to one server. Without it the page is the same page, drawn once.
+/// makes to one server. A page the server is too busy to keep current asks
+/// again after as long as a quiet connection waits for a comment. Without it
+/// the page is the same page, drawn once.
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const asked = location.pathname + (location.search ? location.search + "&" : "?");
@@ -492,7 +494,12 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     show(page = lines);
   };
   const listen = () => {
-    changes = new EventSource(asked + "since=" + since);
+    const source = changes = new EventSource(asked + "since=" + since);
+    source.addEventListener("error", () => {
+      if (source.readyState !== EventSource.CLOSED || changes !== source) return;
+      changes = null;
+      setTimeout(() => document.hidden || changes || listen(), 15000);
+    });
     changes.addEventListener("page", (event) => heard(event, event.data.split("\n")));
     changes.addEventListener("patch", (event) => {
       const lines = event.data.split("\n");
@@ -511,7 +518,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!document.hidden) listen();
   const goes = (link) => {
     const to = new URL(link.href);
-    return [link.className, to.pathname, to.searchParams.get("at")].join(" ");
+    const where = link.matches(".fold") ? to.search : to.searchParams.get("at");
+    return [link.className, to.pathname, where].join(" ");
   };
   const known = (row) => {
     const bead = row.querySelector("a.bead[href]");
@@ -521,16 +529,9 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const marks = () => [...rows().filter(known), document.querySelector("aside")].filter(Boolean);
   const mark = (at) => at.matches("aside") ? "aside" : known(at);
   const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
-  const holding = (link) => {
-    const row = link.closest(".line");
-    return row ? known(row) ?? row.id : boxes().findIndex((box) => box?.contains(link));
-  };
-  const alike = (held, kind) => {
-    const within = typeof held === "number"
-      ? boxes()[held] ?? document
-      : rows().find((row) => (known(row) ?? row.id) === held);
-    return [...(within?.querySelectorAll("a[href]") ?? [])].filter((link) => goes(link) === kind);
-  };
+  const pane = (link) => boxes().findIndex((box) => box?.contains(link));
+  const alike = (at, kind) => [...(boxes()[at] ?? document).querySelectorAll("a[href]")]
+    .filter((link) => goes(link) === kind);
   const show = (page) => {
     const text = page.join("\n").replace(/ data-change="\d+"/, "");
     if (text === shown) return;
@@ -539,7 +540,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const top = marks().find((at) => at.getBoundingClientRect().bottom > 0);
     const kept = top && [mark(top), top.getBoundingClientRect().top];
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
-    const focused = focus && [holding(focus), goes(focus)];
+    const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
     const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
     document.title = drawn.title;

@@ -375,7 +375,8 @@ arrives. It must not buffer or compress the response, which holds each
 change back until the buffer fills. It must not close the connection for
 being idle in under 15 seconds, because `bdi web` sends a comment down it
 every 15 seconds that nothing else is sent. A page whose connection is
-refused or closed for good stays as it was drawn.
+refused asks again 15 seconds later, and stays as it was drawn until one is
+taken.
 
 The page is read-only and asks nobody to sign in. Anyone who can reach the
 address can read every configured tracker, so listen only where everyone who

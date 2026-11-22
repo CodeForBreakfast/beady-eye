@@ -4545,9 +4545,10 @@ position. Past 1,024 lines inserted or removed the page is sent whole, which
 also bounds the work of finding the patch. A connection holds no request
 slot: the eight requests drawn at once are apart from the 32 pages kept
 current, and the pages kept current draw one at a time. Over 32 the
-connection is refused and the page stays as it was drawn. A connection with
-nothing to send for 15 seconds is sent a comment, so a proxy does not close
-it as idle and a reader who has gone is found. A proxy in front must not
+connection is refused, and the page asks again 15 seconds later. A connection
+with nothing to send for 15 seconds is sent a comment, so a proxy does not
+close it as idle and a reader who has gone is found, which frees its place
+for a page asking again. A proxy in front must not
 buffer or compress the stream. A browser makes only a few connections to one
 server, so a hidden page lets its connection go and asks again from the change
 it last heard once it is shown.
