@@ -1908,6 +1908,39 @@ mod tests {
         assert_eq!(carried, Vec::new(), "{closing}");
     }
 
+    /// A search from a page that marks no selection counts from the top,
+    /// wherever pointing the page's folds left the selection.
+    #[test]
+    fn a_search_from_a_page_with_no_selection_counts_from_the_top() {
+        let under = terminal_lines(&terminal_forest(&[]))
+            .iter()
+            .position(|line| line.contains("▸ ○ .6"))
+            .expect("the blocked bead rests shut over its child");
+        let opened = page_at(&fold_link(&page_at("/").html, under)).html;
+        let nested = page_lines(&opened)
+            .iter()
+            .position(|line| line.contains("confirm the wedges are gone"))
+            .expect("its child is drawn");
+        let nested_open = page_at(&fold_link(&opened, nested)).html;
+        let found = page_at(&searched_from(&nested_open, "wedge")).html;
+
+        let mut terminal = terminal_forest(&[under, nested]);
+        terminal.select_line(0);
+        let origin = terminal.origin();
+        let landed = terminal.seek("wedge", &origin);
+        assert!(
+            matches!(&landed, Landed::On { key, .. } if key.id == "smt-4kd3p.7"),
+            "{landed:?}"
+        );
+        assert_eq!(shown_line(&found), terminal.selected_line());
+    }
+
+    /// A key the page does not know is passed over whatever its value holds.
+    #[test]
+    fn an_address_with_a_key_the_page_does_not_know_is_still_read() {
+        assert!(Asked::of("/?utm=%FF").is_some());
+    }
+
     /// A search's form goes to the match, as its steps do.
     #[test]
     fn a_search_from_the_form_lands_the_page_on_the_match() {

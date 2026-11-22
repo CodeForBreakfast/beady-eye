@@ -135,6 +135,9 @@ impl Asked {
             let Some((key, value)) = pair.split_once('=') else {
                 continue;
             };
+            if ![OPEN, SHUT, AT, VIEW, READY, ROOT, FIND, STEP].contains(&key) {
+                continue;
+            }
             let value = form_decoded(value)?;
             let open = match key {
                 OPEN => true,
@@ -248,15 +251,22 @@ impl Asked {
     }
 
     /// Search `forest` for `find`'s text from the copy the reader was on, as
-    /// the terminal's search counts from the selection, or step on from the
-    /// match the reader was on as its next-match keys do.
+    /// the terminal's search counts from the selection, and from the top
+    /// where the page they searched from marked none. Or step on from the
+    /// match the reader was on, as the terminal's next-match keys do.
     ///
     /// The folds the reader pointed under a line the search opened come into
     /// sight only once it has landed, so they are pointed then, holding open
     /// the lines over the match, and the match is stepped to again.
     fn search(&self, forest: &mut Forest, find: &Find) -> Landed {
-        if let (None, Some(place)) = (find.step, &self.place) {
-            forest.go_to_place(place);
+        match (find.step, &self.place) {
+            (None, Some(place)) => {
+                forest.go_to_place(place);
+            }
+            (None, None) => {
+                forest.select_line(0);
+            }
+            (Some(_), _) => {}
         }
         let origin = forest.origin();
         let mut landed = forest.seek(&find.text, &origin);
