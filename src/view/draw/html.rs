@@ -305,7 +305,8 @@ impl Drawing<'_> {
         }
         // A bead's line keeps apart the parts a phone lays out on two lines:
         // what it hangs under, the reference, the row's other cells and its
-        // state. Any other line is drawn as one run before its state.
+        // state. Any other line is drawn as what it hangs under, then one run
+        // beside it, before its state.
         let bead = reference.is_some();
         let more = bead && !(identity.is_empty() && whole.title.is_empty());
         if !bead {
@@ -313,6 +314,9 @@ impl Drawing<'_> {
         }
         if let Some((prefix, _)) = prefix {
             self.prefix(html, line, prefix);
+        }
+        if !bead {
+            html.push_str("<span>");
         }
         if let Some(reference) = reference {
             // A bead's own row is a line this page draws, so the page it
@@ -334,7 +338,10 @@ impl Drawing<'_> {
             html.push_str(&indent());
             spans(html, whole.title, Block::Title, whole.links, 0);
         }
-        if !bead || more {
+        if !bead {
+            html.push_str("</span></span>");
+        }
+        if more {
             html.push_str("</span>");
         }
         html.push_str("<span class=\"state\">");
@@ -758,7 +765,8 @@ aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
-.line>.left>.rails{height:18.85px}\
+.line>.left:has(>.rails){display:inline-flex;max-width:100%}\
+.line>.left>.rails+span{min-width:0}\
 .line i,.line b,.line u{flex:none;width:14px;position:relative}\
 .line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:10px;\
 border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
@@ -1775,7 +1783,8 @@ mod tests {
     }
 
     /// A root that draws no bead hangs in the same column as one that does,
-    /// so a phone lays its connectors out as it lays out a bead's.
+    /// so a phone lays its connectors out as it lays out a bead's, beside
+    /// one run of text that may wrap.
     #[test]
     fn a_root_that_draws_no_bead_hangs_as_a_beads_root_does() {
         let unread = snapshot(
@@ -1791,7 +1800,11 @@ mod tests {
         let root = line_html(&html, 1);
         assert!(!root.contains("class=\"bead"), "{root}");
         assert_eq!(parts(root).0[0], "span.left", "{root}");
-        assert_eq!(parts(inside(root, "left")).0[0], "span.rails", "{root}");
+        assert_eq!(
+            parts(inside(root, "left")).0,
+            ["span.rails", "span"],
+            "{root}"
+        );
     }
 
     /// Readiness and blockers are read apart, so a tracker can say both, and
