@@ -76,6 +76,7 @@ impl Hosts {
         let Some(name) = host.and_then(name_of) else {
             return false;
         };
+        let name = name.strip_suffix('.').unwrap_or(name);
         name.parse::<IpAddr>().is_ok()
             || name.eq_ignore_ascii_case("localhost")
             || self
@@ -420,9 +421,9 @@ mod tests {
         }
     }
 
-    /// An allowed name gets the page on any port and in any case, and so do
-    /// `localhost` and an address, which only this machine or its network
-    /// can make a browser send.
+    /// An allowed name gets the page on any port, in any case and with or
+    /// without the root's dot, and so do `localhost` and an address, which
+    /// only this machine or its network can make a browser send.
     #[test]
     fn a_request_sent_to_an_allowed_name_localhost_or_an_address_gets_the_page() {
         let latest = read();
@@ -431,6 +432,8 @@ mod tests {
             "Beads.Example.Invalid:8080",
             "localhost",
             "LOCALHOST:8080",
+            "localhost.:8080",
+            "beads.example.invalid.",
             "127.0.0.1:8080",
             "10.0.0.7",
             "[::1]:8080",
