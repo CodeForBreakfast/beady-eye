@@ -477,7 +477,7 @@ aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c
 /// address for its changes since the one the page was drawn from, and the
 /// server sends them down that one connection: the whole page first, and
 /// after it each patch to the page it sent last. Each page replaces the
-/// body, keeping the bead or bead view at the top of the window where it
+/// body, keeping the line or bead view at the top of the window where it
 /// was, both panes' scroll, and the link that had focus. A page differing
 /// only in its change is not shown again. A hidden page lets its connection
 /// go, and asks again from the change it last heard once it is shown, so
@@ -518,12 +518,12 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!document.hidden) listen();
   const goes = (link) => {
     const to = new URL(link.href);
-    const where = link.matches(".fold") ? to.search : to.searchParams.get("at");
+    const where = link.matches(".fold") ? to.hash : to.searchParams.get("at");
     return [link.className, to.pathname, where].join(" ");
   };
   const known = (row) => {
     const bead = row.querySelector("a.bead[href]");
-    return bead && goes(bead);
+    return bead ? goes(bead) : row.id;
   };
   const rows = () => [...document.querySelectorAll(".line")];
   const marks = () => [...rows().filter(known), document.querySelector("aside")].filter(Boolean);
