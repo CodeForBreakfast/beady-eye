@@ -113,6 +113,8 @@ coin one — and say so.**
 | gate, resolve | beads (`bd gate`) | a bead that blocks another until something outside the tracker happens, and closing one. A gh:pr gate waits on a pull request, a gh:issue gate on an issue closing, a gh:release gate on a repository publishing a release, a gh:run gate on a workflow run finishing, a timer gate on its timeout running out after it was made, and a bead gate on the bead its await id names closing, and `bdi gates` is named for these. bd accepts any gate type, and its own `bd gate check` passes over gh:issue and gh:release |
 | delivery | GitHub (webhooks) | one webhook request GitHub sends, with its event and signature in headers. `bdi gates --listen` takes a `pull_request` delivery as a trigger to settle the pull request it names, and nothing more |
 | **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has done what the gate waits for: resolve the gate on a merge, or on leaving draft for a gate with `awaits=ready_for_review`, or on approval for a gate with `awaits=approved`, and on a close without a merge, or on failing or passing checks or a conflict with the base on the head commit, or on a submitted review, or on a comment on its conversation, comment on the beads it holds back, once each. Act on a gh:issue gate once its issue closes, on a gh:release gate once its repository publishes a release after the gate was made, on a gh:run gate once its run succeeds or is skipped, on a timer gate once its deadline passes, and on a bead gate once its bead closes, in its own tracker or another the config names, by resolving the gate. beads has `bd gate check`, which resolves a gh:pr gate on a merge alone and acts on a close through an escalation `bdi` does not make |
+| **reference** | *coined* | a bead named on the web page: its glyph, its id second to its title, and a link that opens it. One component draws every one, a row of the forest and a bead the bead view names alike. Neither project draws a bead anywhere a reader can follow it. |
+| **address** | *coined* | where the web page shows one bead, `/<project>/<id>`, each part percent-encoded, with the project as the config names it. A client composes it from the bead's project and id and nothing else. |
 | **cell** | *coined* | one named thing a bead's row draws, in whichever block the row's layout puts it: a built-in — `glyph`, `id`, `title`, `badges`, `progress`, `agent`, `anomalies` — or one badge as `badge.<key>`. Notes and the fold's counts are not cells; they trail the state whatever the layout says. Neither project names the parts of a drawn row. |
 
 ### Three different things are called "blocked"
@@ -159,14 +161,16 @@ Three units, each testable alone.
 
 ```
   bd CLI (per project) ──→  collector  ─→  model  ─→  ┬─→  TUI (ratatui)
-  herdr socket (optional) ─┘             (pure)      └─→  --json (serde)
+  herdr socket (optional) ─┘             (pure)      ├─→  web page (bdi web)
+                                                     └─→  --json (serde)
 ```
 
 **collector** — the only unit that does I/O. Shells out, parses, joins.
 **model** — pure functions: tree construction, anomaly rules, ordering,
 filtering. All the logic worth a test lives here and needs neither herdr nor bd
 to run.
-**renderers** — two consumers of the same model.
+**renderers** — three consumers of the same model. The web page draws the
+TUI's own lines as HTML (see *The web page*).
 
 ## The agent provider is a seam, not a dependency
 
@@ -4453,6 +4457,85 @@ first collection, is rechecked by nothing, so a clock is the only thing that
 can take it off, and it stands for a minute. The rule is the road rather than
 a list of notices, so the next fact that arrives that way inherits the minute
 for arriving that way.
+
+## The web page
+
+**`bdi web` draws the terminal's forest and bead view as a web page, and the
+terminal is the design.** Graeme: *"a lot of thought has gone into the tui,
+this should follow it closely"*. Every line of the page is the line the
+terminal draws, in its words and its colours, and the page re-derives none of
+it. The forest's lines, a line's three blocks and the bead view's rows are
+written as HTML where the terminal writes them into a frame. A row is never
+cut, because a browser scrolls and the terminal does not.
+
+**Every bead the page names is a reference to it.** One component draws the
+bead's glyph, its id second to its title, and a link that opens the bead. A
+row of the forest is built from it, and so is every bead the bead view names:
+its parent, what it depends on, what it blocks, what it mentions, and what it
+is blocked by. Graeme called a bare *blocks: ark-5* "not useful to humans", so
+no bead appears on the page by its id alone. The terminal's bead view still
+says what a bead is blocked by as ids. A forest row starts with its reference
+wherever `[row]` puts the glyph, the id and the title, and the rest of the row
+keeps its layout.
+
+**A key is a link, and the state a key would change rides in the address.** A
+line that folds links to the page with that fold pointed the other way,
+landing on the line. The query names each fold the reader has pointed by what
+its line is known by, and which way it points. Each request flattens a fresh
+forest from the latest snapshot and points the folds through the forest's own
+fold action, going through them again while pointing one brings another into
+sight. A fold on a line the forest no longer draws is passed over, as a
+refresh passes over one, and is carried on. The server keeps nothing between
+requests. An address that has outgrown the longest request the server reads
+is answered with a page saying so and a link to the forest.
+
+The terminal points a fold on the selected line, and its bead view is over the
+selection. So on a bead's page a fold link goes to the page of the bead on its
+line, or to the forest where the line is no bead. The folds opened to reach a
+bead ride on in every link its page carries, so they stay open as they do in
+the terminal. Opening them can bring into sight a line whose fold the reader
+pointed, and that fold is pointed as they left it. A link from a line names
+the copy of the bead the line draws, so where the forest draws a bead more
+than once its page lands on that copy, as the terminal keeps the copy it
+selected. The address without it lands where `go_to` lands.
+
+**Each bead has an address:** `/<project>/<id>`, each part percent-encoded,
+with the project as the config names it. It draws the forest with the bead
+selected, its folds opened as `go_to` opens them, and the bead view beside the
+forest. Anything that knows a bead's project and id can link to it. A bead the
+forest does not draw is answered 404, with the forest and a line saying so.
+`bdi web` refuses to start for a project named `.`, `..` or nothing, because a
+browser drops such a segment from the path.
+
+**A page is drawn once, so it dates its reads by the clock.** The terminal
+says how long ago a project was read, because it redraws as the age moves. A
+page left open would go on saying *30s ago*, so each project's line says the
+date and time of day it was read instead, at the server's offset from UTC,
+behind the same mark. Nothing is pushed to an open page.
+
+**It reads as a view reads, and asks no agent provider.** It runs where no
+herdr does, so it draws no agent, no pane and no tail, and every tree is
+drawn. It reads every configured project, through the watcher where one
+answers, again as the watcher says each changed or as a deferral it held
+back comes due, and each project that polls again `refresh_seconds` after the
+interval's last reads. A project set `poll = false` is never read again on
+the interval.
+A page drawn while a read is out marks the project as being read, and marks it
+as no longer answering once the read has been out for
+`unanswered_after_seconds`, over the rows the last read left. Until the
+first read answers, the forest is each project's line with that mark, as the
+terminal opens, and a bead's page says the trackers are still being read.
+`/healthz` passes once every project has been asked once, whether or not its
+tracker answered, because a tracker that fails is drawn as failing. It is
+read-only, and no reader signs in.
+
+**Three places, each knowing one thing.** `cli/web.rs` serves: it holds the
+latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`
+that `bdi gates --listen` shares. `view/address.rs` knows addresses: what a
+request asks for, the forest it asks for, and the address of every link a
+page carries. `view/draw/html.rs` knows HTML, and draws the forest the address
+gave it with the terminal's own drawing. The colours become CSS in the
+palette, which is the one module that names a colour.
 
 ## Alternatives considered
 

@@ -35,6 +35,7 @@ use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 mod gates;
+mod web;
 
 /// Where the config lives when nothing says otherwise.
 const DEFAULT_CONFIG: &str = "~/.config/beady-eye/config.toml";
@@ -211,6 +212,19 @@ enum Passing {
         #[arg(long)]
         config: Option<String>,
     },
+    /// Answer HTTP on an address, such as 0.0.0.0:8080, with every configured
+    /// project's forest as a read-only web page, and each bead's own page at
+    /// /<project>/<bead-id>. Trackers are read as the view reads them, through
+    /// the watcher where one answers, and no agent provider is asked.
+    Web {
+        /// The address to take requests on.
+        #[arg(long, value_name = "ADDRESS")]
+        listen: String,
+        /// Read the configuration from this file, rather than
+        /// ~/.config/beady-eye/config.toml.
+        #[arg(long)]
+        config: Option<String>,
+    },
     /// Settle every configured project's gh:pr, gh:issue, gh:release, gh:run
     /// and timer gates, looking again every [gates] poll_seconds: close a gate
     /// whose pull request merged, whose issue closed, whose workflow run
@@ -361,6 +375,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Some(Passing::Watch { socket, config }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return watch(socket.clone(), &config);
+        }
+        Some(Passing::Web { listen, config }) => {
+            let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
+            return web::web(&config, listen);
         }
         Some(Passing::Gates {
             config,

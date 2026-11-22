@@ -16,7 +16,7 @@ use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
 use crate::view::draw::bead::{badge_style, opens_at};
 use crate::view::draw::tone::status_style;
-use crate::view::draw::{done, key_rows};
+use crate::view::draw::{done, key_rows, Reference};
 use crate::view::fitted::{self, cover, indent, Fitted, Link};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Waiting};
@@ -336,11 +336,15 @@ pub fn followable(forest: &Forest, related: &Related) -> bool {
 /// is drawn on.
 pub struct Page {
     pub rows: Vec<Vec<Span<'static>>>,
+    /// How many of the first rows the bead's own glyph, id and title take.
+    pub head: usize,
+    /// The row that names the beads this one is blocked by, where it is.
+    pub blocked_by: Option<usize>,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
     /// Which spans of which rows the terminal is told point somewhere, for
     /// the rows that hold a link at all.
-    links: HashMap<usize, Vec<Link>>,
+    pub(crate) links: HashMap<usize, Vec<Link>>,
 }
 
 /// How much of what the selected line stands for is done, where the forest
@@ -514,12 +518,7 @@ pub fn said(
     followable: &dyn Fn(&Related) -> bool,
 ) -> Page {
     let cells = row::cells(node, None, progress, None);
-    let name = vec![
-        Span::styled(cells.glyph.to_string(), status_style(&cells.status)),
-        Span::raw(" "),
-        Span::styled(cells.id.clone(), palette::IDENTITY),
-        Span::raw(indent()),
-    ];
+    let name = named(node, Vec::new()).spans();
     let where_the_title_starts = name.iter().map(Span::width).sum::<usize>();
     let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
     for line in title_of(
@@ -535,6 +534,7 @@ pub fn said(
         row.extend(line);
         rows.push(row);
     }
+    let head = rows.len();
     if !node.labels.is_empty() {
         rows.push(indented(vec![Span::styled(
             node.labels.join(BETWEEN_LABELS),
@@ -555,7 +555,9 @@ pub fn said(
         ),
         Span::raw(format!(" · {}", facts.join(" · "))),
     ]));
+    let mut blocked_by = None;
     if let Some(readiness) = phrase::readiness(node.ready, &node.blocked_by) {
+        blocked_by = (!node.ready && !node.blocked_by.is_empty()).then_some(rows.len());
         rows.push(indented(vec![Span::raw(readiness)]));
     }
     for dates in dates(node) {
@@ -659,8 +661,21 @@ pub fn said(
 
     Page {
         rows,
+        head,
+        blocked_by,
         related,
         links,
+    }
+}
+
+/// The bead the window shows, as the reference its head draws: its glyph,
+/// its whole id, and `title`.
+pub(crate) fn named(node: &Node, title: Vec<Span<'static>>) -> Reference {
+    Reference {
+        glyph: glyph(&node.status),
+        id: vec![Span::styled(node.id.clone(), palette::IDENTITY)],
+        title,
+        between: Style::new(),
     }
 }
 
@@ -758,35 +773,44 @@ fn glyph(status: &Status) -> Span<'static> {
 /// id is blue is broken up to say so, so a row the reader cannot follow is
 /// the row it always was.
 fn related_row(related: &Related, followable: bool) -> Vec<Span<'static>> {
-    let Some(status) = &related.status else {
-        return vec![Span::raw(format!(
+    match related_reference(related, followable) {
+        Some(reference) if followable => reference.spans(),
+        // Nothing on the row is broken out to be gone to, so it stays one
+        // span after the glyph.
+        Some(reference) => {
+            let (glyph, between) = (reference.glyph.clone(), reference.between);
+            let words: String = reference.spans()[1..]
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            vec![glyph, Span::styled(words, between)]
+        }
+        None => vec![Span::raw(format!(
             "{}{}{}",
             related.id,
             indent(),
             phrase::not_in_the_answer()
-        ))];
-    };
-    let mut beside = format!(
-        "{}{}",
-        indent(),
-        related.title.as_deref().unwrap_or_default()
-    );
+        ))],
+    }
+}
+
+/// A related bead's row as a reference to it, where the answer holds the
+/// bead. Nothing where it does not, since there is then no glyph and no
+/// title to draw.
+pub(crate) fn related_reference(related: &Related, followable: bool) -> Option<Reference> {
+    let status = related.status.as_ref()?;
+    let mut title = related.title.clone().unwrap_or_default();
     if let Edge::Other(kind) = &related.edge {
-        beside.push_str(&format!(" · {}", phrase::edge_kind(kind)));
+        title.push_str(&format!(" · {}", phrase::edge_kind(kind)));
     }
     let tone = dimmed_if_closed(status);
-    if !followable {
-        return vec![
-            glyph(status),
-            Span::styled(format!(" {}{beside}", related.id), tone),
-        ];
-    }
-    vec![
-        glyph(status),
-        Span::styled(" ", tone),
-        Span::styled(related.id.clone(), palette::IDENTITY),
-        Span::styled(beside, tone),
-    ]
+    let id = if followable { palette::IDENTITY } else { tone };
+    Some(Reference {
+        glyph: glyph(status),
+        id: vec![Span::styled(related.id.clone(), id)],
+        title: vec![Span::styled(title, tone)],
+        between: tone,
+    })
 }
 
 /// A related row falls to the finished tier when the bead it names is

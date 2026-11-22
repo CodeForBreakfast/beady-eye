@@ -1,22 +1,24 @@
-//! The forest and the tail, drawn into a ratatui frame.
+//! The forest and the tail, drawn into a ratatui frame, and the forest and
+//! the bead drawn as a web page from the same lines.
 //!
 //! One module for each thing drawn — a project's line, a bead's, the groups,
-//! the foot, the tail — one for the bands they are drawn into, and one for
-//! the colours they are drawn in. What is left here is the frame itself:
-//! which kind of line each row is, and the few cells that more than one kind
-//! draws with.
+//! the foot, the tail — one for the bands they are drawn into, one for the
+//! colours they are drawn in, and one for the web page. What is left here is
+//! the frame itself: which kind of line each row is, and the few cells that
+//! more than one kind draws with.
 
 mod bands;
 pub(in crate::view) mod bead;
 mod foot;
 mod groups;
+pub mod html;
 mod project;
 mod tail;
 pub(crate) mod tone;
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::Span;
@@ -24,7 +26,7 @@ use ratatui::Frame;
 
 use crate::app::Awaited;
 use crate::model::types::PaneStatus;
-use crate::view::fitted::{Fitted, GAP};
+use crate::view::fitted::{indent, Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine, Waiting};
 use crate::view::palette;
@@ -40,7 +42,7 @@ pub use tail::{draw_tail, Band};
 use bead::{bead_line, elided_run, orphaned_line};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
-use project::{absent_line, project_line, unread_line};
+use project::{absent_line, project_line, unread_line, Dated};
 
 /// What every project line's freshness is drawn from: when each project was
 /// last read, which projects have a read outstanding, which have lapsed, and
@@ -60,6 +62,8 @@ pub(super) struct Reads<'a> {
     /// The projects nothing has vouched for lately.
     lapsed: &'a [String],
     now: DateTime<Utc>,
+    /// How each project line says when it was read.
+    dated: Dated,
 }
 
 impl<'a> Reads<'a> {
@@ -74,6 +78,16 @@ impl<'a> Reads<'a> {
             collecting,
             lapsed,
             now,
+            dated: Dated::Ago,
+        }
+    }
+
+    /// The same reads, with each project line saying the time of day it was
+    /// read at rather than how long ago.
+    pub(super) fn dated_at(self, offset: FixedOffset) -> Self {
+        Self {
+            dated: Dated::At(offset),
+            ..self
         }
     }
 
@@ -198,9 +212,13 @@ pub(super) fn fitted(
     reads: &Reads,
 ) -> Fitted {
     match &line.content {
-        Content::Project(project) => {
-            project_line(project, &line.prefix, reads.of(project), reads.now)
-        }
+        Content::Project(project) => project_line(
+            project,
+            &line.prefix,
+            reads.of(project),
+            reads.now,
+            reads.dated,
+        ),
         Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
         Content::Absent(absent) => absent_line(absent, &line.prefix, widths.of(&Cell::Id)),
         Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
@@ -272,6 +290,28 @@ pub(super) fn beside(state: &mut Vec<Span<'static>>, cell: Span<'static>) {
 
 pub(super) fn pane_marker(pane: &str, status: &PaneStatus) -> String {
     format!("{AGENT} {pane} {}", phrase::pane_state(status))
+}
+
+/// What a reference to a bead says, wherever one is drawn: its glyph, its id
+/// and its title, each in the style the place drawing it gives it, and the
+/// style of the space between them.
+pub(crate) struct Reference {
+    pub(crate) glyph: Span<'static>,
+    pub(crate) id: Vec<Span<'static>>,
+    pub(crate) title: Vec<Span<'static>>,
+    pub(crate) between: Style,
+}
+
+impl Reference {
+    /// The reference as a run of spans: the glyph and the id a column apart,
+    /// as the identity draws them, and the title clear of both.
+    pub(crate) fn spans(self) -> Vec<Span<'static>> {
+        let mut spans = vec![self.glyph, Span::styled(" ", self.between)];
+        spans.extend(self.id);
+        spans.push(Span::styled(indent(), self.between));
+        spans.extend(self.title);
+        spans
+    }
 }
 
 /// The box-drawing a line hangs under. It says how the tree is shaped rather

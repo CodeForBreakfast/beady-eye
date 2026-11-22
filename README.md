@@ -344,6 +344,32 @@ never told of a change:
 $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
 ```
 
+## In a browser
+
+`bdi web` draws the same trees as a web page, for whoever can reach the
+address it answers on:
+
+```console
+$ bdi web --listen 0.0.0.0:8080
+bdi web is answering on http://0.0.0.0:8080
+```
+
+Each line of the page is the line the view draws. A line's box-drawing opens
+or shuts it. A bead's glyph, id and title open the bead beside the trees, and
+so does every bead that bead names. Each bead has a page of its own at
+`/<project>/<bead-id>`, with the project as the config names it, so anything
+that knows a bead can link to it.
+
+It reads every configured project as the view does, through the watcher where
+one runs. It asks no agent provider, so it shows no agents and no pane. A page
+does not change while it is open, so each project's line says the time its
+beads were read. `/healthz` answers once every project has been asked, even
+where its tracker failed, since the page shows the failure.
+
+The page is read-only and asks nobody to sign in. Anyone who can reach the
+address can read every configured tracker, so listen only where everyone who
+can reach it may read them all.
+
 ## Writing back
 
 beady-eye writes to a tracker in two ways.
