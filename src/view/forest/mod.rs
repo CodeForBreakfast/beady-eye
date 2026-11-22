@@ -27,8 +27,7 @@ use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
-pub use ready::ready_list;
-use ready::List;
+pub use ready::{listed, only_ready, ready_list, view_of, List};
 use search::{Listed, Matches, Sought, Walked};
 pub use spine::Spine;
 
@@ -641,24 +640,15 @@ impl Forest {
             // Laid out as it switches, so there is nothing left to compare:
             // the list and the trees are never the same screen.
             Action::ToggleReadyList => {
-                let next = match self.list.clone() {
-                    Some(List::Ready) => None,
-                    Some(List::View { name, ready }) => Some(List::View {
-                        name,
-                        ready: !ready,
-                    }),
-                    None => Some(List::Ready),
-                };
-                self.switch_to(next);
-                self.reveal();
+                let list = self.list.as_ref();
+                self.draw_list(listed(view_of(list).map(str::to_string), !only_ready(list)));
                 return true;
             }
             Action::NextView => {
                 let Some(next) = self.next_view() else {
                     return false;
                 };
-                self.switch_to(next);
-                self.reveal();
+                self.draw_list(next);
                 return true;
             }
             Action::FocusForest => {
@@ -878,24 +868,23 @@ impl Forest {
         if views.is_empty() {
             return None;
         }
-        let (at, ready) = match &self.list {
-            Some(List::View { name, ready }) => (
-                views
-                    .iter()
-                    .position(|view| view == name)
-                    .map_or(0, |at| at + 1),
-                *ready,
-            ),
-            Some(List::Ready) => (0, true),
-            None => (0, false),
-        };
-        Some(match views.get(at) {
-            Some(name) => Some(List::View {
-                name: name.clone(),
-                ready,
-            }),
-            None => ready.then_some(List::Ready),
-        })
+        let list = self.list.as_ref();
+        let at = view_of(list)
+            .and_then(|name| views.iter().position(|view| view == name))
+            .map_or(0, |at| at + 1);
+        Some(listed(views.get(at).cloned(), only_ready(list)))
+    }
+
+    /// The list drawn in place of the trees, where one is.
+    pub fn list(&self) -> Option<&List> {
+        self.list.as_ref()
+    }
+
+    /// Draw `list` in place of the trees, or the trees where it is none, as
+    /// the ready and view keys do.
+    pub fn draw_list(&mut self, list: Option<List>) {
+        self.switch_to(list);
+        self.reveal();
     }
 
     /// Draw `list` in place of the trees, or the trees where it is none,
@@ -1206,13 +1195,28 @@ impl Forest {
     }
 
     /// Put the selection on a bead the snapshot holds, wherever the forest
-    /// draws it, opening whatever is folded over it. Reports whether the
-    /// selection is on it now.
+    /// draws it and in a list on its row, opening whatever is folded over
+    /// it. Reports whether the selection is on it now.
     pub fn go_to(&mut self, key: &BeadKey) -> bool {
-        let Some(place) = self.place_of(key) else {
+        let Some(place) = self.reaches(key) else {
             return false;
         };
         self.go_to_place(&place)
+    }
+
+    /// The copy of `key` [`Forest::go_to_place`] can put the selection on:
+    /// the one the list drawn has a row for, and where no list is drawn, the
+    /// one [`Forest::go_to`] goes to. Nothing where the forest is rooted at a
+    /// bead the key is not under, or the list has no row for it.
+    pub fn reaches(&self, key: &BeadKey) -> Option<Place> {
+        if self.list.is_some() {
+            return self
+                .lines
+                .viewport(0, self.lines.len())
+                .filter_map(|(_, line)| Self::place_of_a_bead(line))
+                .find(|place| place.key() == key);
+        }
+        self.place_of(key).filter(|place| self.drawn(place))
     }
 
     /// The lines drawn whose folds have to be open for the selected line to
@@ -1248,7 +1252,7 @@ impl Forest {
     /// Put the selection on a match for a search step, shutting what the
     /// last step opened before opening what this one needs. Reports whether
     /// the selection is on it now.
-    fn step_to_place(&mut self, place: &Place) -> bool {
+    pub fn step_to_place(&mut self, place: &Place) -> bool {
         if !self.drawn(place) {
             return false;
         }

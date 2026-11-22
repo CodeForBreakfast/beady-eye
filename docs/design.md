@@ -4501,6 +4501,40 @@ the copy of the bead the line draws, so where the forest draws a bead more
 than once its page lands on that copy, as the terminal keeps the copy it
 selected. The address without it lands where `go_to` lands.
 
+**The keys that change the whole forest are links and a form at the head
+of the page.** A menu offers every tree and each view the config names, as
+`v` steps through them, and only where the config names a view. A switch
+lists only ready beads, as `r` does, in the trees or a view. A search form
+asks for part of a bead's id or title, as `/` does. The list drawn, and
+whether it lists only ready beads, ride in the address beside the folds, and
+every link carries them on. Each request draws the list through the forest's
+own switch, before it points the folds, so a page lists exactly what the
+terminal lists after the same keys.
+
+**A bead's page offers its tree alone, as `F` does.** The bead the forest is
+rooted at rides in the address too. A page drawn with one root says so as
+the terminal's foot does, names the bead by its reference, and links to the
+same page drawn whole, which is `F` again. The ready list, the views and the
+search keep to that tree, as they do in the terminal. An address rooted at a
+bead the forest no longer draws draws every tree and says the root is gone,
+with the link that drops it. A bead the bead view
+names that the root or the list leaves out opens with every tree drawn,
+because the page has no line to show it on. The terminal's key to follow it
+does nothing there.
+
+**A search answers with the forest, its selection on the match.** The form
+carries the copy the page shows, so the search counts from it as the
+terminal's counts from the selection. A page that shows no bead and no match
+marks no selection, so a search from it counts from the top. The page lands where the terminal's
+search lands, opening the folds over the match,
+and marks that line as the terminal marks its selection. It does not open
+the bead view, because a search in the terminal moves the selection and
+leaves the bead view shut. Its foot says what the terminal's foot says, and
+links to the match before and the match after, as `N` and `n` step. A step
+names the match it steps from and searches again, so the server keeps
+nothing. A browser writes a space typed into the form as `+`, and the page
+reads it as a space, since no address the page composes writes a bare `+`.
+
 **Each bead has an address:** `/<project>/<id>`, each part percent-encoded,
 with the project as the config names it. It draws the forest with the bead
 selected, its folds opened as `go_to` opens them, and the bead view beside the
@@ -4587,12 +4621,13 @@ latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`
 that `bdi gates --listen` shares. Keeping a page current is serving too, and
 `cli/web/live.rs` holds the connections, the events and the patches.
 `view/address.rs` knows addresses: what a request asks for, the forest it
-asks for, and the address of every link a page carries. It knows nothing of
-changes, which ride in a query key it passes over. `view/draw/html.rs` knows
-HTML, and draws the forest the address gave it with the terminal's own
-drawing. It writes the page's script, which knows only the events. The
-colours become CSS in the palette, which is the one module that names a
-colour.
+asks for, and the address of every link a page carries. It puts the list, the
+root and the search on the forest through the forest's own actions, and works
+out none of them itself. It knows nothing of changes, which ride in a query
+key it passes over. `view/draw/html.rs` knows HTML, and draws the forest the
+address gave it with the terminal's own drawing. It writes the page's script,
+which knows only the events. The colours become CSS in the palette, which is
+the one module that names a colour.
 
 ## Alternatives considered
 

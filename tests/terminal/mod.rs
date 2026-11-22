@@ -606,6 +606,56 @@ impl Producer {
 /// with, which is what the window is for.
 pub const THE_DESCRIBED_SUBTREE: &str = include_str!("../fixtures/bd_described_subtree.json");
 
+/// Two views: one of the beads waiting on a signature and not held, and one
+/// of the urgent beads.
+pub const TWO_VIEWS: &str = r#"
+[[views]]
+name = "to sign"
+
+[[views.select]]
+when = { labels = "signing" }
+unless = { labels = "held" }
+
+[[views]]
+name = "urgent work"
+
+[[views.select]]
+when = { priority = "0" }
+"#;
+
+/// The archive, as `bd list --all --json` writes it.
+pub const THE_ARCHIVE: &str = r#"[
+  {"id":"ark-12","title":"restore the archive","status":"open",
+   "priority":1,"issue_type":"epic","created_at":"2026-08-01T09:00:00Z"},
+  {"id":"ark-12.1","title":"countersign the folios","status":"open","labels":["signing"],
+   "dependencies":[{"issue_id":"ark-12.1","depends_on_id":"ark-12","type":"parent-child"}],
+   "priority":2,"issue_type":"task","created_at":"2026-08-02T09:00:00Z"},
+  {"id":"ark-12.2","title":"countersign the ledgers","status":"open",
+   "labels":["held","signing"],
+   "dependencies":[{"issue_id":"ark-12.2","depends_on_id":"ark-12","type":"parent-child"}],
+   "priority":2,"issue_type":"task","created_at":"2026-08-03T09:00:00Z"},
+  {"id":"ark-12.3","title":"dry the flooded stacks","status":"open",
+   "dependencies":[{"issue_id":"ark-12.3","depends_on_id":"ark-12","type":"parent-child"}],
+   "priority":0,"issue_type":"task","created_at":"2026-08-04T09:00:00Z"}
+]"#;
+
+/// Each view `TWO_VIEWS` names, as its list's heading says it, with the
+/// bead of `THE_ARCHIVE` it lists and the beads it leaves out.
+pub const EACH_VIEW: [(&str, &str, &str, [&str; 2]); 2] = [
+    (
+        "to sign",
+        "to sign · 1",
+        "ark-12.1",
+        ["ark-12.2", "ark-12.3"],
+    ),
+    (
+        "urgent work",
+        "urgent work · 1",
+        "ark-12.3",
+        ["ark-12.1", "ark-12.2"],
+    ),
+];
+
 /// The keys that open that capture's tree and leave the selection on its
 /// header: every tree rather than only the staffed ones, back to the first
 /// row, down onto the tree, open it — and back to the first row and down
