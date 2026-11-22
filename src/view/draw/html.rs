@@ -170,7 +170,7 @@ impl Drawing<'_> {
             let ready = only_ready(list);
             let drawn = view_of(list);
             html.push_str(&format!(
-                "<details class=\"lists\"><summary>{}</summary>",
+                "<details class=\"lists\"><summary>{}</summary><div>",
                 escaped(drawn.unwrap_or(phrase::every_tree()))
             ));
             let entries = iter::once((None, phrase::every_tree())).chain(
@@ -186,7 +186,7 @@ impl Drawing<'_> {
                     escaped(said)
                 ));
             }
-            html.push_str("</details>");
+            html.push_str("</div></details>");
         }
         html.push_str(&format!(
             "<a class=\"ready{}\" href=\"{}\">{}</a>",
@@ -208,9 +208,10 @@ impl Drawing<'_> {
         }
         let typed = self.asked.find.as_ref().map_or("", |find| &find.text);
         html.push_str(&format!(
-            "<input type=\"search\" name=\"{FIND}\" value=\"{}\" aria-label=\"{}\">\
-             <button>{}</button></form>",
+            "<input type=\"search\" name=\"{FIND}\" value=\"{}\" aria-label=\"{}\" \
+             placeholder=\"{}\"><button>{}</button></form>",
             escaped(typed),
+            escaped(phrase::find()),
             escaped(phrase::find()),
             escaped(phrase::find())
         ));
@@ -707,6 +708,7 @@ footer .said{color:var(--fg)}\
 nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--c8)}\
 nav form{display:flex;gap:4px;margin-left:auto}\
 nav input,nav button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--c8);padding:1px 6px}\
+nav input::placeholder{color:transparent}\
 .lists{position:relative}.lists summary{cursor:pointer}\
 .lists[open] a{display:block;padding:2px 0}\
 .lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
@@ -730,6 +732,34 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead>.id{grid-column:2}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
+body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
+nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
+padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--c8);\
+font:13px system-ui,sans-serif}\
+nav,.lists>div{background:var(--bg)}\
+nav>*{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}\
+nav summary,nav>.ready,nav input{display:block;box-sizing:border-box;width:100%;padding:7px 4px;\
+border:0;border-radius:8px;background:none;font:inherit;text-align:center;\
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\
+nav summary{list-style:none}nav summary::-webkit-details-marker{display:none}nav summary::after{content:\" \\25BE\"}\
+nav .ready.on,.lists[open] summary{background:var(--shown);font-weight:bold;text-decoration:none}\
+nav input::placeholder{color:var(--fg);opacity:1}\
+nav button{display:none}\
+nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
+background:var(--bg);border-bottom:1px solid var(--c8)}\
+html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
+footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
+.lists>div{display:none}\
+.lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
+max-height:calc(100dvh - 64px);overflow-y:auto;\
+border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
+.lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--shown)}\
+.lists a.on{color:var(--c4);text-decoration:none}\
+.lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}\
+nav:has(.lists[open]) form{visibility:hidden}\
 .page .w,.page .arrow{display:none}\
 .page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
 vertical-align:top;width:100%;white-space:normal}\
