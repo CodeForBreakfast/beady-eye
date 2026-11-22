@@ -17,7 +17,7 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
-use crate::view::address::{line_anchor, Asked, SHOWN};
+use crate::view::address::{fold_name, Asked, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Line, Waiting};
@@ -152,10 +152,10 @@ impl Drawing<'_> {
         };
         let whole = drawn.whole();
         let selected = self.selected == Some(at);
+        let anchor = fold_name(line).map_or_else(String::new, |name| format!(" id=\"{name}\""));
         html.push_str(&format!(
-            "<div class=\"line{}\" id=\"{}\"{}>",
+            "<div class=\"line{}\"{anchor}{}>",
             if selected { " shown" } else { "" },
-            line_anchor(at),
             styled(palette::css(whole.under))
         ));
         if selected {
@@ -177,7 +177,7 @@ impl Drawing<'_> {
             html.push_str("<span class=\"left\">");
         }
         if let Some((prefix, _)) = prefix {
-            self.prefix(html, at, line, prefix);
+            self.prefix(html, line, prefix);
         }
         if let Some(reference) = reference {
             let href = line
@@ -207,8 +207,8 @@ impl Drawing<'_> {
 
     /// The box-drawing a line hangs under, which is the link that toggles the
     /// line's fold where it has one.
-    fn prefix(&self, html: &mut String, at: usize, line: &Line, prefix: &Span<'static>) {
-        let Some(href) = self.asked.toggling(line, at) else {
+    fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>) {
+        let Some(href) = self.asked.toggling(line) else {
             html.push_str(&format!(
                 "<span{}>{}</span>",
                 styled(palette::css(prefix.style)),
@@ -628,21 +628,39 @@ mod tests {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
+    /// Each line of the forest on the page, whole from its opening tag.
+    fn lines_html(html: &str) -> Vec<&str> {
+        html.split("<div class=\"line")
+            .skip(1)
+            .map(|line| &line[..line.find("</div>").expect("the line ends")])
+            .collect()
+    }
+
     /// The HTML inside one line of the forest on the page.
     fn line_html(html: &str, at: usize) -> &str {
-        let line = html
-            .split(&format!("id=\"{}\"", line_anchor(at)))
-            .nth(1)
-            .expect("the line is drawn");
-        &line
-            [line.find('>').expect("the tag ends") + 1..line.find("</div>").expect("the line ends")]
+        let line = lines_html(html)[at];
+        &line[line.find('>').expect("the tag ends") + 1..]
+    }
+
+    /// The id a line of the forest carries, where it carries one.
+    fn line_id(html: &str, at: usize) -> Option<String> {
+        let line = lines_html(html)[at];
+        let tag = &line[..line.find('>').expect("the tag ends")];
+        let id = tag.split(" id=\"").nth(1)?;
+        Some(id[..id.find('"').expect("the id ends")].replace("&amp;", "&"))
+    }
+
+    /// The line of the page a browser lands on for `fragment`.
+    fn landed_on(html: &str, fragment: &str) -> usize {
+        (0..lines_html(html).len())
+            .find(|&at| line_id(html, at).as_deref() == Some(fragment))
+            .expect("a line carries the fragment")
     }
 
     /// Each line of the forest on the page, as a reader sees it, with the
     /// state block apart from the rest as the terminal sets it apart.
     fn page_lines(html: &str) -> Vec<String> {
-        let count = html.matches("<div class=\"line").count();
-        (0..count)
+        (0..lines_html(html).len())
             .map(|at| {
                 let line = line_html(html, at).replace("<span class=\"state\">", " ");
                 words(&text_of(&line))
@@ -674,6 +692,14 @@ mod tests {
     /// What a browser asks for when the fold link on line `at` of a page is
     /// followed: the link without its fragment, which stays in the browser.
     fn fold_link(html: &str, at: usize) -> String {
+        let (asked, fragment) = fold_link_whole(html, at);
+        assert_eq!(landed_on(html, &fragment), at);
+        asked
+    }
+
+    /// The fold link on line `at` of a page, as what a browser asks for and
+    /// the fragment it keeps.
+    fn fold_link_whole(html: &str, at: usize) -> (String, String) {
         let line = line_html(html, at);
         let link = line
             .split("<a class=\"fold\" href=\"")
@@ -681,8 +707,78 @@ mod tests {
             .expect("the line folds");
         let link = link[..link.find('"').expect("the link ends")].replace("&amp;", "&");
         let (asked, fragment) = link.split_once('#').expect("the link lands on its line");
-        assert_eq!(fragment, line_anchor(at));
-        asked.to_string()
+        (asked.to_string(), fragment.to_string())
+    }
+
+    /// The ground with a bead more under its root, drawn above every other
+    /// child of it.
+    fn with_a_bead_above() -> Snapshot {
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        let mut bead = node("smt-4kd3p.9", "chart the new ground", Status::Open);
+        bead.parent = tree.beads[1].parent.clone();
+        tree.beads.push(bead);
+        tree.children.push(vec![]);
+        tree.children[0].insert(
+            0,
+            Link {
+                bead: tree.beads.len() - 1,
+                edge: Edge::ParentChild,
+                first: true,
+            },
+        );
+        snapshot.collected = snapshot.trees.clone();
+        snapshot
+    }
+
+    #[test]
+    fn a_fold_link_lands_on_its_own_line_after_a_bead_appears_above_it() {
+        let before = page_at("/").html;
+        let shut = lines_titled(&before, "apply the two niri settings")[0];
+        let (asked, fragment) = fold_link_whole(&before, shut);
+
+        let after = page_of(with_a_bead_above(), &asked);
+        assert!(text_of(&after).contains("chart the new ground"));
+        let landed = landed_on(&after, &fragment);
+        assert_ne!(landed, shut, "the bead above moved the line down");
+        assert!(
+            page_lines(&after)[landed].contains("apply the two niri settings"),
+            "{:#?}",
+            page_lines(&after)
+        );
+    }
+
+    /// A browser takes `:~:` in a fragment for the start of a directive and
+    /// looks for no element by what follows, which a project named `~` would
+    /// put in the anchor of every bead's line.
+    #[test]
+    fn no_anchor_holds_what_a_browser_takes_for_a_fragment_directive() {
+        let mut ground = ground();
+        for tree in ground.trees.iter_mut().chain(ground.collected.iter_mut()) {
+            let tree = std::sync::Arc::make_mut(tree);
+            tree.project = "~".to_string();
+            for bead in &mut tree.beads {
+                bead.project = "~".to_string();
+            }
+        }
+        ground.projects = vec!["~".to_string()];
+        let html = page_of(ground, "/");
+        assert!(html.contains("class=\"fold\""));
+        assert!(!html.contains(":~:"), "{html}");
+    }
+
+    #[test]
+    fn a_line_with_no_fold_carries_no_id() {
+        let html = page_at("/").html;
+        let lines = lines_html(&html);
+        assert!(lines.iter().any(|line| line.contains("class=\"fold\"")));
+        for (at, line) in lines.iter().enumerate() {
+            assert_eq!(
+                line_id(&html, at).is_some(),
+                line.contains("class=\"fold\""),
+                "{line}"
+            );
+        }
     }
 
     #[test]
@@ -878,13 +974,10 @@ mod tests {
 
     /// The line the page shows its bead on.
     fn shown_line(html: &str) -> usize {
-        let after = html
-            .split("class=\"line shown\" id=\"l")
-            .nth(1)
-            .expect("a line is shown");
-        after[..after.find('"').expect("the id ends")]
-            .parse()
-            .expect("a line number")
+        lines_html(html)
+            .iter()
+            .position(|line| line.starts_with(" shown\""))
+            .expect("a line is shown")
     }
 
     /// The lines the page draws `title` on.
@@ -1325,14 +1418,11 @@ mod tests {
             .filter(|&at| line_html(&html, at).contains("class=\"bead\""))
             .collect();
         assert_eq!(beads, [1, 2, 3, 4]);
+        let leaf = 3;
         for at in beads {
             let line = line_html(&html, at);
             let (shape, between) = parts(line);
-            let hung = if html.contains(&format!("#{}\"", line_anchor(at))) {
-                "a.fold"
-            } else {
-                "span"
-            };
+            let hung = if at == leaf { "span" } else { "a.fold" };
             assert_eq!(shape, [hung, "a.bead", "span.state"], "{line}");
             assert_eq!(between, "", "{line}");
 
