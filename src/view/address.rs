@@ -247,18 +247,29 @@ impl Asked {
         }
     }
 
-    /// Search `forest` for `find`'s text as the terminal's search does, or
-    /// step on from the match the reader was on as its next-match keys do.
+    /// Search `forest` for `find`'s text from the copy the reader was on, as
+    /// the terminal's search counts from the selection, or step on from the
+    /// match the reader was on as its next-match keys do.
+    ///
+    /// The folds the reader pointed under a line the search opened come into
+    /// sight only once it has landed, so they are pointed then, holding open
+    /// the lines over the match, and the match is stepped to again.
     fn search(&self, forest: &mut Forest, find: &Find) -> Landed {
-        let origin = forest.origin();
-        let landed = forest.seek(&find.text, &origin);
-        let (Some(forward), Some(place)) = (find.step, &self.place) else {
-            return landed;
-        };
-        if !forest.step_to_place(place) {
-            return landed;
+        if let (None, Some(place)) = (find.step, &self.place) {
+            forest.go_to_place(place);
         }
-        forest.next_match(forward).unwrap_or(landed)
+        let origin = forest.origin();
+        let mut landed = forest.seek(&find.text, &origin);
+        if let (Some(forward), Some(place)) = (find.step, &self.place) {
+            if forest.step_to_place(place) {
+                landed = forest.next_match(forward).unwrap_or(landed);
+            }
+        }
+        if let (Landed::On { .. }, Some(on)) = (&landed, forest.place().cloned()) {
+            point(forest, &self.folds, &folds_over_selected(forest));
+            forest.step_to_place(&on);
+        }
+        landed
     }
 
     /// Put the selection on `key`: on the copy the reader followed where it
@@ -361,9 +372,11 @@ impl Asked {
         format!("/{query}#{SHOWN}")
     }
 
-    /// The pairs a search's form carries beside what is typed into it, so
-    /// the page it answers with keeps this page's folds, list and root.
-    pub fn carried(&self) -> Vec<(&'static str, String)> {
+    /// The pairs carrying this page's folds, list and root, and the copy at
+    /// `place`. A search's form carries them beside what is typed into it,
+    /// so its answer keeps them and counts from the copy, as the terminal's
+    /// search counts from the selection.
+    pub fn carried(&self, place: Option<&Place>) -> Vec<(&'static str, String)> {
         let list = self.list.as_ref();
         let folds = self.folds.iter().map(|fold| {
             let key = if fold.open { OPEN } else { SHUT };
@@ -373,6 +386,7 @@ impl Asked {
             .chain(view_of(list).map(|name| (VIEW, name.to_string())))
             .chain(only_ready(list).then(|| (READY, ONLY.to_string())))
             .chain(self.root.as_ref().map(|root| (ROOT, placed(root))))
+            .chain(place.map(|place| (AT, placed(place))))
             .collect()
     }
 
@@ -380,9 +394,8 @@ impl Asked {
     /// at `place`, or nothing where there are none of them.
     fn query(&self, place: Option<&Place>) -> String {
         let pairs: Vec<String> = self
-            .carried()
+            .carried(place)
             .into_iter()
-            .chain(place.map(|place| (AT, placed(place))))
             .map(|(key, value)| format!("{key}={}", encoded(&value)))
             .collect();
         if pairs.is_empty() {

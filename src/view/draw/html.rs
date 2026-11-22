@@ -169,7 +169,8 @@ impl Drawing<'_> {
             escaped(phrase::ready_only())
         ));
         html.push_str("<form action=\"/\" method=\"get\">");
-        for (key, value) in self.asked.carried() {
+        let selected = self.selected.and(self.forest.place());
+        for (key, value) in self.asked.carried(selected) {
             html.push_str(&format!(
                 "<input type=\"hidden\" name=\"{key}\" value=\"{}\">",
                 escaped(&value)
@@ -1744,6 +1745,83 @@ mod tests {
         let head = &ready[ready.find("<p class=\"rooted\">").expect("the head")..];
         let head = &head[..head.find("</p>").expect("the head ends")];
         assert!(references_on(head).contains_key(&bead.id), "{head}");
+    }
+
+    /// What a browser asks for when `typed` is searched for with the form on
+    /// `html`: the form's hidden pairs, then what was typed.
+    fn searched_from(html: &str, typed: &str) -> String {
+        let form = &html[html.find("<form").expect("a search form")..];
+        let form = &form[..form.find("</form>").expect("the form ends")];
+        let written = |value: &str| {
+            value
+                .replace("&amp;", "&")
+                .replace('%', "%25")
+                .replace('&', "%26")
+                .replace('+', "%2B")
+                .replace(' ', "+")
+        };
+        let pairs: Vec<String> = form
+            .split("<input type=\"hidden\" name=\"")
+            .skip(1)
+            .map(|input| {
+                let (name, rest) = input.split_once("\" value=\"").expect("a value");
+                format!(
+                    "{name}={}",
+                    written(&rest[..rest.find('"').expect("it ends")])
+                )
+            })
+            .chain([format!("find={}", written(typed))])
+            .collect();
+        format!("/?{}", pairs.join("&"))
+    }
+
+    /// A search from a bead's page counts from that bead, as the terminal's
+    /// counts from the selection.
+    #[test]
+    fn a_search_from_a_beads_page_counts_from_that_bead() {
+        let bead = key("smt-4kd3p.4");
+        let found = page_at(&searched_from(&page_at(&address(&bead)).html, "niri")).html;
+
+        let mut terminal = flatten(ground());
+        terminal.go_to(&bead);
+        let origin = terminal.origin();
+        let landed = terminal.seek("niri", &origin);
+        assert!(
+            matches!(&landed, Landed::On { key, .. } if key.id == "smt-4kd3p.6"),
+            "{landed:?}"
+        );
+        assert_eq!(page_lines(&found), terminal_lines(&terminal));
+        assert_eq!(shown_line(&found), terminal.selected_line());
+    }
+
+    /// A fold the reader pointed under a line they shut is still pointed
+    /// once a search opens the line.
+    #[test]
+    fn a_search_that_opens_a_shut_line_keeps_the_folds_pointed_under_it() {
+        let lines = terminal_lines(&terminal_forest(&[]));
+        let under = lines
+            .iter()
+            .position(|line| line.contains("▸ ○ .6"))
+            .expect("the blocked bead rests shut over its child");
+        let opened = page_at(&fold_link(&page_at("/").html, under)).html;
+        let nested = page_lines(&opened)
+            .iter()
+            .position(|line| line.contains("confirm the wedges are gone"))
+            .expect("its child is drawn");
+        let nested_open = page_at(&fold_link(&opened, nested)).html;
+        let shut = page_at(&fold_link(&nested_open, under)).html;
+        let found = page_at(&searched_from(&shut, "confirm")).html;
+
+        let mut terminal = terminal_forest(&[under, nested, under]);
+        let origin = terminal.origin();
+        terminal.seek("confirm", &origin);
+        let lines = terminal_lines(&terminal);
+        assert!(
+            lines.iter().any(|line| line.contains("read the wedge log")),
+            "{lines:#?}"
+        );
+        assert_eq!(page_lines(&found), lines);
+        assert_eq!(shown_line(&found), terminal.selected_line());
     }
 
     /// A fold pointed on a search's answer is pointed on the forest the
