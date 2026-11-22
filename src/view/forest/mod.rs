@@ -27,8 +27,7 @@ use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
-pub use ready::ready_list;
-use ready::List;
+pub use ready::{listed, only_ready, ready_list, view_of, List};
 use search::{Listed, Matches, Sought, Walked};
 pub use spine::Spine;
 
@@ -641,24 +640,15 @@ impl Forest {
             // Laid out as it switches, so there is nothing left to compare:
             // the list and the trees are never the same screen.
             Action::ToggleReadyList => {
-                let next = match self.list.clone() {
-                    Some(List::Ready) => None,
-                    Some(List::View { name, ready }) => Some(List::View {
-                        name,
-                        ready: !ready,
-                    }),
-                    None => Some(List::Ready),
-                };
-                self.switch_to(next);
-                self.reveal();
+                let list = self.list.as_ref();
+                self.draw_list(listed(view_of(list).map(str::to_string), !only_ready(list)));
                 return true;
             }
             Action::NextView => {
                 let Some(next) = self.next_view() else {
                     return false;
                 };
-                self.switch_to(next);
-                self.reveal();
+                self.draw_list(next);
                 return true;
             }
             Action::FocusForest => {
@@ -878,24 +868,24 @@ impl Forest {
         if views.is_empty() {
             return None;
         }
-        let (at, ready) = match &self.list {
-            Some(List::View { name, ready }) => (
-                views
-                    .iter()
-                    .position(|view| view == name)
-                    .map_or(0, |at| at + 1),
-                *ready,
-            ),
-            Some(List::Ready) => (0, true),
-            None => (0, false),
-        };
-        Some(match views.get(at) {
-            Some(name) => Some(List::View {
-                name: name.clone(),
-                ready,
-            }),
-            None => ready.then_some(List::Ready),
-        })
+        let list = self.list.as_ref();
+        let at = view_of(list)
+            .and_then(|name| views.iter().position(|view| view == name))
+            .map_or(0, |at| at + 1);
+        Some(listed(views.get(at).cloned(), only_ready(list)))
+    }
+
+    /// The list drawn in place of the trees, where one is.
+    pub fn list(&self) -> Option<&List> {
+        self.list.as_ref()
+    }
+
+    /// Draw `list` in place of the trees, or the trees where it is none, as
+    /// the ready and view keys do. A view the config does not name draws
+    /// what the key would leave it on.
+    pub fn draw_list(&mut self, list: Option<List>) {
+        self.switch_to(list);
+        self.reveal();
     }
 
     /// Draw `list` in place of the trees, or the trees where it is none,

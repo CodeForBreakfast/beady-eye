@@ -8,6 +8,7 @@
 //! component that opens the bead.
 
 use std::collections::HashMap;
+use std::iter;
 
 use chrono::{DateTime, FixedOffset, Utc};
 use ratatui::text::Span;
@@ -17,12 +18,12 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
-use crate::view::address::{line_anchor, Asked, SHOWN};
+use crate::view::address::{line_anchor, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
-use crate::view::forest::Forest;
+use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{Content, Line, Waiting};
 use crate::view::row::{Layout, WARNING};
-use crate::view::{palette, phrase, show};
+use crate::view::{palette, phrase, show, Said};
 
 use super::bead::referenced_line;
 use super::foot::notices;
@@ -58,11 +59,12 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     let forest = &shown.forest;
     let node = show::selected(forest).filter(|_| shown.bead == Some(true));
     let asked = &shown.asked;
+    let matched = matches!(shown.landed, Some(Landed::On { .. }));
     let drawing = Drawing {
         forest,
         layout,
         asked,
-        selected: node.map(|_| forest.selected_line()),
+        selected: (node.is_some() || matched).then(|| forest.selected_line()),
     };
 
     let mut html = String::new();
@@ -72,6 +74,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
          <title>{}</title><style>{STYLE}</style></head><body>",
         escaped(node.map_or("bdi", |node| &node.title))
     ));
+    drawing.nav(&mut html);
     html.push_str(if shown.bead.is_some() {
         "<main class=\"open\"><div class=\"forest\">"
     } else {
@@ -86,7 +89,10 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
             escaped(phrase::back_to_the_forest())
         ));
         match node {
-            Some(node) => drawing.bead_view(&mut html, node),
+            Some(node) => {
+                drawing.rooting(&mut html);
+                drawing.bead_view(&mut html, node);
+            }
             None => html.push_str(&format!(
                 "<p class=\"missing\">{}</p>",
                 escaped(&format!("{WARNING} {}", phrase::not_drawn(key)))
@@ -95,7 +101,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         html.push_str("</aside>");
     }
     html.push_str("</main>");
-    drawing.foot(&mut html);
+    drawing.foot(&mut html, shown.landed);
     html.push_str("</body></html>\n");
     Answer {
         found: asked.bead.is_none() || node.is_some(),
@@ -125,6 +131,99 @@ struct Drawing<'a> {
 }
 
 impl Drawing<'_> {
+    /// What the terminal's keys put in force over the whole page, as links
+    /// and a form: the list menu where the config names views, the ready
+    /// switch and the search, as `v`, `r` and `/`. Then, where the forest is
+    /// drawn with one bead as its only root, that bead and the link that
+    /// puts every tree back, as `F` does.
+    fn nav(&self, html: &mut String) {
+        let list = self.forest.list();
+        html.push_str("<nav>");
+        let views = &self.forest.snapshot().views;
+        if !views.is_empty() {
+            let ready = only_ready(list);
+            let drawn = view_of(list);
+            html.push_str(&format!(
+                "<details class=\"lists\"><summary>{}</summary>",
+                escaped(drawn.unwrap_or(phrase::every_tree()))
+            ));
+            let entries = iter::once((None, phrase::every_tree())).chain(
+                views
+                    .iter()
+                    .map(|name| (Some(name.as_str()), name.as_str())),
+            );
+            for (view, said) in entries {
+                html.push_str(&format!(
+                    "<a href=\"{}\"{}>{}</a>",
+                    escaped(&self.asked.listing(listed(view.map(str::to_string), ready))),
+                    on(view == drawn),
+                    escaped(said)
+                ));
+            }
+            html.push_str("</details>");
+        }
+        html.push_str(&format!(
+            "<a class=\"ready{}\" href=\"{}\">{}</a>",
+            if only_ready(list) { " on" } else { "" },
+            escaped(&self.asked.toggling_ready()),
+            escaped(phrase::ready_only())
+        ));
+        html.push_str("<form action=\"/\" method=\"get\">");
+        for (key, value) in self.asked.carried() {
+            html.push_str(&format!(
+                "<input type=\"hidden\" name=\"{key}\" value=\"{}\">",
+                escaped(&value)
+            ));
+        }
+        let typed = self.asked.find.as_ref().map_or("", |find| &find.text);
+        html.push_str(&format!(
+            "<input type=\"search\" name=\"{FIND}\" value=\"{}\" aria-label=\"{}\">\
+             <button>{}</button></form>",
+            escaped(typed),
+            escaped(phrase::find()),
+            escaped(phrase::find())
+        ));
+        html.push_str("</nav>\n");
+        let Some(root) = self
+            .asked
+            .root
+            .as_ref()
+            .filter(|_| self.forest.is_focused())
+        else {
+            return;
+        };
+        html.push_str(&format!(
+            "<p class=\"rooted\">{} ",
+            escaped(phrase::focused())
+        ));
+        if let Some(node) = self.forest.snapshot().node(root.key()) {
+            self.reference(
+                html,
+                show::named(node, vec![Span::raw(node.title.clone())]),
+                Some(self.asked.opening_at(root)),
+            );
+        }
+        html.push_str(&format!(
+            " <a class=\"close\" href=\"{}\">{}</a></p>\n",
+            escaped(&self.asked.rooting(None)),
+            escaped(phrase::show_all())
+        ));
+    }
+
+    /// The link on the bead view that draws the bead as the only root, as
+    /// `F` does, where the forest is drawn whole. Drawn with one root, the
+    /// key puts every tree back, which the page's head offers.
+    fn rooting(&self, html: &mut String) {
+        let Some(place) = self.forest.place().filter(|_| !self.forest.is_focused()) else {
+            return;
+        };
+        html.push_str(&format!(
+            "<a class=\"root\" href=\"{}\">{}</a>\n",
+            escaped(&self.asked.rooting(Some(place))),
+            escaped(phrase::only_this_tree())
+        ));
+    }
+
     fn forest_lines(&self, html: &mut String, drawn: Drawn) {
         let lines = self.forest.lines();
         let reads = Reads::new(
@@ -313,13 +412,40 @@ impl Drawing<'_> {
         true
     }
 
-    /// Every notice the terminal says at its foot, one to a line.
-    fn foot(&self, html: &mut String) {
+    /// Every notice the terminal says at its foot, one to a line, after
+    /// what it says of where a search came to, with the links that step to
+    /// the match before and the match after, as `N` and `n` do.
+    fn foot(&self, html: &mut String, landed: Option<Landed>) {
         let notices = notices(self.forest.snapshot(), &[]);
-        if notices.is_empty() {
+        if notices.is_empty() && landed.is_none() {
             return;
         }
         html.push_str("<footer>");
+        if let Some(landed) = landed {
+            let steps = match (&landed, &self.asked.find, self.forest.place()) {
+                (Landed::On { of, .. }, Some(find), Some(place)) if *of > 1 => {
+                    Some((&find.text, place))
+                }
+                _ => None,
+            };
+            html.push_str(&format!(
+                "<p class=\"said\">{}",
+                escaped(&phrase::said(&Said::from(landed)))
+            ));
+            if let Some((find, place)) = steps {
+                for (forward, (mark, said)) in
+                    [(false, phrase::MATCH_BEFORE), (true, phrase::MATCH_AFTER)]
+                {
+                    html.push_str(&format!(
+                        " <a class=\"step\" href=\"{}\" aria-label=\"{}\">{}</a>",
+                        escaped(&self.asked.stepping(find, place, forward)),
+                        escaped(said),
+                        escaped(mark)
+                    ));
+                }
+            }
+            html.push_str("</p>");
+        }
         for notice in &notices {
             html.push_str(&format!(
                 "<p>{}</p>",
@@ -393,6 +519,15 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, links: &[Link
     }
 }
 
+/// The attribute marking the entry or switch that is in force, where `on`.
+fn on(on: bool) -> &'static str {
+    if on {
+        " class=\"on\""
+    } else {
+        ""
+    }
+}
+
 /// A style attribute holding `css`, or nothing where it is empty.
 fn styled(css: String) -> String {
     if css.is_empty() {
@@ -445,6 +580,16 @@ padding:8px 12px;border-left:1px solid var(--c8)}\
 .close{display:inline-block;margin-bottom:8px}\
 footer{padding:8px 12px;color:var(--c3)}\
 footer p,.missing{margin:0}\
+footer .said{color:var(--fg)}\
+nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--c8)}\
+nav form{display:flex;gap:4px;margin-left:auto}\
+nav input,nav button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--c8);padding:1px 6px}\
+.lists{position:relative}.lists summary{cursor:pointer}\
+.lists[open] a{display:block;padding:2px 0}\
+.lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
+.rooted{margin:0;padding:4px 12px;background:var(--shown)}\
+.root{display:block;margin-bottom:8px}\
+a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
 aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c8)}}";
 
@@ -458,7 +603,7 @@ mod tests {
     use crate::model::types::{Edge, Status};
     use crate::view::address::{address, addressable};
     use crate::view::draw::tests::{counts, drawn_at, frame_of, node, snapshot, tree};
-    use crate::view::forest::flatten;
+    use crate::view::forest::{flatten, List};
     use crate::view::Action;
 
     const PROJECT: &str = "summit-works";
@@ -522,8 +667,13 @@ mod tests {
             vec![link(8)],
             vec![],
         ];
+        for (view, listed) in VIEWS {
+            for &at in *listed {
+                beads[at].views.push((*view).to_string());
+            }
+        }
         let total = beads.len();
-        snapshot(
+        let mut ground = snapshot(
             vec![Tree {
                 beads,
                 children,
@@ -537,8 +687,14 @@ mod tests {
             }],
             Vec::new(),
             ProviderState::Absent,
-        )
+        );
+        ground.views = VIEWS.iter().map(|(view, _)| (*view).to_string()).collect();
+        ground
     }
+
+    /// The views the ground's config names, each with the beads it lists:
+    /// one of beads waiting on other work, and one holding the ready bead.
+    const VIEWS: &[(&str, &[usize])] = &[("theming", &[1, 6]), ("settings", &[2, 6, 7])];
 
     /// The page is drawn at the terminal's instant, an hour east of UTC, so
     /// a time of day said in UTC would be an hour out.
@@ -1276,5 +1432,246 @@ mod tests {
             }
         }
         html.len()
+    }
+
+    /// The address the link a page draws with the words `said` goes to, as a
+    /// browser asks for it: without its fragment, which stays in the browser.
+    fn link_saying(html: &str, said: &str) -> String {
+        let end = html
+            .find(&format!(">{}</a>", escaped(said)))
+            .unwrap_or_else(|| panic!("a link says {said:?}: {html}"));
+        let tag = &html[html[..end].rfind("<a ").expect("the link opens")..end];
+        let href = tag
+            .split("href=\"")
+            .nth(1)
+            .expect("the link goes somewhere");
+        let href = href[..href.find('"').expect("the address ends")].replace("&amp;", "&");
+        href.split('#').next().unwrap_or_default().to_string()
+    }
+
+    /// The terminal's forest for the ground after `keys`, each pressed on
+    /// whatever the selection is on.
+    fn pressed(keys: &[Action]) -> Forest {
+        let mut forest = flatten(ground());
+        for &key in keys {
+            forest.apply(key);
+        }
+        forest
+    }
+
+    #[test]
+    fn the_ready_switch_lists_what_the_terminal_lists_on_r_and_again_puts_the_trees_back() {
+        let ready = page_at(&link_saying(&page_at("/").html, phrase::ready_only())).html;
+        let terminal = terminal_lines(&pressed(&[Action::ToggleReadyList]));
+        assert!(
+            terminal
+                .iter()
+                .any(|line| line.contains("restore app theming")),
+            "{terminal:#?}"
+        );
+        assert_eq!(page_lines(&ready), terminal);
+        assert!(ready.contains("<a class=\"ready on\""), "{ready}");
+
+        let back = page_at(&link_saying(&ready, phrase::ready_only())).html;
+        assert_eq!(page_lines(&back), terminal_lines(&pressed(&[])));
+    }
+
+    /// Each view the config names is an entry of the menu, in the config's
+    /// order, and picking it lists what `v` lists on reaching it. Picked
+    /// with only ready beads listed, it keeps to them, as `v` keeps `r`.
+    #[test]
+    fn a_view_picked_from_the_menu_lists_what_the_terminal_lists_for_it() {
+        let trees = page_at("/").html;
+        let ready_trees = page_at(&link_saying(&trees, phrase::ready_only())).html;
+        for (nth, (view, _)) in VIEWS.iter().enumerate() {
+            let mut keys = vec![Action::NextView; nth + 1];
+            let picked = page_at(&link_saying(&trees, view)).html;
+            assert_eq!(
+                page_lines(&picked),
+                terminal_lines(&pressed(&keys)),
+                "{view}"
+            );
+
+            let ready = page_at(&link_saying(&picked, phrase::ready_only())).html;
+            keys.push(Action::ToggleReadyList);
+            assert_eq!(
+                page_lines(&ready),
+                terminal_lines(&pressed(&keys)),
+                "{view}"
+            );
+            let from_ready = page_at(&link_saying(&ready_trees, view)).html;
+            assert_eq!(page_lines(&from_ready), page_lines(&ready), "{view}");
+        }
+        let left = page_at(&link_saying(
+            &page_at(&link_saying(&trees, VIEWS[0].0)).html,
+            phrase::every_tree(),
+        ))
+        .html;
+        assert_eq!(page_lines(&left), terminal_lines(&pressed(&[])));
+    }
+
+    #[test]
+    fn a_page_offers_no_list_menu_where_the_config_names_no_view() {
+        let mut bare = ground();
+        bare.views.clear();
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(bare, &Layout::default(), &asked, drawing()).html;
+        assert!(!html.contains("class=\"lists\""), "{html}");
+        assert!(html.contains("class=\"ready\""), "{html}");
+    }
+
+    /// A bead's page offers its tree alone, as `F` on its row does, and the
+    /// page it goes to draws what the terminal draws then, with the bead
+    /// still shown. Its head says so and puts every tree back, as `F` again.
+    #[test]
+    fn a_bead_drawn_as_the_only_root_is_drawn_as_the_terminal_draws_it_on_f() {
+        let bead = key("smt-4kd3p.6");
+        let page_of_it = page_at(&address(&bead)).html;
+        let rooted = page_at(&link_saying(&page_of_it, phrase::only_this_tree())).html;
+
+        let mut terminal = flatten(ground());
+        terminal.go_to(&bead);
+        terminal.apply(Action::FocusForest);
+        assert!(terminal.is_focused());
+        let lines = terminal_lines(&terminal);
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.contains("restore app theming")),
+            "{lines:#?}"
+        );
+        assert_eq!(page_lines(&rooted), lines);
+        assert_eq!(shown_line(&rooted), terminal.selected_line());
+        assert!(text_of(&rooted).contains(phrase::focused()), "{rooted}");
+        assert!(!rooted.contains(phrase::only_this_tree()), "{rooted}");
+
+        let whole = page_at(&link_saying(&rooted, phrase::show_all())).html;
+        terminal.apply(Action::FocusForest);
+        assert_eq!(page_lines(&whole), terminal_lines(&terminal));
+        assert!(whole.contains(phrase::only_this_tree()), "{whole}");
+    }
+
+    /// The ready list keeps to the tree the forest is rooted at, as it does
+    /// in the terminal.
+    #[test]
+    fn the_ready_list_keeps_to_the_bead_drawn_as_the_only_root() {
+        let bead = key("smt-4kd3p.6");
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&bead)).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+        let ready = page_at(&link_saying(&rooted, phrase::ready_only())).html;
+
+        let mut terminal = flatten(ground());
+        terminal.go_to(&bead);
+        terminal.apply(Action::FocusForest);
+        terminal.apply(Action::ToggleReadyList);
+        assert_eq!(page_lines(&ready), terminal_lines(&terminal));
+    }
+
+    /// A search lands where the terminal's does, says what its foot says,
+    /// and steps through the matches as `n` and `N` do.
+    #[test]
+    fn a_search_lands_and_steps_where_the_terminals_search_does() {
+        let found = page_at("/?find=niri").html;
+        let mut terminal = flatten(ground());
+        let origin = terminal.origin();
+        let landed = terminal.seek("niri", &origin);
+        assert!(matches!(landed, Landed::On { of: 2, .. }), "{landed:?}");
+        assert_eq!(page_lines(&found), terminal_lines(&terminal));
+        assert_eq!(shown_line(&found), terminal.selected_line());
+        assert!(
+            text_of(&found).contains(&phrase::said(&Said::from(landed))),
+            "{found}"
+        );
+
+        let next = page_at(&link_saying(&found, phrase::MATCH_AFTER.0)).html;
+        let stepped = terminal.next_match(true).expect("a search to step through");
+        assert_eq!(page_lines(&next), terminal_lines(&terminal));
+        assert_eq!(shown_line(&next), terminal.selected_line());
+        assert!(
+            text_of(&next).contains(&phrase::said(&Said::from(stepped))),
+            "{next}"
+        );
+
+        let back = page_at(&link_saying(&next, phrase::MATCH_BEFORE.0)).html;
+        terminal.next_match(false);
+        assert_eq!(page_lines(&back), terminal_lines(&terminal));
+        assert_eq!(shown_line(&back), terminal.selected_line());
+    }
+
+    /// A browser sends what is typed into the search with each space as a
+    /// `+`, and the search is for the words with their spaces.
+    #[test]
+    fn a_search_typed_into_the_form_is_read_with_its_spaces() {
+        let found = page_at("/?find=wedge+log").html;
+        let mut terminal = flatten(ground());
+        let origin = terminal.origin();
+        let landed = terminal.seek("wedge log", &origin);
+        assert!(matches!(landed, Landed::On { of: 1, .. }), "{landed:?}");
+        assert_eq!(page_lines(&found), terminal_lines(&terminal));
+        assert_eq!(shown_line(&found), terminal.selected_line());
+        assert!(found.contains("value=\"wedge log\""), "{found}");
+    }
+
+    #[test]
+    fn a_search_that_matches_nothing_says_so_and_leaves_the_forest_as_it_was() {
+        let found = page_at("/?find=lighthouse").html;
+        assert_eq!(page_lines(&found), terminal_lines(&pressed(&[])));
+        assert!(!found.contains("line shown"), "{found}");
+        let said = phrase::said(&Said::NothingMatched("lighthouse".to_string()));
+        assert!(text_of(&found).contains(&said), "{found}");
+    }
+
+    /// A search looks through the list drawn, as the terminal's does, and
+    /// the form carries the list on to the page it answers with.
+    #[test]
+    fn a_search_from_the_ready_list_looks_through_the_ready_list() {
+        let ready = page_at(&link_saying(&page_at("/").html, phrase::ready_only())).html;
+        assert!(
+            ready.contains("<input type=\"hidden\" name=\"ready\" value=\"1\">"),
+            "{ready}"
+        );
+        let found = page_at("/?ready=1&find=theming").html;
+        let mut terminal = pressed(&[Action::ToggleReadyList]);
+        let origin = terminal.origin();
+        terminal.seek("theming", &origin);
+        assert_eq!(page_lines(&found), terminal_lines(&terminal));
+        assert_eq!(shown_line(&found), terminal.selected_line());
+    }
+
+    /// Every link a page carries keeps the list it draws and the bead it is
+    /// rooted at, as every key leaves them in the terminal.
+    #[test]
+    fn every_link_keeps_the_list_and_the_root() {
+        let place = |id: &str| {
+            let mut forest = flatten(ground());
+            forest.go_to(&key(id));
+            forest.place().cloned().expect("the bead is drawn")
+        };
+        let asked = Asked {
+            list: Some(List::View {
+                name: VIEWS[1].0.to_string(),
+                ready: true,
+            }),
+            root: Some(place("smt-4kd3p.6")),
+            ..Asked::default()
+        };
+        for link in [
+            asked.opening(&key("smt-4kd3p.7")),
+            asked.opening_at(&place("smt-4kd3p.7")),
+            asked.closing(),
+            asked.listing(asked.list.clone()),
+            asked.rooting(asked.root.as_ref()),
+        ] {
+            let read = Asked::of(link.split('#').next().unwrap_or_default())
+                .expect("the link is an address");
+            assert_eq!(
+                (&read.list, &read.root),
+                (&asked.list, &asked.root),
+                "{link}"
+            );
+        }
     }
 }

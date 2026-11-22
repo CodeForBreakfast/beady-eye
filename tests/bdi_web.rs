@@ -14,7 +14,10 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project, die_with, THE_DESCRIBED_SUBTREE};
+use terminal::{
+    a_home_naming_one_project, a_home_naming_one_project_settled, die_with, EACH_VIEW, THE_ARCHIVE,
+    THE_DESCRIBED_SUBTREE, TWO_VIEWS,
+};
 
 /// Long enough for a read that is coming to have come, and short enough
 /// that one that is not is a failure rather than a hang.
@@ -98,10 +101,15 @@ fn get(address: &str, path: &str) -> (String, String) {
 
 /// `bdi web` over the described subtree, once it has read the tracker.
 fn a_web_over_the_tracker(named: &str) -> (Web, String) {
-    let home = a_home_naming_one_project(named);
-    let tracker = ShimmedTracker::beside(&home);
-    tracker.holds(THE_DESCRIBED_SUBTREE);
-    let (web, address) = bdi_web(&home, &tracker);
+    a_web_over(&a_home_naming_one_project(named), THE_DESCRIBED_SUBTREE)
+}
+
+/// `bdi web` in `home`, over a tracker holding `beads`, once it has read
+/// the tracker.
+fn a_web_over(home: &Path, beads: &str) -> (Web, String) {
+    let tracker = ShimmedTracker::beside(home);
+    tracker.holds(beads);
+    let (web, address) = bdi_web(home, &tracker);
     let giving_up = Instant::now() + GIVING_UP;
     while get(&address, "/healthz").0 != "HTTP/1.1 200 OK" {
         assert!(Instant::now() < giving_up, "bdi web never read the tracker");
@@ -142,4 +150,42 @@ fn a_beads_address_answers_with_that_bead_shown() {
 
     let (status, _) = get(&address, "/arkham/dun-zzz");
     assert_eq!(status, "HTTP/1.1 404 Not Found");
+}
+
+/// Where the entry of `page`'s list menu that says `said` goes.
+fn menu_entry(page: &str, said: &str) -> String {
+    let menu = &page[page.find("<details class=\"lists\">").expect("a list menu")..];
+    let menu = &menu[..menu.find("</details>").expect("the menu ends")];
+    let end = menu
+        .find(&format!(">{said}</a>"))
+        .unwrap_or_else(|| panic!("the menu offers {said}: {menu}"));
+    let href = &menu[menu[..end]
+        .rfind("href=\"")
+        .expect("the entry goes somewhere")
+        + 6..end];
+    href[..href.find('"').expect("the address ends")].replace("&amp;", "&")
+}
+
+/// Each view the config names is an entry of the page's menu, and picking
+/// it lists the beads its conditions select and none of the others, as `v`
+/// does in the terminal.
+#[test]
+fn each_view_picked_from_the_menu_lists_only_what_it_selects() {
+    let home = a_home_naming_one_project_settled("web-views", TWO_VIEWS);
+    let (_web, address) = a_web_over(&home, THE_ARCHIVE);
+    let (_, trees) = get(&address, "/");
+
+    for (view, heading, listed, left_out) in EACH_VIEW {
+        let (status, page) = get(&address, &menu_entry(&trees, view));
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        for said in [heading, listed] {
+            assert!(page.contains(said), "{view} does not draw {said}: {page}");
+        }
+        for bead in left_out {
+            assert!(
+                !page.contains(bead),
+                "{view} lists {bead}, which it does not select: {page}"
+            );
+        }
+    }
 }

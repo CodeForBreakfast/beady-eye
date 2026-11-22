@@ -8,13 +8,18 @@
 //! flattened afresh from the snapshot and the folds are pointed on it. A link
 //! from a line names the copy of the bead the line draws too, so where the
 //! forest draws a bead more than once the page lands on that copy.
+//!
+//! What else a key changes rides in the query too: the list drawn in place
+//! of the trees, the bead the forest is rooted at, and what was searched
+//! for. Each is put on the forest by the forest's own action, before the
+//! folds, so the page draws what the terminal draws after the same keys.
 
 use std::collections::HashMap;
 use std::iter;
 
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
-use crate::view::forest::{flatten, Forest};
+use crate::view::forest::{flatten, listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{Content, Line, Place};
 use crate::view::row::Layout;
 use crate::view::Action;
@@ -25,8 +30,25 @@ const OPEN: &str = "open";
 const SHUT: &str = "shut";
 
 /// The query key naming which copy of a bead drawn more than once the page
-/// lands on.
+/// lands on. A step through a search's matches steps from this copy.
 const AT: &str = "at";
+
+/// The query keys naming the view drawn in place of the trees, and whether
+/// only ready beads are listed, which `READY` says with the value `ONLY`.
+const VIEW: &str = "view";
+const READY: &str = "ready";
+const ONLY: &str = "1";
+
+/// The query key naming the bead the forest is drawn with as its only root.
+const ROOT: &str = "root";
+
+/// The query keys holding what was searched for, and which way a step
+/// through its matches goes. A search's form names what is typed into it
+/// by `FIND`.
+pub const FIND: &str = "find";
+const STEP: &str = "step";
+const NEXT: &str = "next";
+const BACK: &str = "back";
 
 /// The anchor on the line a bead's address shows the bead on, which every
 /// link to a bead ends in, so the page it opens is scrolled to the bead.
@@ -42,6 +64,21 @@ pub struct Asked {
     /// The copy of the bead the reader followed, where the forest draws it
     /// more than once.
     pub place: Option<Place>,
+    /// The list drawn in place of the trees, where one is.
+    pub list: Option<List>,
+    /// The bead the forest is drawn with as its only root, where it is.
+    pub root: Option<Place>,
+    /// What was searched for, where a page asks for a search's answer
+    /// rather than for a bead.
+    pub find: Option<Find>,
+}
+
+/// A search a page asks for: the text, and whether the page steps on from
+/// the match it was on, forward or back, rather than searching afresh.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Find {
+    pub text: String,
+    pub step: Option<bool>,
 }
 
 /// One fold the reader has pointed: what its line is known by, and whether
@@ -62,6 +99,9 @@ pub struct Shown {
     /// What was asked, with the folds opened to reach the bead pointed open,
     /// so the next page keeps them open as the terminal does.
     pub asked: Asked,
+    /// Where the search asked for came to, with the selection on the match
+    /// where it found one.
+    pub landed: Option<Landed>,
 }
 
 /// Where the page shows one bead: its project's name as the config gives it,
@@ -84,21 +124,47 @@ impl Asked {
     /// is at that address.
     pub fn of(target: &str) -> Option<Self> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
-        let (mut folds, mut place) = (Vec::new(), None);
+        let (mut folds, mut place, mut root) = (Vec::new(), None, None);
+        let (mut view, mut ready, mut find, mut step) = (None, false, None, None);
         for pair in query.split('&') {
             let Some((key, value)) = pair.split_once('=') else {
                 continue;
             };
+            let value = form_decoded(value)?;
             let open = match key {
                 OPEN => true,
                 SHUT => false,
                 AT => {
-                    place = unplaced(&decoded(value)?);
+                    place = unplaced(&value);
+                    continue;
+                }
+                VIEW => {
+                    view = Some(value).filter(|name| !name.is_empty());
+                    continue;
+                }
+                READY => {
+                    ready = value == ONLY;
+                    continue;
+                }
+                ROOT => {
+                    root = unplaced(&value);
+                    continue;
+                }
+                FIND => {
+                    find = Some(value).filter(|text| !text.is_empty());
+                    continue;
+                }
+                STEP => {
+                    step = match value.as_str() {
+                        NEXT => Some(true),
+                        BACK => Some(false),
+                        _ => None,
+                    };
                     continue;
                 }
                 _ => continue,
             };
-            pointed(&mut folds, decoded(value)?, open);
+            pointed(&mut folds, value, open);
         }
         let bead = match path.strip_prefix('/')?.split('/').collect::<Vec<_>>()[..] {
             [""] => None,
@@ -108,7 +174,14 @@ impl Asked {
             }),
             _ => return None,
         };
-        Some(Self { bead, folds, place })
+        Some(Self {
+            bead,
+            folds,
+            place,
+            list: listed(view, ready),
+            root,
+            find: find.map(|text| Find { text, step }),
+        })
     }
 
     /// The forest this asks for, drawn from `snapshot` under `layout`: its
@@ -121,6 +194,14 @@ impl Asked {
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
         let mut forest = flatten(snapshot);
         forest.laid_out_to(layout.clone());
+        if let Some(root) = &self.root {
+            if forest.go_to_place(root) {
+                forest.apply(Action::FocusForest);
+            }
+        }
+        if self.list.is_some() {
+            forest.draw_list(self.list.clone());
+        }
         point(&mut forest, &self.folds, &[]);
         let mut asked = self.clone();
         let open_already: Vec<String> = in_sight(&forest)
@@ -148,11 +229,30 @@ impl Asked {
                 }
             }
         }
+        let landed = match (&self.bead, &self.find) {
+            (None, Some(find)) => Some(self.search(&mut forest, find)),
+            _ => None,
+        };
         Shown {
             forest,
             bead,
             asked,
+            landed,
         }
+    }
+
+    /// Search `forest` for `find`'s text as the terminal's search does, or
+    /// step on from the match the reader was on as its next-match keys do.
+    fn search(&self, forest: &mut Forest, find: &Find) -> Landed {
+        let origin = forest.origin();
+        let landed = forest.seek(&find.text, &origin);
+        let (Some(forward), Some(place)) = (find.step, &self.place) else {
+            return landed;
+        };
+        if !forest.go_to_place(place) {
+            return landed;
+        }
+        forest.next_match(forward).unwrap_or(landed)
     }
 
     /// Put the selection on `key`: on the copy the reader followed where it
@@ -179,16 +279,20 @@ impl Asked {
             _ => None,
         };
         let path = place.map_or_else(|| "/".to_string(), |place| address(place.key()));
+        let toggled = Self {
+            folds,
+            ..self.clone()
+        };
         Some(format!(
             "{path}{}#{}",
-            query(&folds, place),
+            toggled.query(place),
             line_anchor(at)
         ))
     }
 
     /// The address of the page showing `key`, with the folds this page has.
     pub fn opening(&self, key: &BeadKey) -> String {
-        format!("{}{}#{SHOWN}", address(key), query(&self.folds, None))
+        format!("{}{}#{SHOWN}", address(key), self.query(None))
     }
 
     /// The address of the page showing the bead at `place`, landing on that
@@ -197,14 +301,88 @@ impl Asked {
         format!(
             "{}{}#{SHOWN}",
             address(place.key()),
-            query(&self.folds, Some(place))
+            self.query(Some(place))
         )
     }
 
     /// The address of the forest with no bead shown, with the folds this
     /// page has.
     pub fn closing(&self) -> String {
-        format!("/{}", query(&self.folds, None))
+        format!("/{}", self.query(None))
+    }
+
+    /// The address of the page drawing `list` in place of the trees, or the
+    /// trees where it is none, with the folds and the root this page has.
+    pub fn listing(&self, list: Option<List>) -> String {
+        let listed = Self {
+            list,
+            ..self.clone()
+        };
+        format!("/{}", listed.query(None))
+    }
+
+    /// The address of the page listing only ready beads where this one lists
+    /// all of them, and all of them where it lists only ready ones, in the
+    /// view this page draws, as the ready key toggles it.
+    pub fn toggling_ready(&self) -> String {
+        let list = self.list.as_ref();
+        self.listing(listed(view_of(list).map(str::to_string), !only_ready(list)))
+    }
+
+    /// The address of this page with the forest drawn with `root` as its
+    /// only root, or drawn whole where it is none.
+    pub fn rooting(&self, root: Option<&Place>) -> String {
+        let rooted = Self {
+            root: root.cloned(),
+            ..self.clone()
+        };
+        match &self.bead {
+            Some(key) => format!(
+                "{}{}#{SHOWN}",
+                address(key),
+                rooted.query(self.place.as_ref())
+            ),
+            None => format!("/{}", rooted.query(None)),
+        }
+    }
+
+    /// The address of the match after the one at `place` of what was
+    /// searched for, or of the one before it.
+    pub fn stepping(&self, find: &str, place: &Place, forward: bool) -> String {
+        let step = if forward { NEXT } else { BACK };
+        let mut query = self.query(Some(place));
+        query.push_str(&format!("&{FIND}={}&{STEP}={step}", encoded(find)));
+        format!("/{query}#{SHOWN}")
+    }
+
+    /// The pairs a search's form carries beside what is typed into it, so
+    /// the page it answers with keeps this page's folds, list and root.
+    pub fn carried(&self) -> Vec<(&'static str, String)> {
+        let list = self.list.as_ref();
+        let folds = self.folds.iter().map(|fold| {
+            let key = if fold.open { OPEN } else { SHUT };
+            (key, fold.name.clone())
+        });
+        folds
+            .chain(view_of(list).map(|name| (VIEW, name.to_string())))
+            .chain(only_ready(list).then(|| (READY, ONLY.to_string())))
+            .chain(self.root.as_ref().map(|root| (ROOT, placed(root))))
+            .collect()
+    }
+
+    /// The query carrying this page's folds, list and root, and the copy
+    /// at `place`, or nothing where there are none of them.
+    fn query(&self, place: Option<&Place>) -> String {
+        let pairs: Vec<String> = self
+            .carried()
+            .into_iter()
+            .chain(place.map(|place| (AT, placed(place))))
+            .map(|(key, value)| format!("{key}={}", encoded(&value)))
+            .collect();
+        if pairs.is_empty() {
+            return String::new();
+        }
+        format!("?{}", pairs.join("&"))
     }
 }
 
@@ -300,23 +478,6 @@ fn unplaced(text: &str) -> Option<Place> {
     })
 }
 
-/// The query that carries `folds` and the copy at `place`, or nothing where
-/// there are neither.
-fn query(folds: &[Fold], place: Option<&Place>) -> String {
-    let pairs: Vec<String> = folds
-        .iter()
-        .map(|fold| {
-            let key = if fold.open { OPEN } else { SHUT };
-            format!("{key}={}", encoded(&fold.name))
-        })
-        .chain(place.map(|place| format!("{AT}={}", encoded(&placed(place)))))
-        .collect();
-    if pairs.is_empty() {
-        return String::new();
-    }
-    format!("?{}", pairs.join("&"))
-}
-
 /// `text` with every byte but the ones a URL leaves unreserved written as
 /// `%XX`, so it can stand as one segment of a path or one value of a query.
 fn encoded(text: &str) -> String {
@@ -329,6 +490,13 @@ fn encoded(text: &str) -> String {
         }
     }
     said
+}
+
+/// A query's value read back, as [`encoded`] writes it or as a browser
+/// writes what is typed into a form, with a space as `+`. [`encoded`] writes
+/// a `+` escaped, so one standing bare is a form's space.
+fn form_decoded(text: &str) -> Option<String> {
+    decoded(&text.replace('+', " "))
 }
 
 /// What [`encoded`] wrote, read back. Nothing where an escape is not two hex
