@@ -730,7 +730,7 @@ impl Shown {
             self.forest.restore(&prompt.origin);
             self.said = None;
         } else {
-            self.said = Some(said_of(
+            self.said = Some(Said::from(
                 self.forest.seek(prompt.query.typed(), &prompt.origin),
             ));
         }
@@ -747,7 +747,7 @@ impl Shown {
         let Some(landed) = self.forest.next_match(forward) else {
             return false;
         };
-        self.said = Some(said_of(landed));
+        self.said = Some(Said::from(landed));
         self.moved(true);
         true
     }
@@ -1072,17 +1072,6 @@ fn put_the_terminal_back_on_a_panic() {
 struct Prompt {
     query: Query,
     origin: forest::Origin,
-}
-
-/// What the foot says about where a search got to.
-///
-/// The forest reports what it did and this decides what to say about it, so
-/// the forest goes on knowing nothing about the foot.
-fn said_of(landed: forest::Landed) -> Said {
-    match landed {
-        forest::Landed::Nowhere(sought) => Said::NothingMatched(sought),
-        forest::Landed::On { key, at, of } => Said::Matched { key, at, of },
-    }
 }
 
 /// One frame: the forest, the tail beneath it, the height the forest is told

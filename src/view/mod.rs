@@ -215,6 +215,18 @@ pub enum Said {
     Matched { key: BeadKey, at: usize, of: usize },
 }
 
+/// What the foot says about where a search got to. The forest reports what
+/// it did and this decides what to say about it, so the forest goes on
+/// knowing nothing about the foot.
+impl From<forest::Landed> for Said {
+    fn from(landed: forest::Landed) -> Self {
+        match landed {
+            forest::Landed::Nowhere(sought) => Said::NothingMatched(sought),
+            forest::Landed::On { key, at, of } => Said::Matched { key, at, of },
+        }
+    }
+}
+
 /// Something true of the view as a whole rather than of any row in it, said
 /// at the foot of the screen.
 ///
