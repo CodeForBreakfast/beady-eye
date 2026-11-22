@@ -1204,17 +1204,19 @@ impl Forest {
         self.go_to_place(&place)
     }
 
-    /// Whether [`Forest::go_to`] could put the selection on `key`, which it
-    /// cannot where the forest is rooted at a bead the key is not under, or
-    /// where the list drawn has no row for it.
-    pub fn reaches(&self, key: &BeadKey) -> bool {
-        let Some(place) = self.place_of(key) else {
-            return false;
-        };
+    /// The copy of `key` [`Forest::go_to_place`] can put the selection on:
+    /// the one the list drawn has a row for, and where no list is drawn, the
+    /// one [`Forest::go_to`] goes to. Nothing where the forest is rooted at a
+    /// bead the key is not under, or the list has no row for it.
+    pub fn reaches(&self, key: &BeadKey) -> Option<Place> {
         if self.list.is_some() {
-            return self.lines.row_of(&self.handle_on(&place)).is_some();
+            return self
+                .lines
+                .viewport(0, self.lines.len())
+                .filter_map(|(_, line)| Self::place_of_a_bead(line))
+                .find(|place| place.key() == key);
         }
-        self.drawn(&place)
+        self.place_of(key).filter(|place| self.drawn(place))
     }
 
     /// The lines drawn whose folds have to be open for the selected line to
