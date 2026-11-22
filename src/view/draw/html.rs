@@ -21,7 +21,7 @@ use crate::model::types::{Edge, Status};
 use crate::view::address::{line_anchor, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
-use crate::view::lines::{Content, Line, Waiting};
+use crate::view::lines::{Content, Line, Place, Waiting};
 use crate::view::row::{Layout, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
@@ -101,7 +101,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         html.push_str("</aside>");
     }
     html.push_str("</main>");
-    drawing.foot(&mut html, shown.landed);
+    drawing.foot(&mut html, shown.landed, &shown.searched);
     html.push_str("</body></html>\n");
     Answer {
         found: asked.bead.is_none() || node.is_some(),
@@ -200,7 +200,7 @@ impl Drawing<'_> {
             self.reference(
                 html,
                 show::named(node, vec![Span::raw(node.title.clone())]),
-                Some(self.asked.opening_at(root)),
+                Some(self.opening(root.key(), Some(root))),
             );
         }
         html.push_str(&format!(
@@ -272,7 +272,7 @@ impl Drawing<'_> {
             let href = line
                 .place
                 .as_ref()
-                .map(|place| self.asked.opening_at(place));
+                .map(|place| self.opening(place.key(), Some(place)));
             self.reference(html, reference, href);
             if !identity.is_empty() {
                 html.push_str(&indent());
@@ -360,7 +360,9 @@ impl Drawing<'_> {
         self.reference(
             html,
             show::named(node, vec![Span::raw(node.title.clone())]),
-            forest.place().map(|place| self.asked.opening_at(place)),
+            forest
+                .place()
+                .map(|place| self.opening(place.key(), Some(place))),
         );
         html.push_str("</div>\n");
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
@@ -408,37 +410,44 @@ impl Drawing<'_> {
             return false;
         };
         let key = show::key_of(self.forest, related).filter(|_| followable);
-        self.reference(html, reference, key.map(|key| self.opening(&key)));
+        self.reference(html, reference, key.map(|key| self.opening(&key, None)));
         true
     }
 
-    /// The address of the page showing `key`. A bead outside the tree the
-    /// forest is drawn with as its only root, or outside the list drawn,
+    /// The address of the page showing `key`, landing on the copy at
+    /// `place` where there is one. A bead outside the tree the forest is
+    /// drawn with as its only root, or without a row in the list drawn,
     /// opens with every tree drawn, because this page has no line to show
     /// it on.
-    fn opening(&self, key: &BeadKey) -> String {
-        if self.forest.reaches(key) {
-            return self.asked.opening(key);
+    fn opening(&self, key: &BeadKey, place: Option<&Place>) -> String {
+        let whole;
+        let asked = if self.forest.reaches(key) {
+            self.asked
+        } else {
+            whole = Asked {
+                root: None,
+                list: None,
+                ..self.asked.clone()
+            };
+            &whole
+        };
+        match place {
+            Some(place) => asked.opening_at(place),
+            None => asked.opening(key),
         }
-        Asked {
-            root: None,
-            list: None,
-            ..self.asked.clone()
-        }
-        .opening(key)
     }
 
     /// Every notice the terminal says at its foot, one to a line, after
     /// what it says of where a search came to, with the links that step to
     /// the match before and the match after, as `N` and `n` do.
-    fn foot(&self, html: &mut String, landed: Option<Landed>) {
+    fn foot(&self, html: &mut String, landed: Option<Landed>, searched: &Asked) {
         let notices = notices(self.forest.snapshot(), &[]);
         if notices.is_empty() && landed.is_none() {
             return;
         }
         html.push_str("<footer>");
         if let Some(landed) = landed {
-            let steps = match (&landed, &self.asked.find, self.forest.place()) {
+            let steps = match (&landed, &searched.find, self.forest.place()) {
                 (Landed::On { of, .. }, Some(find), Some(place)) if *of > 1 => {
                     Some((&find.text, place))
                 }
@@ -454,7 +463,7 @@ impl Drawing<'_> {
                 {
                     html.push_str(&format!(
                         " <a class=\"step\" href=\"{}\" aria-label=\"{}\">{}</a>",
-                        escaped(&self.asked.stepping(find, place, forward)),
+                        escaped(&searched.stepping(find, place, forward)),
                         escaped(said),
                         escaped(mark)
                     ));
@@ -1680,12 +1689,10 @@ mod tests {
         assert_eq!(shown_line(&found), terminal.selected_line());
     }
 
-    /// What each bead the bead view on `html` names asks for, by the bead's
-    /// id, after checking the page it opens shows it.
-    fn named_by_the_bead_view(html: &str) -> HashMap<String, Asked> {
-        let aside = &html[html.find("<aside>").expect("the bead view")..];
-        aside
-            .split("<a class=\"bead\" href=\"")
+    /// What each reference to a bead on `html` asks for, by the bead's id,
+    /// after checking the page it opens shows it.
+    fn references_on(html: &str) -> HashMap<String, Asked> {
+        html.split("<a class=\"bead\" href=\"")
             .skip(1)
             .map(|link| {
                 let link = link[..link.find('"').expect("the address ends")].replace("&amp;", "&");
@@ -1695,6 +1702,70 @@ mod tests {
                 (asked.bead.clone().expect("a bead's address").id, asked)
             })
             .collect()
+    }
+
+    /// The same of the references the bead view on `html` draws.
+    fn named_by_the_bead_view(html: &str) -> HashMap<String, Asked> {
+        references_on(&html[html.find("<aside>").expect("the bead view")..])
+    }
+
+    /// Where a list has a row expanded to the beads waiting on it, a bead
+    /// that waits and has no row of its own opens with every tree drawn.
+    #[test]
+    fn a_bead_waiting_under_a_listed_row_opens_a_page_that_shows_it() {
+        let ready = page_at("/?ready=1").html;
+        let row = page_lines(&ready)
+            .iter()
+            .position(|line| line.contains("restore app theming"))
+            .expect("the ready bead is listed");
+        let expanded = page_at(&fold_link(&ready, row)).html;
+        assert!(
+            page_lines(&expanded)
+                .iter()
+                .any(|line| line.contains("wire the niri theme include")),
+            "{expanded}"
+        );
+        let references = references_on(&expanded);
+        assert!(references["smt-4kd3p.1"].list.is_none(), "{expanded}");
+        assert!(references["smt-4kd3p.4"].list.is_some(), "{expanded}");
+    }
+
+    /// The bead the forest is drawn with as its only root opens from the
+    /// head of the page even where the list drawn leaves it out.
+    #[test]
+    fn the_only_root_opens_from_the_head_where_the_list_leaves_it_out() {
+        let bead = key("smt-4kd3p.6");
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&bead)).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+        let ready = page_at(&link_saying(&rooted, phrase::ready_only())).html;
+        let head = &ready[ready.find("<p class=\"rooted\">").expect("the head")..];
+        let head = &head[..head.find("</p>").expect("the head ends")];
+        assert!(references_on(head).contains_key(&bead.id), "{head}");
+    }
+
+    /// A fold pointed on a search's answer is pointed on the forest the
+    /// search opened, as a fold key after `/` is: the folds the search
+    /// opened stay open.
+    #[test]
+    fn a_fold_pointed_on_a_searchs_answer_keeps_what_the_search_opened() {
+        let found = page_at("/?find=wedge").html;
+        let on = shown_line(&found);
+        let toggled = page_at(&fold_link(&found, on)).html;
+
+        let mut terminal = flatten(ground());
+        let origin = terminal.origin();
+        terminal.seek("wedge", &origin);
+        terminal.select_line(on);
+        terminal.apply(Action::ToggleFold);
+        let lines = terminal_lines(&terminal);
+        assert!(
+            lines.iter().any(|line| line.contains("read the wedge log")),
+            "{lines:#?}"
+        );
+        assert_eq!(page_lines(&toggled), lines);
     }
 
     /// Every bead the bead view names opens a page that shows it. One

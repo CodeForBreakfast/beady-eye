@@ -99,6 +99,11 @@ pub struct Shown {
     /// What was asked, with the folds opened to reach the bead pointed open,
     /// so the next page keeps them open as the terminal does.
     pub asked: Asked,
+    /// What was asked, as a step through the search's matches carries it
+    /// on: without the folds the search opened, which the next step shuts
+    /// as `n` does. Every other link carries them, as every other key keeps
+    /// them open.
+    pub searched: Asked,
     /// Where the search asked for came to, with the selection on the match
     /// where it found one.
     pub landed: Option<Landed>,
@@ -210,33 +215,34 @@ impl Asked {
             .map(|(name, _)| name)
             .collect();
         let bead = self.bead.as_ref().map(|key| self.reach(&mut forest, key));
+        let mut kept_open = Vec::new();
         if let (Some(true), Some(key)) = (bead, &self.bead) {
-            let lines = forest.lines();
-            let over: Vec<String> = forest
-                .lines_over_selected()
-                .into_iter()
-                .filter_map(|at| lines.get(at).and_then(fold_name))
-                .collect();
+            kept_open = folds_over_selected(&forest);
             // Going to the bead brought lines into sight whose folds the
             // reader may have pointed, and the terminal keeps those as they
             // were pointed. Pointing them moves the selection, so the bead
             // is gone to again.
-            point(&mut forest, &self.folds, &over);
+            point(&mut forest, &self.folds, &kept_open);
             self.reach(&mut forest, key);
-            for name in over {
-                if !open_already.contains(&name) {
-                    pointed(&mut asked.folds, name, true);
-                }
-            }
         }
+        let searched = asked.clone();
         let landed = match (&self.bead, &self.find) {
             (None, Some(find)) => Some(self.search(&mut forest, find)),
             _ => None,
         };
+        if let Some(Landed::On { .. }) = landed {
+            kept_open = folds_over_selected(&forest);
+        }
+        for name in kept_open {
+            if !open_already.contains(&name) {
+                pointed(&mut asked.folds, name, true);
+            }
+        }
         Shown {
             forest,
             bead,
             asked,
+            searched,
             landed,
         }
     }
@@ -391,6 +397,17 @@ impl Asked {
 fn pointed(folds: &mut Vec<Fold>, name: String, open: bool) {
     folds.retain(|fold| fold.name != name);
     folds.push(Fold { name, open });
+}
+
+/// What the lines open over the selection are known by, which are the folds
+/// going to it opened.
+fn folds_over_selected(forest: &Forest) -> Vec<String> {
+    let lines = forest.lines();
+    forest
+        .lines_over_selected()
+        .into_iter()
+        .filter_map(|at| lines.get(at).and_then(fold_name))
+        .collect()
 }
 
 /// The anchor on the line drawn `at`.
