@@ -86,7 +86,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         html.push_str(&format!(
             "<aside><a class=\"close\" href=\"{}\">{}</a>\n",
             escaped(&asked.closing()),
-            escaped(phrase::back_to_the_forest())
+            escaped(phrase::back())
         ));
         match node {
             Some(node) => {
@@ -117,7 +117,7 @@ pub fn saying(said: &str) -> String {
          <title>bdi</title><style>{STYLE}</style></head><body><footer><p>{}</p>\
          <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
         escaped(said),
-        escaped(phrase::back_to_the_forest())
+        escaped(phrase::back())
     )
 }
 
@@ -2202,7 +2202,7 @@ mod tests {
         let target = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
         let answer = page_at(&target);
         assert!(answer.found, "{}", answer.html);
-        let closing = link_saying(&answer.html, phrase::back_to_the_forest());
+        let closing = link_saying(&answer.html, phrase::back());
         let carried = Asked::of(&closing).expect("an address").folds;
         assert_eq!(carried, Vec::new(), "{closing}");
     }
