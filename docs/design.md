@@ -4567,8 +4567,8 @@ change held, so a connection also wakes when the read out passes
 `unanswered_after_seconds`.
 
 The script replaces the body with each page, and keeps the line at the top of
-the window where it was, the bead view's scroll, and the link that had focus.
-The folds ride in the address the script asks, so a reader's folds stay as
+the window where it was, both panes' scroll, the link that had focus, an open
+menu, and what is typed in the find field. The folds ride in the address the script asks, so a reader's folds stay as
 they were. Pointing a fold is still a link, and the new page opens its own
 connection.
 
