@@ -134,7 +134,12 @@ impl Latest {
                 .collecting
                 .as_ref()
                 .filter(|out| !out.unanswered_at(now))
-                .and_then(|out| (out.asked_at + out.patience - now).to_std().ok());
+                .and_then(|out| {
+                    out.patience
+                        .checked_sub(&(now - out.asked_at))?
+                        .to_std()
+                        .ok()
+                });
             let wait = unanswered_in.map_or(left, |unanswered_in| left.min(unanswered_in));
             held = self
                 .changed

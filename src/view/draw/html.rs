@@ -480,7 +480,7 @@ aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c
 /// body, keeping the line at the top of the window where it was, the bead
 /// view's scroll, and the link that had focus. Without it the page is the
 /// same page, drawn once.
-const KEPT_CURRENT: &str = r#"addEventListener("DOMContentLoaded", () => {
+const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const asked = location.pathname + (location.search ? location.search + "&" : "?");
   const changes = new EventSource(asked + "since=" + document.documentElement.dataset.change);
@@ -494,24 +494,27 @@ const KEPT_CURRENT: &str = r#"addEventListener("DOMContentLoaded", () => {
     }
     show(page);
   });
-  const known = (line) => line.querySelector("a.bead")?.getAttribute("href") ?? line.id;
+  const target = (link) => link?.getAttribute("href")?.split("#")[0];
+  const known = (line) => target(line.querySelector("a")) ?? line.id;
   const lines = () => [...document.querySelectorAll(".line")];
+  const scrolling = () => [document.querySelector(".forest"), document.querySelector("aside")];
   const show = (page) => {
     const drawn = new DOMParser().parseFromString(page.join("\n"), "text/html");
     const top = lines().find((line) => line.getBoundingClientRect().bottom > 0);
     const kept = top && [known(top), top.getBoundingClientRect().top];
-    const focused = document.activeElement?.getAttribute("href");
-    const scrolled = document.querySelector("aside")?.scrollTop;
+    const focused = target(document.activeElement);
+    const scrolled = scrolling().map((box) => box && [box.scrollLeft, box.scrollTop]);
     document.title = drawn.title;
     document.body.replaceWith(drawn.body);
     const again = kept && lines().find((line) => known(line) === kept[0]);
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
-    const aside = document.querySelector("aside");
-    if (aside && scrolled) aside.scrollTop = scrolled;
+    scrolling().forEach((box, at) => {
+      if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
+    });
     if (focused) [...document.querySelectorAll("a")]
-      .find((link) => link.getAttribute("href") === focused)?.focus({ preventScroll: true });
+      .find((link) => target(link) === focused)?.focus({ preventScroll: true });
   };
-});"#;
+});"##;
 
 #[cfg(test)]
 mod tests {
