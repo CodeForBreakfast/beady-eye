@@ -18,10 +18,11 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
-use crate::view::address::{fold_name, Asked, FIND, SHOWN};
+use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{Content, Line, Waiting};
+use crate::view::markdown::Flow;
 use crate::view::row::{Layout, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
@@ -82,7 +83,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     if let Some(key) = &asked.bead {
         html.push_str(&format!(
             "<aside><a class=\"close\" href=\"{}\">{}</a>\n",
-            escaped(&asked.closing()),
+            escaped(&asked.closing(node.and(forest.place()), forest.list().is_some())),
             escaped(phrase::back())
         ));
         match node {
@@ -286,7 +287,7 @@ impl Drawing<'_> {
         };
         let whole = drawn.whole();
         let selected = self.selected == Some(at);
-        let anchor = fold_name(line, self.listed())
+        let anchor = line_name(line, self.listed())
             .map_or_else(String::new, |name| format!(" id=\"{name}\""));
         html.push_str(&format!(
             "<div class=\"line{}\"{anchor}{}>",
@@ -435,22 +436,38 @@ impl Drawing<'_> {
             forest.place().map(|place| self.asked.opening_at(place)),
         );
         html.push_str("</div>");
+        let mut in_prose = false;
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
             let links = page.links.get(&at).map_or(&[][..], Vec::as_slice);
+            // A row of prose starts with two spans: the indent the page gives
+            // it, and the lead or the hang the text gives it.
+            let (lead, rest) = row.split_at(row.len().min(2));
+            let flow = page.prose.get(&at);
             // A row of prose broken from the one above only to fit the
             // terminal's width keeps that break in an element of its own, so a
             // page narrower than the terminal can let the prose flow.
-            if let Some(joint) = page.flowing.get(&at) {
-                let (hang, rest) = row.split_at(row.len().min(2));
+            if let Some(Flow::Joins(joint)) = flow {
                 html.push_str(joint);
                 html.push_str("<span class=\"w\">\n");
-                spans(html, hang, Block::Identity, links, 0);
+                spans(html, lead, Block::Identity, links, 0);
                 html.push_str("</span>");
-                spans(html, rest, Block::Identity, links, hang.len());
+                spans(html, rest, Block::Identity, links, lead.len());
                 continue;
             }
+            if std::mem::take(&mut in_prose) {
+                html.push_str("</span></span>");
+            }
             html.push('\n');
-            if let Some(related) = named.get(&at) {
+            // A line of prose is an element of its own, with what it starts
+            // with apart from its text, so a phone can set the text in a face
+            // of its own and hang every row of it under the text's start.
+            if let Some(Flow::Opens) = flow {
+                html.push_str("<span class=\"p\"><span class=\"lead\">");
+                spans(html, lead, Block::Identity, links, 0);
+                html.push_str("</span><span class=\"t\">");
+                spans(html, rest, Block::Identity, links, lead.len());
+                in_prose = true;
+            } else if let Some(related) = named.get(&at) {
                 let (arrow, rest) = row.split_at(row.len().min(2));
                 html.push_str("<span class=\"arrow\">");
                 spans(html, arrow, Block::Identity, &[], 0);
@@ -481,6 +498,9 @@ impl Drawing<'_> {
             } else {
                 spans(html, row, Block::Identity, links, 0);
             }
+        }
+        if in_prose {
+            html.push_str("</span></span>");
         }
         html.push_str("\n</div>");
     }
@@ -741,6 +761,10 @@ border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
 .page .w,.page .arrow{display:none}\
+.page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
+vertical-align:top;width:100%;white-space:normal}\
+.page .lead{white-space:pre}\
+.page .p .t{font:15px system-ui,sans-serif;line-height:1.5;overflow-wrap:anywhere}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
@@ -1150,15 +1174,21 @@ mod tests {
         assert!(!html.contains(":~:"), "{html}");
     }
 
+    /// A link lands on a line by its id, so a line no link lands on, one
+    /// that neither folds nor is a bead's row, carries none.
     #[test]
-    fn a_line_with_no_fold_carries_no_id() {
+    fn a_line_that_neither_folds_nor_is_a_beads_row_carries_no_id() {
         let html = page_at("/").html;
         let lines = lines_html(&html);
-        assert!(lines.iter().any(|line| line.contains("class=\"fold\"")));
+        let folds = |line: &&str| line.contains("class=\"fold\"");
+        let bead = |line: &&str| line.contains("class=\"bead\"");
+        assert!(lines.iter().any(folds));
+        assert!(lines.iter().any(|line| !folds(line) && bead(line)));
+        assert!(lines.iter().any(|line| !bead(line)));
         for (at, line) in lines.iter().enumerate() {
             assert_eq!(
                 line_id(&html, at).is_some(),
-                line.contains("class=\"fold\""),
+                folds(line) || bead(line),
                 "{line}"
             );
         }
@@ -1309,15 +1339,79 @@ mod tests {
     #[test]
     fn the_folds_opened_to_reach_a_bead_stay_open_once_its_view_is_closed() {
         let shown = page_at(&address(&key("smt-4kd3p.7"))).html;
-        let close = shown
-            .split("<a class=\"close\" href=\"")
-            .nth(1)
-            .expect("the bead view closes");
-        let close = close[..close.find('"').expect("the link ends")].replace("&amp;", "&");
+        let close = closing_link(&shown);
+        let (close, _) = close
+            .split_once('#')
+            .expect("the link lands on the bead's row");
 
         let mut terminal = flatten(ground());
         assert!(terminal.go_to(&key("smt-4kd3p.7")));
-        assert_eq!(page_lines(&page_at(&close).html), terminal_lines(&terminal));
+        assert_eq!(page_lines(&page_at(close).html), terminal_lines(&terminal));
+    }
+
+    /// The whole address the bead view's back link goes to, fragment and all.
+    fn closing_link(html: &str) -> String {
+        let close = html
+            .split("<a class=\"close\" href=\"")
+            .nth(1)
+            .expect("the bead view closes");
+        close[..close.find('"').expect("the link ends")].replace("&amp;", "&")
+    }
+
+    /// Closing the bead view lands on the bead's own row of the forest, so a
+    /// phone, which draws the bead view in the forest's place, comes back to
+    /// where the reader was rather than to the top of a long forest.
+    #[test]
+    fn closing_a_beads_view_lands_on_its_row() {
+        let tree = address(&key("smt-4kd3p.8"));
+        let listed = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
+        let twice = page_of(reached_twice(), &address(&key("smt-4kd3p.6")));
+        for (shown, bead) in [
+            (page_at(&tree).html, "smt-4kd3p.8"),
+            (page_at(&listed).html, "smt-4kd3p.7"),
+            (twice, "smt-4kd3p.6"),
+        ] {
+            let close = closing_link(&shown);
+            let (target, landing) = close.split_once('#').expect("the link lands somewhere");
+            let closed = if bead == "smt-4kd3p.6" {
+                page_of(reached_twice(), target)
+            } else {
+                page_at(target).html
+            };
+            let opened_at = lines_html(&shown)
+                .iter()
+                .position(|line| line.starts_with(" shown\""))
+                .expect("a line is shown");
+            let landed = landed_on(&closed, landing);
+            assert!(
+                text_of(line_html(&closed, landed)).contains(bead),
+                "{close}"
+            );
+            assert_eq!(landed, opened_at, "{close}");
+        }
+    }
+
+    /// A link lands on the first line carrying its fragment, so no two lines
+    /// of a page carry one id: not a bead the trees draw twice, and not a
+    /// bead a list draws again under each row expanded to what it waits on.
+    #[test]
+    fn no_two_lines_of_a_page_carry_one_id() {
+        let mut listed = page_at(&format!("/?view={}", VIEWS[0].0)).html;
+        for title in ["wire the niri theme include", "apply the two niri settings"] {
+            let row = page_lines(&listed)
+                .iter()
+                .position(|line| line.contains(title))
+                .expect("the bead is listed");
+            listed = page_at(&fold_link(&listed, row)).html;
+        }
+        assert_eq!(lines_titled(&listed, "lift the ground station").len(), 2);
+        for html in [page_of(reached_twice(), "/"), listed] {
+            let ids: Vec<String> = (0..lines_html(&html).len())
+                .filter_map(|at| line_id(&html, at))
+                .collect();
+            let unique: std::collections::HashSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        }
     }
 
     #[test]
@@ -1872,6 +1966,54 @@ mod tests {
         assert!(lines.contains(&paragraph.to_string()), "{lines:#?}");
         assert!(lines.contains(&"• one item".to_string()), "{lines:#?}");
         assert!(lines.contains(&"• another item".to_string()), "{lines:#?}");
+    }
+
+    /// A phone sets the bead view's prose in a face of its own and lets it
+    /// flow, and a wrapped item still hangs under its text rather than its
+    /// marker. So each line of prose is an element holding its lead, the
+    /// indent and any marker, apart from its text, and all of a wrapped
+    /// item's rows are in the one element. A line of code is laid out by
+    /// its author and is not prose.
+    #[test]
+    fn each_line_of_the_bead_views_prose_holds_its_lead_apart_from_its_text() {
+        let item = "re-silver the reflector before the lamp goes back in, and test the diaphone once it is back in its housing on the gallery";
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying(
+                &format!("A first paragraph.\n\n- {item}\n\n```\nlog the burn\n```"),
+                "",
+            );
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let view = inside(&html, "page");
+        let mut lines = Vec::new();
+        let mut from = 0;
+        while let Some(found) = view[from..].find("<span class=\"p\">") {
+            let open = from + found;
+            let end = element_end(view, open);
+            let line = &view[open..end];
+            let (shape, between) = parts(inside(line, "p"));
+            assert_eq!(shape, ["span.lead", "span.t"], "{line}");
+            assert_eq!(between, "", "{line}");
+            let mut text = inside(line, "t").to_string();
+            while let Some(at) = text.find("<span class=\"w\">") {
+                text.replace_range(at..element_end(&text, at), "");
+            }
+            lines.push((text_of(inside(line, "lead")), words(&text_of(&text))));
+            from = end;
+        }
+        assert!(
+            lines.contains(&("  ".to_string(), "A first paragraph.".to_string())),
+            "{lines:#?}"
+        );
+        assert!(
+            lines.contains(&("  • ".to_string(), item.to_string())),
+            "{lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|(_, text)| text.contains("log the burn")),
+            "{lines:#?}"
+        );
+        assert!(text_of(view).contains("log the burn"), "{view}");
     }
 
     /// The arrow a related bead is drawn after is apart from the reference,
@@ -2559,7 +2701,7 @@ mod tests {
         for link in [
             asked.opening(&key("smt-4kd3p.7")),
             asked.opening_at(&place("smt-4kd3p.7")),
-            asked.closing(),
+            asked.closing(None, false),
             asked.listing(asked.list.clone()),
             asked.rooting(asked.root.as_ref()),
         ] {
