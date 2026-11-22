@@ -84,13 +84,13 @@ impl Drop for Kept {
 }
 
 /// The change a reconnecting script last heard of, or the one its page was
-/// drawn from.
+/// drawn from, which the script puts last in the query.
 fn since(head: &Head) -> Option<u64> {
     head.header("Last-Event-ID")
         .or_else(|| {
             let (_, query) = head.target.split_once('?')?;
             query
-                .split('&')
+                .rsplit('&')
                 .find_map(|pair| pair.strip_prefix(SINCE)?.strip_prefix('='))
         })
         .and_then(|change| change.parse().ok())
@@ -383,6 +383,8 @@ mod tests {
         assert!(!asks_for_changes(&head));
         assert_eq!(since(&head), Some(44));
         assert_eq!(since(&asked("GET / HTTP/1.1\r\n\r\n")), None);
+        let head = asked("GET /?since=7&since=41 HTTP/1.1\r\n\r\n");
+        assert_eq!(since(&head), Some(41), "the script's own comes last");
     }
 
     /// A page asking to be kept current while as many are kept current as
