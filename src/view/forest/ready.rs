@@ -28,7 +28,7 @@ use super::way_to;
 
 /// A list drawn in place of the trees.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum List {
+pub enum List {
     Ready,
     /// The view the config names so, with only the beads the ready list
     /// would draw where `ready` is set.
@@ -36,6 +36,32 @@ pub(super) enum List {
         name: String,
         ready: bool,
     },
+}
+
+/// What is drawn for `view`, or for the trees where it is none, listing only
+/// ready beads where `ready` is set.
+pub fn listed(view: Option<String>, ready: bool) -> Option<List> {
+    match view {
+        Some(name) => Some(List::View { name, ready }),
+        None => ready.then_some(List::Ready),
+    }
+}
+
+/// The view `list` draws, where it draws one.
+pub fn view_of(list: Option<&List>) -> Option<&str> {
+    match list {
+        Some(List::View { name, .. }) => Some(name),
+        _ => None,
+    }
+}
+
+/// Whether `list` lists only ready beads.
+pub fn only_ready(list: Option<&List>) -> bool {
+    match list {
+        Some(List::Ready) => true,
+        Some(List::View { ready, .. }) => *ready,
+        None => false,
+    }
 }
 
 /// Every line a list draws: each project's own line, saying how fresh its

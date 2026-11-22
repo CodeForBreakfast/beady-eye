@@ -976,6 +976,39 @@ pub fn back_to_the_forest() -> &'static str {
     "✕ back to the forest"
 }
 
+/// The entry in a web page's list menu that draws the trees, as leaving the
+/// last view does in the terminal.
+pub fn every_tree() -> &'static str {
+    "every tree"
+}
+
+/// The web page's switch that lists only ready beads, as `r` does.
+pub fn ready_only() -> &'static str {
+    "ready"
+}
+
+/// The web page's search, as `/` is.
+pub fn find() -> &'static str {
+    "find"
+}
+
+/// The link on a web page's bead view that draws the bead as the only root,
+/// as `F` does.
+pub fn only_this_tree() -> &'static str {
+    "show only this tree"
+}
+
+/// The link on a web page drawn with one bead as its only root that puts
+/// every tree back, as `F` does again.
+pub fn show_all() -> &'static str {
+    "show all"
+}
+
+/// The web page's links to the match before and the match after, as `N`
+/// and `n` step, each drawn as its mark and said as its words.
+pub const MATCH_BEFORE: (&str, &str) = ("‹", "previous match");
+pub const MATCH_AFTER: (&str, &str) = ("›", "next match");
+
 /// What following a web page's fold link does to an open fold.
 pub fn shut_the_fold() -> &'static str {
     "shut"
