@@ -4537,8 +4537,9 @@ of it. One sent to `localhost`, to an address, or to a name `--allow-host`
 gives is answered, on any port, and any other is refused with `421 Misdirected
 Request`. No other page can make a browser send `localhost` or an address as
 the host, so a loopback run needs no setting, and a probe by the pod's address
-passes. The check sits in `cli/web.rs`, at the top of the one function every
-request goes through.
+passes. Behind a proxy the check reads the Host the proxy sends, so the proxy
+passes the browser's through. The check sits in `cli/web.rs`, at the top of
+the one function every request goes through.
 
 **Three places, each knowing one thing.** `cli/web.rs` serves: it holds the
 latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`

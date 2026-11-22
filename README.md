@@ -382,6 +382,11 @@ $ bdi web --listen 0.0.0.0:8080 --allow-host beads.example.invalid
 Any other request is refused with `421 Misdirected Request`, `/healthz`
 included. A probe that asks by the pod's or the machine's address is answered.
 
+`bdi web` sees the Host the proxy sends, not the one the browser sent. So the
+proxy must pass the browser's Host through unchanged. A proxy that rewrites it
+to an address turns the check off, and one that rewrites it to another name is
+refused unless that name is allowed.
+
 ## Writing back
 
 beady-eye writes to a tracker in two ways.
