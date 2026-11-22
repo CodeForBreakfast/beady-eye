@@ -391,11 +391,13 @@ pub(crate) enum Level<'a> {
     /// A level nothing runs down through.
     Gap,
     /// The line's own elbow onto the line it hangs under: the last line
-    /// hung there or not, and on the dashed arm or the solid one.
+    /// hung there or not, on the dashed arm or the solid one, and whether
+    /// its arm ends in the ready list's arrow up.
     Elbow {
         drawn: &'a str,
         last: bool,
         blocks: bool,
+        up: bool,
     },
 }
 
@@ -442,6 +444,7 @@ pub(crate) fn levels(prefix: &str) -> Option<(&str, Vec<Level<'_>>)> {
         drawn: rest,
         last,
         blocks,
+        up: chars.next() == Some(UP_THE_ARM),
     });
     Some((INDENT, levels))
 }
@@ -713,20 +716,21 @@ mod tests {
             .iter()
             .map(|prefix| levels(prefix).expect("connectors read back"))
             .collect();
-        let elbow = |drawn, last, blocks| Level::Elbow {
+        let elbow = |drawn, last, blocks, up| Level::Elbow {
             drawn,
             last,
             blocks,
+            up,
         };
         assert_eq!(
             read.iter()
                 .map(|(_, levels)| levels.clone())
                 .collect::<Vec<_>>(),
             [
-                vec![elbow("└── ", true, false)],
-                vec![Level::Trunk, Level::Gap, elbow("├─▸ ", false, false)],
-                vec![Level::Gap, elbow("└┄┄ ", true, true)],
-                vec![Level::Trunk, elbow("├┄↑ ", false, true)],
+                vec![elbow("└── ", true, false, false)],
+                vec![Level::Trunk, Level::Gap, elbow("├─▸ ", false, false, false)],
+                vec![Level::Gap, elbow("└┄┄ ", true, true, false)],
+                vec![Level::Trunk, elbow("├┄↑ ", false, true, true)],
             ]
         );
         for (prefix, (indent, levels)) in drawn.iter().zip(&read) {

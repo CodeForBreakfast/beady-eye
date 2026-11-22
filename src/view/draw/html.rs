@@ -647,14 +647,22 @@ fn railed(prefix: &str, listed: bool) -> String {
                 html.push_str(&drawn);
                 continue;
             }
-            Level::Trunk => ("i", ""),
-            Level::Gap => ("b", ""),
-            Level::Elbow { last, blocks, .. } => match (last, blocks) {
-                (false, false) => ("u", ""),
-                (true, false) => ("u", " class=\"last\""),
-                (false, true) => ("u", " class=\"blocks\""),
-                (true, true) => ("u", " class=\"last blocks\""),
-            },
+            Level::Trunk => ("i", String::new()),
+            Level::Gap => ("b", String::new()),
+            Level::Elbow {
+                last, blocks, up, ..
+            } => {
+                let classes: Vec<_> = [(last, "last"), (blocks, "blocks"), (up, "up")]
+                    .into_iter()
+                    .filter_map(|(on, class)| on.then_some(class))
+                    .collect();
+                let class = if classes.is_empty() {
+                    String::new()
+                } else {
+                    format!(" class=\"{}\"", classes.join(" "))
+                };
+                ("u", class)
+            }
         };
         html.push_str(&format!("<{tag}{class}>{drawn}</{tag}>"));
     }
@@ -753,6 +761,7 @@ border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
 .line>:has(+.bead)::after{padding-top:6px}\
 .line>a.fold:has(+.bead)::after,.line>.left>a.fold:has(>u)::after{content:\"▾\"}\
 .line>a.fold.shut:has(+.bead)::after,.line>.left>a.fold.shut:has(>u)::after{content:\"▸\"}\
+.line>:has(>u.up)::after{content:\"↑\"}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
 #shown{position:absolute;top:0}\
@@ -1976,7 +1985,7 @@ mod tests {
         let open = page_of(deep(), &fold_link_whole(&ready, row).0);
         let waiting = lines_titled(&open, "soak it in oil")[0];
         assert_eq!(rails(&open, row), Vec::<String>::new());
-        assert_eq!(rails(&open, waiting), ["u.last"]);
+        assert_eq!(rails(&open, waiting), ["u.last up"]);
     }
 
     /// A phone draws a fold's arrow itself, so a fold says whether it is
