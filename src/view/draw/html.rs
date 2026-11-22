@@ -1895,6 +1895,19 @@ mod tests {
         assert_eq!(name, "u:summit-works:smt-4kd3p.4");
     }
 
+    /// A list's rows are peers, with no folds over one another, so a bead's
+    /// page in a view opens no other row on the way to it, even one that
+    /// is its parent in the tree.
+    #[test]
+    fn a_beads_page_in_a_view_opens_no_other_row_to_reach_it() {
+        let target = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
+        let answer = page_at(&target);
+        assert!(answer.found, "{}", answer.html);
+        let closing = link_saying(&answer.html, phrase::back_to_the_forest());
+        let carried = Asked::of(&closing).expect("an address").folds;
+        assert_eq!(carried, Vec::new(), "{closing}");
+    }
+
     /// A search's form goes to the match, as its steps do.
     #[test]
     fn a_search_from_the_form_lands_the_page_on_the_match() {

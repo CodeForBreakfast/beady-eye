@@ -414,14 +414,16 @@ fn pointed(folds: &mut Vec<Fold>, name: String, open: bool) {
 }
 
 /// What the lines open over the selection are known by, which are the folds
-/// going to it opened.
+/// going to it opened. A list's rows are peers, so none is over another.
 fn folds_over_selected(forest: &Forest) -> Vec<String> {
+    if forest.list().is_some() {
+        return Vec::new();
+    }
     let lines = forest.lines();
-    let listed = forest.list().is_some();
     forest
         .lines_over_selected()
         .into_iter()
-        .filter_map(|at| lines.get(at).and_then(|line| fold_name(line, listed)))
+        .filter_map(|at| lines.get(at).and_then(|line| fold_name(line, false)))
         .collect()
 }
 

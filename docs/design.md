@@ -4520,7 +4520,8 @@ does nothing there.
 
 **A search answers with the forest, its selection on the match.** The form
 carries the copy the page shows, so the search counts from it as the
-terminal's counts from the selection. The page lands where the terminal's
+terminal's counts from the selection. A page that shows no bead and no match
+marks no selection, so a search from it counts from the top. The page lands where the terminal's
 search lands, opening the folds over the match,
 and marks that line as the terminal marks its selection. It does not open
 the bead view, because a search in the terminal moves the selection and
