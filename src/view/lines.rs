@@ -382,6 +382,73 @@ fn elbow(trunk: &[bool], last: bool, edge: Option<&Edge>, end: Option<char>) -> 
     drawn
 }
 
+/// One level of the connectors a line hangs under, as `prefix` drew it,
+/// each holding the text it was drawn with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Level<'a> {
+    /// A level an ancestor's later sibling runs down through.
+    Trunk,
+    /// A level nothing runs down through.
+    Gap,
+    /// The line's own elbow onto the line it hangs under: the last line
+    /// hung there or not, on the dashed arm or the solid one, and whether
+    /// its arm ends in the ready list's arrow up.
+    Elbow {
+        drawn: &'a str,
+        last: bool,
+        blocks: bool,
+        up: bool,
+    },
+}
+
+impl Level<'_> {
+    /// The text the level was drawn with.
+    pub(crate) fn drawn(&self) -> &str {
+        match self {
+            Level::Trunk => TRUNK,
+            Level::Gap => GAP,
+            Level::Elbow { drawn, .. } => drawn,
+        }
+    }
+}
+
+/// The levels of `prefix`, outermost first, after the indent every one of
+/// them starts with. Nothing where `prefix` is no line's connectors, such as
+/// a header's marker.
+pub(crate) fn levels(prefix: &str) -> Option<(&str, Vec<Level<'_>>)> {
+    let mut rest = prefix.strip_prefix(INDENT)?;
+    let mut levels = Vec::new();
+    loop {
+        if let Some(after) = rest.strip_prefix(TRUNK) {
+            levels.push(Level::Trunk);
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix(GAP) {
+            levels.push(Level::Gap);
+            rest = after;
+        } else {
+            break;
+        }
+    }
+    let mut chars = rest.chars();
+    let last = match chars.next()? {
+        LAST => true,
+        BRANCH => false,
+        _ => return None,
+    };
+    let blocks = match chars.next()? {
+        BLOCKS_ARM => true,
+        ARM => false,
+        _ => return None,
+    };
+    levels.push(Level::Elbow {
+        drawn: rest,
+        last,
+        blocks,
+        up: chars.next() == Some(UP_THE_ARM),
+    });
+    Some((INDENT, levels))
+}
+
 pub(crate) fn notes_of(tree: &Tree) -> Vec<Note> {
     let mut notes = Vec::new();
     if !tree.orphaned_dependencies.is_empty() {
@@ -627,4 +694,57 @@ pub(crate) fn run_size(tree: &Tree, members: &[&Link], above: &[usize]) -> usize
         seen.extend(beneath(tree, member.bead, above));
     }
     seen.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// Whatever `prefix` draws reads back as the levels it was drawn from,
+    /// and the levels' text is the prefix whole.
+    #[test]
+    fn a_lines_connectors_read_back_as_the_levels_they_were_drawn_from() {
+        let blocks = Edge::Blocks;
+        let drawn = [
+            prefix(&[], true, false, None),
+            prefix(&[true, false], false, true, None),
+            prefix(&[false], true, false, Some(&blocks)),
+            upward_prefix(&[true], false, &blocks),
+        ];
+        let read: Vec<_> = drawn
+            .iter()
+            .map(|prefix| levels(prefix).expect("connectors read back"))
+            .collect();
+        let elbow = |drawn, last, blocks, up| Level::Elbow {
+            drawn,
+            last,
+            blocks,
+            up,
+        };
+        assert_eq!(
+            read.iter()
+                .map(|(_, levels)| levels.clone())
+                .collect::<Vec<_>>(),
+            [
+                vec![elbow("└── ", true, false, false)],
+                vec![Level::Trunk, Level::Gap, elbow("├─▸ ", false, false, false)],
+                vec![Level::Gap, elbow("└┄┄ ", true, true, false)],
+                vec![Level::Trunk, elbow("├┄↑ ", false, true, true)],
+            ]
+        );
+        for (prefix, (indent, levels)) in drawn.iter().zip(&read) {
+            let text: String = std::iter::once(*indent)
+                .chain(levels.iter().map(Level::drawn))
+                .collect();
+            assert_eq!(&text, prefix);
+        }
+    }
+
+    #[test]
+    fn a_headers_marker_is_no_lines_connectors() {
+        for prefix in [OPEN, SHUT, INDENT, ""] {
+            assert_eq!(levels(prefix), None, "{prefix:?}");
+        }
+    }
 }

@@ -18,10 +18,10 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
-use crate::view::address::{fold_name, Asked, FIND, SHOWN};
+use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
-use crate::view::lines::{Content, Line, Waiting};
+use crate::view::lines::{self, Content, Level, Line, Waiting};
 use crate::view::markdown::Flow;
 use crate::view::row::{Layout, WARNING};
 use crate::view::{palette, phrase, show, Said};
@@ -83,7 +83,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     if let Some(key) = &asked.bead {
         html.push_str(&format!(
             "<aside><a class=\"close\" href=\"{}\">{}</a>\n",
-            escaped(&asked.closing()),
+            escaped(&asked.closing(node.and(forest.place()), forest.list().is_some())),
             escaped(phrase::back())
         ));
         match node {
@@ -287,7 +287,7 @@ impl Drawing<'_> {
         };
         let whole = drawn.whole();
         let selected = self.selected == Some(at);
-        let anchor = fold_name(line, self.listed())
+        let anchor = line_name(line, self.listed())
             .map_or_else(String::new, |name| format!(" id=\"{name}\""));
         html.push_str(&format!(
             "<div class=\"line{}\"{anchor}{}>",
@@ -306,7 +306,8 @@ impl Drawing<'_> {
         }
         // A bead's line keeps apart the parts a phone lays out on two lines:
         // what it hangs under, the reference, the row's other cells and its
-        // state. Any other line is drawn as one run before its state.
+        // state. Any other line is drawn as what it hangs under, then one run
+        // beside it, before its state.
         let bead = reference.is_some();
         let more = bead && !(identity.is_empty() && whole.title.is_empty());
         if !bead {
@@ -314,6 +315,9 @@ impl Drawing<'_> {
         }
         if let Some((prefix, _)) = prefix {
             self.prefix(html, line, prefix);
+        }
+        if !bead {
+            html.push_str("<span>");
         }
         if let Some(reference) = reference {
             // A bead's own row is a line this page draws, so the page it
@@ -335,7 +339,10 @@ impl Drawing<'_> {
             html.push_str(&indent());
             spans(html, whole.title, Block::Title, whole.links, 0);
         }
-        if !bead || more {
+        if !bead {
+            html.push_str("</span></span>");
+        }
+        if more {
             html.push_str("</span>");
         }
         html.push_str("<span class=\"state\">");
@@ -351,25 +358,32 @@ impl Drawing<'_> {
     /// The box-drawing a line hangs under, which is the link that toggles the
     /// line's fold where it has one.
     fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>) {
+        let (drawn, rails) = match railed(&prefix.content, self.listed()) {
+            Some(drawn) => (drawn, " rails"),
+            None => (escaped(&prefix.content), ""),
+        };
         let Some(href) = self.asked.toggling(line, self.listed()) else {
+            let class = if rails.is_empty() {
+                ""
+            } else {
+                " class=\"rails\""
+            };
             html.push_str(&format!(
-                "<span{}>{}</span>",
+                "<span{class}{}>{drawn}</span>",
                 styled(palette::css(prefix.style)),
-                escaped(&prefix.content)
             ));
             return;
         };
-        let said = if line.folded == Some(true) {
-            phrase::shut_the_fold()
+        let (said, shut) = if line.folded == Some(true) {
+            (phrase::shut_the_fold(), "")
         } else {
-            phrase::open_the_fold()
+            (phrase::open_the_fold(), " shut")
         };
         html.push_str(&format!(
-            "<a class=\"fold\" href=\"{}\" aria-label=\"{}\"{}>{}</a>",
+            "<a class=\"fold{shut}{rails}\" href=\"{}\" aria-label=\"{}\"{}>{drawn}</a>",
             escaped(&href),
             escaped(said),
             styled(palette::css(prefix.style)),
-            escaped(&prefix.content)
         ));
     }
 
@@ -648,6 +662,53 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, links: &[Link
     }
 }
 
+/// How many levels a phone indents a line by before it stops. A line deeper
+/// than that is drawn at that depth, and drawing its tree as the only root
+/// is the way further down.
+const PHONE_LEVELS: usize = 5;
+
+/// The connectors a line hangs under, with each level a phone draws as a
+/// rail in an element of its own: a trunk as `i`, a gap as `b`, and the
+/// line's elbow as `u`, classed by whether it is the last line hung there
+/// and whether it hangs on a blocking edge. Under the trees the outermost
+/// level is the column a project's roots hang in, which a phone draws no
+/// rail for, and a level past what a phone indents is left as text. A
+/// prefix that is no line's connectors, such as a header's marker, is `None`.
+fn railed(prefix: &str, listed: bool) -> Option<String> {
+    let (indent, levels) = lines::levels(prefix)?;
+    let unrailed = usize::from(!listed);
+    let elbow = levels.len() - 1;
+    let mut html = escaped(indent);
+    for (at, level) in levels.iter().enumerate() {
+        let drawn = escaped(level.drawn());
+        let railed = at >= unrailed && (at == elbow || at - unrailed < PHONE_LEVELS - 1);
+        let (tag, class) = match level {
+            _ if !railed => {
+                html.push_str(&drawn);
+                continue;
+            }
+            Level::Trunk => ("i", String::new()),
+            Level::Gap => ("b", String::new()),
+            Level::Elbow {
+                last, blocks, up, ..
+            } => {
+                let classes: Vec<_> = [(last, "last"), (blocks, "blocks"), (up, "up")]
+                    .into_iter()
+                    .filter_map(|(on, class)| on.then_some(class))
+                    .collect();
+                let class = if classes.is_empty() {
+                    String::new()
+                } else {
+                    format!(" class=\"{}\"", classes.join(" "))
+                };
+                ("u", class)
+            }
+        };
+        html.push_str(&format!("<{tag}{class}>{drawn}</{tag}>"));
+    }
+    Some(html)
+}
+
 /// The attribute marking the entry or switch that is in force, where `on`.
 fn on(on: bool) -> &'static str {
     if on {
@@ -700,6 +761,7 @@ main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 .line{display:flex;white-space:pre;padding:0 12px;box-sizing:border-box;width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 .line.shown{background:var(--shown)}\
+.line i,.line b,.line u{font:inherit;text-decoration:none}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{opacity:.75}\
@@ -726,7 +788,22 @@ aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 .line{width:auto;white-space:pre-wrap;position:relative}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
-.line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;white-space:pre;margin-block:-6px;padding-block:6px}\
+.line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
+.line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
+.line>.left:has(>.rails){display:inline-flex;max-width:100%}\
+.line>.left>.rails+span{min-width:0}\
+.line i,.line b,.line u{flex:none;width:14px;position:relative}\
+.line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:10px;\
+border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
+.line i::before,.line u::before{top:0;bottom:0;border-left-width:1.5px}\
+.line u.last::before{bottom:auto;height:var(--arm,9px)}\
+.line u::after{top:var(--arm,9px);width:10px;border-top-width:1.5px}\
+.line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--c8)}\
+.line>:has(+.bead)::after,.line>.left>.rails::after{content:\"\";flex:none;width:22px;font-size:13px;text-align:center}\
+.line>:has(+.bead)::after{padding-top:6px}\
+.line>a.fold:has(+.bead)::after,.line>.left>a.fold.rails::after{content:\"▾\"}\
+.line>a.fold.shut:has(+.bead)::after,.line>.left>a.fold.shut.rails::after{content:\"▸\"}\
+.line>.rails:has(>u.up)::after{content:\"↑\"}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
 #shown{position:absolute;top:0}\
@@ -1105,9 +1182,11 @@ mod tests {
     fn fold_link_whole(html: &str, at: usize) -> (String, String) {
         let line = line_html(html, at);
         let link = line
-            .split("<a class=\"fold\" href=\"")
+            .split("<a class=\"fold")
             .nth(1)
-            .expect("the line folds");
+            .and_then(|link| link.split_once(" href=\""))
+            .expect("the line folds")
+            .1;
         let link = link[..link.find('"').expect("the link ends")].replace("&amp;", "&");
         let (asked, fragment) = link.split_once('#').expect("the link lands on its line");
         (asked.to_string(), fragment.to_string())
@@ -1166,19 +1245,25 @@ mod tests {
         }
         ground.projects = vec!["~".to_string()];
         let html = page_of(ground, "/");
-        assert!(html.contains("class=\"fold\""));
+        assert!(html.contains("class=\"fold"));
         assert!(!html.contains(":~:"), "{html}");
     }
 
+    /// A link lands on a line by its id, so a line no link lands on, one
+    /// that neither folds nor is a bead's row, carries none.
     #[test]
-    fn a_line_with_no_fold_carries_no_id() {
+    fn a_line_that_neither_folds_nor_is_a_beads_row_carries_no_id() {
         let html = page_at("/").html;
         let lines = lines_html(&html);
-        assert!(lines.iter().any(|line| line.contains("class=\"fold\"")));
+        let folds = |line: &&str| line.contains("class=\"fold");
+        let bead = |line: &&str| line.contains("class=\"bead\"");
+        assert!(lines.iter().any(folds));
+        assert!(lines.iter().any(|line| !folds(line) && bead(line)));
+        assert!(lines.iter().any(|line| !bead(line)));
         for (at, line) in lines.iter().enumerate() {
             assert_eq!(
                 line_id(&html, at).is_some(),
-                line.contains("class=\"fold\""),
+                folds(line) || bead(line),
                 "{line}"
             );
         }
@@ -1329,15 +1414,79 @@ mod tests {
     #[test]
     fn the_folds_opened_to_reach_a_bead_stay_open_once_its_view_is_closed() {
         let shown = page_at(&address(&key("smt-4kd3p.7"))).html;
-        let close = shown
-            .split("<a class=\"close\" href=\"")
-            .nth(1)
-            .expect("the bead view closes");
-        let close = close[..close.find('"').expect("the link ends")].replace("&amp;", "&");
+        let close = closing_link(&shown);
+        let (close, _) = close
+            .split_once('#')
+            .expect("the link lands on the bead's row");
 
         let mut terminal = flatten(ground());
         assert!(terminal.go_to(&key("smt-4kd3p.7")));
-        assert_eq!(page_lines(&page_at(&close).html), terminal_lines(&terminal));
+        assert_eq!(page_lines(&page_at(close).html), terminal_lines(&terminal));
+    }
+
+    /// The whole address the bead view's back link goes to, fragment and all.
+    fn closing_link(html: &str) -> String {
+        let close = html
+            .split("<a class=\"close\" href=\"")
+            .nth(1)
+            .expect("the bead view closes");
+        close[..close.find('"').expect("the link ends")].replace("&amp;", "&")
+    }
+
+    /// Closing the bead view lands on the bead's own row of the forest, so a
+    /// phone, which draws the bead view in the forest's place, comes back to
+    /// where the reader was rather than to the top of a long forest.
+    #[test]
+    fn closing_a_beads_view_lands_on_its_row() {
+        let tree = address(&key("smt-4kd3p.8"));
+        let listed = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
+        let twice = page_of(reached_twice(), &address(&key("smt-4kd3p.6")));
+        for (shown, bead) in [
+            (page_at(&tree).html, "smt-4kd3p.8"),
+            (page_at(&listed).html, "smt-4kd3p.7"),
+            (twice, "smt-4kd3p.6"),
+        ] {
+            let close = closing_link(&shown);
+            let (target, landing) = close.split_once('#').expect("the link lands somewhere");
+            let closed = if bead == "smt-4kd3p.6" {
+                page_of(reached_twice(), target)
+            } else {
+                page_at(target).html
+            };
+            let opened_at = lines_html(&shown)
+                .iter()
+                .position(|line| line.starts_with(" shown\""))
+                .expect("a line is shown");
+            let landed = landed_on(&closed, landing);
+            assert!(
+                text_of(line_html(&closed, landed)).contains(bead),
+                "{close}"
+            );
+            assert_eq!(landed, opened_at, "{close}");
+        }
+    }
+
+    /// A link lands on the first line carrying its fragment, so no two lines
+    /// of a page carry one id: not a bead the trees draw twice, and not a
+    /// bead a list draws again under each row expanded to what it waits on.
+    #[test]
+    fn no_two_lines_of_a_page_carry_one_id() {
+        let mut listed = page_at(&format!("/?view={}", VIEWS[0].0)).html;
+        for title in ["wire the niri theme include", "apply the two niri settings"] {
+            let row = page_lines(&listed)
+                .iter()
+                .position(|line| line.contains(title))
+                .expect("the bead is listed");
+            listed = page_at(&fold_link(&listed, row)).html;
+        }
+        assert_eq!(lines_titled(&listed, "lift the ground station").len(), 2);
+        for html in [page_of(reached_twice(), "/"), listed] {
+            let ids: Vec<String> = (0..lines_html(&html).len())
+                .filter_map(|at| line_id(&html, at))
+                .collect();
+            let unique: std::collections::HashSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        }
     }
 
     #[test]
@@ -1733,6 +1882,31 @@ mod tests {
         assert!(!answer.found);
     }
 
+    /// A root that draws no bead hangs in the same column as one that does,
+    /// so a phone lays its connectors out as it lays out a bead's, beside
+    /// one run of text that may wrap.
+    #[test]
+    fn a_root_that_draws_no_bead_hangs_as_a_beads_root_does() {
+        let unread = snapshot(
+            vec![Tree::tracker_unreachable(
+                PROJECT,
+                "smt-4kd3p",
+                crate::model::snapshot::TrackerFailure::Unavailable,
+            )],
+            Vec::new(),
+            ProviderState::Absent,
+        );
+        let html = page_of(unread, "/");
+        let root = line_html(&html, 1);
+        assert!(!root.contains("class=\"bead"), "{root}");
+        assert_eq!(parts(root).0[0], "span.left", "{root}");
+        assert_eq!(
+            parts(inside(root, "left")).0,
+            ["span.rails", "span"],
+            "{root}"
+        );
+    }
+
     /// Readiness and blockers are read apart, so a tracker can say both, and
     /// the terminal says ready.
     #[test]
@@ -1821,11 +1995,15 @@ mod tests {
             .filter(|&at| line_html(&html, at).contains("class=\"bead\""))
             .collect();
         assert_eq!(beads, [1, 2, 3, 4]);
-        let leaf = 3;
+        let (leaf, shut) = (3, 4);
         for at in beads {
             let line = line_html(&html, at);
             let (shape, between) = parts(line);
-            let hung = if at == leaf { "span" } else { "a.fold" };
+            let hung = match at {
+                _ if at == leaf => "span.rails",
+                _ if at == shut => "a.fold shut rails",
+                _ => "a.fold rails",
+            };
             assert_eq!(shape, [hung, "a.bead", "span.state"], "{line}");
             assert_eq!(between, "", "{line}");
 
@@ -1853,7 +2031,7 @@ mod tests {
         let line = line_html(&html, 2);
         assert_eq!(
             parts(line).0,
-            ["a.fold", "a.bead", "span.more", "span.state"],
+            ["a.fold rails", "a.bead", "span.more", "span.state"],
             "{line}"
         );
         let more = inside(line, "more");
@@ -1862,6 +2040,148 @@ mod tests {
             "{more}"
         );
         assert_eq!(words(&text_of(more)), "⇢ #12");
+    }
+
+    /// One invented tree deeper than a phone indents: a chain seven levels
+    /// under the root with a sibling below it at each of its first two
+    /// levels, and a bead drawn again under the one it blocks.
+    fn deep() -> Snapshot {
+        let titles = [
+            "refit the lighthouse",
+            "rewire the lamp",
+            "strip the old wiring",
+            "trace the feed",
+            "open the junction box",
+            "free the seized screw",
+            "soak it in oil",
+            "wait a night",
+            "test the fog signal",
+            "log the burn",
+        ];
+        let mut beads: Vec<Node> = titles
+            .iter()
+            .enumerate()
+            .map(|(at, title)| node(&format!("smt-9lh.{at}"), title, Status::Open))
+            .collect();
+        beads[7].ready = true;
+        let root = related(&beads[0], Edge::ParentChild);
+        for bead in &mut beads[1..] {
+            bead.parent = Some(root.clone());
+        }
+        let log = related(&beads[9], Edge::Blocks);
+        beads[1].depends_on = vec![log.clone()];
+        beads[1].blocked_by = vec![log.id.clone()];
+        let link = |bead, edge, first| Link { bead, edge, first };
+        let child = |bead| link(bead, Edge::ParentChild, true);
+        let mut children: Vec<Vec<Link>> = vec![vec![]; beads.len()];
+        children[0] = vec![child(1), child(8), child(9)];
+        children[1] = vec![child(2), link(9, Edge::Blocks, false)];
+        children[2] = vec![child(3), child(4)];
+        children[4] = vec![child(5)];
+        children[5] = vec![child(6)];
+        children[6] = vec![child(7)];
+        let total = beads.len();
+        snapshot(
+            vec![Tree {
+                beads,
+                children,
+                counts: counts(0, total, 0, 0),
+                ..tree(PROJECT, "smt-9lh.0", titles[0], counts(0, 0, 0, 0))
+            }],
+            Vec::new(),
+            ProviderState::Absent,
+        )
+    }
+
+    /// The elements a phone draws as rails on line `at`, each as its tag and
+    /// its class: the levels inside what the line hangs under.
+    fn rails(html: &str, at: usize) -> Vec<String> {
+        let line = line_html(html, at);
+        let hung = &line[..element_end(line, 0)];
+        let content = hung.find('>').expect("the tag ends") + 1;
+        parts(&hung[content..hung.rfind('<').expect("a closing tag")]).0
+    }
+
+    /// A phone draws a rail for each level a line hangs under, except the
+    /// column a project's roots hang in: a trunk where a line below still
+    /// hangs at that level, a gap where none does, and the line's own elbow,
+    /// marked where it is the last there and where it hangs on a blocking
+    /// edge. A line deeper than a phone indents keeps its outermost levels
+    /// and its elbow.
+    #[test]
+    fn a_phone_draws_each_level_a_line_hangs_under_as_a_rail_up_to_five() {
+        let html = page_of(deep(), "/");
+        let drawn: Vec<(String, Vec<String>)> = (1..lines_html(&html).len())
+            .map(|at| {
+                (
+                    words(&text_of(inside(line_html(&html, at), "title"))),
+                    rails(&html, at),
+                )
+            })
+            .collect();
+        let rails = |title: &str, rails: &[&str]| {
+            (
+                title.to_string(),
+                rails.iter().map(|rail| rail.to_string()).collect(),
+            )
+        };
+        assert_eq!(
+            drawn,
+            [
+                rails("refit the lighthouse", &[]),
+                rails("rewire the lamp", &["u"]),
+                rails("strip the old wiring", &["i", "u"]),
+                rails("trace the feed", &["i", "i", "u"]),
+                rails("open the junction box", &["i", "i", "u.last"]),
+                rails("free the seized screw", &["i", "i", "b", "u.last"]),
+                rails("soak it in oil", &["i", "i", "b", "b", "u.last"]),
+                rails("wait a night", &["i", "i", "b", "b", "u.last"]),
+                rails("log the burn", &["i", "u.last blocks"]),
+                rails("test the fog signal", &["u"]),
+                rails("log the burn", &["u.last"]),
+            ]
+        );
+    }
+
+    /// A list's rows hang under nothing, so a line waiting under one is
+    /// drawn a rail from its first level.
+    #[test]
+    fn a_phone_draws_a_rail_from_the_first_level_under_a_lists_row() {
+        let ready = page_of(
+            deep(),
+            &link_saying(&page_of(deep(), "/"), phrase::ready_only()),
+        );
+        let row = lines_titled(&ready, "wait a night")[0];
+        let open = page_of(deep(), &fold_link_whole(&ready, row).0);
+        let waiting = lines_titled(&open, "soak it in oil")[0];
+        assert_eq!(rails(&open, row), Vec::<String>::new());
+        assert_eq!(rails(&open, waiting), ["u.last up"]);
+    }
+
+    /// A phone draws a fold's arrow itself, so a fold says whether it is
+    /// shut.
+    #[test]
+    fn a_shut_fold_says_so_and_an_open_one_does_not() {
+        let html = page_at("/").html;
+        let folds: Vec<(String, bool)> = (0..lines_html(&html).len())
+            .filter(|&at| line_html(&html, at).contains("class=\"bead"))
+            .filter(|&at| line_html(&html, at).starts_with("<a class=\"fold"))
+            .map(|at| {
+                let line = line_html(&html, at);
+                (
+                    words(&text_of(inside(line, "title"))),
+                    line.starts_with("<a class=\"fold shut"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            folds,
+            [
+                ("lift the ground station".to_string(), false),
+                ("wire the niri theme include".to_string(), false),
+                ("apply the two niri settings".to_string(), true),
+            ]
+        );
     }
 
     /// A phone lets the bead view's prose flow rather than keep the rows the
@@ -2647,7 +2967,7 @@ mod tests {
         for link in [
             asked.opening(&key("smt-4kd3p.7")),
             asked.opening_at(&place("smt-4kd3p.7")),
-            asked.closing(),
+            asked.closing(None, false),
             asked.listing(asked.list.clone()),
             asked.rooting(asked.root.as_ref()),
         ] {
