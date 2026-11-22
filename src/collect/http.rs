@@ -19,10 +19,9 @@ pub(crate) const LONGEST_HEAD: usize = 16 * 1024;
 /// The most headers one request may carry.
 const MOST_HEADERS: usize = 64;
 
-/// How long a request turned away while the listener is busy is read and
-/// dropped before it is closed. The accepting thread spends it, so it is
-/// short.
-const LINGER: Duration = Duration::from_millis(100);
+/// How long a request turned away as busy is read and dropped before it is
+/// closed. Whoever turned it away spends it, so it is short.
+pub(crate) const LINGER: Duration = Duration::from_millis(100);
 
 /// Take connections on `listener` for as long as the process runs, each on a
 /// thread of its own handed to `answer`. A connection arriving while `most`

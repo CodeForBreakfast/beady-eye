@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::collect::http::{self, close, Head};
+use crate::collect::http::{self, close, Head, LINGER};
 use crate::view::address::Asked;
 
 use super::{Answering, DrawnFrom, PATIENCE, TEXT, UNAVAILABLE};
@@ -66,7 +66,7 @@ pub(super) fn keep_current(
     if open.fetch_add(1, Ordering::SeqCst) >= MOST_KEPT_CURRENT {
         open.fetch_sub(1, Ordering::SeqCst);
         http::reply(&stream, UNAVAILABLE, TEXT, b"busy\n", PATIENCE);
-        close(stream, Instant::now() + PATIENCE);
+        close(stream, Instant::now() + LINGER);
         return;
     }
     let kept = Kept(Arc::clone(answering));
@@ -383,5 +383,51 @@ mod tests {
         assert!(!asks_for_changes(&head));
         assert_eq!(since(&head), Some(44));
         assert_eq!(since(&asked("GET / HTTP/1.1\r\n\r\n")), None);
+    }
+
+    /// A page asking to be kept current while as many are kept current as
+    /// may be is refused, and the refusal frees its worker soon even where
+    /// the sender leaves the connection open.
+    #[test]
+    fn a_page_past_the_most_kept_current_is_refused_at_once() {
+        use std::io::Read;
+        use std::net::TcpListener;
+
+        use super::super::{Config, Hosts, Latest};
+
+        let answering = Arc::new(Answering {
+            latest: Arc::new(Latest::new()),
+            cfg: Config::naming(Vec::new()),
+            hosts: Hosts::default(),
+            live: Streams {
+                open: AtomicUsize::new(MOST_KEPT_CURRENT),
+                drawing: Mutex::default(),
+            },
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let mut sender =
+            TcpStream::connect(listener.local_addr().expect("an address")).expect("a connection");
+        let (stream, _) = listener.accept().expect("the connection");
+        let sent = "GET / HTTP/1.1\r\nAccept: text/event-stream\r\n\r\n";
+        let head = http::head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
+        let started = Instant::now();
+        keep_current(
+            &answering,
+            stream,
+            &head,
+            Asked::of("/").expect("an address"),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the refusal took {:?}",
+            started.elapsed()
+        );
+        let mut answer = String::new();
+        sender.read_to_string(&mut answer).expect("the answer");
+        assert!(answer.starts_with("HTTP/1.1 503 "), "{answer}");
+        assert_eq!(
+            answering.live.open.load(Ordering::SeqCst),
+            MOST_KEPT_CURRENT
+        );
     }
 }
