@@ -20,7 +20,7 @@ use crate::view::draw::{done, key_rows, Reference};
 use crate::view::fitted::{self, cover, indent, Fitted, Link};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Waiting};
-use crate::view::markdown;
+use crate::view::markdown::{self, Flow};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, status_glyph, Progress};
@@ -342,9 +342,9 @@ pub struct Page {
     pub blocked_by: Option<usize>,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
-    /// The rows of prose broken from the line of text above them only to
-    /// fit the width, each with what joins it back on.
-    pub flowing: HashMap<usize, &'static str>,
+    /// How each row of the description and the notes stands to the line
+    /// of text it is a row of.
+    pub(crate) prose: HashMap<usize, Flow>,
     /// Which spans of which rows the terminal is told point somewhere, for
     /// the rows that hold a link at all.
     pub(crate) links: HashMap<usize, Vec<Link>>,
@@ -624,7 +624,7 @@ pub fn said(
     let prose = |text: &str| {
         markdown::flowing_rows(text, room)
             .into_iter()
-            .map(|(row, joint)| (indented(row), joint))
+            .map(|(row, flow)| (indented(row), Some(flow)))
             .collect::<Vec<_>>()
     };
     let tied = |arrow: char, related: &[Related]| {
@@ -639,7 +639,7 @@ pub fn said(
     };
 
     let mut related = Vec::new();
-    let mut flowing = HashMap::new();
+    let mut flows = HashMap::new();
     for (heading, body, names_beads) in [
         (
             DESCRIPTION,
@@ -660,9 +660,9 @@ pub fn said(
         if names_beads {
             related.extend(rows.len()..rows.len() + body.len());
         }
-        for (row, joint) in body {
-            if let Some(joint) = joint {
-                flowing.insert(rows.len(), joint);
+        for (row, flow) in body {
+            if let Some(flow) = flow {
+                flows.insert(rows.len(), flow);
             }
             rows.push(row);
         }
@@ -673,7 +673,7 @@ pub fn said(
         head,
         blocked_by,
         related,
-        flowing,
+        prose: flows,
         links,
     }
 }
