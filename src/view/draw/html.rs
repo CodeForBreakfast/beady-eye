@@ -477,18 +477,19 @@ footer p,.missing{margin:0}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
 aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c8)}\
 .line{width:auto;white-space:pre-wrap;position:relative}\
-.line:has(>.bead){display:grid;grid-template-columns:auto 1.6em auto auto minmax(0,1fr);\
+.line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;white-space:pre;margin-block:-6px;padding-block:6px}\
-.line>.bead{display:contents}\
+.line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
+#shown{position:absolute;top:0}\
 .line a:not(.bead){position:relative;z-index:1}\
-.line .g{grid-area:1/2;font-size:14px;text-align:center}\
-.line .title{grid-area:1/3/2/-1;font:15px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}\
+.line .g{grid-area:1/1;font-size:14px;text-align:center}\
+.line .title{grid-area:1/2/2/-1;min-width:10em;font:15px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
-.line>.bead>.id{grid-column:3}\
-.line>.more{grid-column:4;padding-left:2ch}\
-.line>.bead~.state{grid-column:5;margin-left:0}}";
+.line>.bead>.id{grid-column:2}\
+.line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
+.line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}}";
 
 #[cfg(test)]
 mod tests {
