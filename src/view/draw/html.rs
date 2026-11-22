@@ -477,14 +477,15 @@ aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c
 /// address for its changes since the one the page was drawn from, and the
 /// server sends them down that one connection: the whole page first, and
 /// after it each patch to the page it sent last. Each page replaces the
-/// body, keeping the line or bead view at the top of the window where it
-/// was, both panes' scroll, and the link that had focus. A page differing
-/// only in its change is not shown again. A hidden page lets its connection
-/// go, and asks again from the change it last heard once it is shown, so
-/// pages left in the background hold none of the few connections a browser
-/// makes to one server. A page the server is too busy to keep current asks
-/// again after as long as a quiet connection waits for a comment. Without it
-/// the page is the same page, drawn once.
+/// body. It keeps the line or bead view at the top of the window where it
+/// was, or the next line below it that is still drawn, and keeps both panes'
+/// scroll and the link that had focus. A page differing only in its change
+/// is not shown again. A hidden page lets its connection go, and asks again
+/// from the change it last heard once it is shown, so pages left in the
+/// background hold none of the few connections a browser makes to one
+/// server. A page the server is too busy to keep current asks again after as
+/// long as a quiet connection waits for a comment. Without it the page is
+/// the same page, drawn once.
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const asked = location.pathname + (location.search ? location.search + "&" : "?");
@@ -518,8 +519,9 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!document.hidden) listen();
   const goes = (link) => {
     const to = new URL(link.href);
-    const where = link.matches(".fold") ? to.hash : to.searchParams.get("at");
-    return [link.className, to.pathname, where].join(" ");
+    if (to.origin !== location.origin) return [link.className, to.href].join(" ");
+    const where = link.matches(".fold") ? "" : to.searchParams.get("at");
+    return [link.className, to.pathname, where, to.hash].join(" ");
   };
   const known = (row) => {
     const bead = row.querySelector("a.bead[href]");
@@ -537,16 +539,19 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     if (text === shown) return;
     shown = text;
     const drawn = new DOMParser().parseFromString(text, "text/html");
-    const top = marks().find((at) => at.getBoundingClientRect().bottom > 0);
-    const kept = top && [mark(top), top.getBoundingClientRect().top];
+    const before = marks();
+    const top = before.findIndex((at) => at.getBoundingClientRect().bottom > 0);
+    const kept = top < 0 ? [] : before.slice(top, top + 8)
+      .map((at) => [mark(at), at.getBoundingClientRect().top]);
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
     const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
     const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
     document.title = drawn.title;
     document.body.replaceWith(drawn.body);
-    const again = kept && marks().find((at) => mark(at) === kept[0]);
-    if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
+    const after = new Map(marks().reverse().map((at) => [mark(at), at]));
+    const again = kept.find(([name]) => after.has(name));
+    if (again) scrollBy(0, after.get(again[0]).getBoundingClientRect().top - again[1]);
     boxes().forEach((box, at) => {
       if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
     });
