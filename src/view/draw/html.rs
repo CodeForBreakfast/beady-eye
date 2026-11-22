@@ -350,10 +350,18 @@ impl Drawing<'_> {
     /// The box-drawing a line hangs under, which is the link that toggles the
     /// line's fold where it has one.
     fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>) {
-        let drawn = railed(&prefix.content, self.listed());
+        let (drawn, rails) = match railed(&prefix.content, self.listed()) {
+            Some(drawn) => (drawn, " rails"),
+            None => (escaped(&prefix.content), ""),
+        };
         let Some(href) = self.asked.toggling(line, self.listed()) else {
+            let class = if rails.is_empty() {
+                ""
+            } else {
+                " class=\"rails\""
+            };
             html.push_str(&format!(
-                "<span{}>{drawn}</span>",
+                "<span{class}{}>{drawn}</span>",
                 styled(palette::css(prefix.style)),
             ));
             return;
@@ -364,7 +372,7 @@ impl Drawing<'_> {
             (phrase::open_the_fold(), " shut")
         };
         html.push_str(&format!(
-            "<a class=\"fold{shut}\" href=\"{}\" aria-label=\"{}\"{}>{drawn}</a>",
+            "<a class=\"fold{shut}{rails}\" href=\"{}\" aria-label=\"{}\"{}>{drawn}</a>",
             escaped(&href),
             escaped(said),
             styled(palette::css(prefix.style)),
@@ -632,11 +640,10 @@ const PHONE_LEVELS: usize = 5;
 /// line's elbow as `u`, classed by whether it is the last line hung there
 /// and whether it hangs on a blocking edge. Under the trees the outermost
 /// level is the column a project's roots hang in, which a phone draws no
-/// rail for, and a level past what a phone indents is left as text.
-fn railed(prefix: &str, listed: bool) -> String {
-    let Some((indent, levels)) = lines::levels(prefix) else {
-        return escaped(prefix);
-    };
+/// rail for, and a level past what a phone indents is left as text. A
+/// prefix that is no line's connectors, such as a header's marker, is `None`.
+fn railed(prefix: &str, listed: bool) -> Option<String> {
+    let (indent, levels) = lines::levels(prefix)?;
     let unrailed = usize::from(!listed);
     let elbow = levels.len() - 1;
     let mut html = escaped(indent);
@@ -667,7 +674,7 @@ fn railed(prefix: &str, listed: bool) -> String {
         };
         html.push_str(&format!("<{tag}{class}>{drawn}</{tag}>"));
     }
-    html
+    Some(html)
 }
 
 /// The attribute marking the entry or switch that is in force, where `on`.
@@ -750,8 +757,8 @@ aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
-.line>:has(+.bead),.line>.left>:has(>u){display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
-.line>.left>:has(>u){height:18.85px}\
+.line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
+.line>.left>.rails{height:18.85px}\
 .line i,.line b,.line u{flex:none;width:14px;position:relative}\
 .line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:10px;\
 border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
@@ -759,11 +766,11 @@ border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
 .line u.last::before{bottom:auto;height:var(--arm,9px)}\
 .line u::after{top:var(--arm,9px);width:10px;border-top-width:1.5px}\
 .line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--c8)}\
-.line>:has(+.bead)::after,.line>.left>:has(>u)::after{content:\"\";flex:none;width:22px;font-size:13px;text-align:center}\
+.line>:has(+.bead)::after,.line>.left>.rails::after{content:\"\";flex:none;width:22px;font-size:13px;text-align:center}\
 .line>:has(+.bead)::after{padding-top:6px}\
-.line>a.fold:has(+.bead)::after,.line>.left>a.fold:has(>u)::after{content:\"▾\"}\
-.line>a.fold.shut:has(+.bead)::after,.line>.left>a.fold.shut:has(>u)::after{content:\"▸\"}\
-.line>:has(>u.up)::after{content:\"↑\"}\
+.line>a.fold:has(+.bead)::after,.line>.left>a.fold.rails::after{content:\"▾\"}\
+.line>a.fold.shut:has(+.bead)::after,.line>.left>a.fold.shut.rails::after{content:\"▸\"}\
+.line>.rails:has(>u.up)::after{content:\"↑\"}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
 #shown{position:absolute;top:0}\
@@ -1767,6 +1774,26 @@ mod tests {
         assert!(!answer.found);
     }
 
+    /// A root that draws no bead hangs in the same column as one that does,
+    /// so a phone lays its connectors out as it lays out a bead's.
+    #[test]
+    fn a_root_that_draws_no_bead_hangs_as_a_beads_root_does() {
+        let unread = snapshot(
+            vec![Tree::tracker_unreachable(
+                PROJECT,
+                "smt-4kd3p",
+                crate::model::snapshot::TrackerFailure::Unavailable,
+            )],
+            Vec::new(),
+            ProviderState::Absent,
+        );
+        let html = page_of(unread, "/");
+        let root = line_html(&html, 1);
+        assert!(!root.contains("class=\"bead"), "{root}");
+        assert_eq!(parts(root).0[0], "span.left", "{root}");
+        assert_eq!(parts(inside(root, "left")).0[0], "span.rails", "{root}");
+    }
+
     /// Readiness and blockers are read apart, so a tracker can say both, and
     /// the terminal says ready.
     #[test]
@@ -1860,9 +1887,9 @@ mod tests {
             let line = line_html(&html, at);
             let (shape, between) = parts(line);
             let hung = match at {
-                _ if at == leaf => "span",
-                _ if at == shut => "a.fold shut",
-                _ => "a.fold",
+                _ if at == leaf => "span.rails",
+                _ if at == shut => "a.fold shut rails",
+                _ => "a.fold rails",
             };
             assert_eq!(shape, [hung, "a.bead", "span.state"], "{line}");
             assert_eq!(between, "", "{line}");
@@ -1891,7 +1918,7 @@ mod tests {
         let line = line_html(&html, 2);
         assert_eq!(
             parts(line).0,
-            ["a.fold", "a.bead", "span.more", "span.state"],
+            ["a.fold rails", "a.bead", "span.more", "span.state"],
             "{line}"
         );
         let more = inside(line, "more");
@@ -2030,7 +2057,7 @@ mod tests {
                 let line = line_html(&html, at);
                 (
                     words(&text_of(inside(line, "title"))),
-                    line.starts_with("<a class=\"fold shut\""),
+                    line.starts_with("<a class=\"fold shut"),
                 )
             })
             .collect();
