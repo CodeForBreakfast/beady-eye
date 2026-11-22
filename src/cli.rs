@@ -220,6 +220,12 @@ enum Passing {
         /// The address to take requests on.
         #[arg(long, value_name = "ADDRESS")]
         listen: String,
+        /// Answer requests sent to this host name, as a browser's address bar
+        /// names it, on any port. Give it once for each name. Requests sent to
+        /// localhost or to an address are answered without it, and every other
+        /// request is refused with 421 Misdirected Request.
+        #[arg(long = "allow-host", value_name = "NAME")]
+        allow_hosts: Vec<String>,
         /// Read the configuration from this file, rather than
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
@@ -376,9 +382,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return watch(socket.clone(), &config);
         }
-        Some(Passing::Web { listen, config }) => {
+        Some(Passing::Web {
+            listen,
+            allow_hosts,
+            config,
+        }) => {
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return web::web(&config, listen);
+            return web::web(&config, listen, web::Hosts(allow_hosts.clone()));
         }
         Some(Passing::Gates {
             config,

@@ -4529,6 +4529,17 @@ terminal opens, and a bead's page says the trackers are still being read.
 tracker answered, because a tracker that fails is drawn as failing. It is
 read-only, and no reader signs in.
 
+**It answers only the names it was told it serves.** With no sign-in, a page
+elsewhere could point a name of its own at the listener and have a visitor's
+browser read the trackers as that page's own. The request still names the
+host it was sent to, so every request is checked before anything else is read
+of it. One sent to `localhost`, to an address, or to a name `--allow-host`
+gives is answered, on any port, and any other is refused with `421 Misdirected
+Request`. No other page can make a browser send `localhost` or an address as
+the host, so a loopback run needs no setting, and a probe by the pod's address
+passes. The check sits in `cli/web.rs`, at the top of the one function every
+request goes through.
+
 **Three places, each knowing one thing.** `cli/web.rs` serves: it holds the
 latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`
 that `bdi gates --listen` shares. `view/address.rs` knows addresses: what a

@@ -370,6 +370,18 @@ The page is read-only and asks nobody to sign in. Anyone who can reach the
 address can read every configured tracker, so listen only where everyone who
 can reach it may read them all.
 
+It answers only a request sent to `localhost`, to an address, or to a name
+given with `--allow-host`. So a page elsewhere cannot point a name of its own
+at it and read the trackers through a visitor's browser. Behind a proxy or an
+ingress that routes by name, give that name, once for each name it answers to:
+
+```console
+$ bdi web --listen 0.0.0.0:8080 --allow-host beads.example.invalid
+```
+
+Any other request is refused with `421 Misdirected Request`, `/healthz`
+included. A probe that asks by the pod's or the machine's address is answered.
+
 ## Writing back
 
 beady-eye writes to a tracker in two ways.
