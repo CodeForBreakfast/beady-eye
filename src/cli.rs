@@ -220,8 +220,8 @@ enum Passing {
         /// The address to take requests on.
         #[arg(long, value_name = "ADDRESS")]
         listen: String,
-        /// Answer requests sent to this host name, as a browser's address bar
-        /// names it, on any port. Give it once for each name. Requests sent to
+        /// Answer requests sent to this host name, spelled as a request's Host
+        /// header spells it, on any port. Give it once for each name. Requests sent to
         /// localhost or to an address are answered without it, and every other
         /// request is refused with 421 Misdirected Request.
         #[arg(long = "allow-host", value_name = "NAME")]
