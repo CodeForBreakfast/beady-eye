@@ -706,6 +706,25 @@ mod tests {
         );
     }
 
+    /// A browser takes `:~:` in a fragment for the start of a directive and
+    /// looks for no element by what follows, which a project named `~` would
+    /// put in the anchor of every bead's line.
+    #[test]
+    fn no_anchor_holds_what_a_browser_takes_for_a_fragment_directive() {
+        let mut ground = ground();
+        for tree in ground.trees.iter_mut().chain(ground.collected.iter_mut()) {
+            let tree = std::sync::Arc::make_mut(tree);
+            tree.project = "~".to_string();
+            for bead in &mut tree.beads {
+                bead.project = "~".to_string();
+            }
+        }
+        ground.projects = vec!["~".to_string()];
+        let html = page_of(ground, "/");
+        assert!(html.contains("class=\"fold\""));
+        assert!(!html.contains(":~:"), "{html}");
+    }
+
     #[test]
     fn a_line_with_no_fold_carries_no_id() {
         let html = page_at("/").html;

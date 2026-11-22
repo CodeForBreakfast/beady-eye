@@ -313,10 +313,13 @@ fn query(folds: &[Fold], place: Option<&Place>) -> String {
 
 /// `text` with every byte but the ones a URL leaves unreserved written as
 /// `%XX`, so it can stand as one segment of a path or one value of a query.
+///
+/// `~` is unreserved too, but is written as `%7E`, because a browser takes
+/// `:~:` in a fragment for a directive and finds no line by its anchor.
 fn encoded(text: &str) -> String {
     let mut said = String::with_capacity(text.len());
     for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+        if byte.is_ascii_alphanumeric() || b"-._".contains(&byte) {
             said.push(char::from(byte));
         } else {
             said.push_str(&format!("%{byte:02X}"));
