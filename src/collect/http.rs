@@ -174,6 +174,19 @@ impl Head {
             .find(|(named, _)| named.eq_ignore_ascii_case(name))
             .and_then(|(_, value)| value.as_deref())
     }
+
+    /// The value of the one header of this name, in any case, where there is
+    /// exactly one and its value is text.
+    pub(crate) fn only(&self, name: &str) -> Option<&str> {
+        let mut named = self
+            .headers
+            .iter()
+            .filter(|(named, _)| named.eq_ignore_ascii_case(name));
+        match (named.next(), named.next()) {
+            (Some((_, value)), None) => value.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// Why a request's head was not read.

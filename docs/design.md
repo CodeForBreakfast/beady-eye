@@ -4481,13 +4481,15 @@ keeps its layout.
 **A key is a link, and the state a key would change rides in the address.** A
 line that folds links to the page with that fold pointed the other way,
 landing on the line. The query names each fold the reader has pointed by what
-its line is known by, and which way it points. Each request flattens a fresh
-forest from the latest snapshot and points the folds through the forest's own
-fold action, going through them again while pointing one brings another into
-sight. A fold on a line the forest no longer draws is passed over, as a
-refresh passes over one, and is carried on. The server keeps nothing between
-requests. An address that has outgrown the longest request the server reads
-is answered with a page saying so and a link to the forest.
+its line is known by, and which way it points. That name is the line's anchor
+on the page too, so the link lands on the line even after beads above it
+appear or go, and a line with no fold carries no anchor. Each request flattens
+a fresh forest from the latest snapshot and points the folds through the
+forest's own fold action, going through them again while pointing one brings
+another into sight. A fold on a line the forest no longer draws is passed
+over, as a refresh passes over one, and is carried on. The server keeps
+nothing between requests. An address that has outgrown the longest request
+the server reads is answered with a page saying so and a link to the forest.
 
 The terminal points a fold on the selected line, and its bead view is over the
 selection. So on a bead's page a fold link goes to the page of the bead on its
@@ -4539,10 +4541,9 @@ connection.
 **What bounds it.** A large forest's page runs to megabytes and changes every
 few seconds while agents write beads, mostly one project's read time and a
 few rows. Whole pages would send the forest again each time, where a patch
-is a few kilobytes. A change that moves lines, such as a bead
-appearing, rewrites every line under it while each line's anchor is its
-position. Past 1,024 lines inserted or removed the page is sent whole, which
-also bounds the work of finding the patch. A connection holds no request
+is a few kilobytes. A line's anchor is its fold's name, so a bead appearing
+changes the lines around it and leaves the lines below it alone. Past 1,024 lines inserted or removed
+the page is sent whole, which also bounds the work of finding the patch. A connection holds no request
 slot: the eight requests drawn at once are apart from the 32 pages kept
 current, and the pages kept current draw one at a time. Over 32 the
 connection is refused, and the page asks again 15 seconds later. A connection
@@ -4568,6 +4569,18 @@ terminal opens, and a bead's page says the trackers are still being read.
 `/healthz` passes once every project has been asked once, whether or not its
 tracker answered, because a tracker that fails is drawn as failing. It is
 read-only, and no reader signs in.
+
+**It answers only the names it was told it serves.** With no sign-in, a page
+elsewhere could point a name of its own at the listener and have a visitor's
+browser read the trackers as that page's own. The request still names the
+host it was sent to, so every request is checked before anything else is read
+of it. One sent to `localhost`, to an address, or to a name `--allow-host`
+gives is answered, on any port, and any other is refused with `421 Misdirected
+Request`. No other page can make a browser send `localhost` or an address as
+the host, so a loopback run needs no setting, and a probe by the pod's address
+passes. Behind a proxy the check reads the Host the proxy sends, so the proxy
+passes the browser's through. The check sits in `cli/web.rs`, at the top of
+the one function every request goes through.
 
 **Three places, each knowing one thing.** `cli/web.rs` serves: it holds the
 latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`

@@ -43,13 +43,15 @@ impl Drop for Web {
     }
 }
 
-/// `bdi web` over `tracker`, on a port the system picks, and the address it
-/// says it is answering on.
-fn bdi_web(home: &Path, tracker: &ShimmedTracker) -> (Web, String) {
+/// `bdi web` over `tracker`, on a port the system picks, answering for the
+/// host names `allowing` as well as its address, and the address it says it
+/// is answering on.
+fn bdi_web(home: &Path, tracker: &ShimmedTracker, allowing: &[&str]) -> (Web, String) {
     let spawned_by = std::process::id();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
     command
         .args(["web", "--listen", "127.0.0.1:0"])
+        .args(allowing.iter().flat_map(|host| ["--allow-host", host]))
         .current_dir(home)
         .env("HOME", home)
         .env_remove("BEADS_DIR")
@@ -81,14 +83,20 @@ fn first_line(stdout: ChildStdout) -> String {
     line
 }
 
-/// What `address` answers a GET of `path` with: its status line and its
-/// body.
+/// What `address` answers a GET of `path` sent to it by its address with:
+/// its status line and its body.
 fn get(address: &str, path: &str) -> (String, String) {
+    get_from(address, address, path)
+}
+
+/// What `address` answers a GET of `path` sent to the host `host` with: its
+/// status line and its body.
+fn get_from(address: &str, host: &str, path: &str) -> (String, String) {
     let mut stream = TcpStream::connect(address).expect("bdi web takes the connection");
     stream
         .set_read_timeout(Some(GIVING_UP))
         .expect("a read timeout");
-    write!(stream, "GET {path} HTTP/1.1\r\nHost: bdi\r\n\r\n").expect("the request is sent");
+    write!(stream, "GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n").expect("the request is sent");
     let mut answer = String::new();
     stream
         .read_to_string(&mut answer)
@@ -98,19 +106,21 @@ fn get(address: &str, path: &str) -> (String, String) {
     (status, body.to_string())
 }
 
-/// `bdi web` over the described subtree, once it has read the tracker.
-fn a_web_over_the_tracker(named: &str) -> (Web, String) {
+/// `bdi web` over the described subtree, answering for the host names
+/// `allowing`, once it has read the tracker.
+fn a_web_over_the_tracker(named: &str, allowing: &[&str]) -> (Web, String) {
     let home = a_home_naming_one_project(named);
-    let (web, address, _) = serving(&home);
+    let (web, address, _) = serving(&home, allowing);
     (web, address)
 }
 
-/// `bdi web` in `home` over the described subtree, once it has read the
-/// tracker, and the tracker, which the test may change.
-fn serving(home: &Path) -> (Web, String, ShimmedTracker) {
+/// `bdi web` in `home` over the described subtree, answering for the host
+/// names `allowing`, once it has read the tracker, and the tracker, which the
+/// test may change.
+fn serving(home: &Path, allowing: &[&str]) -> (Web, String, ShimmedTracker) {
     let tracker = ShimmedTracker::beside(home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
-    let (web, address) = bdi_web(home, &tracker);
+    let (web, address) = bdi_web(home, &tracker, allowing);
     let giving_up = Instant::now() + GIVING_UP;
     while get(&address, "/healthz").0 != "HTTP/1.1 200 OK" {
         assert!(Instant::now() < giving_up, "bdi web never read the tracker");
@@ -119,9 +129,21 @@ fn serving(home: &Path) -> (Web, String, ShimmedTracker) {
     (web, address, tracker)
 }
 
+/// A page elsewhere that points a name of its own at the listener sends that
+/// name as the host, so only a name the listener was given is answered.
+#[test]
+fn only_a_request_sent_to_a_host_it_was_given_is_answered() {
+    let (_web, address) = a_web_over_the_tracker("web-hosts", &["beads.example.invalid"]);
+    let (status, _) = get_from(&address, "dunwich.invalid", "/");
+    assert_eq!(status, "HTTP/1.1 421 Misdirected Request");
+    let (status, body) = get_from(&address, "beads.example.invalid:8080", "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(body.contains(THE_ROOT.1), "{body}");
+}
+
 #[test]
 fn the_forest_a_tracker_holds_is_answered_as_a_page() {
-    let (_web, address) = a_web_over_the_tracker("web-forest");
+    let (_web, address) = a_web_over_the_tracker("web-forest", &[]);
     let (status, body) = get(&address, "/");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert!(body.starts_with("<!doctype html>"), "{body}");
@@ -137,7 +159,7 @@ fn the_forest_a_tracker_holds_is_answered_as_a_page() {
 
 #[test]
 fn a_beads_address_answers_with_that_bead_shown() {
-    let (_web, address) = a_web_over_the_tracker("web-bead");
+    let (_web, address) = a_web_over_the_tracker("web-bead", &[]);
     let (status, body) = get(&address, &format!("/arkham/{}", A_BEAD_BENEATH.0));
     assert_eq!(status, "HTTP/1.1 200 OK");
     let aside = &body[body.find("<aside>").expect("the bead view is drawn")..];
@@ -159,7 +181,7 @@ fn a_beads_address_answers_with_that_bead_shown() {
 fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
     const RETITLED: &str = "A title the tracker gave the root after the page was drawn";
     let home = a_home_naming_one_project_settled("web-live", "[tui]\nrefresh_seconds = 1\n");
-    let (_web, address, tracker) = serving(&home);
+    let (_web, address, tracker) = serving(&home, &[]);
     let (_, page) = get(&address, "/");
     let change = page
         .split_once("data-change=\"")
@@ -173,7 +195,7 @@ fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
         .expect("a read timeout");
     write!(
         stream,
-        "GET /?since={change} HTTP/1.1\r\nHost: bdi\r\nAccept: text/event-stream\r\n\r\n"
+        "GET /?since={change} HTTP/1.1\r\nHost: {address}\r\nAccept: text/event-stream\r\n\r\n"
     )
     .expect("the request is sent");
     let mut events = BufReader::new(stream);

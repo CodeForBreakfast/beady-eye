@@ -6,7 +6,7 @@
 //! that snapshot, so what a request costs is the drawing and never a read.
 
 use std::collections::BTreeMap;
-use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv6Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -160,11 +160,55 @@ impl Held {
     }
 }
 
+/// The host names a request may be addressed to, beside `localhost` and an
+/// address, which no other page can make a browser resolve to this one.
+///
+/// A page elsewhere can point a name of its own at this listener and have a
+/// visitor's browser read it as that page's own. The request still says the
+/// name it was sent to, so a name nobody allowed is refused.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Hosts(pub(super) Vec<String>);
+
+impl Hosts {
+    /// Whether a request whose one Host header says `host` was sent to a
+    /// name this listener answers for. The port is not compared.
+    fn allow(&self, host: Option<&str>) -> bool {
+        let Some(name) = host.and_then(name_of) else {
+            return false;
+        };
+        let name = name.strip_suffix('.').unwrap_or(name);
+        name.parse::<IpAddr>().is_ok()
+            || name.eq_ignore_ascii_case("localhost")
+            || self.0.iter().any(|allowed| {
+                name.eq_ignore_ascii_case(allowed.strip_suffix('.').unwrap_or(allowed))
+            })
+    }
+}
+
+/// The name a Host header's `host` sends a request to, without its port, or
+/// nothing where it is not a name with an optional port.
+fn name_of(host: &str) -> Option<&str> {
+    let (name, rest) = match host.strip_prefix('[') {
+        Some(bracketed) => {
+            let (address, rest) = bracketed.split_once(']')?;
+            address.parse::<Ipv6Addr>().ok()?;
+            (address, rest)
+        }
+        None => host.split_at(host.find(':').unwrap_or(host.len())),
+    };
+    let port_is_sound = match rest.strip_prefix(':') {
+        Some(port) => port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok(),
+        None => rest.is_empty(),
+    };
+    (port_is_sound && !name.is_empty()).then_some(name)
+}
+
 /// Answer requests on `listen` until a signal ends the process, drawing each
-/// from the latest read of every project `config` names.
+/// from the latest read of every project `config` names, for requests sent to
+/// a name `hosts` allows.
 ///
 /// The config is read once. Replacing what it reads is a restart.
-pub(super) fn web(config: &Path, listen: &str) -> anyhow::Result<ExitCode> {
+pub(super) fn web(config: &Path, listen: &str, hosts: Hosts) -> anyhow::Result<ExitCode> {
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,
@@ -193,6 +237,7 @@ pub(super) fn web(config: &Path, listen: &str) -> anyhow::Result<ExitCode> {
     let answering = Arc::new(Answering {
         latest: Arc::clone(&latest),
         cfg: cfg.clone(),
+        hosts,
         live: live::Streams::default(),
     });
     http::accept(
@@ -209,6 +254,7 @@ pub(super) fn web(config: &Path, listen: &str) -> anyhow::Result<ExitCode> {
 struct Answering {
     latest: Arc<Latest>,
     cfg: Config,
+    hosts: Hosts,
     live: live::Streams,
 }
 
@@ -333,12 +379,15 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
     };
     let read = head(&mut stream, &mut Vec::new());
     if let Ok(head) = &read {
-        if let Some(asked) = Asked::of(&head.target).filter(|_| live::asks_for_changes(head)) {
+        let kept_current = answering.hosts.allow(head.only("Host")) && live::asks_for_changes(head);
+        if let Some(asked) = Asked::of(&head.target).filter(|_| kept_current) {
             live::keep_current(answering, stream.stream, head, asked);
             return;
         }
     }
-    let Some((status, kind, body)) = said(read, &answering.latest, &answering.cfg) else {
+    let Some((status, kind, body)) =
+        said(read, &answering.latest, &answering.cfg, &answering.hosts)
+    else {
         return;
     };
     reply(&stream.stream, status, kind, body.as_bytes());
@@ -351,9 +400,10 @@ fn said(
     read: Result<Head, Unread>,
     latest: &Latest,
     cfg: &Config,
+    hosts: &Hosts,
 ) -> Option<(&'static str, &'static str, String)> {
     match read {
-        Ok(head) => Some(answered(&head, latest, cfg)),
+        Ok(head) => Some(answered(&head, latest, cfg, hosts)),
         Err(Unread::TooLong) => Some((
             "414 URI Too Long",
             HTML,
@@ -364,7 +414,19 @@ fn said(
 }
 
 /// What a request comes to: its status, the kind of body, and the body.
-fn answered(head: &Head, latest: &Latest, cfg: &Config) -> (&'static str, &'static str, String) {
+fn answered(
+    head: &Head,
+    latest: &Latest,
+    cfg: &Config,
+    hosts: &Hosts,
+) -> (&'static str, &'static str, String) {
+    if !hosts.allow(head.only("Host")) {
+        return (
+            "421 Misdirected Request",
+            TEXT,
+            "not a host bdi web answers for\n".to_string(),
+        );
+    }
     if head.method != "GET" {
         return ("405 Method Not Allowed", TEXT, "GET only\n".to_string());
     }
@@ -429,14 +491,95 @@ mod tests {
     /// What a request for `target` with `method` is answered, with `latest`
     /// held.
     fn answered_to(method: &str, target: &str, latest: &Latest) -> (&'static str, String) {
-        let sent = format!("{method} {target} HTTP/1.1\r\nHost: bdi\r\n\r\n");
+        answered_from(&format!("Host: {BEADS}"), method, target, latest)
+    }
+
+    /// A name the tests' listener is told it answers for.
+    const BEADS: &str = "beads.example.invalid";
+
+    fn allowed() -> Hosts {
+        Hosts(vec![BEADS.to_string()])
+    }
+
+    /// A name given with the root's dot is the same name as one without it.
+    #[test]
+    fn a_name_allowed_with_the_roots_dot_is_allowed_without_it() {
+        let dotted = Hosts(vec![format!("{BEADS}.")]);
+        assert!(dotted.allow(Some(BEADS)));
+        assert!(dotted.allow(Some(&format!("{BEADS}.:8080"))));
+        assert!(!dotted.allow(Some("dunwich.invalid.")));
+    }
+
+    /// What a request for `target` with `method` and the header lines
+    /// `headers` is answered, with `latest` held.
+    fn answered_from(
+        headers: &str,
+        method: &str,
+        target: &str,
+        latest: &Latest,
+    ) -> (&'static str, String) {
+        let sent = format!("{method} {target} HTTP/1.1\r\n{headers}\r\n\r\n");
         let (status, _, body) = said(
             head(&mut sent.as_bytes(), &mut Vec::new()),
             latest,
             &Config::naming(Vec::new()),
+            &allowed(),
         )
         .expect("an answer");
         (status, body)
+    }
+
+    /// A page elsewhere that points its own name at this listener sends its
+    /// own name as the host, so it is refused, and so is a request naming no
+    /// host, naming one unsoundly, or naming more than one. The probe is
+    /// refused alike, since it says whether trackers answer.
+    #[test]
+    fn a_request_sent_to_a_name_nobody_allowed_is_refused() {
+        let latest = read();
+        for headers in [
+            "Host: dunwich.invalid",
+            "Host: dunwich.invalid:8080",
+            "Host: beads.example.invalid.dunwich.invalid",
+            "Accept: text/html",
+            "Host: ",
+            "Host: beads.example.invalid:http",
+            "Host: localhost:+8080",
+            "Host: beads.example.invalid:8080:80",
+            "Host: [::1",
+            "Host: [::1]x",
+            "Host: [beads.example.invalid]",
+            "Host: beads.example.invalid\r\nHost: dunwich.invalid",
+        ] {
+            for target in ["/", HEALTH] {
+                let (status, body) = answered_from(headers, "GET", target, &latest);
+                assert_eq!(status, "421 Misdirected Request", "{headers} {target}");
+                assert!(!body.contains("<!doctype html>"), "{body}");
+            }
+        }
+    }
+
+    /// An allowed name gets the page on any port, in any case and with or
+    /// without the root's dot, and so do `localhost` and an address, which
+    /// only this machine or its network can make a browser send.
+    #[test]
+    fn a_request_sent_to_an_allowed_name_localhost_or_an_address_gets_the_page() {
+        let latest = read();
+        for host in [
+            BEADS,
+            "Beads.Example.Invalid:8080",
+            "localhost",
+            "LOCALHOST:8080",
+            "localhost.:8080",
+            "beads.example.invalid.",
+            "127.0.0.1:8080",
+            "10.0.0.7",
+            "[::1]:8080",
+            "[::1]",
+        ] {
+            let (status, body) = answered_from(&format!("Host: {host}"), "GET", "/", &latest);
+            assert_eq!(status, "200 OK", "{host}");
+            assert!(body.starts_with("<!doctype html>"), "{body}");
+        }
     }
 
     /// Every link carries the folds the reader pointed, so a reader who
@@ -455,7 +598,7 @@ mod tests {
     #[test]
     fn an_address_is_too_long_however_its_bytes_arrive() {
         let target = format!("/?{}", "open=p%3Aarkham&".repeat(1024));
-        let sent = format!("GET {target} HTTP/1.1\r\nHost: bdi\r\n\r\n");
+        let sent = format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n");
         assert!(sent.len() > http::LONGEST_HEAD && sent.len() < http::LONGEST_HEAD + 4096);
         let (first, rest) = sent.as_bytes().split_at(100);
         let mut arriving = first.chain(rest);
@@ -463,6 +606,7 @@ mod tests {
             head(&mut arriving, &mut Vec::new()),
             &read(),
             &Config::naming(Vec::new()),
+            &Hosts::default(),
         )
         .expect("an answer");
         assert_eq!(status, "414 URI Too Long");
@@ -588,9 +732,9 @@ path = "/home/user/dev/arkham"
             }),
             change: 0,
         });
-        let sent = "GET / HTTP/1.1\r\nHost: bdi\r\n\r\n";
+        let sent = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
-        let (status, _, body) = answered(&head, &latest, &cfg);
+        let (status, _, body) = answered(&head, &latest, &cfg, &Hosts::default());
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];
