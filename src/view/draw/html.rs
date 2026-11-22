@@ -862,7 +862,8 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 /// server sends them down that one connection: the whole page first, and
 /// after it each patch to the page it sent last. Each page replaces the
 /// body. It keeps the line or bead view at the top of the window where it
-/// was, or the next line below it that is still drawn, and keeps both panes'
+/// was, or the next line below it that is still drawn, knowing a line by its
+/// id, and keeps both panes'
 /// scroll, the link that had focus, an open menu, and what is typed in the
 /// find field. A page differing only in its change is not shown again. A
 /// hidden page lets its connection go, and asks again from the change it
@@ -906,13 +907,9 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const where = link.matches(".fold") ? "" : new URLSearchParams(link.search).get("at");
     return [link.className, link.pathname, where, link.hash].join(" ");
   };
-  const known = (row) => {
-    const bead = row.querySelector("a.bead[href]");
-    return bead ? goes(bead) : row.id;
-  };
   const marks = (on = document) =>
-    [...[...on.querySelectorAll(".line")].filter(known), on.querySelector("aside")].filter(Boolean);
-  const mark = (at) => at.matches("aside") ? "aside" : known(at);
+    [...on.querySelectorAll(".line[id]"), on.querySelector("aside")].filter(Boolean);
+  const mark = (at) => at.matches("aside") ? "aside" : at.id;
   const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
   const pane = (link) => boxes().findIndex((box) => box?.contains(link));
   const alike = (at, kind) => [...(boxes()[at] ?? document).querySelectorAll("a[href]")]
@@ -1469,6 +1466,8 @@ mod tests {
     /// A link lands on the first line carrying its fragment, so no two lines
     /// of a page carry one id: not a bead the trees draw twice, and not a
     /// bead a list draws again under each row expanded to what it waits on.
+    /// The live page keeps the reader's place by a line's id, so every line
+    /// drawing a bead carries one.
     #[test]
     fn no_two_lines_of_a_page_carry_one_id() {
         let mut listed = page_at(&format!("/?view={}", VIEWS[0].0)).html;
@@ -1481,6 +1480,11 @@ mod tests {
         }
         assert_eq!(lines_titled(&listed, "lift the ground station").len(), 2);
         for html in [page_of(reached_twice(), "/"), listed] {
+            for (at, line) in lines_html(&html).iter().enumerate() {
+                if line.contains("class=\"bead\"") {
+                    assert!(line_id(&html, at).is_some(), "{line}");
+                }
+            }
             let ids: Vec<String> = (0..lines_html(&html).len())
                 .filter_map(|at| line_id(&html, at))
                 .collect();
