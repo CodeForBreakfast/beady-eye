@@ -189,19 +189,23 @@ impl Drawing<'_> {
             escaped(phrase::find())
         ));
         html.push_str("</nav>\n");
-        let Some(root) = self
-            .asked
-            .root
-            .as_ref()
-            .filter(|_| self.forest.is_focused())
-        else {
+        let Some(root) = self.asked.root.as_ref() else {
             return;
         };
-        html.push_str(&format!(
-            "<p class=\"rooted\">{} ",
-            escaped(phrase::focused())
-        ));
-        if let Some(node) = self.forest.snapshot().node(root.key()) {
+        // An address can name a root the forest no longer draws, and the
+        // page then draws every tree, so it says so rather than drop it.
+        let said = if self.forest.is_focused() {
+            phrase::focused().to_string()
+        } else {
+            format!("{WARNING} {}", phrase::not_drawn(root.key()))
+        };
+        html.push_str(&format!("<p class=\"rooted\">{} ", escaped(&said)));
+        if let Some(node) = self
+            .forest
+            .snapshot()
+            .node(root.key())
+            .filter(|_| self.forest.is_focused())
+        {
             self.reference(
                 html,
                 show::named(node, vec![Span::raw(node.title.clone())]),
@@ -2166,6 +2170,17 @@ mod tests {
     #[test]
     fn an_address_with_a_key_the_page_does_not_know_is_still_read() {
         assert!(Asked::of("/?utm=%FF").is_some());
+    }
+
+    /// An address rooted at a bead the forest no longer draws says so over
+    /// every tree, and offers them without the root.
+    #[test]
+    fn a_root_the_forest_no_longer_draws_is_said_to_be_gone() {
+        let gone = key("smt-4kd3p.99");
+        let html = page_at("/?root=summit-works%3Asmt-4kd3p%2Fsummit-works%3Asmt-4kd3p.99").html;
+        assert!(text_of(&html).contains(&phrase::not_drawn(&gone)), "{html}");
+        let all = link_saying(&html, phrase::show_all());
+        assert_eq!(Asked::of(&all).and_then(|asked| asked.root), None, "{all}");
     }
 
     /// A search's form goes to the match, as its steps do.
