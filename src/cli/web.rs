@@ -79,10 +79,9 @@ impl Hosts {
         let name = name.strip_suffix('.').unwrap_or(name);
         name.parse::<IpAddr>().is_ok()
             || name.eq_ignore_ascii_case("localhost")
-            || self
-                .0
-                .iter()
-                .any(|allowed| name.eq_ignore_ascii_case(allowed))
+            || self.0.iter().any(|allowed| {
+                name.eq_ignore_ascii_case(allowed.strip_suffix('.').unwrap_or(allowed))
+            })
     }
 }
 
@@ -371,6 +370,15 @@ mod tests {
 
     fn allowed() -> Hosts {
         Hosts(vec![BEADS.to_string()])
+    }
+
+    /// A name given with the root's dot is the same name as one without it.
+    #[test]
+    fn a_name_allowed_with_the_roots_dot_is_allowed_without_it() {
+        let dotted = Hosts(vec![format!("{BEADS}.")]);
+        assert!(dotted.allow(Some(BEADS)));
+        assert!(dotted.allow(Some(&format!("{BEADS}.:8080"))));
+        assert!(!dotted.allow(Some("dunwich.invalid.")));
     }
 
     /// What a request for `target` with `method` and the header lines
