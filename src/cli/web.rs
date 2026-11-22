@@ -97,7 +97,7 @@ fn name_of(host: &str) -> Option<&str> {
         None => host.split_at(host.find(':').unwrap_or(host.len())),
     };
     let port_is_sound = match rest.strip_prefix(':') {
-        Some(port) => port.parse::<u16>().is_ok(),
+        Some(port) => port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok(),
         None => rest.is_empty(),
     };
     (port_is_sound && !name.is_empty()).then_some(name)
@@ -405,6 +405,7 @@ mod tests {
             "Accept: text/html",
             "Host: ",
             "Host: beads.example.invalid:http",
+            "Host: localhost:+8080",
             "Host: beads.example.invalid:8080:80",
             "Host: [::1",
             "Host: [::1]x",
