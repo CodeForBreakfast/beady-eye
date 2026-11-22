@@ -291,17 +291,16 @@ impl Asked {
     }
 
     /// The address that points `line`'s fold the other way, landing on the
-    /// line, where `line` folds at all. `at` is where the line is drawn,
-    /// which pointing its own fold does not move, and `listed` is whether
-    /// the line is a row of a list drawn in place of the trees.
+    /// line by its [`fold_name`], where `line` folds at all. `listed` is
+    /// whether the line is a row of a list drawn in place of the trees.
     ///
     /// The terminal points a fold on the selected line, and its bead view is
     /// over the selection, so on a bead's page the link goes to the page of
     /// the bead on the line, or to the forest where the line is no bead.
-    pub fn toggling(&self, line: &Line, at: usize, listed: bool) -> Option<String> {
+    pub fn toggling(&self, line: &Line, listed: bool) -> Option<String> {
         let name = fold_name(line, listed)?;
         let mut folds = self.folds.clone();
-        pointed(&mut folds, name, line.folded != Some(true));
+        pointed(&mut folds, name.clone(), line.folded != Some(true));
         let place = match (&self.bead, &line.content) {
             (Some(_), Content::Bead(_)) => line.place.as_ref(),
             _ => None,
@@ -311,11 +310,7 @@ impl Asked {
             folds,
             ..self.clone()
         };
-        Some(format!(
-            "{path}{}#{}",
-            toggled.query(place),
-            line_anchor(at)
-        ))
+        Some(format!("{path}{}#{name}", toggled.query(place)))
     }
 
     /// The address of the page showing `key`, with the folds this page has.
@@ -437,11 +432,6 @@ fn folds_over_selected(forest: &Forest) -> Vec<String> {
         .collect()
 }
 
-/// The anchor on the line drawn `at`.
-pub fn line_anchor(at: usize) -> String {
-    format!("l{at}")
-}
-
 /// Point each of `folds` on `forest` but those `held_open` names.
 ///
 /// A fold is pointed through the forest's own fold action, which acts on a
@@ -486,10 +476,14 @@ fn in_sight(forest: &Forest) -> HashMap<String, (usize, bool)> {
 /// What a line that folds is known by in an address: what the forest knows
 /// its fold by, written out. Nothing for a line with no fold.
 ///
+/// It is the line's anchor on the page too, so a link to the line lands on
+/// it wherever it is drawn. Being written as [`encoded`] writes, it stands
+/// in a fragment and an id as it is.
+///
 /// A bead's row in a list folds to what the bead unblocks, which the forest
 /// keeps by the bead and apart from the bead's folds in the trees, so where
 /// the line is `listed` it is known by the bead under another name.
-fn fold_name(line: &Line, listed: bool) -> Option<String> {
+pub fn fold_name(line: &Line, listed: bool) -> Option<String> {
     line.folded?;
     Some(match &line.content {
         Content::Project(project) => format!("p:{}", encoded(&project.project)),
@@ -533,10 +527,13 @@ fn unplaced(text: &str) -> Option<Place> {
 
 /// `text` with every byte but the ones a URL leaves unreserved written as
 /// `%XX`, so it can stand as one segment of a path or one value of a query.
+///
+/// `~` is unreserved too, but is written as `%7E`, because a browser takes
+/// `:~:` in a fragment for a directive and finds no line by its anchor.
 fn encoded(text: &str) -> String {
     let mut said = String::with_capacity(text.len());
     for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+        if byte.is_ascii_alphanumeric() || b"-._".contains(&byte) {
             said.push(char::from(byte));
         } else {
             said.push_str(&format!("%{byte:02X}"));
