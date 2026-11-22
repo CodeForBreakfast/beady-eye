@@ -4481,13 +4481,15 @@ keeps its layout.
 **A key is a link, and the state a key would change rides in the address.** A
 line that folds links to the page with that fold pointed the other way,
 landing on the line. The query names each fold the reader has pointed by what
-its line is known by, and which way it points. Each request flattens a fresh
-forest from the latest snapshot and points the folds through the forest's own
-fold action, going through them again while pointing one brings another into
-sight. A fold on a line the forest no longer draws is passed over, as a
-refresh passes over one, and is carried on. The server keeps nothing between
-requests. An address that has outgrown the longest request the server reads
-is answered with a page saying so and a link to the forest.
+its line is known by, and which way it points. That name is the line's anchor
+on the page too, so the link lands on the line even after beads above it
+appear or go, and a line with no fold carries no anchor. Each request flattens
+a fresh forest from the latest snapshot and points the folds through the
+forest's own fold action, going through them again while pointing one brings
+another into sight. A fold on a line the forest no longer draws is passed
+over, as a refresh passes over one, and is carried on. The server keeps
+nothing between requests. An address that has outgrown the longest request
+the server reads is answered with a page saying so and a link to the forest.
 
 The terminal points a fold on the selected line, and its bead view is over the
 selection. So on a bead's page a fold link goes to the page of the bead on its
