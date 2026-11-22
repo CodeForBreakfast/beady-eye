@@ -22,6 +22,7 @@ use crate::view::address::{fold_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{Content, Line, Waiting};
+use crate::view::markdown::Flow;
 use crate::view::row::{Layout, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
@@ -435,22 +436,38 @@ impl Drawing<'_> {
             forest.place().map(|place| self.asked.opening_at(place)),
         );
         html.push_str("</div>");
+        let mut in_prose = false;
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
             let links = page.links.get(&at).map_or(&[][..], Vec::as_slice);
+            // A row of prose starts with two spans: the indent the page gives
+            // it, and the lead or the hang the text gives it.
+            let (lead, rest) = row.split_at(row.len().min(2));
+            let flow = page.prose.get(&at);
             // A row of prose broken from the one above only to fit the
             // terminal's width keeps that break in an element of its own, so a
             // page narrower than the terminal can let the prose flow.
-            if let Some(joint) = page.flowing.get(&at) {
-                let (hang, rest) = row.split_at(row.len().min(2));
+            if let Some(Flow::Joins(joint)) = flow {
                 html.push_str(joint);
                 html.push_str("<span class=\"w\">\n");
-                spans(html, hang, Block::Identity, links, 0);
+                spans(html, lead, Block::Identity, links, 0);
                 html.push_str("</span>");
-                spans(html, rest, Block::Identity, links, hang.len());
+                spans(html, rest, Block::Identity, links, lead.len());
                 continue;
             }
+            if std::mem::take(&mut in_prose) {
+                html.push_str("</span></span>");
+            }
             html.push('\n');
-            if let Some(related) = named.get(&at) {
+            // A line of prose is an element of its own, with what it starts
+            // with apart from its text, so a phone can set the text in a face
+            // of its own and hang every row of it under the text's start.
+            if let Some(Flow::Opens) = flow {
+                html.push_str("<span class=\"p\"><span class=\"lead\">");
+                spans(html, lead, Block::Identity, links, 0);
+                html.push_str("</span><span class=\"t\">");
+                spans(html, rest, Block::Identity, links, lead.len());
+                in_prose = true;
+            } else if let Some(related) = named.get(&at) {
                 let (arrow, rest) = row.split_at(row.len().min(2));
                 html.push_str("<span class=\"arrow\">");
                 spans(html, arrow, Block::Identity, &[], 0);
@@ -481,6 +498,9 @@ impl Drawing<'_> {
             } else {
                 spans(html, row, Block::Identity, links, 0);
             }
+        }
+        if in_prose {
+            html.push_str("</span></span>");
         }
         html.push_str("\n</div>");
     }
@@ -741,6 +761,10 @@ border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
 .page .w,.page .arrow{display:none}\
+.page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
+vertical-align:top;width:100%;white-space:normal}\
+.page .lead{white-space:pre}\
+.page .p .t{font:15px system-ui,sans-serif;line-height:1.5;overflow-wrap:anywhere}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
@@ -1862,6 +1886,54 @@ mod tests {
         assert!(lines.contains(&paragraph.to_string()), "{lines:#?}");
         assert!(lines.contains(&"• one item".to_string()), "{lines:#?}");
         assert!(lines.contains(&"• another item".to_string()), "{lines:#?}");
+    }
+
+    /// A phone sets the bead view's prose in a face of its own and lets it
+    /// flow, and a wrapped item still hangs under its text rather than its
+    /// marker. So each line of prose is an element holding its lead, the
+    /// indent and any marker, apart from its text, and all of a wrapped
+    /// item's rows are in the one element. A line of code is laid out by
+    /// its author and is not prose.
+    #[test]
+    fn each_line_of_the_bead_views_prose_holds_its_lead_apart_from_its_text() {
+        let item = "re-silver the reflector before the lamp goes back in, and test the diaphone once it is back in its housing on the gallery";
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying(
+                &format!("A first paragraph.\n\n- {item}\n\n```\nlog the burn\n```"),
+                "",
+            );
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let view = inside(&html, "page");
+        let mut lines = Vec::new();
+        let mut from = 0;
+        while let Some(found) = view[from..].find("<span class=\"p\">") {
+            let open = from + found;
+            let end = element_end(view, open);
+            let line = &view[open..end];
+            let (shape, between) = parts(inside(line, "p"));
+            assert_eq!(shape, ["span.lead", "span.t"], "{line}");
+            assert_eq!(between, "", "{line}");
+            let mut text = inside(line, "t").to_string();
+            while let Some(at) = text.find("<span class=\"w\">") {
+                text.replace_range(at..element_end(&text, at), "");
+            }
+            lines.push((text_of(inside(line, "lead")), words(&text_of(&text))));
+            from = end;
+        }
+        assert!(
+            lines.contains(&("  ".to_string(), "A first paragraph.".to_string())),
+            "{lines:#?}"
+        );
+        assert!(
+            lines.contains(&("  • ".to_string(), item.to_string())),
+            "{lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|(_, text)| text.contains("log the burn")),
+            "{lines:#?}"
+        );
+        assert!(text_of(view).contains("log the burn"), "{view}");
     }
 
     /// The arrow a related bead is drawn after is apart from the reference,
