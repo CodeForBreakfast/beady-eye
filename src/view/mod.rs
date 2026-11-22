@@ -1,12 +1,14 @@
 //! Everything between the model and the screen: `bdi`'s own words for what the
-//! model found, the cells of one row, the forest those rows are drawn from, and
-//! the pane tail beneath it.
+//! model found, the cells of one row, the forest those rows are drawn from,
+//! the pane tail beneath it, and the address a web page of them is asked for
+//! at.
 
 use chrono::{DateTime, Utc};
 
 use crate::app::Awaited;
 use crate::model::join::BeadKey;
 
+pub mod address;
 pub mod bindings;
 pub mod draw;
 pub mod fitted;

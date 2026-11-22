@@ -14,7 +14,7 @@ use crate::view::phrase;
 use crate::view::row::{self, Cell, Layout, Row, Widths, AGENT, WARNING};
 
 use super::tone::{status_style, tone};
-use super::{beside, done, structure};
+use super::{beside, done, structure, Reference};
 
 /// A run of closed siblings said as a count, carrying the glyph each of them
 /// would carry on a line of its own.
@@ -95,6 +95,51 @@ pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layou
         }
     }
     fitted.toned(tone(row))
+}
+
+/// The cells a reference to this row's bead is drawn from, the glyph, the id
+/// and the title, each as this row draws it, and the row without them.
+///
+/// The id is drawn through the forest's width for it, as the identity draws
+/// it, so the titles of a column of references start together.
+pub(super) fn referenced_line(
+    row: &Row,
+    prefix: &str,
+    widths: &Widths,
+    layout: &Layout,
+) -> (Reference, Fitted) {
+    const REFERENCE: [Cell; 3] = [Cell::Glyph, Cell::Id, Cell::Title];
+    let walk = Walk {
+        row,
+        layout,
+        widths,
+    };
+    let drawn = |cell: Cell| {
+        let mut walked = Walked::opening(Block::Identity, Vec::new());
+        walk.padded(&mut walked, &cell, None);
+        walked.spans
+    };
+    let reference = Reference {
+        glyph: Span::styled(row.glyph.to_string(), status_style(&row.status)),
+        id: drawn(Cell::Id),
+        title: vec![Span::raw(row.title.clone())],
+        between: Style::new(),
+    };
+
+    let without = |cells: &[Cell]| {
+        cells
+            .iter()
+            .filter(|cell| !REFERENCE.contains(cell))
+            .cloned()
+            .collect()
+    };
+    let rest = Layout {
+        identity: without(&layout.identity),
+        title: without(&layout.title),
+        state: without(&layout.state),
+        open_id: layout.open_id,
+    };
+    (reference, bead_line(row, prefix, widths, &rest))
 }
 
 /// How wide each identity cell of `layout` draws on this row, in columns as

@@ -1,0 +1,145 @@
+//! `bdi web` answers a browser with the forest a tracker holds, and each
+//! bead's own page at the address its project and id compose.
+//!
+//! The cases run the binary, because what is under test is the process a
+//! supervisor starts and the port it answers on.
+
+mod terminal;
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::os::unix::process::CommandExt;
+use std::path::Path;
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use terminal::shims::ShimmedTracker;
+use terminal::{a_home_naming_one_project, die_with, THE_DESCRIBED_SUBTREE};
+
+/// Long enough for a read that is coming to have come, and short enough
+/// that one that is not is a failure rather than a hang.
+const GIVING_UP: Duration = Duration::from_secs(10);
+
+/// The capture's root, and a bead beneath it, each with its title.
+const THE_ROOT: (&str, &str) = (
+    "dun-0tp",
+    "Every outside program is optional: one seam per capability, and a setup that lacks one runs without it",
+);
+const A_BEAD_BENEATH: (&str, &str) = (
+    "dun-0tp.7",
+    "phrase.rs is one file every screen change edits",
+);
+
+/// A running `bdi web`, killed and reaped if the test ends without stopping
+/// it, which a panic does.
+struct Web(Child);
+
+impl Drop for Web {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `bdi web` over `tracker`, on a port the system picks, and the address it
+/// says it is answering on.
+fn bdi_web(home: &Path, tracker: &ShimmedTracker) -> (Web, String) {
+    let spawned_by = std::process::id();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
+    command
+        .args(["web", "--listen", "127.0.0.1:0"])
+        .current_dir(home)
+        .env("HOME", home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("BDI_PROJECT")
+        .env("XDG_RUNTIME_DIR", home)
+        .envs(tracker.environment())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    // Dropping a `Child` leaves its process running, and a test binary that
+    // is killed runs no `Drop`, so the kernel is asked to end it with its
+    // spawner.
+    unsafe { command.pre_exec(move || die_with(spawned_by)) };
+    let mut child = command.spawn().expect("bdi web starts");
+    let said = first_line(child.stdout.take().expect("its stdout"));
+    let address = said
+        .trim_end()
+        .rsplit_once("http://")
+        .map(|(_, address)| address.to_string())
+        .unwrap_or_else(|| panic!("bdi web said where it answers: {said:?}"));
+    (Web(child), address)
+}
+
+fn first_line(stdout: ChildStdout) -> String {
+    let mut line = String::new();
+    BufReader::new(stdout)
+        .read_line(&mut line)
+        .expect("bdi web says where it answers");
+    line
+}
+
+/// What `address` answers a GET of `path` with: its status line and its
+/// body.
+fn get(address: &str, path: &str) -> (String, String) {
+    let mut stream = TcpStream::connect(address).expect("bdi web takes the connection");
+    stream
+        .set_read_timeout(Some(GIVING_UP))
+        .expect("a read timeout");
+    write!(stream, "GET {path} HTTP/1.1\r\nHost: bdi\r\n\r\n").expect("the request is sent");
+    let mut answer = String::new();
+    stream
+        .read_to_string(&mut answer)
+        .expect("bdi web answers and closes");
+    let (head, body) = answer.split_once("\r\n\r\n").expect("a head and a body");
+    let status = head.lines().next().unwrap_or_default().to_string();
+    (status, body.to_string())
+}
+
+/// `bdi web` over the described subtree, once it has read the tracker.
+fn a_web_over_the_tracker(named: &str) -> (Web, String) {
+    let home = a_home_naming_one_project(named);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let (web, address) = bdi_web(&home, &tracker);
+    let giving_up = Instant::now() + GIVING_UP;
+    while get(&address, "/healthz").0 != "HTTP/1.1 200 OK" {
+        assert!(Instant::now() < giving_up, "bdi web never read the tracker");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    (web, address)
+}
+
+#[test]
+fn the_forest_a_tracker_holds_is_answered_as_a_page() {
+    let (_web, address) = a_web_over_the_tracker("web-forest");
+    let (status, body) = get(&address, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(body.starts_with("<!doctype html>"), "{body}");
+    assert!(
+        body.contains(THE_ROOT.0) && body.contains(THE_ROOT.1),
+        "{body}"
+    );
+    assert!(
+        body.contains("href=\"/arkham/dun-0tp?at=arkham%3Adun-0tp#shown\""),
+        "the root's row opens it: {body}"
+    );
+}
+
+#[test]
+fn a_beads_address_answers_with_that_bead_shown() {
+    let (_web, address) = a_web_over_the_tracker("web-bead");
+    let (status, body) = get(&address, &format!("/arkham/{}", A_BEAD_BENEATH.0));
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    let aside = &body[body.find("<aside>").expect("the bead view is drawn")..];
+    assert!(aside.contains(A_BEAD_BENEATH.1), "{aside}");
+    // The root rests shut, so the page opened it to reach the bead, and the
+    // link keeps it open.
+    assert!(
+        aside.contains("href=\"/arkham/dun-0tp?open=b%3Aarkham%3Adun-0tp#shown\""),
+        "the bead's parent opens it: {aside}"
+    );
+
+    let (status, _) = get(&address, "/arkham/dun-zzz");
+    assert_eq!(status, "HTTP/1.1 404 Not Found");
+}

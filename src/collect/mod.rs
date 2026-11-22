@@ -9,8 +9,9 @@
 //! running watcher says of each tracker, one for
 //! the pull requests each tracker's gates wait on, one for what each thing a
 //! pull request does means to those gates, one for the gates waiting on an
-//! issue or a release, and one for GitHub's webhook deliveries about pull
-//! requests.
+//! issue or a release, one for GitHub's webhook deliveries about pull
+//! requests, and one for answering HTTP requests, which both those
+//! deliveries and the web view arrive by.
 
 pub mod agents;
 pub mod bd;
@@ -20,6 +21,7 @@ pub mod environment;
 pub mod gates;
 pub mod github;
 pub mod herdr;
+pub mod http;
 pub mod panes;
 pub mod pr_events;
 pub mod run;

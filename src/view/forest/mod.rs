@@ -1215,6 +1215,24 @@ impl Forest {
         self.go_to_place(&place)
     }
 
+    /// The lines drawn whose folds have to be open for the selected line to
+    /// be drawn, which are the folds [`Forest::go_to`] opens to reach it.
+    pub fn lines_over_selected(&self) -> Vec<usize> {
+        let Some(place) = self
+            .lines
+            .get(self.selected)
+            .and_then(|line| line.place.clone())
+        else {
+            return Vec::new();
+        };
+        let over: BTreeSet<Handle> = self.folds_over(&place).into_iter().collect();
+        self.lines
+            .viewport(0, self.lines.len())
+            .filter(|(_, line)| handle_of(line).is_some_and(|handle| over.contains(&handle)))
+            .map(|(at, _)| at)
+            .collect()
+    }
+
     /// Put the selection back on a line it held before, opening whatever has
     /// been folded over it since. Reports whether the selection is on it now,
     /// which it is not where the snapshot has stopped drawing that line.

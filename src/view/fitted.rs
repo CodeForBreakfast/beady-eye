@@ -267,6 +267,28 @@ impl Fitted {
         self.whole = tone.patch(self.whole);
         self
     }
+
+    /// The row at its whole width, for a page that is not cut to a terminal's:
+    /// each block's spans, the style drawn under all of them, and where each
+    /// link points.
+    pub(crate) fn whole(&self) -> Whole<'_> {
+        Whole {
+            identity: &self.identity,
+            title: &self.title,
+            state: &self.state,
+            under: self.whole,
+            links: &self.links,
+        }
+    }
+}
+
+/// A row as [`Fitted::whole`] gives it, uncut.
+pub(crate) struct Whole<'a> {
+    pub(crate) identity: &'a [Span<'static>],
+    pub(crate) title: &'a [Span<'static>],
+    pub(crate) state: &'a [Span<'static>],
+    pub(crate) under: Style,
+    pub(crate) links: &'a [Link],
 }
 
 impl Widget for Fitted {

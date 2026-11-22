@@ -2,12 +2,11 @@
 //! secret and about a pull request names the pull request to settle, and
 //! what happened there, read only from fields GitHub writes itself.
 
-use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::io::Read;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -18,6 +17,7 @@ use serde::Deserialize;
 use sha2::Sha256;
 
 use crate::collect::gates::PullRequest;
+use crate::collect::http::{self, close, head, Patient};
 
 /// The path a readiness probe asks, answered whatever the secret, and
 /// answered as failing while the settling reads nothing from GitHub.
@@ -28,13 +28,6 @@ pub const HEALTH: &str = "/healthz";
 /// far smaller: its largest field, the pull request's own body, is held by
 /// GitHub to 65,536 characters.
 const LARGEST_DELIVERY: usize = 1024 * 1024;
-
-/// The most of a request's line and headers read before they must have
-/// ended. GitHub's come to under a kilobyte.
-const LONGEST_HEAD: usize = 16 * 1024;
-
-/// The most headers one request may carry.
-const MOST_HEADERS: usize = 64;
 
 /// The most requests answered at once, which with [`LARGEST_DELIVERY`]
 /// bounds the memory every request in flight can hold between them.
@@ -52,11 +45,6 @@ const BUSY: (&str, &str) = ("503 Service Unavailable", "busy\n");
 /// goes quiet holds one of the [`MOST_AT_ONCE`]. GitHub itself gives up on an
 /// answer after ten seconds.
 const PATIENCE: Duration = Duration::from_secs(10);
-
-/// How long a request turned away while the listener is busy is read and
-/// dropped before it is closed. The accepting thread spends it, so it is
-/// short.
-const LINGER: Duration = Duration::from_millis(100);
 
 /// The secret GitHub signs each delivery with.
 pub struct Secret(Vec<u8>);
@@ -619,39 +607,13 @@ pub fn listen<T: From<Delivery> + Send + 'static>(
     let taken = listener
         .local_addr()
         .with_context(|| format!("reading the address {address} gave"))?;
-    let secret = Arc::new(secret);
-    let told = Arc::new(told);
-    let answering = Arc::new(AtomicUsize::new(0));
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { continue };
-            if answering.fetch_add(1, Ordering::SeqCst) >= MOST_AT_ONCE {
-                answering.fetch_sub(1, Ordering::SeqCst);
-                reply(&stream, BUSY);
-                close(stream, Instant::now() + LINGER);
-                continue;
-            }
-            let answered = Answering(Arc::clone(&answering));
-            let secret = Arc::clone(&secret);
-            let settle = settle.clone();
-            let told = Arc::clone(&told);
-            let reading = Arc::clone(&reading);
-            thread::spawn(move || {
-                answer(stream, &secret, &settle, &reading, told.as_ref());
-                drop(answered);
-            });
-        }
-    });
+    http::accept(
+        listener,
+        MOST_AT_ONCE,
+        |stream| reply(stream, BUSY),
+        move |stream| answer(stream, &secret, &settle, &reading, &told),
+    );
     Ok(taken)
-}
-
-/// One request being answered, counted until it is dropped, panic or not.
-struct Answering(Arc<AtomicUsize>);
-
-impl Drop for Answering {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
 }
 
 /// Read one request from `stream` and answer it, or close it unanswered
@@ -683,62 +645,25 @@ fn answer<T: From<Delivery>>(
     close(stream.stream, stream.deadline);
 }
 
-fn reply(mut stream: &TcpStream, (status, text): (&str, &str)) {
-    let _ = stream.set_write_timeout(Some(PATIENCE));
-    let _ = stream.write_all(
-        format!(
-            "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
-             Connection: close\r\n\r\n{text}",
-            text.len()
-        )
-        .as_bytes(),
-    );
-}
-
-/// Close `stream` once its answer is sent, first reading and dropping
-/// whatever the sender is still sending until it stops or `until`. Closing
-/// with bytes unread makes the system reset the connection, and a reset can
-/// reach the sender before the answer does.
-fn close(stream: TcpStream, until: Instant) {
-    let _ = stream.shutdown(Shutdown::Write);
-    let _ = std::io::copy(
-        &mut Patient {
-            stream,
-            deadline: until,
-        },
-        &mut std::io::sink(),
-    );
-}
-
-/// A connection read only until its deadline, however slowly it sends.
-struct Patient {
-    stream: TcpStream,
-    deadline: Instant,
-}
-
-impl Read for Patient {
-    fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
-        let left = self.deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(ErrorKind::TimedOut.into());
-        }
-        self.stream.set_read_timeout(Some(left))?;
-        self.stream.read(into)
-    }
+fn reply(stream: &TcpStream, (status, text): (&str, &str)) {
+    http::reply(stream, status, "text/plain", text.as_bytes(), PATIENCE);
 }
 
 /// What the one request `from` sends comes to, or nothing where it ends,
 /// fails or runs past a limit before it is whole, or is not HTTP.
 fn read(from: &mut impl Read, secret: &Secret) -> Option<Heard> {
     let mut held = Vec::new();
-    let head = head(from, &mut held)?;
-    match (head.method.as_str(), head.path.as_str()) {
+    let head = head(from, &mut held).ok()?;
+    match (head.method.as_str(), head.path()) {
         ("GET", HEALTH) => return Some(Heard::Healthy),
         ("POST", _) => {}
         _ => return Some(Heard::Unknown),
     }
-    let length = match head.length {
-        _ if head.chunked => return Some(Heard::Unmeasured),
+    let length = head
+        .header("Content-Length")
+        .and_then(|length| length.trim().parse::<usize>().ok());
+    let length = match length {
+        _ if head.header("Transfer-Encoding").is_some() => return Some(Heard::Unmeasured),
         None => return Some(Heard::Unmeasured),
         Some(length) if length > LARGEST_DELIVERY => return Some(Heard::TooLarge),
         Some(length) => length,
@@ -752,64 +677,21 @@ fn read(from: &mut impl Read, secret: &Secret) -> Option<Heard> {
     body.truncate(length);
     Some(delivery(
         secret,
-        head.event.as_deref(),
-        head.signature.as_deref(),
+        head.header("X-GitHub-Event"),
+        head.header("X-Hub-Signature-256"),
         &body,
     ))
-}
-
-/// What a request's line and headers say, of what the listener reads.
-struct Head {
-    /// Where in what was read the head ends and the body begins.
-    end: usize,
-    method: String,
-    /// The path without its query.
-    path: String,
-    /// The body's length, where the request gives one that is a number.
-    length: Option<usize>,
-    chunked: bool,
-    event: Option<String>,
-    signature: Option<String>,
-}
-
-/// Read from `from` into `held` until the request's head is whole, and say
-/// what it holds.
-fn head(from: &mut impl Read, held: &mut Vec<u8>) -> Option<Head> {
-    let mut chunk = [0; 4096];
-    loop {
-        let got = from.read(&mut chunk).ok().filter(|&got| got > 0)?;
-        held.extend_from_slice(&chunk[..got]);
-        let mut headers = [httparse::EMPTY_HEADER; MOST_HEADERS];
-        let mut request = httparse::Request::new(&mut headers);
-        let end = match request.parse(held).ok()? {
-            httparse::Status::Complete(end) => end,
-            httparse::Status::Partial if held.len() < LONGEST_HEAD => continue,
-            httparse::Status::Partial => return None,
-        };
-        let value = |name: &str| {
-            request
-                .headers
-                .iter()
-                .find(|header| header.name.eq_ignore_ascii_case(name))
-                .and_then(|header| std::str::from_utf8(header.value).ok())
-                .map(str::to_string)
-        };
-        let path = request.path.unwrap_or_default();
-        return Some(Head {
-            end,
-            method: request.method.unwrap_or_default().to_string(),
-            path: path.split('?').next().unwrap_or_default().to_string(),
-            length: value("Content-Length").and_then(|length| length.trim().parse().ok()),
-            chunked: value("Transfer-Encoding").is_some(),
-            event: value("X-GitHub-Event"),
-            signature: value("X-Hub-Signature-256"),
-        });
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::io::Write;
+    use std::net::Shutdown;
+    use std::thread;
+
+    use crate::collect::http::LONGEST_HEAD;
 
     /// GitHub's own worked example of a signature, from *Validating webhook
     /// deliveries*.

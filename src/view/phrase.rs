@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, FixedOffset, TimeDelta, Utc};
 
 use crate::collect::run::FailureKind;
 use crate::model::anomaly::Anomaly;
@@ -230,6 +230,18 @@ pub fn mark(freshness: Freshness, now: DateTime<Utc>) -> &'static str {
 /// is no read to date the rows to, and no rows either.
 pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
+}
+
+/// When a project's rows were read, as a date and a time of day at `offset`,
+/// for a page that is drawn once. An age would stop being true the moment
+/// the page was left open, with nothing on it to say so.
+pub fn read_at(freshness: Freshness, offset: FixedOffset) -> Option<String> {
+    freshness.read_at.map(|at| {
+        format!(
+            "read {}",
+            at.with_timezone(&offset).format("%Y-%m-%d %H:%M:%S %:z")
+        )
+    })
 }
 
 /// Which frame the collecting mark is on at this instant.
@@ -908,9 +920,22 @@ pub fn readiness(ready: bool, blocked_by: &[String]) -> Option<String> {
     } else if blocked_by.is_empty() {
         None
     } else {
-        Some(format!("blocked by: {}", blocked_by.join(", ")))
+        Some(format!(
+            "{}{}",
+            blocked_by_ahead(),
+            blocked_by.join(BETWEEN_BLOCKERS)
+        ))
     }
 }
+
+/// What [`readiness`] says ahead of the beads a bead is blocked by.
+pub fn blocked_by_ahead() -> &'static str {
+    "blocked by: "
+}
+
+/// What [`readiness`] says between one bead a bead is blocked by and the
+/// next.
+pub const BETWEEN_BLOCKERS: &str = ", ";
 
 /// The bead window's border title: which bead the reader is on, and — where
 /// the window is too short for the whole of it — how far down it they have
@@ -935,6 +960,46 @@ pub fn bead_window_title(id: &str, from: usize, room: usize, total: usize) -> St
 /// all the answer can say of it.
 pub fn not_in_the_answer() -> &'static str {
     "not found in the tracker"
+}
+
+/// A bead a web page's address names that no tree the forest draws holds.
+pub fn not_drawn(key: &BeadKey) -> String {
+    format!(
+        "{} is in no tree bdi draws from project {}",
+        key.id, key.project
+    )
+}
+
+/// The link on a web page's bead view that goes back to the forest, as `Esc`
+/// does in the terminal.
+pub fn back_to_the_forest() -> &'static str {
+    "✕ back to the forest"
+}
+
+/// What following a web page's fold link does to an open fold.
+pub fn shut_the_fold() -> &'static str {
+    "shut"
+}
+
+/// What following a web page's fold link does to a shut fold.
+pub fn open_the_fold() -> &'static str {
+    "open"
+}
+
+/// What a web page says before bdi has read any tracker.
+pub fn not_read_yet() -> &'static str {
+    "bdi has not finished reading its trackers yet"
+}
+
+/// What a web page says at an address longer than bdi reads, which only
+/// the folds it carries can make it.
+pub fn address_too_long() -> &'static str {
+    "bdi cannot read an address carrying this many folds"
+}
+
+/// What a web page says at an address it has no page for.
+pub fn no_page_here() -> &'static str {
+    "bdi has no page at this address"
 }
 
 /// A kind of edge outside the two `bdi` knows, said as bd's word for it.

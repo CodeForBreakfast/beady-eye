@@ -241,11 +241,121 @@ pub(crate) fn colour_named(written: &str) -> Option<Color> {
     Color::from_str(written).ok()
 }
 
+// ---- on a web page ------------------------------------------------------
+
+/// A style as CSS declarations for an element drawn over its parent's, as a
+/// span is drawn over its row's: what the style leaves alone is left out.
+///
+/// The terminal's own foreground and its sixteen colours are the page's
+/// `--fg` and `--c0` to `--c15`, so the page's own theme resolves them as a
+/// terminal's resolves its palette. `bd`'s 24-bit values stay literal, as
+/// they are in the terminal.
+pub(crate) fn css(style: Style) -> String {
+    let mut said = Vec::new();
+    if let Some(colour) = style.fg {
+        said.push(format!("color:{}", css_colour(colour, "--fg")));
+    }
+    if let Some(colour) = style.bg {
+        said.push(format!("background:{}", css_colour(colour, "--bg")));
+    }
+    let added = style.add_modifier;
+    let removed = style.sub_modifier;
+    for (modifier, on, off) in [
+        (Modifier::BOLD, "font-weight:bold", "font-weight:normal"),
+        (Modifier::DIM, "opacity:.6", "opacity:1"),
+        (Modifier::ITALIC, "font-style:italic", "font-style:normal"),
+    ] {
+        if added.contains(modifier) {
+            said.push(on.to_string());
+        } else if removed.contains(modifier) {
+            said.push(off.to_string());
+        }
+    }
+    let lines: Vec<&str> = [
+        (Modifier::UNDERLINED, "underline"),
+        (Modifier::CROSSED_OUT, "line-through"),
+    ]
+    .into_iter()
+    .filter(|(modifier, _)| added.contains(*modifier))
+    .map(|(_, line)| line)
+    .collect();
+    if !lines.is_empty() {
+        said.push(format!("text-decoration:{}", lines.join(" ")));
+    }
+    if added.contains(Modifier::REVERSED) {
+        said.push("background:var(--fg);color:var(--bg)".to_string());
+    }
+    said.join(";")
+}
+
+/// One colour as CSS, with the terminal's default standing for `default`.
+fn css_colour(colour: Color, default: &str) -> String {
+    let slot = |n: u8| format!("var(--c{n})");
+    match colour {
+        Color::Reset => format!("var({default})"),
+        Color::Black => slot(0),
+        Color::Red => slot(1),
+        Color::Green => slot(2),
+        Color::Yellow => slot(3),
+        Color::Blue => slot(4),
+        Color::Magenta => slot(5),
+        Color::Cyan => slot(6),
+        Color::Gray => slot(7),
+        Color::DarkGray => slot(8),
+        Color::LightRed => slot(9),
+        Color::LightGreen => slot(10),
+        Color::LightYellow => slot(11),
+        Color::LightBlue => slot(12),
+        Color::LightMagenta => slot(13),
+        Color::LightCyan => slot(14),
+        Color::White => slot(15),
+        Color::Indexed(n) if n < 16 => slot(n),
+        Color::Indexed(n) => {
+            let (r, g, b) = xterm_256(n);
+            format!("#{r:02x}{g:02x}{b:02x}")
+        }
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+    }
+}
+
+/// Where xterm puts an index past the sixteen: a six-level cube, then a ramp
+/// of greys.
+fn xterm_256(n: u8) -> (u8, u8, u8) {
+    if n >= 232 {
+        let grey = 8 + (n - 232) * 10;
+        return (grey, grey, grey);
+    }
+    let level = |step: u8| if step == 0 { 0 } else { 55 + step * 40 };
+    let cube = n - 16;
+    (level(cube / 36), level(cube / 6 % 6), level(cube % 6))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::config::Background;
+
+    /// A status keeps `bd`'s own value on the page, and the terminal's own
+    /// colours become the page's, so its theme resolves them.
+    #[test]
+    fn a_style_on_the_page_keeps_bds_values_and_takes_the_pages_palette() {
+        assert_eq!(css(STATUS_IN_PROGRESS), "color:#ffb454");
+        assert_eq!(css(TIER_FINISHED), "color:var(--c8)");
+        assert_eq!(css(STRUCTURE), "color:var(--fg);font-weight:normal");
+        assert_eq!(css(TIER_STAFFED), "color:var(--fg);font-weight:bold");
+        assert_eq!(css(STATUS_OPEN), "");
+    }
+
+    /// Past the sixteen, an index is the colour xterm puts there.
+    #[test]
+    fn an_index_past_the_sixteen_is_xterms_colour() {
+        assert_eq!(xterm_256(16), (0, 0, 0));
+        assert_eq!(xterm_256(196), (255, 0, 0));
+        assert_eq!(xterm_256(231), (255, 255, 255));
+        assert_eq!(xterm_256(232), (8, 8, 8));
+        assert_eq!(xterm_256(255), (238, 238, 238));
+    }
 
     /// The reader's declaration has to reach a value, or `[theme]` is a
     /// setting nothing reads and a reader who sets it is worse off than one
