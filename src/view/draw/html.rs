@@ -698,7 +698,8 @@ max-height:calc(100dvh - 64px);overflow-y:auto;\
 border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
 .lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--shown)}\
 .lists a.on{color:var(--c4);text-decoration:none}\
-.lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}}";
+.lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}\
+nav:has(.lists[open]) form{visibility:hidden}}";
 
 #[cfg(test)]
 mod tests {
