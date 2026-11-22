@@ -625,10 +625,15 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
 
 /// Spans of one block as HTML, each in its own style, the first of them the
 /// block's span `from`. One that `links` names is a link, where it points
-/// somewhere a page may link to.
+/// somewhere a page may link to. One in the code tone is marked as code.
 fn spans(html: &mut String, spans: &[Span<'static>], block: Block, links: &[Link], from: usize) {
     for (at, span) in spans.iter().enumerate() {
-        let style = styled(palette::css(span.style));
+        let code = if span.style.fg == palette::CODE.fg {
+            " class=\"code\""
+        } else {
+            ""
+        };
+        let style = format!("{code}{}", styled(palette::css(span.style)));
         let text = escaped(&span.content);
         let to = links
             .iter()
@@ -765,6 +770,7 @@ nav:has(.lists[open]) form{visibility:hidden}\
 vertical-align:top;width:100%;white-space:normal}\
 .page .lead{white-space:pre}\
 .page .p .t{font:15px system-ui,sans-serif;line-height:1.5;overflow-wrap:anywhere}\
+.page .p .t .code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
@@ -1934,6 +1940,26 @@ mod tests {
             "{lines:#?}"
         );
         assert!(text_of(view).contains("log the burn"), "{view}");
+    }
+
+    /// A code span in the bead view's prose is marked as code, so a phone can
+    /// set it in the terminal's face while the words round it are not.
+    #[test]
+    fn a_code_span_in_the_bead_views_prose_is_marked_as_code() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying("Trim the `wick` daily.", "");
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let view = inside(&html, "page");
+        let code: Vec<String> = view
+            .match_indices("class=\"code\"")
+            .map(|(at, _)| {
+                let open = view[..at].rfind('<').expect("the attribute is in a tag");
+                text_of(&view[open..element_end(view, open)])
+            })
+            .collect();
+        assert_eq!(code, ["wick"], "{view}");
+        assert!(STYLE.contains(".page .p .t .code{font-family:"), "{STYLE}");
     }
 
     /// The arrow a related bead is drawn after is apart from the reference,
