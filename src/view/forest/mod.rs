@@ -881,8 +881,7 @@ impl Forest {
     }
 
     /// Draw `list` in place of the trees, or the trees where it is none, as
-    /// the ready and view keys do. A view the config does not name draws
-    /// what the key would leave it on.
+    /// the ready and view keys do.
     pub fn draw_list(&mut self, list: Option<List>) {
         self.switch_to(list);
         self.reveal();
@@ -1203,6 +1202,12 @@ impl Forest {
             return false;
         };
         self.go_to_place(&place)
+    }
+
+    /// Whether [`Forest::go_to`] could put the selection on `key`, which it
+    /// cannot where the forest is rooted at a bead the key is not under.
+    pub fn reaches(&self, key: &BeadKey) -> bool {
+        self.place_of(key).is_some_and(|place| self.drawn(&place))
     }
 
     /// The lines drawn whose folds have to be open for the selected line to

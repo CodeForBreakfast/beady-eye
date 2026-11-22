@@ -408,8 +408,22 @@ impl Drawing<'_> {
             return false;
         };
         let key = show::key_of(self.forest, related).filter(|_| followable);
-        self.reference(html, reference, key.map(|key| self.asked.opening(&key)));
+        self.reference(html, reference, key.map(|key| self.opening(&key)));
         true
+    }
+
+    /// The address of the page showing `key`. A bead outside the tree the
+    /// forest is drawn with as its only root opens with every tree drawn,
+    /// because the rooted forest has no line to show it on.
+    fn opening(&self, key: &BeadKey) -> String {
+        if self.forest.reaches(key) {
+            return self.asked.opening(key);
+        }
+        Asked {
+            root: None,
+            ..self.asked.clone()
+        }
+        .opening(key)
     }
 
     /// Every notice the terminal says at its foot, one to a line, after
@@ -1639,6 +1653,38 @@ mod tests {
         terminal.seek("theming", &origin);
         assert_eq!(page_lines(&found), terminal_lines(&terminal));
         assert_eq!(shown_line(&found), terminal.selected_line());
+    }
+
+    /// Every bead the bead view names opens a page that shows it. One
+    /// outside the tree the forest is drawn with as its only root opens with
+    /// every tree drawn, and one inside it keeps the root.
+    #[test]
+    fn a_bead_named_from_inside_the_only_root_opens_a_page_that_shows_it() {
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&key("smt-4kd3p.6"))).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+        let aside = &rooted[rooted.find("<aside>").expect("the bead view")..];
+        let links: Vec<String> = aside
+            .split("<a class=\"bead\" href=\"")
+            .skip(1)
+            .map(|link| link[..link.find('"').expect("the address ends")].replace("&amp;", "&"))
+            .collect();
+        let rooted_at = |id: &str| {
+            let link = links
+                .iter()
+                .map(|link| link.split('#').next().unwrap_or_default())
+                .find(|link| Asked::of(link).and_then(|asked| asked.bead) == Some(key(id)))
+                .unwrap_or_else(|| panic!("the bead view names {id}: {aside}"));
+            Asked::of(link).and_then(|asked| asked.root).is_some()
+        };
+        assert!(!rooted_at("smt-4kd3p"), "the parent is outside the tree");
+        assert!(rooted_at("smt-4kd3p.6"), "the root itself is inside it");
+        for link in &links {
+            let answer = page_at(link.split('#').next().unwrap_or_default());
+            assert!(answer.found, "{link} shows no bead");
+        }
     }
 
     /// Every link a page carries keeps the list it draws and the bead it is
