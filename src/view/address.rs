@@ -501,10 +501,13 @@ pub fn fold_name(line: &Line, listed: bool) -> Option<String> {
 }
 
 /// The anchor `line` is drawn with on the page: a bead's own row is known by
-/// its bead whether or not it folds, and any other line by its fold's name.
+/// its bead whether or not it folds, a row of what a bead waits on by the
+/// beads stepped up through to reach it, and any other line by its fold's
+/// name.
 pub fn line_name(line: &Line, listed: bool) -> Option<String> {
     match &line.content {
         Content::Bead(_) => line.place.as_ref().map(|place| row_name(place, listed)),
+        Content::Waiting(step) => Some(format!("w:{}", keyed(&step.up))),
         _ => fold_name(line, listed),
     }
 }
@@ -521,8 +524,12 @@ fn row_name(place: &Place, listed: bool) -> String {
 
 /// A place as the beads stepped through to reach it, from its tree's root.
 fn placed(place: &Place) -> String {
-    iter::once(&place.tree)
-        .chain(&place.steps)
+    keyed(iter::once(&place.tree).chain(&place.steps))
+}
+
+/// `keys` written one after another, as [`placed`] writes a place's.
+fn keyed<'a>(keys: impl IntoIterator<Item = &'a BeadKey>) -> String {
+    keys.into_iter()
         .map(|key| format!("{}:{}", encoded(&key.project), encoded(&key.id)))
         .collect::<Vec<_>>()
         .join("/")
