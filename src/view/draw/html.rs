@@ -672,7 +672,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead>.id{grid-column:2}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
-body{display:flex;flex-direction:column;min-height:100dvh}main{flex:1 0 auto}\
+body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
 nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
 padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--c8);\
 font:13px system-ui,sans-serif}\
@@ -682,18 +682,19 @@ nav summary,nav>.ready,nav input{display:block;box-sizing:border-box;width:100%;
 border:0;border-radius:8px;background:none;font:inherit;text-align:center;\
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\
 nav summary{list-style:none}nav summary::-webkit-details-marker{display:none}nav summary::after{content:\" \\25BE\"}\
-nav .ready.on,.lists[open] summary,nav input:not(:placeholder-shown){background:var(--shown);font-weight:bold;text-decoration:none}\
+nav .ready.on,.lists[open] summary{background:var(--shown);font-weight:bold;text-decoration:none}\
 nav input::placeholder{color:var(--fg);opacity:1}\
 nav button{display:none}\
-nav:has(form:focus-within)>:not(form){visibility:hidden}\
-nav form:focus-within{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
+nav:has(input:is(:focus,:not(:placeholder-shown))){height:0;padding-block:0;border:0}nav:has(input:is(:focus,:not(:placeholder-shown)))>:not(form){visibility:hidden}\
+nav:has(input:is(:focus,:not(:placeholder-shown))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
 background:var(--bg);border-bottom:1px solid var(--c8)}\
-body:has(nav form:focus-within){padding-top:52px}\
-nav form:focus-within input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
+html:has(nav input:is(:focus,:not(:placeholder-shown))){scroll-padding-top:52px}body:has(nav input:is(:focus,:not(:placeholder-shown))){padding-top:52px}\
+nav:has(input:is(:focus,:not(:placeholder-shown))) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-nav form:focus-within button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
+nav:has(input:is(:focus,:not(:placeholder-shown))) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
+max-height:calc(100dvh - 64px);overflow-y:auto;\
 border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
 .lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--shown)}\
 .lists a.on{color:var(--c4);text-decoration:none}\
