@@ -282,13 +282,14 @@ impl Asked {
 
     /// The address that points `line`'s fold the other way, landing on the
     /// line, where `line` folds at all. `at` is where the line is drawn,
-    /// which pointing its own fold does not move.
+    /// which pointing its own fold does not move, and `listed` is whether
+    /// the line is a row of a list drawn in place of the trees.
     ///
     /// The terminal points a fold on the selected line, and its bead view is
     /// over the selection, so on a bead's page the link goes to the page of
     /// the bead on the line, or to the forest where the line is no bead.
-    pub fn toggling(&self, line: &Line, at: usize) -> Option<String> {
-        let name = fold_name(line)?;
+    pub fn toggling(&self, line: &Line, at: usize, listed: bool) -> Option<String> {
+        let name = fold_name(line, listed)?;
         let mut folds = self.folds.clone();
         pointed(&mut folds, name, line.folded != Some(true));
         let place = match (&self.bead, &line.content) {
@@ -416,10 +417,11 @@ fn pointed(folds: &mut Vec<Fold>, name: String, open: bool) {
 /// going to it opened.
 fn folds_over_selected(forest: &Forest) -> Vec<String> {
     let lines = forest.lines();
+    let listed = forest.list().is_some();
     forest
         .lines_over_selected()
         .into_iter()
-        .filter_map(|at| lines.get(at).and_then(fold_name))
+        .filter_map(|at| lines.get(at).and_then(|line| fold_name(line, listed)))
         .collect()
 }
 
@@ -462,15 +464,20 @@ fn point(forest: &mut Forest, folds: &[Fold], held_open: &[String]) {
 /// drawn, and whether its fold is open.
 fn in_sight(forest: &Forest) -> HashMap<String, (usize, bool)> {
     let lines = forest.lines();
+    let listed = forest.list().is_some();
     lines
         .viewport(0, lines.len())
-        .filter_map(|(at, line)| Some((fold_name(line)?, (at, line.folded?))))
+        .filter_map(|(at, line)| Some((fold_name(line, listed)?, (at, line.folded?))))
         .collect()
 }
 
 /// What a line that folds is known by in an address: what the forest knows
 /// its fold by, written out. Nothing for a line with no fold.
-fn fold_name(line: &Line) -> Option<String> {
+///
+/// A bead's row in a list folds to what the bead unblocks, which the forest
+/// keeps apart from the bead's fold in the trees, so it is known by another
+/// name where the line is `listed`.
+fn fold_name(line: &Line, listed: bool) -> Option<String> {
     line.folded?;
     Some(match &line.content {
         Content::Project(project) => format!("p:{}", encoded(&project.project)),
@@ -480,6 +487,7 @@ fn fold_name(line: &Line) -> Option<String> {
             group.project.as_deref().map(encoded).unwrap_or_default()
         ),
         Content::Elided { under, .. } => format!("e:{}", placed(under)),
+        _ if listed => format!("u:{}", placed(line.place.as_ref()?)),
         _ => format!("b:{}", placed(line.place.as_ref()?)),
     })
 }

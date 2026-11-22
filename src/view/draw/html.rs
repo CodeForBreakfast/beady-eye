@@ -168,7 +168,7 @@ impl Drawing<'_> {
             escaped(&self.asked.toggling_ready()),
             escaped(phrase::ready_only())
         ));
-        html.push_str("<form action=\"/\" method=\"get\">");
+        html.push_str(&format!("<form action=\"/#{SHOWN}\" method=\"get\">"));
         // A search that found nothing put the selection back where it began,
         // which the next search counts from, though no line is marked.
         let counted_from = (self.selected.is_some() || self.asked.find.is_some())
@@ -298,7 +298,7 @@ impl Drawing<'_> {
     /// The box-drawing a line hangs under, which is the link that toggles the
     /// line's fold where it has one.
     fn prefix(&self, html: &mut String, at: usize, line: &Line, prefix: &Span<'static>) {
-        let Some(href) = self.asked.toggling(line, at) else {
+        let Some(href) = self.asked.toggling(line, at, self.forest.list().is_some()) else {
             spans(html, std::slice::from_ref(prefix), Block::Identity, &[], 0);
             return;
         };
@@ -1821,6 +1821,34 @@ mod tests {
         );
         assert_eq!(page_lines(&found), lines);
         assert_eq!(shown_line(&found), terminal.selected_line());
+    }
+
+    /// A fold opened in the trees leaves the same bead's row in a list as
+    /// it was, as the terminal keeps what a list's row unblocks apart from
+    /// the trees' folds.
+    #[test]
+    fn a_fold_opened_in_the_trees_leaves_a_lists_row_of_the_bead_shut() {
+        let shut = terminal_lines(&terminal_forest(&[]))
+            .iter()
+            .position(|line| line.contains("▸ ○ .6"))
+            .expect("the blocked bead rests shut over its child");
+        let opened = page_at(&fold_link(&page_at("/").html, shut)).html;
+        let view = page_at(&link_saying(&opened, VIEWS[1].0)).html;
+
+        let mut terminal = terminal_forest(&[shut]);
+        terminal.apply(Action::NextView);
+        terminal.apply(Action::NextView);
+        assert_eq!(page_lines(&view), terminal_lines(&terminal));
+    }
+
+    /// A search's form goes to the match, as its steps do.
+    #[test]
+    fn a_search_from_the_form_lands_the_page_on_the_match() {
+        let html = page_at("/").html;
+        assert!(
+            html.contains(&format!("<form action=\"/#{SHOWN}\" method=\"get\">")),
+            "{html}"
+        );
     }
 
     /// A search that finds nothing leaves the selection where it began, as
