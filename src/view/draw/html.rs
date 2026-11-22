@@ -527,8 +527,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const bead = row.querySelector("a.bead[href]");
     return bead ? goes(bead) : row.id;
   };
-  const rows = () => [...document.querySelectorAll(".line")];
-  const marks = () => [...rows().filter(known), document.querySelector("aside")].filter(Boolean);
+  const marks = (on = document) =>
+    [...[...on.querySelectorAll(".line")].filter(known), on.querySelector("aside")].filter(Boolean);
   const mark = (at) => at.matches("aside") ? "aside" : known(at);
   const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
   const pane = (link) => boxes().findIndex((box) => box?.contains(link));
@@ -539,19 +539,19 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     if (text === shown) return;
     shown = text;
     const drawn = new DOMParser().parseFromString(text, "text/html");
+    const coming = new Set(marks(drawn).map(mark));
     const before = marks();
     const top = before.findIndex((at) => at.getBoundingClientRect().bottom > 0);
-    const kept = top < 0 ? [] : before.slice(top, top + 8)
-      .map((at) => [mark(at), at.getBoundingClientRect().top]);
+    const held = top < 0 ? null : before.slice(top).find((at) => coming.has(mark(at)));
+    const kept = held && [mark(held), held.getBoundingClientRect().top];
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
     const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
     const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
     document.title = drawn.title;
     document.body.replaceWith(drawn.body);
-    const after = new Map(marks().reverse().map((at) => [mark(at), at]));
-    const again = kept.find(([name]) => after.has(name));
-    if (again) scrollBy(0, after.get(again[0]).getBoundingClientRect().top - again[1]);
+    const again = kept && marks().find((at) => mark(at) === kept[0]);
+    if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
     boxes().forEach((box, at) => {
       if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
     });

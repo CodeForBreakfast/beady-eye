@@ -380,7 +380,7 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
     let read = head(&mut stream, &mut Vec::new());
     if let Ok(head) = &read {
         let kept_current = answering.hosts.allow(head.only("Host")) && live::asks_for_changes(head);
-        if let Some(asked) = Asked::of(&head.target).filter(|_| kept_current) {
+        if let Some(asked) = kept_current.then(|| Asked::of(&head.target)).flatten() {
             live::keep_current(answering, stream.stream, head, asked);
             return;
         }
