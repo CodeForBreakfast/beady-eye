@@ -725,7 +725,8 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 /// server sends them down that one connection: the whole page first, and
 /// after it each patch to the page it sent last. Each page replaces the
 /// body. It keeps the line or bead view at the top of the window where it
-/// was, or the next line below it that is still drawn, and keeps both panes'
+/// was, or the next line below it that is still drawn, telling copies of one
+/// bead apart by how many come before it on the page. It keeps both panes'
 /// scroll, the link that had focus, an open menu, and what is typed in the
 /// find field. A page differing only in its change is not shown again. A
 /// hidden page lets its connection go, and asks again from the change it
@@ -776,6 +777,14 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const marks = (on = document) =>
     [...[...on.querySelectorAll(".line")].filter(known), on.querySelector("aside")].filter(Boolean);
   const mark = (at) => at.matches("aside") ? "aside" : known(at);
+  const named = (marked) => {
+    const seen = new Map();
+    return marked.map((at) => {
+      const name = mark(at), nth = seen.get(name) ?? 0;
+      seen.set(name, nth + 1);
+      return name + " " + nth;
+    });
+  };
   const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
   const pane = (link) => boxes().findIndex((box) => box?.contains(link));
   const alike = (at, kind) => [...(boxes()[at] ?? document).querySelectorAll("a[href]")]
@@ -785,11 +794,11 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     if (text === shown) return;
     shown = text;
     const drawn = new DOMParser().parseFromString(text, "text/html");
-    const coming = new Set(marks(drawn).map(mark));
-    const before = marks();
+    const coming = new Set(named(marks(drawn)));
+    const before = marks(), names = named(before);
     const top = before.findIndex((at) => at.getBoundingClientRect().bottom > 0);
-    const held = top < 0 ? null : before.slice(top).find((at) => coming.has(mark(at)));
-    const kept = held && [mark(held), held.getBoundingClientRect().top];
+    const held = top < 0 ? -1 : names.findIndex((name, at) => at >= top && coming.has(name));
+    const kept = held >= 0 && [names[held], before[held].getBoundingClientRect().top];
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
     const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
@@ -812,7 +821,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
       typing.focus({ preventScroll: true });
       typing.setSelectionRange(...caret);
     }
-    const again = kept && marks().find((at) => mark(at) === kept[0]);
+    const after = kept && marks();
+    const again = kept && after[named(after).indexOf(kept[0])];
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
     boxes().forEach((box, at) => {
       if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
