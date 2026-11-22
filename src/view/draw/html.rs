@@ -1191,15 +1191,35 @@ mod tests {
                 .iter()
                 .position(|line| line.starts_with(" shown\""))
                 .expect("a line is shown");
-            let landed = lines_html(&closed)
-                .iter()
-                .position(|line| line.contains(&format!(" id=\"{landing}\"")))
-                .unwrap_or_else(|| panic!("no line is {landing:?}: {closed}"));
+            let landed = landed_on(&closed, landing);
             assert!(
                 text_of(line_html(&closed, landed)).contains(bead),
                 "{close}"
             );
             assert_eq!(landed, opened_at, "{close}");
+        }
+    }
+
+    /// A link lands on the first line carrying its fragment, so no two lines
+    /// of a page carry one id: not a bead the trees draw twice, and not a
+    /// bead a list draws again under each row expanded to what it waits on.
+    #[test]
+    fn no_two_lines_of_a_page_carry_one_id() {
+        let mut listed = page_at(&format!("/?view={}", VIEWS[0].0)).html;
+        for title in ["wire the niri theme include", "apply the two niri settings"] {
+            let row = page_lines(&listed)
+                .iter()
+                .position(|line| line.contains(title))
+                .expect("the bead is listed");
+            listed = page_at(&fold_link(&listed, row)).html;
+        }
+        assert_eq!(lines_titled(&listed, "lift the ground station").len(), 2);
+        for html in [page_of(reached_twice(), "/"), listed] {
+            let ids: Vec<String> = (0..lines_html(&html).len())
+                .filter_map(|at| line_id(&html, at))
+                .collect();
+            let unique: std::collections::HashSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "{ids:?}");
         }
     }
 
