@@ -266,13 +266,23 @@ impl Drawing<'_> {
         if selected {
             html.push_str(&format!("<a id=\"{SHOWN}\"></a>"));
         }
-        html.push_str("<span class=\"left\">");
         let (mut identity, mut from) = (whole.identity, 0);
-        if let Some((prefix, rest)) = identity.split_first() {
-            if prefix.content == line.prefix {
-                self.prefix(html, line, prefix);
-                (identity, from) = (rest, 1);
-            }
+        let prefix = identity
+            .split_first()
+            .filter(|(prefix, _)| prefix.content == line.prefix);
+        if let Some((_, rest)) = prefix {
+            (identity, from) = (rest, 1);
+        }
+        // A bead's line keeps apart the parts a phone lays out on two lines:
+        // what it hangs under, the reference, the row's other cells and its
+        // state. Any other line is drawn as one run before its state.
+        let bead = reference.is_some();
+        let more = bead && !(identity.is_empty() && whole.title.is_empty());
+        if !bead {
+            html.push_str("<span class=\"left\">");
+        }
+        if let Some((prefix, _)) = prefix {
+            self.prefix(html, line, prefix);
         }
         if let Some(reference) = reference {
             // A bead's own row is a line this page draws, so the page it
@@ -282,16 +292,22 @@ impl Drawing<'_> {
                 _ => self.opening(place.key()),
             });
             self.reference(html, reference, href);
-            if !identity.is_empty() {
-                html.push_str(&indent());
-            }
+        }
+        if more {
+            html.push_str("<span class=\"more\">");
+        }
+        if bead && !identity.is_empty() {
+            html.push_str(&indent());
         }
         spans(html, identity, Block::Identity, whole.links, from);
         if !whole.title.is_empty() {
             html.push_str(&indent());
             spans(html, whole.title, Block::Title, whole.links, 0);
         }
-        html.push_str("</span><span class=\"state\">");
+        if !bead || more {
+            html.push_str("</span>");
+        }
+        html.push_str("<span class=\"state\">");
         spans(html, whole.state, Block::State, whole.links, 0);
         html.push_str("</span></div>\n");
     }
@@ -305,7 +321,11 @@ impl Drawing<'_> {
     /// line's fold where it has one.
     fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>) {
         let Some(href) = self.asked.toggling(line, self.listed()) else {
-            spans(html, std::slice::from_ref(prefix), Block::Identity, &[], 0);
+            html.push_str(&format!(
+                "<span{}>{}</span>",
+                styled(palette::css(prefix.style)),
+                escaped(&prefix.content)
+            ));
             return;
         };
         let said = if line.folded == Some(true) {
@@ -331,17 +351,26 @@ impl Drawing<'_> {
             Some(href) => html.push_str(&format!("<a class=\"bead\" href=\"{}\">", escaped(&href))),
             None => html.push_str("<span class=\"bead\">"),
         }
-        spans(html, &[reference.glyph], Block::Identity, &[], 0);
+        let between = |html: &mut String, gap: &str| {
+            spans(
+                html,
+                &[Span::styled(gap.to_string(), reference.between)],
+                Block::Identity,
+                &[],
+                0,
+            )
+        };
         html.push_str(&format!(
-            "<span{}> </span><span class=\"id\">",
-            styled(palette::css(reference.between))
+            "<span class=\"g\"{}>{}</span>",
+            styled(palette::css(reference.glyph.style)),
+            escaped(&reference.glyph.content)
         ));
+        between(html, " ");
+        html.push_str("<span class=\"id\">");
         spans(html, &reference.id, Block::Identity, &[], 0);
-        html.push_str(&format!(
-            "</span><span{}>{}</span><span class=\"title\">",
-            styled(palette::css(reference.between)),
-            indent()
-        ));
+        html.push_str("</span>");
+        between(html, &indent());
+        html.push_str("<span class=\"title\">");
         spans(html, &reference.title, Block::Identity, &[], 0);
         html.push_str("</span>");
         html.push_str(if linked { "</a>" } else { "</span>" });
@@ -622,7 +651,21 @@ nav input,nav button{font:inherit;color:inherit;background:var(--bg);border:1px 
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
-aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c8)}}";
+aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c8)}\
+.line{width:auto;white-space:pre-wrap;position:relative}\
+.line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
+align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
+.line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;white-space:pre;margin-block:-6px;padding-block:6px}\
+.line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
+.line>.bead::after{content:\"\";position:absolute;inset:0}\
+#shown{position:absolute;top:0}\
+.line a:not(.bead){position:relative;z-index:1}\
+.line .g{grid-area:1/1;font-size:14px;text-align:center}\
+.line .title{grid-area:1/2/2/-1;min-width:10em;font:15px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}\
+.line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
+.line>.bead>.id{grid-column:2}\
+.line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
+.line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}}";
 
 #[cfg(test)]
 mod tests {
@@ -1519,6 +1562,91 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The elements `html` holds at its top level, each as its tag and its
+    /// class, and the text between them.
+    fn parts(html: &str) -> (Vec<String>, String) {
+        let (mut parts, mut between, mut from) = (Vec::new(), String::new(), 0);
+        while let Some(found) = html[from..].find('<') {
+            let open = from + found;
+            between.push_str(&html[from..open]);
+            let tag = &html[open + 1..open + html[open..].find('>').expect("the tag ends")];
+            let name = tag.split(' ').next().expect("a tag has a name");
+            let class = tag
+                .split("class=\"")
+                .nth(1)
+                .map(|class| &class[..class.find('"').expect("the class ends")]);
+            parts.push(class.map_or(name.to_string(), |class| format!("{name}.{class}")));
+            from = element_end(html, open);
+        }
+        between.push_str(&html[from..]);
+        (parts, between)
+    }
+
+    /// What the element of `class` inside `html` holds.
+    fn inside<'a>(html: &'a str, class: &str) -> &'a str {
+        let open = html
+            .find(&format!("class=\"{class}\""))
+            .and_then(|at| html[..at].rfind('<'))
+            .expect("the element is drawn");
+        let end = element_end(html, open);
+        let content = open + html[open..].find('>').expect("the tag ends") + 1;
+        &html[content..html[..end].rfind('<').expect("a closing tag")]
+    }
+
+    /// A phone's stylesheet draws a bead's line as two lines, the glyph and
+    /// title over the id and the rest of the row, with the line it hangs
+    /// under beside both. So each of those is an element of its own, and
+    /// nothing else sits between them that a layout would have to place.
+    #[test]
+    fn a_bead_line_holds_apart_each_part_a_phone_lays_out() {
+        let html = page_at("/").html;
+        let beads: Vec<usize> = (0..html.matches("<div class=\"line").count())
+            .filter(|&at| line_html(&html, at).contains("class=\"bead\""))
+            .collect();
+        assert_eq!(beads, [1, 2, 3, 4]);
+        let leaf = 3;
+        for at in beads {
+            let line = line_html(&html, at);
+            let (shape, between) = parts(line);
+            let hung = if at == leaf { "span" } else { "a.fold" };
+            assert_eq!(shape, [hung, "a.bead", "span.state"], "{line}");
+            assert_eq!(between, "", "{line}");
+
+            let (reference, between) = parts(inside(line, "bead"));
+            assert_eq!(reference, ["span.g", "span.id", "span.title"], "{line}");
+            assert_eq!(between.trim(), "", "{line}");
+        }
+    }
+
+    /// The row's cells other than the reference are drawn together, after
+    /// it and before the state, where a phone draws them after the id.
+    #[test]
+    fn a_bead_lines_other_cells_are_drawn_together_after_its_reference() {
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        tree.beads[1].badges = vec![crate::model::badges::Badged {
+            key: "pr".to_string(),
+            text: "⇢ #12".to_string(),
+            short: None,
+            link: Some("https://example.invalid/dunwich/12".to_string()),
+            colour: None,
+            drawn_on: crate::config::DrawnOn::Own,
+        }];
+        let html = page_of(snapshot, "/");
+        let line = line_html(&html, 2);
+        assert_eq!(
+            parts(line).0,
+            ["a.fold", "a.bead", "span.more", "span.state"],
+            "{line}"
+        );
+        let more = inside(line, "more");
+        assert!(
+            more.contains("href=\"https://example.invalid/dunwich/12\""),
+            "{more}"
+        );
+        assert_eq!(words(&text_of(more)), "⇢ #12");
     }
 
     /// The references on a page, each whole, and the page with them taken
