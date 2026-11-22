@@ -726,12 +726,12 @@ nav .ready.on,.lists[open] summary{background:var(--shown);font-weight:bold;text
 nav input::placeholder{color:var(--fg);opacity:1}\
 nav button{display:none}\
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
-nav:has(form:focus-within,input[type=search]:not(:placeholder-shown)) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
 background:var(--bg);border-bottom:1px solid var(--c8)}\
-html:has(nav form:focus-within,nav input[type=search]:not(:placeholder-shown)){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:not(:placeholder-shown)){padding-top:52px}\
-nav:has(form:focus-within,input[type=search]:not(:placeholder-shown)) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
+html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-nav:has(form:focus-within,input[type=search]:not(:placeholder-shown)) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
 max-height:calc(100dvh - 64px);overflow-y:auto;\
