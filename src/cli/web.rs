@@ -82,7 +82,10 @@ impl Hosts {
         };
         name.parse::<IpAddr>().is_ok()
             || name.eq_ignore_ascii_case("localhost")
-            || self.0.iter().any(|allowed| name.eq_ignore_ascii_case(allowed))
+            || self
+                .0
+                .iter()
+                .any(|allowed| name.eq_ignore_ascii_case(allowed))
     }
 }
 
