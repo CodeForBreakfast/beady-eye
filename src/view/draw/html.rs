@@ -40,20 +40,22 @@ pub struct Answer {
     pub html: String,
 }
 
-/// When a page is drawn, the offset from UTC it says the time of day at, and
-/// the reads out as it is drawn.
+/// When a page is drawn, the offset from UTC it says the time of day at, the
+/// reads out as it is drawn, and the change to what the server holds that
+/// it is drawn from, which its script asks for the changes since.
 #[derive(Debug, Clone)]
 pub struct Drawn {
     pub at: DateTime<Utc>,
     pub offset: FixedOffset,
     pub collecting: Vec<Awaited>,
+    pub change: u64,
 }
 
 /// The page `asked` names, drawn from `snapshot` under `layout`.
 ///
-/// A page is drawn once and may be left open, so each project's line says
-/// the time of day it was read at rather than how long ago, which the
-/// terminal says because it redraws itself as the age moves.
+/// A page may be left open with no script to keep it current, so each
+/// project's line says the time of day it was read at rather than how long
+/// ago, which the terminal says because it redraws itself as the age moves.
 pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) -> Answer {
     let shown = asked.forest(snapshot, layout);
     let forest = &shown.forest;
@@ -67,13 +69,8 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         selected: (node.is_some() || matched).then(|| forest.selected_line()),
     };
 
-    let mut html = String::new();
-    html.push_str(&format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{}</title><style>{STYLE}</style></head><body>",
-        escaped(node.map_or("bdi", |node| &node.title))
-    ));
+    let mut html = head(node.map_or("bdi", |node| &node.title), Some(drawn.change));
+    html.push_str("<body>");
     drawing.nav(&mut html);
     html.push_str(if shown.bead.is_some() {
         "<main class=\"open\"><div class=\"forest\">"
@@ -112,12 +109,40 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
 /// A page with nothing on it but one sentence and a link to the forest, for
 /// an address that has no forest to draw.
 pub fn saying(said: &str) -> String {
+    said_alone(said, None)
+}
+
+/// The same, for an address that will have a forest to draw once the server
+/// holds a later change than `change`, which the page is kept current to.
+pub fn saying_kept_current(said: &str, change: u64) -> String {
+    said_alone(said, Some(change))
+}
+
+fn said_alone(said: &str, change: Option<u64>) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <title>bdi</title><style>{STYLE}</style></head><body><footer><p>{}</p>\
+        "{}<body><footer><p>{}</p>\
          <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
+        head("bdi", change),
         escaped(said),
         escaped(phrase::back())
+    )
+}
+
+/// A page's head, titled `title`. Where the page is drawn from `change`, it
+/// carries the script that keeps it current.
+fn head(title: &str, change: Option<u64>) -> String {
+    let (named, script) = match change {
+        Some(change) => (
+            format!(" data-change=\"{change}\""),
+            format!("<script>{KEPT_CURRENT}</script>"),
+        ),
+        None => (String::new(), String::new()),
+    };
+    format!(
+        "<!doctype html><html lang=\"en\"{named}><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>{}</title><style>{STYLE}</style>{script}</head>",
+        escaped(title)
     )
 }
 
@@ -725,6 +750,107 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .head .bead{width:100%;margin-bottom:4px}\
 .page .head .title{font-size:18px;font-weight:600}}";
 
+/// The page's one script, which keeps it current. It asks the page's own
+/// address for its changes since the one the page was drawn from, and the
+/// server sends them down that one connection: the whole page first, and
+/// after it each patch to the page it sent last. Each page replaces the
+/// body. It keeps the line or bead view at the top of the window where it
+/// was, or the next line below it that is still drawn, and keeps both panes'
+/// scroll, the link that had focus, an open menu, and what is typed in the
+/// find field. A page differing only in its change is not shown again. A
+/// hidden page lets its connection go, and asks again from the change it
+/// last heard once it is shown, so pages left in the background hold none of
+/// the few connections a browser makes to one server. A page the server is
+/// too busy to keep current asks again after as long as a quiet connection
+/// waits for a comment. Without it the page is the same page, drawn once.
+const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
+  if (!window.EventSource) return;
+  const asked = location.pathname + (location.search ? location.search + "&" : "?");
+  let since = document.documentElement.dataset.change, changes, page, shown;
+  const heard = (event, lines) => {
+    since = event.lastEventId;
+    show(page = lines);
+  };
+  const listen = () => {
+    const source = changes = new EventSource(asked + "since=" + since);
+    source.addEventListener("error", () => {
+      if (source.readyState !== EventSource.CLOSED || changes !== source) return;
+      changes = null;
+      setTimeout(() => document.hidden || changes || listen(), 15000);
+    });
+    changes.addEventListener("page", (event) => heard(event, event.data.split("\n")));
+    changes.addEventListener("patch", (event) => {
+      const lines = event.data.split("\n");
+      for (let at = 0; at < lines.length; ) {
+        const [from, going, coming] = lines[at++].split(" ").map(Number);
+        page.splice(from, going, ...lines.slice(at, at += coming));
+      }
+      heard(event, page);
+    });
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return changes || listen();
+    changes?.close();
+    changes = null;
+  });
+  if (!document.hidden) listen();
+  const goes = (link) => {
+    if (link.origin !== location.origin) return [link.className, link.href].join(" ");
+    const where = link.matches(".fold") ? "" : new URLSearchParams(link.search).get("at");
+    return [link.className, link.pathname, where, link.hash].join(" ");
+  };
+  const known = (row) => {
+    const bead = row.querySelector("a.bead[href]");
+    return bead ? goes(bead) : row.id;
+  };
+  const marks = (on = document) =>
+    [...[...on.querySelectorAll(".line")].filter(known), on.querySelector("aside")].filter(Boolean);
+  const mark = (at) => at.matches("aside") ? "aside" : known(at);
+  const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
+  const pane = (link) => boxes().findIndex((box) => box?.contains(link));
+  const alike = (at, kind) => [...(boxes()[at] ?? document).querySelectorAll("a[href]")]
+    .filter((link) => goes(link) === kind);
+  const show = (page) => {
+    const text = page.join("\n").replace(/ data-change="\d+"/, "");
+    if (text === shown) return;
+    shown = text;
+    const drawn = new DOMParser().parseFromString(text, "text/html");
+    const coming = new Set(marks(drawn).map(mark));
+    const before = marks();
+    const top = before.findIndex((at) => at.getBoundingClientRect().bottom > 0);
+    const held = top < 0 ? null : before.slice(top).find((at) => coming.has(mark(at)));
+    const kept = held && [mark(held), held.getBoundingClientRect().top];
+    const focus = document.activeElement?.matches("a[href]") && document.activeElement;
+    const focused = focus && [pane(focus), goes(focus)];
+    if (focused) focused.push(alike(...focused).indexOf(focus));
+    const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
+    const opened = [...document.querySelectorAll("details[open]")].map((menu) => menu.className);
+    const summary = document.activeElement?.matches("summary") && document.activeElement.parentElement.className;
+    const field = document.querySelector("input[type=search]");
+    const typed = field && field.value !== field.defaultValue ? field.value : null;
+    const caret = field && field === document.activeElement
+      && [field.selectionStart, field.selectionEnd, field.selectionDirection];
+    document.title = drawn.title;
+    document.body.replaceWith(drawn.body);
+    const menus = [...document.querySelectorAll("details")];
+    menus.forEach((menu) => menu.open ||= opened.includes(menu.className));
+    const menu = summary ? menus.find((menu) => menu.className === summary) : null;
+    menu?.querySelector("summary")?.focus({ preventScroll: true });
+    const typing = document.querySelector("input[type=search]");
+    if (typing && typed !== null) typing.value = typed;
+    if (typing && caret) {
+      typing.focus({ preventScroll: true });
+      typing.setSelectionRange(...caret);
+    }
+    const again = kept && marks().find((at) => mark(at) === kept[0]);
+    if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
+    boxes().forEach((box, at) => {
+      if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
+    });
+    if (focused) alike(focused[0], focused[1])[focused[2]]?.focus({ preventScroll: true });
+  };
+});"##;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,6 +961,7 @@ mod tests {
             at: drawn_at(),
             offset: FixedOffset::east_opt(3600).expect("an offset"),
             collecting: Vec::new(),
+            change: 7,
         }
     }
 

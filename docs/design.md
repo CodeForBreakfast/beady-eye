@@ -4543,11 +4543,50 @@ forest does not draw is answered 404, with the forest and a line saying so.
 `bdi web` refuses to start for a project named `.`, `..` or nothing, because a
 browser drops such a segment from the path.
 
-**A page is drawn once, so it dates its reads by the clock.** The terminal
-says how long ago a project was read, because it redraws as the age moves. A
-page left open would go on saying *30s ago*, so each project's line says the
-date and time of day it was read instead, at the server's offset from UTC,
-behind the same mark. Nothing is pushed to an open page.
+**A page dates its reads by the clock.** The terminal says how long ago a
+project was read, because it redraws as the age moves. A page with no script,
+or one whose connection has gone, would go on saying *30s ago*, so each
+project's line says the date and time of day it was read instead, at the
+server's offset from UTC, behind the same mark.
+
+**An open page is kept current by the server, and the browser never polls.**
+Graeme: *"a live view just like the tui ... of course server push as we do
+not poll unless absolutely necessary"*. Each change to what the server holds,
+a read starting or landing, has a number. A page names the number it was
+drawn from, and its one script asks the page's own address for the changes
+since, as Server-Sent Events. The server tells that request from a page's by
+its `Accept: text/event-stream`, so the address names the same page either
+way. It sends nothing until it holds a later change, and then the page that
+address now draws. The first event on a connection is the whole page. Each
+event after it is a patch of lines against the page sent before it, or the
+whole page where that is the smaller. Each event carries its change as its
+id, so a browser that reconnects names the last it heard. The count starts at
+the time the server started, so a page from a server since restarted is sent
+the new one's page. A read that goes unanswered changes the page with no
+change held, so a connection also wakes when the read out passes
+`unanswered_after_seconds`.
+
+The script replaces the body with each page, and keeps the line at the top of
+the window where it was, both panes' scroll, the link that had focus, an open
+menu, and what is typed in the find field. The folds ride in the address the script asks, so a reader's folds stay as
+they were. Pointing a fold is still a link, and the new page opens its own
+connection.
+
+**What bounds it.** A large forest's page runs to megabytes and changes every
+few seconds while agents write beads, mostly one project's read time and a
+few rows. Whole pages would send the forest again each time, where a patch
+is a few kilobytes. A line's anchor is its fold's name, so a bead appearing
+changes the lines around it and leaves the lines below it alone. Past 1,024 lines inserted or removed
+the page is sent whole, which also bounds the work of finding the patch. A connection holds no request
+slot: the eight requests drawn at once are apart from the 32 pages kept
+current, and the pages kept current draw one at a time. Over 32 the
+connection is refused, and the page asks again 15 seconds later. A connection
+with nothing to send for 15 seconds is sent a comment, so a proxy does not
+close it as idle and a reader who has gone is found, which frees its place
+for a page asking again. A proxy in front must not
+buffer or compress the stream. A browser makes only a few connections to one
+server, so a hidden page lets its connection go and asks again from the change
+it last heard once it is shown.
 
 **It reads as a view reads, and asks no agent provider.** It runs where no
 herdr does, so it draws no agent, no pane and no tail, and every tree is
@@ -4579,12 +4618,16 @@ the one function every request goes through.
 
 **Three places, each knowing one thing.** `cli/web.rs` serves: it holds the
 latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`
-that `bdi gates --listen` shares. `view/address.rs` knows addresses: what a
-request asks for, the forest it asks for, and the address of every link a
-page carries. It puts the list, the root and the search on the forest through
-the forest's own actions, and works out none of them itself. `view/draw/html.rs` knows HTML, and draws the forest the address
-gave it with the terminal's own drawing. The colours become CSS in the
-palette, which is the one module that names a colour.
+that `bdi gates --listen` shares. Keeping a page current is serving too, and
+`cli/web/live.rs` holds the connections, the events and the patches.
+`view/address.rs` knows addresses: what a request asks for, the forest it
+asks for, and the address of every link a page carries. It puts the list, the
+root and the search on the forest through the forest's own actions, and works
+out none of them itself. It knows nothing of changes, which ride in a query
+key it passes over. `view/draw/html.rs` knows HTML, and draws the forest the
+address gave it with the terminal's own drawing. It writes the page's script,
+which knows only the events. The colours become CSS in the palette, which is
+the one module that names a colour.
 
 ## Alternatives considered
 
