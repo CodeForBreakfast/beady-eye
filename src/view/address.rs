@@ -139,7 +139,7 @@ impl Asked {
                     continue;
                 }
                 VIEW => {
-                    view = Some(value).filter(|name| !name.is_empty());
+                    view = Some(value);
                     continue;
                 }
                 READY => {
@@ -249,7 +249,7 @@ impl Asked {
         let (Some(forward), Some(place)) = (find.step, &self.place) else {
             return landed;
         };
-        if !forest.go_to_place(place) {
+        if !forest.step_to_place(place) {
             return landed;
         }
         forest.next_match(forward).unwrap_or(landed)

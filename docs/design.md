@@ -4513,7 +4513,10 @@ terminal lists after the same keys.
 rooted at rides in the address too. A page drawn with one root says so as
 the terminal's foot does, names the bead by its reference, and links to the
 same page drawn whole, which is `F` again. The ready list, the views and the
-search keep to that tree, as they do in the terminal.
+search keep to that tree, as they do in the terminal. A bead the bead view
+names that the root or the list leaves out opens with every tree drawn,
+because the page has no line to show it on. The terminal's key to follow it
+does nothing there.
 
 **A search answers with the forest, its selection on the match.** The page
 lands where the terminal's search lands, opening the folds over the match,

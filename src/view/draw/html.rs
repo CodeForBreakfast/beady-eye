@@ -413,14 +413,16 @@ impl Drawing<'_> {
     }
 
     /// The address of the page showing `key`. A bead outside the tree the
-    /// forest is drawn with as its only root opens with every tree drawn,
-    /// because the rooted forest has no line to show it on.
+    /// forest is drawn with as its only root, or outside the list drawn,
+    /// opens with every tree drawn, because this page has no line to show
+    /// it on.
     fn opening(&self, key: &BeadKey) -> String {
         if self.forest.reaches(key) {
             return self.asked.opening(key);
         }
         Asked {
             root: None,
+            list: None,
             ..self.asked.clone()
         }
         .opening(key)
@@ -1615,6 +1617,29 @@ mod tests {
         assert_eq!(shown_line(&back), terminal.selected_line());
     }
 
+    /// A step shuts what the step before it opened, as `n` and `N` do, so
+    /// stepping back out of a deeper match shuts the fold opened for it.
+    #[test]
+    fn a_step_shuts_what_the_step_before_it_opened() {
+        let found = page_at("/?find=wedge").html;
+        let next = page_at(&link_saying(&found, phrase::MATCH_AFTER.0)).html;
+        let back = page_at(&link_saying(&next, phrase::MATCH_BEFORE.0)).html;
+
+        let mut terminal = flatten(ground());
+        let origin = terminal.origin();
+        terminal.seek("wedge", &origin);
+        terminal.next_match(true);
+        assert_eq!(page_lines(&next), terminal_lines(&terminal));
+        terminal.next_match(false);
+        let lines = terminal_lines(&terminal);
+        assert!(
+            !lines.iter().any(|line| line.contains("read the wedge log")),
+            "{lines:#?}"
+        );
+        assert_eq!(page_lines(&back), lines);
+        assert_eq!(shown_line(&back), terminal.selected_line());
+    }
+
     /// A browser sends what is typed into the search with each space as a
     /// `+`, and the search is for the words with their spaces.
     #[test]
@@ -1655,6 +1680,23 @@ mod tests {
         assert_eq!(shown_line(&found), terminal.selected_line());
     }
 
+    /// What each bead the bead view on `html` names asks for, by the bead's
+    /// id, after checking the page it opens shows it.
+    fn named_by_the_bead_view(html: &str) -> HashMap<String, Asked> {
+        let aside = &html[html.find("<aside>").expect("the bead view")..];
+        aside
+            .split("<a class=\"bead\" href=\"")
+            .skip(1)
+            .map(|link| {
+                let link = link[..link.find('"').expect("the address ends")].replace("&amp;", "&");
+                let target = link.split('#').next().unwrap_or_default();
+                assert!(page_at(target).found, "{link} shows no bead");
+                let asked = Asked::of(target).expect("an address");
+                (asked.bead.clone().expect("a bead's address").id, asked)
+            })
+            .collect()
+    }
+
     /// Every bead the bead view names opens a page that shows it. One
     /// outside the tree the forest is drawn with as its only root opens with
     /// every tree drawn, and one inside it keeps the root.
@@ -1665,26 +1707,42 @@ mod tests {
             phrase::only_this_tree(),
         ))
         .html;
-        let aside = &rooted[rooted.find("<aside>").expect("the bead view")..];
-        let links: Vec<String> = aside
-            .split("<a class=\"bead\" href=\"")
-            .skip(1)
-            .map(|link| link[..link.find('"').expect("the address ends")].replace("&amp;", "&"))
-            .collect();
-        let rooted_at = |id: &str| {
-            let link = links
-                .iter()
-                .map(|link| link.split('#').next().unwrap_or_default())
-                .find(|link| Asked::of(link).and_then(|asked| asked.bead) == Some(key(id)))
-                .unwrap_or_else(|| panic!("the bead view names {id}: {aside}"));
-            Asked::of(link).and_then(|asked| asked.root).is_some()
-        };
-        assert!(!rooted_at("smt-4kd3p"), "the parent is outside the tree");
-        assert!(rooted_at("smt-4kd3p.6"), "the root itself is inside it");
-        for link in &links {
-            let answer = page_at(link.split('#').next().unwrap_or_default());
-            assert!(answer.found, "{link} shows no bead");
-        }
+        let named = named_by_the_bead_view(&rooted);
+        assert!(
+            named["smt-4kd3p"].root.is_none(),
+            "the parent is outside the tree"
+        );
+        assert!(
+            named["smt-4kd3p.6"].root.is_some(),
+            "the root itself is inside it"
+        );
+    }
+
+    /// The same of a view: a bead it does not list opens with every tree
+    /// drawn, and one it lists keeps the view.
+    #[test]
+    fn a_bead_named_from_inside_a_view_opens_a_page_that_shows_it() {
+        let view = format!("{}?view={}", address(&key("smt-4kd3p.6")), VIEWS[0].0);
+        let named = named_by_the_bead_view(&page_at(&view).html);
+        assert!(
+            named["smt-4kd3p"].list.is_none(),
+            "the view leaves the parent out"
+        );
+        assert!(
+            named["smt-4kd3p.6"].list.is_some(),
+            "the view lists the bead"
+        );
+    }
+
+    /// A config may name a view with nothing, and its menu entry still
+    /// picks it.
+    #[test]
+    fn a_view_named_with_nothing_is_picked_by_its_address() {
+        let asked = Asked::default().listing(listed(Some(String::new()), false));
+        assert_eq!(
+            Asked::of(&asked).expect("an address").list,
+            listed(Some(String::new()), false)
+        );
     }
 
     /// Every link a page carries keeps the list it draws and the bead it is

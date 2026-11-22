@@ -1205,9 +1205,16 @@ impl Forest {
     }
 
     /// Whether [`Forest::go_to`] could put the selection on `key`, which it
-    /// cannot where the forest is rooted at a bead the key is not under.
+    /// cannot where the forest is rooted at a bead the key is not under, or
+    /// where the list drawn has no row for it.
     pub fn reaches(&self, key: &BeadKey) -> bool {
-        self.place_of(key).is_some_and(|place| self.drawn(&place))
+        let Some(place) = self.place_of(key) else {
+            return false;
+        };
+        if self.list.is_some() {
+            return self.lines.row_of(&self.handle_on(&place)).is_some();
+        }
+        self.drawn(&place)
     }
 
     /// The lines drawn whose folds have to be open for the selected line to
@@ -1243,7 +1250,7 @@ impl Forest {
     /// Put the selection on a match for a search step, shutting what the
     /// last step opened before opening what this one needs. Reports whether
     /// the selection is on it now.
-    fn step_to_place(&mut self, place: &Place) -> bool {
+    pub fn step_to_place(&mut self, place: &Place) -> bool {
         if !self.drawn(place) {
             return false;
         }
