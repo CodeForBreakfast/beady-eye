@@ -709,7 +709,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
 vertical-align:top;width:100%;white-space:normal}\
 .page .lead{white-space:pre}\
-.page .p .t{font:15px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}\
+.page .p .t{font:15px system-ui,sans-serif;line-height:1.5;overflow-wrap:anywhere}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\

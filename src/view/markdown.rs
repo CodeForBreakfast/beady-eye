@@ -367,6 +367,7 @@ impl Rendering {
             Event::HardBreak => self.break_line(),
             Event::Rule => {
                 self.open_block();
+                self.line().verbatim = true;
                 let room = self.width.saturating_sub(columns_of(&self.indent()));
                 self.say(&RULE.to_string().repeat(room));
                 self.close();
@@ -552,7 +553,8 @@ mod tests {
     /// Only a row the layout broke to fit joins the line above it: not the
     /// first row of a paragraph or an item, not a row after a break the
     /// author asked for, and not a row of code broken to fit. A word broken
-    /// to fit joins with no space, and every row of code is kept as laid out.
+    /// to fit joins with no space, and every row of code is kept as laid
+    /// out, as a rule is.
     #[test]
     fn only_a_row_broken_to_fit_carries_on_the_line_above_it() {
         let flows = |text: &str, width: usize| -> Vec<(String, Flow)> {
@@ -582,6 +584,7 @@ mod tests {
             .iter()
             .all(|(_, flow)| *flow == Flow::Kept));
         assert!(flows("```\nabcdefghijkl\n```", 6).len() > 1);
+        assert_eq!(flows("---", 6), [("──────".to_string(), Flow::Kept)]);
         assert_eq!(
             flows("go abcdefghijkl on", 8),
             [
