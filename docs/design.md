@@ -4548,7 +4548,9 @@ current, and the pages kept current draw one at a time. Over 32 the
 connection is refused and the page stays as it was drawn. A connection with
 nothing to send for 15 seconds is sent a comment, so a proxy does not close
 it as idle and a reader who has gone is found. A proxy in front must not
-buffer or compress the stream.
+buffer or compress the stream. A browser makes only a few connections to one
+server, so a hidden page lets its connection go and asks again from the change
+it last heard once it is shown.
 
 **It reads as a view reads, and asks no agent provider.** It runs where no
 herdr does, so it draws no agent, no pane and no tail, and every tree is

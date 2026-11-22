@@ -477,47 +477,74 @@ aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c
 /// address for its changes since the one the page was drawn from, and the
 /// server sends them down that one connection: the whole page first, and
 /// after it each patch to the page it sent last. Each page replaces the
-/// body, keeping the line at the top of the window where it was, the bead
-/// view's scroll, and the link that had focus. Without it the page is the
-/// same page, drawn once.
+/// body, keeping the bead at the top of the window where it was, both
+/// panes' scroll, and the link that had focus. A hidden page lets its
+/// connection go, and asks again from the change it last heard once it is
+/// shown, so pages left in the background hold none of the few connections
+/// a browser makes to one server. Without it the page is the same page,
+/// drawn once.
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const asked = location.pathname + (location.search ? location.search + "&" : "?");
-  const changes = new EventSource(asked + "since=" + document.documentElement.dataset.change);
-  let page;
-  changes.addEventListener("page", (event) => show(page = event.data.split("\n")));
-  changes.addEventListener("patch", (event) => {
-    const lines = event.data.split("\n");
-    for (let at = 0; at < lines.length; ) {
-      const [from, going, coming] = lines[at++].split(" ").map(Number);
-      page.splice(from, going, ...lines.slice(at, at += coming));
-    }
-    show(page);
+  let since = document.documentElement.dataset.change, changes, page;
+  const heard = (event, lines) => {
+    since = event.lastEventId;
+    show(page = lines);
+  };
+  const listen = () => {
+    changes = new EventSource(asked + "since=" + since);
+    changes.addEventListener("page", (event) => heard(event, event.data.split("\n")));
+    changes.addEventListener("patch", (event) => {
+      const lines = event.data.split("\n");
+      for (let at = 0; at < lines.length; ) {
+        const [from, going, coming] = lines[at++].split(" ").map(Number);
+        page.splice(from, going, ...lines.slice(at, at += coming));
+      }
+      heard(event, page);
+    });
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return changes || listen();
+    changes?.close();
+    changes = null;
   });
-  const target = (link) => link?.getAttribute("href")?.split("#")[0];
-  const known = (line) => target(line.querySelector("a"));
-  const lines = () => [...document.querySelectorAll(".line")].filter(known);
+  if (!document.hidden) listen();
+  const goes = (link) => {
+    const to = new URL(link.href);
+    return [link.className, to.pathname, to.searchParams.get("at")].join(" ");
+  };
+  const known = (row) => {
+    const bead = row.querySelector("a.bead[href]");
+    return bead && goes(bead);
+  };
+  const rows = () => [...document.querySelectorAll(".line")];
   const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
-  const linked = (box, to) => [...(box ?? document).querySelectorAll("a")]
-    .filter((link) => target(link) === to);
+  const holding = (link) => {
+    const row = link.closest(".line");
+    return row ? known(row) ?? row.id : boxes().findIndex((box) => box?.contains(link));
+  };
+  const alike = (held, kind) => {
+    const within = typeof held === "number"
+      ? boxes()[held] ?? document
+      : rows().find((row) => (known(row) ?? row.id) === held);
+    return [...(within?.querySelectorAll("a[href]") ?? [])].filter((link) => goes(link) === kind);
+  };
   const show = (page) => {
     const drawn = new DOMParser().parseFromString(page.join("\n"), "text/html");
-    const top = lines().find((line) => line.getBoundingClientRect().bottom > 0);
+    const top = rows().find((row) => known(row) && row.getBoundingClientRect().bottom > 0);
     const kept = top && [known(top), top.getBoundingClientRect().top];
-    const focus = document.activeElement;
-    const to = target(focus);
-    const box = boxes().findIndex((box) => box?.contains(focus));
-    const focused = to && [box, to, linked(boxes()[box], to).indexOf(focus)];
+    const focus = document.activeElement?.matches("a[href]") && document.activeElement;
+    const focused = focus && [holding(focus), goes(focus)];
+    if (focused) focused.push(alike(...focused).indexOf(focus));
     const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
     document.title = drawn.title;
     document.body.replaceWith(drawn.body);
-    const again = kept && lines().find((line) => known(line) === kept[0]);
+    const again = kept && rows().find((row) => known(row) === kept[0]);
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
     boxes().forEach((box, at) => {
       if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
     });
-    if (focused) linked(boxes()[focused[0]], focused[1])[focused[2]]
-      ?.focus({ preventScroll: true });
+    if (focused) alike(focused[0], focused[1])[focused[2]]?.focus({ preventScroll: true });
   };
 });"##;
 
