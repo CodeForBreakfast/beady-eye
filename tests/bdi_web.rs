@@ -14,7 +14,9 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use terminal::shims::ShimmedTracker;
-use terminal::{a_home_naming_one_project, die_with, THE_DESCRIBED_SUBTREE};
+use terminal::{
+    a_home_naming_one_project, a_home_naming_one_project_settled, die_with, THE_DESCRIBED_SUBTREE,
+};
 
 /// Long enough for a read that is coming to have come, and short enough
 /// that one that is not is a failure rather than a hang.
@@ -99,15 +101,22 @@ fn get(address: &str, path: &str) -> (String, String) {
 /// `bdi web` over the described subtree, once it has read the tracker.
 fn a_web_over_the_tracker(named: &str) -> (Web, String) {
     let home = a_home_naming_one_project(named);
-    let tracker = ShimmedTracker::beside(&home);
+    let (web, address, _) = serving(&home);
+    (web, address)
+}
+
+/// `bdi web` in `home` over the described subtree, once it has read the
+/// tracker, and the tracker, which the test may change.
+fn serving(home: &Path) -> (Web, String, ShimmedTracker) {
+    let tracker = ShimmedTracker::beside(home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
-    let (web, address) = bdi_web(&home, &tracker);
+    let (web, address) = bdi_web(home, &tracker);
     let giving_up = Instant::now() + GIVING_UP;
     while get(&address, "/healthz").0 != "HTTP/1.1 200 OK" {
         assert!(Instant::now() < giving_up, "bdi web never read the tracker");
         std::thread::sleep(Duration::from_millis(20));
     }
-    (web, address)
+    (web, address, tracker)
 }
 
 #[test]
@@ -142,4 +151,104 @@ fn a_beads_address_answers_with_that_bead_shown() {
 
     let (status, _) = get(&address, "/arkham/dun-zzz");
     assert_eq!(status, "HTTP/1.1 404 Not Found");
+}
+
+/// A page held open is sent each change the server holds down the one
+/// connection its script opens, and asks for nothing else.
+#[test]
+fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
+    const RETITLED: &str = "A title the tracker gave the root after the page was drawn";
+    let home = a_home_naming_one_project_settled("web-live", "[tui]\nrefresh_seconds = 1\n");
+    let (_web, address, tracker) = serving(&home);
+    let (_, page) = get(&address, "/");
+    let change = page
+        .split_once("data-change=\"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(change, _)| change.to_string())
+        .unwrap_or_else(|| panic!("the page names the change it was drawn from: {page}"));
+
+    let mut stream = TcpStream::connect(&address).expect("bdi web takes the connection");
+    stream
+        .set_read_timeout(Some(GIVING_UP))
+        .expect("a read timeout");
+    write!(
+        stream,
+        "GET /?since={change} HTTP/1.1\r\nHost: bdi\r\nAccept: text/event-stream\r\n\r\n"
+    )
+    .expect("the request is sent");
+    let mut events = BufReader::new(stream);
+    let mut head = String::new();
+    while !head.ends_with("\r\n\r\n") {
+        assert!(
+            events.read_line(&mut head).expect("a head") > 0,
+            "the head ends: {head}"
+        );
+    }
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
+    assert!(
+        head.contains("Content-Type: text/event-stream\r\n"),
+        "{head}"
+    );
+
+    tracker.holds(&THE_DESCRIBED_SUBTREE.replace(THE_ROOT.1, RETITLED));
+    let giving_up = Instant::now() + GIVING_UP;
+    let mut held: Option<Vec<String>> = None;
+    loop {
+        assert!(Instant::now() < giving_up, "the change never arrived");
+        let (kind, data) = next_event(&mut events);
+        held = Some(match kind.as_str() {
+            "page" => data,
+            "patch" => patched(held.expect("a patch follows a page"), &data),
+            _ => continue,
+        });
+        let now = held.as_ref().expect("a page").join("\n");
+        if now.contains(RETITLED) {
+            assert!(now.starts_with("<!doctype html>"), "{now}");
+            assert!(!now.contains(THE_ROOT.1), "{now}");
+            break;
+        }
+    }
+}
+
+/// The next event `events` sends: its kind, and its data a line at a time.
+fn next_event(events: &mut impl BufRead) -> (String, Vec<String>) {
+    let (mut kind, mut data) = (String::new(), Vec::new());
+    loop {
+        let mut line = String::new();
+        assert!(
+            events.read_line(&mut line).expect("an event") > 0,
+            "the stream stays open"
+        );
+        let line = line.trim_end_matches('\n');
+        if line.is_empty() {
+            if !data.is_empty() {
+                return (kind, data);
+            }
+            continue;
+        }
+        if let Some(said) = line.strip_prefix("event: ") {
+            kind = said.to_string();
+        } else if let Some(said) = line.strip_prefix("data:") {
+            data.push(said.strip_prefix(' ').unwrap_or(said).to_string());
+        }
+    }
+}
+
+/// `page` with each hunk of `patch` applied in turn, as the page's script
+/// applies them: a line saying where, how many lines go and how many come,
+/// then the lines that come.
+fn patched(mut page: Vec<String>, patch: &[String]) -> Vec<String> {
+    let mut lines = patch.iter();
+    while let Some(hunk) = lines.next() {
+        let counts: Vec<usize> = hunk
+            .split(' ')
+            .map(|count| count.parse().expect("a count"))
+            .collect();
+        let [at, going, coming] = counts[..] else {
+            panic!("a hunk names three counts: {hunk}");
+        };
+        let came: Vec<String> = lines.by_ref().take(coming).cloned().collect();
+        page.splice(at..at + going, came);
+    }
+    page
 }

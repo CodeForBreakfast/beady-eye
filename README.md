@@ -361,10 +361,21 @@ so does every bead that bead names. Each bead has a page of its own at
 that knows a bead can link to it.
 
 It reads every configured project as the view does, through the watcher where
-one runs. It asks no agent provider, so it shows no agents and no pane. A page
-does not change while it is open, so each project's line says the time its
-beads were read. `/healthz` answers once every project has been asked, even
-where its tracker failed, since the page shows the failure.
+one runs. It asks no agent provider, so it shows no agents and no pane. An
+open page changes as the trees do, without a reload, and keeps its place and
+its folds. The server sends each change down one connection the page holds
+open, as Server-Sent Events. A browser without scripts gets the same page,
+drawn once. Each project's line says the time its beads were read, which
+stays true on a page that has stopped changing. `/healthz` answers once every
+project has been asked, even where its tracker failed, since the page shows
+the failure.
+
+A proxy in front of `bdi web` must pass that connection through as it
+arrives. It must not buffer or compress the response, which holds each
+change back until the buffer fills. It must not close the connection for
+being idle in under 15 seconds, because `bdi web` sends a comment down it
+every 15 seconds that nothing else is sent. A page whose connection is
+refused or closed for good stays as it was drawn.
 
 The page is read-only and asks nobody to sign in. Anyone who can reach the
 address can read every configured tracker, so listen only where everyone who

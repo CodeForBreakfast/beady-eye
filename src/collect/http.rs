@@ -83,6 +83,16 @@ pub(crate) fn reply(stream: &TcpStream, status: &str, kind: &str, body: &[u8], p
         .and_then(|()| hurried.write_all(body));
 }
 
+/// Send `bytes` down `stream`, taking no longer than `patience`, and say
+/// whether they went.
+pub(crate) fn send(stream: &TcpStream, bytes: &[u8], patience: Duration) -> std::io::Result<()> {
+    Hurried {
+        stream,
+        deadline: Instant::now() + patience,
+    }
+    .write_all(bytes)
+}
+
 /// A connection written to only until its deadline, however slowly it reads.
 struct Hurried<'a> {
     stream: &'a TcpStream,

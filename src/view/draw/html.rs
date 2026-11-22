@@ -39,20 +39,22 @@ pub struct Answer {
     pub html: String,
 }
 
-/// When a page is drawn, the offset from UTC it says the time of day at, and
-/// the reads out as it is drawn.
+/// When a page is drawn, the offset from UTC it says the time of day at, the
+/// reads out as it is drawn, and the change to what the server holds that
+/// it is drawn from, which its script asks for the changes since.
 #[derive(Debug, Clone)]
 pub struct Drawn {
     pub at: DateTime<Utc>,
     pub offset: FixedOffset,
     pub collecting: Vec<Awaited>,
+    pub change: u64,
 }
 
 /// The page `asked` names, drawn from `snapshot` under `layout`.
 ///
-/// A page is drawn once and may be left open, so each project's line says
-/// the time of day it was read at rather than how long ago, which the
-/// terminal says because it redraws itself as the age moves.
+/// A page may be left open with no script to keep it current, so each
+/// project's line says the time of day it was read at rather than how long
+/// ago, which the terminal says because it redraws itself as the age moves.
 pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) -> Answer {
     let shown = asked.forest(snapshot, layout);
     let forest = &shown.forest;
@@ -65,13 +67,8 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         selected: node.map(|_| forest.selected_line()),
     };
 
-    let mut html = String::new();
-    html.push_str(&format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{}</title><style>{STYLE}</style></head><body>",
-        escaped(node.map_or("bdi", |node| &node.title))
-    ));
+    let mut html = head(node.map_or("bdi", |node| &node.title), Some(drawn.change));
+    html.push_str("<body>");
     html.push_str(if shown.bead.is_some() {
         "<main class=\"open\"><div class=\"forest\">"
     } else {
@@ -106,12 +103,40 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
 /// A page with nothing on it but one sentence and a link to the forest, for
 /// an address that has no forest to draw.
 pub fn saying(said: &str) -> String {
+    said_alone(said, None)
+}
+
+/// The same, for an address that will have a forest to draw once the server
+/// holds a later change than `change`, which the page is kept current to.
+pub fn saying_kept_current(said: &str, change: u64) -> String {
+    said_alone(said, Some(change))
+}
+
+fn said_alone(said: &str, change: Option<u64>) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <title>bdi</title><style>{STYLE}</style></head><body><footer><p>{}</p>\
+        "{}<body><footer><p>{}</p>\
          <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
+        head("bdi", change),
         escaped(said),
         escaped(phrase::back_to_the_forest())
+    )
+}
+
+/// A page's head, titled `title`. Where the page is drawn from `change`, it
+/// carries the script that keeps it current.
+fn head(title: &str, change: Option<u64>) -> String {
+    let (named, script) = match change {
+        Some(change) => (
+            format!(" data-change=\"{change}\""),
+            format!("<script>{KEPT_CURRENT}</script>"),
+        ),
+        None => (String::new(), String::new()),
+    };
+    format!(
+        "<!doctype html><html lang=\"en\"{named}><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>{}</title><style>{STYLE}</style>{script}</head>",
+        escaped(title)
     )
 }
 
@@ -448,6 +473,46 @@ footer p,.missing{margin:0}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
 aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c8)}}";
 
+/// The page's one script, which keeps it current. It asks the page's own
+/// address for its changes since the one the page was drawn from, and the
+/// server sends them down that one connection: the whole page first, and
+/// after it each patch to the page it sent last. Each page replaces the
+/// body, keeping the line at the top of the window where it was, the bead
+/// view's scroll, and the link that had focus. Without it the page is the
+/// same page, drawn once.
+const KEPT_CURRENT: &str = r#"addEventListener("DOMContentLoaded", () => {
+  if (!window.EventSource) return;
+  const asked = location.pathname + (location.search ? location.search + "&" : "?");
+  const changes = new EventSource(asked + "since=" + document.documentElement.dataset.change);
+  let page;
+  changes.addEventListener("page", (event) => show(page = event.data.split("\n")));
+  changes.addEventListener("patch", (event) => {
+    const lines = event.data.split("\n");
+    for (let at = 0; at < lines.length; ) {
+      const [from, going, coming] = lines[at++].split(" ").map(Number);
+      page.splice(from, going, ...lines.slice(at, at += coming));
+    }
+    show(page);
+  });
+  const known = (line) => line.querySelector("a.bead")?.getAttribute("href") ?? line.id;
+  const lines = () => [...document.querySelectorAll(".line")];
+  const show = (page) => {
+    const drawn = new DOMParser().parseFromString(page.join("\n"), "text/html");
+    const top = lines().find((line) => line.getBoundingClientRect().bottom > 0);
+    const kept = top && [known(top), top.getBoundingClientRect().top];
+    const focused = document.activeElement?.getAttribute("href");
+    const scrolled = document.querySelector("aside")?.scrollTop;
+    document.title = drawn.title;
+    document.body.replaceWith(drawn.body);
+    const again = kept && lines().find((line) => known(line) === kept[0]);
+    if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
+    const aside = document.querySelector("aside");
+    if (aside && scrolled) aside.scrollTop = scrolled;
+    if (focused) [...document.querySelectorAll("a")]
+      .find((link) => link.getAttribute("href") === focused)?.focus({ preventScroll: true });
+  };
+});"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,6 +612,7 @@ mod tests {
             at: drawn_at(),
             offset: FixedOffset::east_opt(3600).expect("an offset"),
             collecting: Vec::new(),
+            change: 7,
         }
     }
 

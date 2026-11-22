@@ -6,12 +6,11 @@
 //! that snapshot, so what a request costs is the drawing and never a read.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,7 +22,7 @@ use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes::Heard;
 use crate::collect::environment::EnvironmentCache;
-use crate::collect::http::{self, close, head, Patient, Unread};
+use crate::collect::http::{self, close, head, Head, Patient, Unread};
 use crate::collect::run::RealRunner;
 use crate::collect::watched::Through;
 use crate::config::{Config, Poll};
@@ -33,6 +32,8 @@ use crate::view::draw::html;
 use crate::view::phrase;
 
 use super::{read_config, where_this_machine_watches, Launch, Reading};
+
+mod live;
 
 /// The path a readiness probe asks, answered as passing once the trackers
 /// have been read.
@@ -48,16 +49,110 @@ const PATIENCE: Duration = Duration::from_secs(10);
 const HTML: &str = "text/html; charset=utf-8";
 const TEXT: &str = "text/plain; charset=utf-8";
 
-/// What the reading thread holds for the pages to be drawn from.
-type Latest = Arc<Mutex<Held>>;
+const UNAVAILABLE: &str = "503 Service Unavailable";
+const NOT_FOUND: &str = "404 Not Found";
 
-#[derive(Default)]
+/// What the reading thread holds for the pages to be drawn from, and word
+/// of each change to it for the open pages waiting on one.
+struct Latest {
+    held: Mutex<Held>,
+    changed: Condvar,
+}
+
+#[derive(Clone)]
 struct Held {
     /// The latest snapshot, where the trackers have been read at all.
     snapshot: Option<Snapshot>,
     /// The read being made, so a page drawn while it is out says so, and
     /// says a tracker has stopped answering once it has been out too long.
     collecting: Option<Awaited>,
+    /// Which change this is. The count starts at the time the server
+    /// started, in milliseconds, so a page drawn by a server since restarted
+    /// never names a change the new one holds, and is sent the new one's.
+    change: u64,
+}
+
+/// What a page drawn from what is held depends on: the change, and whether
+/// the read out has gone unanswered, which time passing changes alone.
+type DrawnFrom = (u64, bool);
+
+impl Latest {
+    fn new() -> Self {
+        let started = Utc::now().timestamp_millis();
+        Self::holding(Held {
+            snapshot: None,
+            collecting: None,
+            change: u64::try_from(started).unwrap_or_default(),
+        })
+    }
+
+    fn holding(held: Held) -> Self {
+        Self {
+            held: Mutex::new(held),
+            changed: Condvar::new(),
+        }
+    }
+
+    /// What is held now.
+    fn now(&self) -> Held {
+        self.held().clone()
+    }
+
+    /// Change what is held with `change`, and wake every page waiting on it.
+    fn change(&self, change: impl FnOnce(&mut Held)) {
+        {
+            let mut held = self.held();
+            change(&mut held);
+            held.change += 1;
+        }
+        self.changed.notify_all();
+    }
+
+    /// The reading thread changes what is held by whole assignments, so a
+    /// panic leaves it whole, and a poisoned lock is taken all the same.
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// What is held once a page drawn from it would differ from one drawn
+    /// from `seen`, and what that page is drawn from, or nothing where
+    /// `until` comes first. A page drawn from nothing yet seen differs at
+    /// once.
+    fn after(&self, seen: Option<DrawnFrom>, until: Instant) -> Option<(Held, DrawnFrom)> {
+        let mut held = self.held();
+        loop {
+            let now = Utc::now();
+            let from = held.drawn_from(now);
+            if Some(from) != seen {
+                return Some((held.clone(), from));
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            let unanswered_in = held
+                .collecting
+                .as_ref()
+                .filter(|out| !out.unanswered_at(now))
+                .and_then(|out| (out.asked_at + out.patience - now).to_std().ok());
+            let wait = unanswered_in.map_or(left, |unanswered_in| left.min(unanswered_in));
+            held = self
+                .changed
+                .wait_timeout(held, wait)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+impl Held {
+    fn drawn_from(&self, now: DateTime<Utc>) -> DrawnFrom {
+        let unanswered = self
+            .collecting
+            .as_ref()
+            .is_some_and(|out| out.unanswered_at(now));
+        (self.change, unanswered)
+    }
 }
 
 /// Answer requests on `listen` until a signal ends the process, drawing each
@@ -89,16 +184,27 @@ pub(super) fn web(config: &Path, listen: &str) -> anyhow::Result<ExitCode> {
         .with_context(|| format!("reading the address {listen} gave"))?;
     println!("bdi web is answering on http://{taken}");
 
-    let latest: Latest = Arc::default();
-    let answering = (Arc::clone(&latest), cfg.clone());
+    let latest = Arc::new(Latest::new());
+    let answering = Arc::new(Answering {
+        latest: Arc::clone(&latest),
+        cfg: cfg.clone(),
+        live: live::Streams::default(),
+    });
     http::accept(
         listener,
         MOST_AT_ONCE,
-        |stream| reply(stream, "503 Service Unavailable", TEXT, b"busy\n"),
-        move |stream| answer(stream, &answering.0, &answering.1),
+        |stream| reply(stream, UNAVAILABLE, TEXT, b"busy\n"),
+        move |stream| answer(stream, &answering),
     );
     keep_reading(&cfg, &latest);
     Ok(ExitCode::SUCCESS)
+}
+
+/// What every request is answered from.
+struct Answering {
+    latest: Arc<Latest>,
+    cfg: Config,
+    live: live::Streams,
 }
 
 /// Read every project, then each project again as the watcher says it
@@ -122,22 +228,20 @@ fn keep_reading(cfg: &Config, latest: &Latest) {
     loop {
         for wanted in wanted {
             let asked_at = Utc::now();
-            if let Ok(mut held) = latest.lock() {
+            latest.change(|held| {
                 held.collecting = Some(Awaited {
                     wanted: wanted.clone(),
                     asked_at,
                     patience: cfg.tui.unanswered_after(),
                 });
-            }
+            });
             let snapshot =
                 collection.collect(cfg, &Unasked, &trackers, &wanted, Filter::All, asked_at);
             speaks_until.clone_from(&snapshot.speaks_until);
-            if let Ok(mut held) = latest.lock() {
-                *held = Held {
-                    snapshot: Some(snapshot),
-                    collecting: None,
-                };
-            }
+            latest.change(|held| {
+                held.snapshot = Some(snapshot);
+                held.collecting = None;
+            });
         }
         // ponytail: a project that polls until it is covered goes on polling
         // under cover; give each its own poll through `app::Reading` if the
@@ -215,27 +319,35 @@ fn changed_before(heard: &Receiver<Heard>, ends: Option<Instant>) -> Option<Stri
 }
 
 /// Read one request from `stream` and answer it, or close it unanswered
-/// where it never arrives in full or is not HTTP.
-fn answer(stream: TcpStream, latest: &Latest, cfg: &Config) {
+/// where it never arrives in full or is not HTTP. A request for the changes
+/// to a page is kept open apart from the requests being answered.
+fn answer(stream: TcpStream, answering: &Arc<Answering>) {
     let mut stream = Patient {
         stream,
         deadline: Instant::now() + PATIENCE,
     };
-    let Some((status, kind, body)) = request(&mut stream, latest, cfg) else {
+    let read = head(&mut stream, &mut Vec::new());
+    if let Ok(head) = &read {
+        if let Some(asked) = Asked::of(&head.target).filter(|_| live::asks_for_changes(head)) {
+            live::keep_current(answering, stream.stream, head, asked);
+            return;
+        }
+    }
+    let Some((status, kind, body)) = said(read, &answering.latest, &answering.cfg) else {
         return;
     };
     reply(&stream.stream, status, kind, body.as_bytes());
     close(stream.stream, stream.deadline);
 }
 
-/// What the request `from` sends comes to, or nothing where it never
-/// arrives in full or is not HTTP.
-fn request(
-    from: &mut impl Read,
+/// What a request whose head was `read` comes to, or nothing where it never
+/// arrived in full or is not HTTP.
+fn said(
+    read: Result<Head, Unread>,
     latest: &Latest,
     cfg: &Config,
 ) -> Option<(&'static str, &'static str, String)> {
-    match head(from, &mut Vec::new()) {
+    match read {
         Ok(head) => Some(answered(&head, latest, cfg)),
         Err(Unread::TooLong) => Some((
             "414 URI Too Long",
@@ -247,22 +359,13 @@ fn request(
 }
 
 /// What a request comes to: its status, the kind of body, and the body.
-fn answered(
-    head: &http::Head,
-    latest: &Latest,
-    cfg: &Config,
-) -> (&'static str, &'static str, String) {
-    const UNAVAILABLE: &str = "503 Service Unavailable";
-    const NOT_FOUND: &str = "404 Not Found";
+fn answered(head: &Head, latest: &Latest, cfg: &Config) -> (&'static str, &'static str, String) {
     if head.method != "GET" {
         return ("405 Method Not Allowed", TEXT, "GET only\n".to_string());
     }
-    let (snapshot, collecting) = latest
-        .lock()
-        .map(|held| (held.snapshot.clone(), held.collecting.clone()))
-        .unwrap_or_default();
+    let held = latest.now();
     if head.path() == HEALTH {
-        return match snapshot {
+        return match held.snapshot {
             Some(_) => ("200 OK", TEXT, "ok\n".to_string()),
             None => (UNAVAILABLE, TEXT, "reading\n".to_string()),
         };
@@ -270,17 +373,25 @@ fn answered(
     let Some(asked) = Asked::of(&head.target) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here()));
     };
+    let (status, page) = drawn(&asked, &held, cfg);
+    (status, HTML, page)
+}
+
+/// The page `asked` names, drawn from `held`, and its status.
+fn drawn(asked: &Asked, held: &Held, cfg: &Config) -> (&'static str, String) {
     let drawn = html::Drawn {
         at: Utc::now(),
         offset: Local::now().offset().fix(),
-        collecting: Vec::from_iter(collecting),
+        collecting: Vec::from_iter(held.collecting.clone()),
+        change: held.change,
     };
-    let Some(snapshot) = snapshot else {
+    let Some(snapshot) = held.snapshot.clone() else {
         // Until the first read answers, the forest is each project's line
         // with its mark saying it is being read, as the terminal opens on.
         // Whether a bead is there cannot be said yet.
         if asked.bead.is_some() {
-            return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet()));
+            let page = html::saying_kept_current(phrase::not_read_yet(), held.change);
+            return (UNAVAILABLE, page);
         }
         let awaiting = Snapshot::awaiting(
             cfg.read().map(|project| project.name.clone()).collect(),
@@ -290,12 +401,14 @@ fn answered(
             Filter::All,
             drawn.at,
         );
-        let page = html::page(awaiting, &cfg.row, &asked, drawn);
-        return (UNAVAILABLE, HTML, page.html);
+        return (
+            UNAVAILABLE,
+            html::page(awaiting, &cfg.row, asked, drawn).html,
+        );
     };
-    let page = html::page(snapshot, &cfg.row, &asked, drawn);
+    let page = html::page(snapshot, &cfg.row, asked, drawn);
     let status = if page.found { "200 OK" } else { NOT_FOUND };
-    (status, HTML, page.html)
+    (status, page.html)
 }
 
 fn reply(stream: &TcpStream, status: &str, kind: &str, body: &[u8]) {
@@ -304,14 +417,20 @@ fn reply(stream: &TcpStream, status: &str, kind: &str, body: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
     use super::*;
 
     /// What a request for `target` with `method` is answered, with `latest`
     /// held.
     fn answered_to(method: &str, target: &str, latest: &Latest) -> (&'static str, String) {
         let sent = format!("{method} {target} HTTP/1.1\r\nHost: bdi\r\n\r\n");
-        let (status, _, body) =
-            request(&mut sent.as_bytes(), latest, &Config::naming(Vec::new())).expect("an answer");
+        let (status, _, body) = said(
+            head(&mut sent.as_bytes(), &mut Vec::new()),
+            latest,
+            &Config::naming(Vec::new()),
+        )
+        .expect("an answer");
         (status, body)
     }
 
@@ -335,8 +454,12 @@ mod tests {
         assert!(sent.len() > http::LONGEST_HEAD && sent.len() < http::LONGEST_HEAD + 4096);
         let (first, rest) = sent.as_bytes().split_at(100);
         let mut arriving = first.chain(rest);
-        let (status, _, _) =
-            request(&mut arriving, &read(), &Config::naming(Vec::new())).expect("an answer");
+        let (status, _, _) = said(
+            head(&mut arriving, &mut Vec::new()),
+            &read(),
+            &Config::naming(Vec::new()),
+        )
+        .expect("an answer");
         assert_eq!(status, "414 URI Too Long");
     }
 
@@ -426,15 +549,16 @@ path = "/home/user/dev/arkham"
             Filter::All,
             Utc::now(),
         );
-        Arc::new(Mutex::new(Held {
+        Latest::holding(Held {
             snapshot: Some(snapshot),
             collecting: None,
-        }))
+            change: 0,
+        })
     }
 
     #[test]
     fn before_the_trackers_are_read_a_beads_page_says_so_and_the_probe_fails() {
-        let latest = Latest::default();
+        let latest = Latest::new();
         let (status, body) = answered_to("GET", "/ark/ark-5", &latest);
         assert_eq!(status, "503 Service Unavailable");
         assert!(body.contains(phrase::not_read_yet()), "{body}");
@@ -450,14 +574,15 @@ path = "/home/user/dev/arkham"
             Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\n")
                 .expect("a config");
         let asked_at = Utc::now() - chrono::TimeDelta::seconds(600);
-        let latest = Arc::new(Mutex::new(Held {
+        let latest = Latest::holding(Held {
             snapshot: None,
             collecting: Some(Awaited {
                 wanted: Wanted::Everything,
                 asked_at,
                 patience: cfg.tui.unanswered_after(),
             }),
-        }));
+            change: 0,
+        });
         let sent = "GET / HTTP/1.1\r\nHost: bdi\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
         let (status, _, body) = answered(&head, &latest, &cfg);
