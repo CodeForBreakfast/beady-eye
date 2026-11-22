@@ -1841,6 +1841,60 @@ mod tests {
         assert_eq!(page_lines(&view), terminal_lines(&terminal));
     }
 
+    /// Stepping through matches under a line the reader shut keeps the folds
+    /// they pointed beneath it, as the terminal's steps do.
+    #[test]
+    fn stepping_under_a_shut_line_keeps_the_folds_pointed_beneath_it() {
+        let under = terminal_lines(&terminal_forest(&[]))
+            .iter()
+            .position(|line| line.contains("▸ ○ .6"))
+            .expect("the blocked bead rests shut over its child");
+        let opened = page_at(&fold_link(&page_at("/").html, under)).html;
+        let nested = page_lines(&opened)
+            .iter()
+            .position(|line| line.contains("confirm the wedges are gone"))
+            .expect("its child is drawn");
+        let nested_open = page_at(&fold_link(&opened, nested)).html;
+        let shut = page_at(&fold_link(&nested_open, under)).html;
+        let found = page_at(&searched_from(&shut, "wedge")).html;
+        let next = page_at(&link_saying(&found, phrase::MATCH_AFTER.0)).html;
+        let back = page_at(&link_saying(&next, phrase::MATCH_BEFORE.0)).html;
+
+        let mut terminal = terminal_forest(&[under, nested, under]);
+        let origin = terminal.origin();
+        terminal.seek("wedge", &origin);
+        assert_eq!(page_lines(&found), terminal_lines(&terminal));
+        terminal.next_match(true);
+        assert_eq!(page_lines(&next), terminal_lines(&terminal));
+        terminal.next_match(false);
+        assert_eq!(page_lines(&back), terminal_lines(&terminal));
+    }
+
+    /// A bead's address in a view, naming no copy, shows the copy the view
+    /// lists, where the tree reaches the bead twice.
+    #[test]
+    fn a_beads_address_in_a_view_shows_the_copy_the_view_lists() {
+        let target = format!("{}?view={}", address(&key("smt-4kd3p.6")), VIEWS[0].0);
+        let asked = Asked::of(&target).expect("an address");
+        assert!(page(reached_twice(), &Layout::default(), &asked, drawing()).found);
+    }
+
+    /// A list's row expanded to what it unblocks stays expanded when the
+    /// forest is drawn with one bead as its only root, as the terminal keeps
+    /// what each bead's row unblocks by the bead.
+    #[test]
+    fn a_lists_row_expanded_is_known_by_its_bead() {
+        let ready = page_at("/?ready=1").html;
+        let row = page_lines(&ready)
+            .iter()
+            .position(|line| line.contains("restore app theming"))
+            .expect("the ready bead is listed");
+        let link = fold_link(&ready, row);
+        let asked = Asked::of(&link).expect("an address");
+        let name = &asked.folds.last().expect("the row's fold").name;
+        assert_eq!(name, "u:summit-works:smt-4kd3p.4");
+    }
+
     /// A search's form goes to the match, as its steps do.
     #[test]
     fn a_search_from_the_form_lands_the_page_on_the_match() {

@@ -475,8 +475,8 @@ fn in_sight(forest: &Forest) -> HashMap<String, (usize, bool)> {
 /// its fold by, written out. Nothing for a line with no fold.
 ///
 /// A bead's row in a list folds to what the bead unblocks, which the forest
-/// keeps apart from the bead's fold in the trees, so it is known by another
-/// name where the line is `listed`.
+/// keeps by the bead and apart from the bead's folds in the trees, so where
+/// the line is `listed` it is known by the bead under another name.
 fn fold_name(line: &Line, listed: bool) -> Option<String> {
     line.folded?;
     Some(match &line.content {
@@ -487,7 +487,10 @@ fn fold_name(line: &Line, listed: bool) -> Option<String> {
             group.project.as_deref().map(encoded).unwrap_or_default()
         ),
         Content::Elided { under, .. } => format!("e:{}", placed(under)),
-        _ if listed => format!("u:{}", placed(line.place.as_ref()?)),
+        _ if listed => {
+            let key = line.place.as_ref()?.key();
+            format!("u:{}:{}", encoded(&key.project), encoded(&key.id))
+        }
         _ => format!("b:{}", placed(line.place.as_ref()?)),
     })
 }

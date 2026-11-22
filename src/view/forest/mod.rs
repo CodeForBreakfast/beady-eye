@@ -1195,10 +1195,10 @@ impl Forest {
     }
 
     /// Put the selection on a bead the snapshot holds, wherever the forest
-    /// draws it, opening whatever is folded over it. Reports whether the
-    /// selection is on it now.
+    /// draws it and in a list on its row, opening whatever is folded over
+    /// it. Reports whether the selection is on it now.
     pub fn go_to(&mut self, key: &BeadKey) -> bool {
-        let Some(place) = self.place_of(key) else {
+        let Some(place) = self.reaches(key) else {
             return false;
         };
         self.go_to_place(&place)
