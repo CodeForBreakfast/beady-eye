@@ -342,6 +342,9 @@ pub struct Page {
     pub blocked_by: Option<usize>,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
+    /// The rows of prose broken from the line of text above them only to
+    /// fit the width, each with what joins it back on.
+    pub flowing: HashMap<usize, &'static str>,
     /// Which spans of which rows the terminal is told point somewhere, for
     /// the rows that hold a link at all.
     pub(crate) links: HashMap<usize, Vec<Link>>,
@@ -619,9 +622,9 @@ pub fn said(
 
     let room = width.saturating_sub(indent().len());
     let prose = |text: &str| {
-        markdown::rows(text, room)
+        markdown::flowing_rows(text, room)
             .into_iter()
-            .map(indented)
+            .map(|(row, joint)| (indented(row), joint))
             .collect::<Vec<_>>()
     };
     let tied = |arrow: char, related: &[Related]| {
@@ -630,12 +633,13 @@ pub fn said(
             .map(|related| {
                 let mut row = vec![Span::styled(format!("{arrow} "), palette::STRUCTURE)];
                 row.extend(related_row(related, followable(related)));
-                indented(row)
+                (indented(row), None)
             })
             .collect::<Vec<_>>()
     };
 
     let mut related = Vec::new();
+    let mut flowing = HashMap::new();
     for (heading, body, names_beads) in [
         (
             DESCRIPTION,
@@ -656,7 +660,12 @@ pub fn said(
         if names_beads {
             related.extend(rows.len()..rows.len() + body.len());
         }
-        rows.extend(body);
+        for (row, joint) in body {
+            if let Some(joint) = joint {
+                flowing.insert(rows.len(), joint);
+            }
+            rows.push(row);
+        }
     }
 
     Page {
@@ -664,6 +673,7 @@ pub fn said(
         head,
         blocked_by,
         related,
+        flowing,
         links,
     }
 }

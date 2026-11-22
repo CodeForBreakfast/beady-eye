@@ -86,7 +86,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         html.push_str(&format!(
             "<aside><a class=\"close\" href=\"{}\">{}</a>\n",
             escaped(&asked.closing()),
-            escaped(phrase::back_to_the_forest())
+            escaped(phrase::back())
         ));
         match node {
             Some(node) => {
@@ -117,7 +117,7 @@ pub fn saying(said: &str) -> String {
          <title>bdi</title><style>{STYLE}</style></head><body><footer><p>{}</p>\
          <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
         escaped(said),
-        escaped(phrase::back_to_the_forest())
+        escaped(phrase::back())
     )
 }
 
@@ -409,11 +409,27 @@ impl Drawing<'_> {
             show::named(node, vec![Span::raw(node.title.clone())]),
             forest.place().map(|place| self.asked.opening_at(place)),
         );
-        html.push_str("</div>\n");
+        html.push_str("</div>");
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
+            let links = page.links.get(&at).map_or(&[][..], Vec::as_slice);
+            // A row of prose broken from the one above only to fit the
+            // terminal's width keeps that break in an element of its own, so a
+            // page narrower than the terminal can let the prose flow.
+            if let Some(joint) = page.flowing.get(&at) {
+                let (hang, rest) = row.split_at(row.len().min(2));
+                html.push_str(joint);
+                html.push_str("<span class=\"w\">\n");
+                spans(html, hang, Block::Identity, links, 0);
+                html.push_str("</span>");
+                spans(html, rest, Block::Identity, links, hang.len());
+                continue;
+            }
+            html.push('\n');
             if let Some(related) = named.get(&at) {
                 let (arrow, rest) = row.split_at(row.len().min(2));
+                html.push_str("<span class=\"arrow\">");
                 spans(html, arrow, Block::Identity, &[], 0);
+                html.push_str("</span>");
                 if !self.related(html, related) {
                     spans(html, rest, Block::Identity, &[], 0);
                 }
@@ -438,12 +454,10 @@ impl Drawing<'_> {
                     }
                 }
             } else {
-                let links = page.links.get(&at).map_or(&[][..], Vec::as_slice);
                 spans(html, row, Block::Identity, links, 0);
             }
-            html.push('\n');
         }
-        html.push_str("</div>");
+        html.push_str("\n</div>");
     }
 
     /// A bead the bead view names, as a reference to it that opens it where
@@ -657,7 +671,8 @@ nav input::placeholder{color:transparent}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
-aside{position:static;max-height:none;border-left:0;border-top:1px solid var(--c8)}\
+main.open:has(.page)>.forest{display:none}\
+aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 .line{width:auto;white-space:pre-wrap;position:relative}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
@@ -699,7 +714,16 @@ border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
 .lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--shown)}\
 .lists a.on{color:var(--c4);text-decoration:none}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}\
-nav:has(.lists[open]) form{visibility:hidden}}";
+nav:has(.lists[open]) form{visibility:hidden}\
+.page .w,.page .arrow{display:none}\
+.page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
+white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
+.page .bead>span:not([class]){display:none}\
+.page .bead .g{grid-area:1/1;font-size:14px;text-align:center}\
+.page .bead .title{grid-area:1/2;font:15px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}\
+.page .bead .id{grid-area:2/2;font-size:12px}\
+.page .head .bead{width:100%;margin-bottom:4px}\
+.page .head .title{font-size:18px;font-weight:600}}";
 
 #[cfg(test)]
 mod tests {
@@ -1683,6 +1707,50 @@ mod tests {
         assert_eq!(words(&text_of(more)), "⇢ #12");
     }
 
+    /// A phone lets the bead view's prose flow rather than keep the rows the
+    /// terminal's width broke it into. So each such break is an element of
+    /// its own, and with every one of them taken out a paragraph reads whole,
+    /// while an item the author started on a line of its own keeps its line.
+    #[test]
+    fn a_break_put_in_the_bead_views_prose_to_fit_the_terminal_can_be_taken_out() {
+        let paragraph = "The diaphone has not sounded since the spring, so run it for a full cycle once the reflector is back in and record each burn in https://example.invalid/dunwich/logbook/diaphone/the-spring-cycle-once-the-reflector-is-back-in-and-every-burn-recorded.";
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying(
+                &format!("{paragraph}\n\n- one item\n- another item"),
+                "",
+            );
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let view = inside(&html, "page");
+        assert!(view.contains("<span class=\"w\">\n"), "{view}");
+
+        let mut flowed = String::new();
+        let mut rest = view;
+        while let Some(at) = rest.find("<span class=\"w\">") {
+            flowed.push_str(&rest[..at]);
+            rest = &rest[element_end(rest, at)..];
+        }
+        flowed.push_str(rest);
+        let lines: Vec<String> = text_of(&flowed).lines().map(words).collect();
+        assert!(lines.contains(&paragraph.to_string()), "{lines:#?}");
+        assert!(lines.contains(&"• one item".to_string()), "{lines:#?}");
+        assert!(lines.contains(&"• another item".to_string()), "{lines:#?}");
+    }
+
+    /// The arrow a related bead is drawn after is apart from the reference,
+    /// so a phone can draw the reference alone under its section's name.
+    #[test]
+    fn a_related_beads_arrow_is_apart_from_its_reference() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        let view = inside(&html, "page");
+        let parent = view
+            .find("<span class=\"arrow\">")
+            .expect("the parent is drawn after its arrow");
+        let (shape, _) = parts(&view[parent..element_end(view, parent)]);
+        assert_eq!(shape, ["span.arrow"]);
+        assert_eq!(words(&text_of(inside(&view[parent..], "arrow"))), "↑");
+    }
+
     /// The references on a page, each whole, and the page with them taken
     /// out.
     fn references_and_the_rest(html: &str) -> (Vec<String>, String) {
@@ -2164,7 +2232,7 @@ mod tests {
         let target = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
         let answer = page_at(&target);
         assert!(answer.found, "{}", answer.html);
-        let closing = link_saying(&answer.html, phrase::back_to_the_forest());
+        let closing = link_saying(&answer.html, phrase::back());
         let carried = Asked::of(&closing).expect("an address").folds;
         assert_eq!(carried, Vec::new(), "{closing}");
     }
