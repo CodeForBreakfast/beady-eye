@@ -685,13 +685,13 @@ nav summary{list-style:none}nav summary::-webkit-details-marker{display:none}nav
 nav .ready.on,.lists[open] summary{background:var(--shown);font-weight:bold;text-decoration:none}\
 nav input::placeholder{color:var(--fg);opacity:1}\
 nav button{display:none}\
-nav:has(input:is(:focus,:not(:placeholder-shown))){height:0;padding-block:0;border:0}nav:has(input:is(:focus,:not(:placeholder-shown)))>:not(form){visibility:hidden}\
-nav:has(input:is(:focus,:not(:placeholder-shown))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
+nav:has(input:focus){height:0;padding-block:0;border:0}nav:has(input:focus)>:not(form){visibility:hidden}\
+nav:has(input[type=search]:is(:focus,:not(:placeholder-shown))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
 background:var(--bg);border-bottom:1px solid var(--c8)}\
-html:has(nav input:is(:focus,:not(:placeholder-shown))){scroll-padding-top:52px}body:has(nav input:is(:focus,:not(:placeholder-shown))){padding-top:52px}\
-nav:has(input:is(:focus,:not(:placeholder-shown))) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
+html:has(nav input[type=search]:is(:focus,:not(:placeholder-shown))){scroll-padding-top:52px}body:has(nav input[type=search]:is(:focus,:not(:placeholder-shown))){padding-top:52px}\
+nav:has(input[type=search]:is(:focus,:not(:placeholder-shown))) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-nav:has(input:is(:focus,:not(:placeholder-shown))) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
+nav:has(input[type=search]:is(:focus,:not(:placeholder-shown))) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
 max-height:calc(100dvh - 64px);overflow-y:auto;\
