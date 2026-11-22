@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::net::{IpAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv6Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -70,15 +70,11 @@ struct Held {
 pub(super) struct Hosts(pub(super) Vec<String>);
 
 impl Hosts {
-    /// Whether a request whose Host header says `host` was sent to a name
-    /// this listener answers for. The port is not compared.
+    /// Whether a request whose one Host header says `host` was sent to a
+    /// name this listener answers for. The port is not compared.
     fn allow(&self, host: Option<&str>) -> bool {
-        let Some(host) = host else {
+        let Some(name) = host.and_then(name_of) else {
             return false;
-        };
-        let name = match host.strip_prefix('[') {
-            Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
-            None => host.split(':').next().unwrap_or_default(),
         };
         name.parse::<IpAddr>().is_ok()
             || name.eq_ignore_ascii_case("localhost")
@@ -87,6 +83,24 @@ impl Hosts {
                 .iter()
                 .any(|allowed| name.eq_ignore_ascii_case(allowed))
     }
+}
+
+/// The name a Host header's `host` sends a request to, without its port, or
+/// nothing where it is not a name with an optional port.
+fn name_of(host: &str) -> Option<&str> {
+    let (name, rest) = match host.strip_prefix('[') {
+        Some(bracketed) => {
+            let (address, rest) = bracketed.split_once(']')?;
+            address.parse::<Ipv6Addr>().ok()?;
+            (address, rest)
+        }
+        None => host.split_at(host.find(':').unwrap_or(host.len())),
+    };
+    let port_is_sound = match rest.strip_prefix(':') {
+        Some(port) => port.parse::<u16>().is_ok(),
+        None => rest.is_empty(),
+    };
+    (port_is_sound && !name.is_empty()).then_some(name)
 }
 
 /// Answer requests on `listen` until a signal ends the process, drawing each
@@ -286,7 +300,7 @@ fn answered(
 ) -> (&'static str, &'static str, String) {
     const UNAVAILABLE: &str = "503 Service Unavailable";
     const NOT_FOUND: &str = "404 Not Found";
-    if !hosts.allow(head.header("Host")) {
+    if !hosts.allow(head.only("Host")) {
         return (
             "421 Misdirected Request",
             TEXT,
@@ -379,8 +393,8 @@ mod tests {
 
     /// A page elsewhere that points its own name at this listener sends its
     /// own name as the host, so it is refused, and so is a request naming no
-    /// host. The probe is refused alike, since it says whether trackers
-    /// answer.
+    /// host, naming one unsoundly, or naming more than one. The probe is
+    /// refused alike, since it says whether trackers answer.
     #[test]
     fn a_request_sent_to_a_name_nobody_allowed_is_refused() {
         let latest = read();
@@ -389,6 +403,13 @@ mod tests {
             "Host: dunwich.invalid:8080",
             "Host: beads.example.invalid.dunwich.invalid",
             "Accept: text/html",
+            "Host: ",
+            "Host: beads.example.invalid:http",
+            "Host: beads.example.invalid:8080:80",
+            "Host: [::1",
+            "Host: [::1]x",
+            "Host: [beads.example.invalid]",
+            "Host: beads.example.invalid\r\nHost: dunwich.invalid",
         ] {
             for target in ["/", HEALTH] {
                 let (status, body) = answered_from(headers, "GET", target, &latest);
