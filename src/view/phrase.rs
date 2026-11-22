@@ -970,10 +970,10 @@ pub fn not_drawn(key: &BeadKey) -> String {
     )
 }
 
-/// The link on a web page's bead view that goes back to the forest, as `Esc`
+/// The link on a web page's bead view that goes back to the list, as `Esc`
 /// does in the terminal.
-pub fn back_to_the_forest() -> &'static str {
-    "✕ back to the forest"
+pub fn back() -> &'static str {
+    "✕ back"
 }
 
 /// The entry in a web page's list menu that draws the trees, as leaving the
