@@ -495,24 +495,29 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     show(page);
   });
   const target = (link) => link?.getAttribute("href")?.split("#")[0];
-  const known = (line) => target(line.querySelector("a")) ?? line.id;
-  const lines = () => [...document.querySelectorAll(".line")];
-  const scrolling = () => [document.querySelector(".forest"), document.querySelector("aside")];
+  const known = (line) => target(line.querySelector("a"));
+  const lines = () => [...document.querySelectorAll(".line")].filter(known);
+  const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
+  const linked = (box, to) => [...(box ?? document).querySelectorAll("a")]
+    .filter((link) => target(link) === to);
   const show = (page) => {
     const drawn = new DOMParser().parseFromString(page.join("\n"), "text/html");
     const top = lines().find((line) => line.getBoundingClientRect().bottom > 0);
     const kept = top && [known(top), top.getBoundingClientRect().top];
-    const focused = target(document.activeElement);
-    const scrolled = scrolling().map((box) => box && [box.scrollLeft, box.scrollTop]);
+    const focus = document.activeElement;
+    const to = target(focus);
+    const box = boxes().findIndex((box) => box?.contains(focus));
+    const focused = to && [box, to, linked(boxes()[box], to).indexOf(focus)];
+    const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
     document.title = drawn.title;
     document.body.replaceWith(drawn.body);
     const again = kept && lines().find((line) => known(line) === kept[0]);
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
-    scrolling().forEach((box, at) => {
+    boxes().forEach((box, at) => {
       if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
     });
-    if (focused) [...document.querySelectorAll("a")]
-      .find((link) => target(link) === focused)?.focus({ preventScroll: true });
+    if (focused) linked(boxes()[focused[0]], focused[1])[focused[2]]
+      ?.focus({ preventScroll: true });
   };
 });"##;
 
