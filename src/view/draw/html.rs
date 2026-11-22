@@ -18,7 +18,7 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
-use crate::view::address::{fold_name, Asked, FIND, SHOWN};
+use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Link};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{Content, Line, Waiting};
@@ -83,7 +83,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     if let Some(key) = &asked.bead {
         html.push_str(&format!(
             "<aside><a class=\"close\" href=\"{}\">{}</a>\n",
-            escaped(&asked.closing()),
+            escaped(&asked.closing(node.and(forest.place()), forest.list().is_some())),
             escaped(phrase::back())
         ));
         match node {
@@ -287,7 +287,7 @@ impl Drawing<'_> {
         };
         let whole = drawn.whole();
         let selected = self.selected == Some(at);
-        let anchor = fold_name(line, self.listed())
+        let anchor = line_name(line, self.listed())
             .map_or_else(String::new, |name| format!(" id=\"{name}\""));
         html.push_str(&format!(
             "<div class=\"line{}\"{anchor}{}>",
@@ -1164,15 +1164,21 @@ mod tests {
         assert!(!html.contains(":~:"), "{html}");
     }
 
+    /// A link lands on a line by its id, so a line no link lands on, one
+    /// that neither folds nor is a bead's row, carries none.
     #[test]
-    fn a_line_with_no_fold_carries_no_id() {
+    fn a_line_that_neither_folds_nor_is_a_beads_row_carries_no_id() {
         let html = page_at("/").html;
         let lines = lines_html(&html);
-        assert!(lines.iter().any(|line| line.contains("class=\"fold\"")));
+        let folds = |line: &&str| line.contains("class=\"fold\"");
+        let bead = |line: &&str| line.contains("class=\"bead\"");
+        assert!(lines.iter().any(folds));
+        assert!(lines.iter().any(|line| !folds(line) && bead(line)));
+        assert!(lines.iter().any(|line| !bead(line)));
         for (at, line) in lines.iter().enumerate() {
             assert_eq!(
                 line_id(&html, at).is_some(),
-                line.contains("class=\"fold\""),
+                folds(line) || bead(line),
                 "{line}"
             );
         }
@@ -1323,15 +1329,79 @@ mod tests {
     #[test]
     fn the_folds_opened_to_reach_a_bead_stay_open_once_its_view_is_closed() {
         let shown = page_at(&address(&key("smt-4kd3p.7"))).html;
-        let close = shown
-            .split("<a class=\"close\" href=\"")
-            .nth(1)
-            .expect("the bead view closes");
-        let close = close[..close.find('"').expect("the link ends")].replace("&amp;", "&");
+        let close = closing_link(&shown);
+        let (close, _) = close
+            .split_once('#')
+            .expect("the link lands on the bead's row");
 
         let mut terminal = flatten(ground());
         assert!(terminal.go_to(&key("smt-4kd3p.7")));
-        assert_eq!(page_lines(&page_at(&close).html), terminal_lines(&terminal));
+        assert_eq!(page_lines(&page_at(close).html), terminal_lines(&terminal));
+    }
+
+    /// The whole address the bead view's back link goes to, fragment and all.
+    fn closing_link(html: &str) -> String {
+        let close = html
+            .split("<a class=\"close\" href=\"")
+            .nth(1)
+            .expect("the bead view closes");
+        close[..close.find('"').expect("the link ends")].replace("&amp;", "&")
+    }
+
+    /// Closing the bead view lands on the bead's own row of the forest, so a
+    /// phone, which draws the bead view in the forest's place, comes back to
+    /// where the reader was rather than to the top of a long forest.
+    #[test]
+    fn closing_a_beads_view_lands_on_its_row() {
+        let tree = address(&key("smt-4kd3p.8"));
+        let listed = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
+        let twice = page_of(reached_twice(), &address(&key("smt-4kd3p.6")));
+        for (shown, bead) in [
+            (page_at(&tree).html, "smt-4kd3p.8"),
+            (page_at(&listed).html, "smt-4kd3p.7"),
+            (twice, "smt-4kd3p.6"),
+        ] {
+            let close = closing_link(&shown);
+            let (target, landing) = close.split_once('#').expect("the link lands somewhere");
+            let closed = if bead == "smt-4kd3p.6" {
+                page_of(reached_twice(), target)
+            } else {
+                page_at(target).html
+            };
+            let opened_at = lines_html(&shown)
+                .iter()
+                .position(|line| line.starts_with(" shown\""))
+                .expect("a line is shown");
+            let landed = landed_on(&closed, landing);
+            assert!(
+                text_of(line_html(&closed, landed)).contains(bead),
+                "{close}"
+            );
+            assert_eq!(landed, opened_at, "{close}");
+        }
+    }
+
+    /// A link lands on the first line carrying its fragment, so no two lines
+    /// of a page carry one id: not a bead the trees draw twice, and not a
+    /// bead a list draws again under each row expanded to what it waits on.
+    #[test]
+    fn no_two_lines_of_a_page_carry_one_id() {
+        let mut listed = page_at(&format!("/?view={}", VIEWS[0].0)).html;
+        for title in ["wire the niri theme include", "apply the two niri settings"] {
+            let row = page_lines(&listed)
+                .iter()
+                .position(|line| line.contains(title))
+                .expect("the bead is listed");
+            listed = page_at(&fold_link(&listed, row)).html;
+        }
+        assert_eq!(lines_titled(&listed, "lift the ground station").len(), 2);
+        for html in [page_of(reached_twice(), "/"), listed] {
+            let ids: Vec<String> = (0..lines_html(&html).len())
+                .filter_map(|at| line_id(&html, at))
+                .collect();
+            let unique: std::collections::HashSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        }
     }
 
     #[test]
@@ -2621,7 +2691,7 @@ mod tests {
         for link in [
             asked.opening(&key("smt-4kd3p.7")),
             asked.opening_at(&place("smt-4kd3p.7")),
-            asked.closing(),
+            asked.closing(None, false),
             asked.listing(asked.list.clone()),
             asked.rooting(asked.root.as_ref()),
         ] {
