@@ -518,10 +518,9 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   });
   if (!document.hidden) listen();
   const goes = (link) => {
-    const to = new URL(link.href);
-    if (to.origin !== location.origin) return [link.className, to.href].join(" ");
-    const where = link.matches(".fold") ? "" : to.searchParams.get("at");
-    return [link.className, to.pathname, where, to.hash].join(" ");
+    if (link.origin !== location.origin) return [link.className, link.href].join(" ");
+    const where = link.matches(".fold") ? "" : new URLSearchParams(link.search).get("at");
+    return [link.className, link.pathname, where, link.hash].join(" ");
   };
   const known = (row) => {
     const bead = row.querySelector("a.bead[href]");
