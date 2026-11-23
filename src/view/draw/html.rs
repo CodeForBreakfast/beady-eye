@@ -18,17 +18,17 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
-use crate::view::address::{Asked, FIND, SHOWN, line_name};
-use crate::view::fitted::{Block, Link, indent};
-use crate::view::forest::{Forest, Landed, listed, only_ready, view_of};
+use crate::view::address::{line_name, Asked, FIND, SHOWN};
+use crate::view::fitted::{indent, Block, Link};
+use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{self, Content, Level, Line, Waiting};
 use crate::view::markdown::Flow;
 use crate::view::row::{Layout, WARNING};
-use crate::view::{Said, palette, phrase, show};
+use crate::view::{palette, phrase, show, Said};
 
 use super::bead::referenced_line;
 use super::foot::notices;
-use super::{Reads, Reference, fitted};
+use super::{fitted, Reads, Reference};
 
 /// The columns the bead view wraps its prose at, which is what `bd show`
 /// wraps at.
@@ -712,7 +712,11 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
 
 /// The attribute marking the entry or switch that is in force, where `on`.
 fn on(on: bool) -> &'static str {
-    if on { " class=\"on\"" } else { "" }
+    if on {
+        " class=\"on\""
+    } else {
+        ""
+    }
 }
 
 /// A style attribute holding `css`, or nothing where it is empty.
@@ -962,10 +966,10 @@ mod tests {
     use crate::model::snapshot::{ProviderState, Tree};
     use crate::model::tree::Link;
     use crate::model::types::{Edge, Status};
-    use crate::view::Action;
     use crate::view::address::{address, addressable};
     use crate::view::draw::tests::{counts, drawn_at, frame_of, node, snapshot, tree};
-    use crate::view::forest::{List, flatten};
+    use crate::view::forest::{flatten, List};
+    use crate::view::Action;
 
     const PROJECT: &str = "summit-works";
 
@@ -1299,11 +1303,9 @@ mod tests {
         let asked = Asked::of("/").expect("the forest");
         let lines = page_lines(&page(ground(), &Layout::default(), &asked, drawn).html);
         assert!(lines[0].starts_with("▾ summit-works ⠿"), "{}", lines[0]);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("apply the two niri settings"))
-        );
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("apply the two niri settings")));
     }
 
     #[test]
@@ -1703,11 +1705,9 @@ mod tests {
                 assert_eq!(page, terminal, "row {at}");
             }
         }
-        assert!(
-            terminal_rows
-                .iter()
-                .any(|row| row == "→ ○ smt-4kd3p.1 wire the niri theme include")
-        );
+        assert!(terminal_rows
+            .iter()
+            .any(|row| row == "→ ○ smt-4kd3p.1 wire the niri theme include"));
     }
 
     /// Ids are per tracker, so a bead can depend on two beads of one id. The
@@ -1883,11 +1883,9 @@ mod tests {
         let target = "/summit-works/smt-4kd3p?at=summit-works%3Asmt-4kd3p";
         let asked = Asked::of(target).expect("a page is at the address");
         let answer = page(unread, &Layout::default(), &asked, drawing());
-        assert!(
-            answer
-                .html
-                .contains(phrase::not_drawn(&key("smt-4kd3p")).as_str())
-        );
+        assert!(answer
+            .html
+            .contains(phrase::not_drawn(&key("smt-4kd3p")).as_str()));
         assert!(!answer.found);
     }
 
