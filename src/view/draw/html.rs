@@ -1488,7 +1488,8 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// of their kind, so one that is no longer drawn does not shift the rest. It
 /// keeps the line or bead view at the top of the window where it was, or the
 /// next line below it that is still drawn. The link that had focus keeps
-/// it, or a link going to the same place takes it if that link went. A page differing only in its change is not shown
+/// it while it goes where it went. Otherwise a link going there takes it,
+/// and where none does the focus goes. A page differing only in its change is not shown
 /// again. A hidden page lets its connection go, and asks again from the
 /// change it last heard once it is shown, so pages left in the background
 /// hold none of the few connections a browser makes to one server. A page
@@ -1605,7 +1606,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[2]);
     if (focused) {
       const back = focus.isConnected && goes(focus) === focused[1] ? focus : alike(focused[0], focused[1])[focused[2]];
-      if (back !== document.activeElement) back?.focus({ preventScroll: true });
+      if (back !== document.activeElement) back ? back.focus({ preventScroll: true }) : focus.blur();
     }
   };
 });"##;
