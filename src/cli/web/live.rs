@@ -2,19 +2,22 @@
 //! and down it, as Server-Sent Events, the page its address answers each
 //! time what the server holds changes.
 //!
-//! The first event on a connection is the whole page. Each one after it is
-//! a patch against the page sent before it, unless the page itself is the
-//! smaller, because a change to the forest is a few of its thousands of
-//! lines.
+//! Nothing is sent while the page is the version the reader already holds.
+//! Each event is a patch against the lines the reader holds, because a
+//! change to the forest is a few of its thousands of lines. The whole page
+//! goes instead where the server cannot say what those lines are, or where
+//! it is the smaller.
 
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::collect::http::{self, close, Encoding, Head, Parts, LINGER};
 use crate::view::address::Asked;
+use crate::view::draw::html;
 
 use super::{Answering, DrawnFrom, PATIENCE, TEXT, UNAVAILABLE};
 
@@ -28,12 +31,19 @@ const MOST_KEPT_CURRENT: usize = 32;
 /// reader who has gone is found.
 const QUIET: Duration = Duration::from_secs(15);
 
-/// The query key the page's script names the change it was drawn from by.
+/// The query key the page's script names the version it shows by.
 const SINCE: &str = "since";
 
 /// The most lines a patch inserts or removes before the page is sent whole
 /// instead. It bounds the work of finding the patch as well as its size.
 const MOST_EDITS: usize = 1024;
+
+/// The most pages remembered as sent, so that a reader asking for the
+/// changes since one of them is sent a patch to it rather than the page.
+// ponytail: a page can run to megabytes, so this bounds the memory rather
+// than covering every reader; key it by address if readers of many pages
+// are sent whole pages.
+const MOST_REMEMBERED: usize = 8;
 
 /// The pages being kept current.
 #[derive(Default)]
@@ -44,6 +54,33 @@ pub(super) struct Streams {
     // ponytail: each draws its own page, so readers of one address draw it
     // once each; share a drawing per address if many read the same page.
     drawing: Mutex<()>,
+    /// The pages last sent to readers, the latest last, each by its version.
+    sent: Mutex<VecDeque<(String, Arc<str>)>>,
+}
+
+impl Streams {
+    /// Remember `page` as sent to a reader, where it is kept current.
+    pub(super) fn remember(&self, page: &str) {
+        let Some(version) = html::version(page) else {
+            return;
+        };
+        let mut sent = self.sent.lock().unwrap_or_else(PoisonError::into_inner);
+        if sent.iter().any(|(sent, _)| sent == version) {
+            return;
+        }
+        if sent.len() == MOST_REMEMBERED {
+            sent.pop_front();
+        }
+        sent.push_back((version.to_string(), page.into()));
+    }
+
+    /// The page sent to a reader as `version`, where it is remembered.
+    fn recall(&self, version: &str) -> Option<Arc<str>> {
+        let sent = self.sent.lock().unwrap_or_else(PoisonError::into_inner);
+        sent.iter()
+            .find(|(sent, _)| sent == version)
+            .map(|(_, page)| Arc::clone(page))
+    }
 }
 
 /// Whether `head` asks for the changes to its page rather than the page.
@@ -84,9 +121,9 @@ impl Drop for Kept {
     }
 }
 
-/// The change a reconnecting script last heard of, or the one its page was
-/// drawn from, which the script puts last in the query.
-fn since(head: &Head) -> Option<u64> {
+/// The version a reconnecting script last heard of, or the one it shows,
+/// which the script puts last in the query.
+fn since(head: &Head) -> Option<String> {
     head.header("Last-Event-ID")
         .or_else(|| {
             let (_, query) = head.target.split_once('?')?;
@@ -94,16 +131,18 @@ fn since(head: &Head) -> Option<u64> {
                 .rsplit('&')
                 .find_map(|pair| pair.strip_prefix(SINCE)?.strip_prefix('='))
         })
-        .and_then(|change| change.parse().ok())
+        .map(str::to_string)
 }
 
 /// Send `asked`'s page down `stream` in `encoding` each time it would be
-/// drawn otherwise, until the reader goes.
+/// drawn otherwise, until the reader goes. A reader holding the lines of
+/// the version `holding` is sent nothing until the page differs from it,
+/// and then a patch to those lines.
 fn send_changes(
     answering: &Answering,
     stream: &TcpStream,
     asked: &Asked,
-    since: Option<u64>,
+    mut holding: Option<String>,
     encoding: Encoding,
 ) {
     let head = format!(
@@ -115,8 +154,11 @@ fn send_changes(
         return;
     }
     let mut parts = Parts::new(encoding);
-    let mut seen: Option<DrawnFrom> = since.map(|change| (change, false));
-    let mut sent: Option<Vec<String>> = None;
+    let mut seen: Option<DrawnFrom> = None;
+    let mut sent = holding
+        .as_deref()
+        .and_then(|version| answering.live.recall(version))
+        .map(|page| lines(&page));
     loop {
         let Some((held, from)) = answering.latest.after(seen, Instant::now() + QUIET) else {
             if http::send(stream, &parts.encode(b":\n\n"), PATIENCE).is_err() {
@@ -127,12 +169,17 @@ fn send_changes(
         seen = Some(from);
         let (page, event) = {
             let _drawing = answering.live.drawing.lock();
-            let page = lines(&super::drawn(asked, &held, &answering.cfg).1);
-            let event = event(sent.as_deref(), &page, held.change);
+            let drawn = super::drawn(asked, &held, &answering.cfg).1;
+            let version = html::version(&drawn).unwrap_or_default().to_string();
+            if holding.as_ref() == Some(&version) {
+                sent.get_or_insert_with(|| lines(&drawn));
+                continue;
+            }
+            let page = lines(&drawn);
+            let event = event(sent.as_deref(), &page, &version);
+            answering.live.remember(&drawn);
+            holding = Some(version);
             (page, event)
-        };
-        let Some(event) = event else {
-            continue;
         };
         if http::send(stream, &parts.encode(event.as_bytes()), PATIENCE).is_err() {
             return;
@@ -150,25 +197,22 @@ fn lines(page: &str) -> Vec<String> {
         .collect()
 }
 
-/// The event that takes a reader holding `sent` to `page`, numbered
-/// `change`, or nothing where they are the same.
-fn event(sent: Option<&[String]>, page: &[String], change: u64) -> Option<String> {
-    let whole = || framed("page", change, page.iter().map(String::as_str));
+/// The event that takes a reader holding `sent` to `page`, which is the
+/// version `version`.
+fn event(sent: Option<&[String]>, page: &[String], version: &str) -> String {
+    let whole = || framed("page", version, page.iter().map(String::as_str));
     let Some(sent) = sent else {
-        return Some(whole());
+        return whole();
     };
-    if sent == page {
-        return None;
-    }
     let patch = patch(sent, page)
-        .map(|hunks| framed("patch", change, hunks.iter().map(String::as_str)))
+        .map(|hunks| framed("patch", version, hunks.iter().map(String::as_str)))
         .filter(|patch| patch.len() < page.iter().map(String::len).sum());
-    Some(patch.unwrap_or_else(whole))
+    patch.unwrap_or_else(whole)
 }
 
-/// An event of `kind`, numbered `change`, whose data is `lines`.
-fn framed<'a>(kind: &str, change: u64, lines: impl Iterator<Item = &'a str>) -> String {
-    let mut event = format!("event: {kind}\nid: {change}\n");
+/// An event of `kind`, naming `version`, whose data is `lines`.
+fn framed<'a>(kind: &str, version: &str, lines: impl Iterator<Item = &'a str>) -> String {
+    let mut event = format!("event: {kind}\nid: {version}\n");
     for line in lines {
         event.push_str("data: ");
         event.push_str(line);
@@ -364,38 +408,68 @@ mod tests {
         let before: Vec<String> = (0..MOST_EDITS).map(|n| format!("before {n}")).collect();
         let after: Vec<String> = (0..MOST_EDITS).map(|n| format!("after {n}")).collect();
         assert_eq!(hunks(&before, &after), None);
-        let event = event(Some(&before), &after, 7).expect("an event");
-        assert!(event.starts_with("event: page\nid: 7\n"), "{event}");
+        let event = event(Some(&before), &after, "7a");
+        assert!(event.starts_with("event: page\nid: 7a\n"), "{event}");
     }
 
     #[test]
-    fn the_first_event_is_the_page_and_an_unchanged_page_sends_nothing() {
+    fn the_first_event_is_the_page() {
         let drawn = lines("<!doctype html>\n<p>one</p>\r\n");
         assert_eq!(
-            event(None, &drawn, 3),
-            Some(
-                "event: page\nid: 3\ndata: <!doctype html>\ndata: <p>one</p>&#13;\ndata: \n\n"
-                    .to_string()
-            )
+            event(None, &drawn, "3c"),
+            "event: page\nid: 3c\ndata: <!doctype html>\ndata: <p>one</p>&#13;\ndata: \n\n"
         );
-        assert_eq!(event(Some(&drawn), &drawn, 4), None);
     }
 
     #[test]
-    fn a_page_says_the_change_it_was_drawn_from_and_a_reconnect_the_last_it_heard() {
+    fn a_page_says_the_version_it_shows_and_a_reconnect_the_last_it_heard() {
         let asked = |sent: &str| {
             crate::collect::http::head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head")
         };
         let head =
             asked("GET /a/b?open=p%3Aa&since=41 HTTP/1.1\r\nAccept: text/event-stream\r\n\r\n");
         assert!(asks_for_changes(&head));
-        assert_eq!(since(&head), Some(41));
+        assert_eq!(since(&head).as_deref(), Some("41"));
         let head = asked("GET /?since=41 HTTP/1.1\r\nLast-Event-ID: 44\r\n\r\n");
         assert!(!asks_for_changes(&head));
-        assert_eq!(since(&head), Some(44));
+        assert_eq!(since(&head).as_deref(), Some("44"));
         assert_eq!(since(&asked("GET / HTTP/1.1\r\n\r\n")), None);
         let head = asked("GET /?since=7&since=41 HTTP/1.1\r\n\r\n");
-        assert_eq!(since(&head), Some(41), "the script's own comes last");
+        assert_eq!(
+            since(&head).as_deref(),
+            Some("41"),
+            "the script's own comes last"
+        );
+    }
+
+    /// A page sent is recalled by its version until as many others have
+    /// been sent after it as are remembered. A page naming no version is
+    /// never kept current, so it is not remembered.
+    #[test]
+    fn the_pages_last_sent_are_recalled_by_their_version() {
+        let streams = Streams::default();
+        let pages: Vec<String> = (0..=MOST_REMEMBERED)
+            .map(|n| html::saying_kept_current(&format!("Page {n}")))
+            .collect();
+        let version = |page: &str| html::version(page).expect("a version").to_string();
+        streams.remember(&pages[0]);
+        streams.remember(&pages[0]);
+        assert_eq!(
+            streams.recall(&version(&pages[0])).as_deref(),
+            Some(&*pages[0])
+        );
+        for page in &pages[1..] {
+            streams.remember(page);
+        }
+        assert_eq!(streams.recall(&version(&pages[0])), None);
+        for page in &pages[1..] {
+            assert_eq!(streams.recall(&version(page)).as_deref(), Some(&**page));
+        }
+        streams.remember(&html::saying("Nothing here"));
+        assert_eq!(
+            streams.recall(&version(&pages[1])).as_deref(),
+            Some(&*pages[1])
+        );
     }
 
     /// A page asking to be kept current while as many are kept current as
@@ -414,7 +488,7 @@ mod tests {
             hosts: Hosts::default(),
             live: Streams {
                 open: AtomicUsize::new(MOST_KEPT_CURRENT),
-                drawing: Mutex::default(),
+                ..Streams::default()
             },
         });
         let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");

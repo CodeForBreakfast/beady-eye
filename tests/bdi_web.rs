@@ -235,11 +235,11 @@ fn an_open_page_kept_current(named: &str, offering: &str) {
     } else {
         String::from_utf8(page).expect("a page is text")
     };
-    let change = page
-        .split_once("data-change=\"")
+    let version = page
+        .split_once("data-version=\"")
         .and_then(|(_, rest)| rest.split_once('"'))
-        .map(|(change, _)| change.to_string())
-        .unwrap_or_else(|| panic!("the page names the change it was drawn from: {page}"));
+        .map(|(version, _)| version.to_string())
+        .unwrap_or_else(|| panic!("the page names its version: {page}"));
 
     let mut stream = TcpStream::connect(&address).expect("bdi web takes the connection");
     stream
@@ -247,7 +247,7 @@ fn an_open_page_kept_current(named: &str, offering: &str) {
         .expect("a read timeout");
     write!(
         stream,
-        "GET /?since={change} HTTP/1.1\r\nHost: {address}\r\nAccept: text/event-stream\r\n{offering}\r\n"
+        "GET /?since={version} HTTP/1.1\r\nHost: {address}\r\nAccept: text/event-stream\r\n{offering}\r\n"
     )
     .expect("the request is sent");
     let mut events = BufReader::new(stream);
@@ -272,16 +272,16 @@ fn an_open_page_kept_current(named: &str, offering: &str) {
 
     tracker.holds(&THE_DESCRIBED_SUBTREE.replace(THE_ROOT.1, RETITLED));
     let giving_up = Instant::now() + GIVING_UP;
-    let mut held: Option<Vec<String>> = None;
+    let mut held: Vec<String> = page.split('\n').map(str::to_string).collect();
     loop {
         assert!(Instant::now() < giving_up, "the change never arrived");
         let (kind, data) = next_event(&mut events);
-        held = Some(match kind.as_str() {
-            "page" => data,
-            "patch" => patched(held.expect("a patch follows a page"), &data),
-            _ => continue,
-        });
-        let now = held.as_ref().expect("a page").join("\n");
+        assert_eq!(
+            kind, "patch",
+            "a reader holding the page is sent patches to it"
+        );
+        held = patched(held, &data);
+        let now = held.join("\n");
         if now.contains(RETITLED) {
             assert!(now.starts_with("<!doctype html>"), "{now}");
             assert!(!now.contains(THE_ROOT.1), "{now}");
@@ -418,6 +418,157 @@ fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
         scrolled,
         "the window and the bead view stay where the reader scrolled them"
     );
+}
+
+/// Opening a page sends its content once: the browser fetches the page,
+/// and its script is sent no page of its own while the server reads the
+/// tracker again and again. A page hidden while a bead changes is sent the
+/// page once more when it is shown again, and shows the change.
+#[cfg(target_os = "linux")]
+#[test]
+fn opening_a_page_and_returning_to_it_after_a_change_each_send_it_once() {
+    const RETITLED: &str = "A title the tracker gave the root while the page was hidden";
+    let home = a_home_naming_one_project_settled("web-once", "[tui]\nrefresh_seconds = 1\n");
+    let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
+    let relay = Relay::to(&address);
+    let mut page = browser::Browser::open(&home, &format!("http://{}/", relay.address), 1200, 600);
+    page.until("document.readyState === 'complete'", GIVING_UP);
+    relay.until_asked(2);
+    // Each second's read draws the page twice, as the read goes out and
+    // as it comes back.
+    std::thread::sleep(Duration::from_secs(3));
+    let opened = relay.answered();
+    let [(fetched, page_bytes), (listened, stream_bytes)] = &opened[..] else {
+        panic!("the page asked for itself and then for its changes alone: {opened:?}");
+    };
+    assert!(!fetched.contains("since="), "{fetched}");
+    assert!(
+        listened.contains("since="),
+        "the script holds the page: {listened}"
+    );
+    assert!(
+        stream_bytes * 4 < *page_bytes,
+        "opening sent the page's {page_bytes} bytes, then {stream_bytes} more down its stream"
+    );
+
+    page.evaluate(
+        r#"Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+        document.dispatchEvent(new Event("visibilitychange"))"#,
+    );
+    tracker.holds(&THE_DESCRIBED_SUBTREE.replace(THE_ROOT.1, RETITLED));
+    let giving_up = Instant::now() + GIVING_UP;
+    while !get(&address, "/").1.contains(RETITLED) {
+        assert!(Instant::now() < giving_up, "bdi web never read the change");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    page.evaluate(
+        r#"Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+        document.dispatchEvent(new Event("visibilitychange"))"#,
+    );
+    page.until(
+        &format!("document.body.textContent.includes({RETITLED:?})"),
+        GIVING_UP,
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let returned = relay.answered();
+    let [_, _, (listened, stream_bytes)] = &returned[..] else {
+        panic!("the shown page asked for its changes alone: {returned:?}");
+    };
+    assert!(listened.contains("since="), "{listened}");
+    assert!(
+        stream_bytes * 2 < page_bytes * 3,
+        "returning sent {stream_bytes} bytes for a page of {page_bytes}"
+    );
+}
+
+/// A relay between a browser and `bdi web`, which keeps the first line of
+/// each request a connection carries and counts the bytes `bdi web` sends
+/// back down it.
+#[cfg(target_os = "linux")]
+struct Relay {
+    address: String,
+    connections: std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Relay {
+    fn to(web: &str) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let address = listener.local_addr().expect("an address").to_string();
+        let connections: std::sync::Arc<std::sync::Mutex<Vec<(String, usize)>>> =
+            std::sync::Arc::default();
+        let kept = std::sync::Arc::clone(&connections);
+        let web = web.to_string();
+        std::thread::spawn(move || {
+            for browser in listener.incoming() {
+                let Ok(browser) = browser else { return };
+                let to_web = TcpStream::connect(&web).expect("bdi web takes the connection");
+                let at = {
+                    let mut connections = kept.lock().expect("the count");
+                    connections.push((String::new(), 0));
+                    connections.len() - 1
+                };
+                let (asked, answered) =
+                    (std::sync::Arc::clone(&kept), std::sync::Arc::clone(&kept));
+                let (mut from_browser, mut to_browser) =
+                    (browser.try_clone().expect("the browser's side"), browser);
+                let (mut from_web, mut web_side) =
+                    (to_web.try_clone().expect("bdi web's side"), to_web);
+                std::thread::spawn(move || {
+                    let mut said = [0; 1 << 16];
+                    while let Ok(got @ 1..) = from_browser.read(&mut said) {
+                        let first = &mut asked.lock().expect("the count")[at].0;
+                        if first.is_empty() {
+                            let line = String::from_utf8_lossy(&said[..got]);
+                            *first = line.lines().next().unwrap_or_default().to_string();
+                        }
+                        if web_side.write_all(&said[..got]).is_err() {
+                            break;
+                        }
+                    }
+                    let _ = web_side.shutdown(std::net::Shutdown::Write);
+                });
+                std::thread::spawn(move || {
+                    let mut said = [0; 1 << 16];
+                    while let Ok(got @ 1..) = from_web.read(&mut said) {
+                        answered.lock().expect("the count")[at].1 += got;
+                        if to_browser.write_all(&said[..got]).is_err() {
+                            break;
+                        }
+                    }
+                    let _ = to_browser.shutdown(std::net::Shutdown::Write);
+                });
+            }
+        });
+        Self {
+            address,
+            connections,
+        }
+    }
+
+    /// Each connection the browser made other than for its favicon: its
+    /// request's first line and the bytes `bdi web` answered it with.
+    fn answered(&self) -> Vec<(String, usize)> {
+        self.connections
+            .lock()
+            .expect("the count")
+            .iter()
+            .filter(|(asked, _)| !asked.is_empty() && !asked.contains("favicon"))
+            .cloned()
+            .collect()
+    }
+
+    fn until_asked(&self, connections: usize) {
+        let giving_up = Instant::now() + GIVING_UP;
+        while self.answered().len() < connections {
+            assert!(
+                Instant::now() < giving_up,
+                "asked only {:?}",
+                self.answered()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 /// Where the entry of `page`'s list menu that says `said` goes.
