@@ -1378,7 +1378,7 @@ header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
 body:has(main>aside)>nav{display:none}\
 main:has(>aside>.acts){align-content:stretch}\
 aside{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
-aside>.close{grid-area:1/1;position:static;justify-self:start;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
+aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
 border:0;background:none;font-size:16px;color:var(--accent)}\
 aside>.close::before{--icon:var(--chevron);width:20px;height:20px;transform:rotate(90deg)}\
 aside>.acts{grid-row:3;top:auto;bottom:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);\
@@ -1641,11 +1641,14 @@ const COPIES: &str = r##"addEventListener("click", (event) => {
   if (!button) return;
   const id = button.dataset.copy;
   const selected = () => {
-    const field = Object.assign(document.createElement("textarea"), { value: id });
+    const field = Object.assign(document.createElement("textarea"), { value: id, readOnly: true });
+    field.style.cssText = "position:fixed;top:0;left:0;opacity:0";
     document.body.append(field);
+    field.focus({ preventScroll: true });
     field.select();
     const copied = document.execCommand("copy");
     field.remove();
+    button.focus({ preventScroll: true });
     if (!copied) throw new Error("not copied");
   };
   (navigator.clipboard ? navigator.clipboard.writeText(id) : Promise.reject())
@@ -3378,6 +3381,13 @@ mod tests {
         );
         assert!(COPIES.contains("navigator.clipboard"), "{COPIES}");
         assert!(COPIES.contains("execCommand(\"copy\")"), "{COPIES}");
+        for quiet in [
+            "field.style.cssText = \"position:fixed;top:0;left:0;opacity:0\";",
+            "field.focus({ preventScroll: true });",
+            "button.focus({ preventScroll: true });",
+        ] {
+            assert!(COPIES.contains(quiet), "{quiet}: {COPIES}");
+        }
         for kept in [
             "const copying = document.activeElement?.matches(\"button[data-copy]\") && document.activeElement.dataset.copy;",
             "[...document.querySelectorAll(\"button[data-copy]\")].find((button) => button.dataset.copy === copying)?.focus({ preventScroll: true });",
@@ -3435,7 +3445,7 @@ mod tests {
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "body:has(main>aside)>nav{display:none}",
-            "aside>.close{grid-area:1/1;",
+            "aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;",
             "main:has(>aside>.acts){align-content:stretch}",
             "aside{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}",
             "aside>.acts{grid-row:3;top:auto;bottom:0;",
