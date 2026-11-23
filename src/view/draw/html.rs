@@ -956,11 +956,11 @@ nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;bor
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
 .lists summary::after,.lists a::before,nav button::before{content:\"\";flex:none;background:currentColor;\
 -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
-.lists{position:relative}\
+.lists{position:relative;min-width:0}\
 .lists summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border:1px solid var(--line);border-radius:8px;font-weight:500}\
 .lists summary::-webkit-details-marker{display:none}\
-.lists summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.lists summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
 .lists summary::after{--icon:var(--chevron);width:13px;height:13px}\
 .lists[open] summary{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}\
 .lists>div{position:absolute;top:calc(100% + 8px);left:0;z-index:5;width:290px;box-sizing:border-box;padding:6px;\
@@ -988,7 +988,7 @@ nav .ready.on{text-decoration:underline}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
-nav input::placeholder{color:var(--faint);opacity:1}\
+nav input::placeholder{color:var(--muted);opacity:1}\
 nav label span{display:none}\
 nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .rooted{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
