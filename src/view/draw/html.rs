@@ -1143,7 +1143,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const marks = (on = document) =>
     [...on.querySelectorAll(".line[id]"), on.querySelector("aside")].filter(Boolean);
   const mark = (at) => at.matches("aside") ? "aside" : at.id;
-  const boxes = () => [document.querySelector(".forest"), document.querySelector("aside")];
+  const boxes = () =>
+    [document.querySelector(".forest"), document.querySelector("aside"), document.querySelector(".lists>div")];
   const pane = (link) => boxes().findIndex((box) => box?.contains(link));
   const alike = (at, kind) => [...(boxes()[at] ?? document).querySelectorAll("a[href]")]
     .filter((link) => goes(link) === kind);

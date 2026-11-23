@@ -175,15 +175,22 @@ pub(super) fn view_counts(
     ready: bool,
 ) -> Vec<usize> {
     let (covered, _) = covered(snapshot, rooted);
+    let place: BTreeMap<&str, usize> = views
+        .iter()
+        .enumerate()
+        .map(|(at, name)| (name.as_str(), at))
+        .collect();
     let mut counts = vec![0; views.len()];
     for (bead, tree, way) in each_once(&covered).values() {
         if bead.views.is_empty() || !counted(bead, tree, way, ready) {
             continue;
         }
-        for (count, name) in counts.iter_mut().zip(views) {
-            if bead.views.contains(name) {
-                *count += 1;
-            }
+        for at in bead
+            .views
+            .iter()
+            .filter_map(|name| place.get(name.as_str()))
+        {
+            counts[*at] += 1;
         }
     }
     counts
