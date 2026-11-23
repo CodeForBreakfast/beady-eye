@@ -797,7 +797,7 @@ main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 .line i,.line b,.line u{font:inherit;text-decoration:none}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
-.bead .id{font:500 12px var(--body);color:var(--faint);letter-spacing:.01em}\
+.bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;\
 padding:8px 12px;border-left:1px solid var(--line)}\
 .page{white-space:pre-wrap}\
@@ -898,7 +898,10 @@ font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
 .bead .g.blocked,.bead .g.closed{background:currentColor}\
 .bead .g.closed::after{content:\"\";position:absolute;left:2.6px;top:.6px;width:3px;height:6px;\
 border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)}\
-.bead .g.deferred{border-style:dashed}";
+.bead .g.deferred{border-style:dashed}\
+@media (forced-colors:active){.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
+width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
+.bead .g.closed::after{content:none}}";
 
 /// The page's one script, which keeps it current. It asks the page's own
 /// address for its changes since the one the page was drawn from, and the
@@ -2435,7 +2438,7 @@ mod tests {
             "{STYLE}"
         );
         assert!(
-            STYLE.contains(".bead .id{font:500 12px var(--body);color:var(--faint);"),
+            STYLE.contains(".bead .id{font:500 12px var(--body);color:var(--muted);"),
             "{STYLE}"
         );
     }
