@@ -480,12 +480,9 @@ mod tests {
         assert!(page_colours().contains("prefers-color-scheme:dark"));
     }
 
-    /// A closed bead's mark is filled like a blocked one's, so its tick is
-    /// what tells the two apart, and it is drawn in the page's own colour over
-    /// the closed colour. WCAG asks 3:1 of a graphic a reader has to make out.
-    #[test]
-    fn a_closed_marks_tick_stands_out_from_the_closed_colour_in_both_themes() {
-        let token = |theme: &str, name: &str| -> (f64, f64, f64) {
+    /// The contrast between two of a page theme's colours, as WCAG measures it.
+    fn contrast(theme: &str, one: &str, other: &str) -> f64 {
+        let luminance = |name: &str| {
             let value = theme
                 .split(';')
                 .find_map(|declaration| declaration.strip_prefix(&format!("{name}:#")))
@@ -498,14 +495,33 @@ mod tests {
                     ((c + 0.055) / 1.055).powf(2.4)
                 }
             };
-            (channel(0), channel(2), channel(4))
+            0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
         };
-        let luminance = |(r, g, b): (f64, f64, f64)| 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let (one, other) = (luminance(one), luminance(other));
+        (one.max(other) + 0.05) / (one.min(other) + 0.05)
+    }
+
+    /// A closed bead's mark is filled like a blocked one's, so its tick is
+    /// what tells the two apart, and it is drawn in the page's own colour over
+    /// the closed colour. WCAG asks 3:1 of a graphic a reader has to make out.
+    #[test]
+    fn a_closed_marks_tick_stands_out_from_the_closed_colour_in_both_themes() {
         for (name, theme) in [("light", PAGE_LIGHT), ("dark", PAGE_DARK)] {
-            let tick = luminance(token(theme, "--surface"));
-            let fill = luminance(token(theme, "--status-closed"));
-            let contrast = (tick.max(fill) + 0.05) / (tick.min(fill) + 0.05);
+            let contrast = contrast(theme, "--surface", "--status-closed");
             assert!(contrast >= 3.0, "{name}: {contrast:.2}:1");
+        }
+    }
+
+    /// The muted grey sets small text, a label among it, on every ground a
+    /// page has, the menu's raised ground included. WCAG asks 4.5:1 of small
+    /// text.
+    #[test]
+    fn the_muted_grey_reads_as_small_text_on_every_ground_in_both_themes() {
+        for (name, theme) in [("light", PAGE_LIGHT), ("dark", PAGE_DARK)] {
+            for ground in ["--surface", "--sunk", "--raised"] {
+                let contrast = contrast(theme, "--muted", ground);
+                assert!(contrast >= 4.5, "{name} on {ground}: {contrast:.2}:1");
+            }
         }
     }
 
