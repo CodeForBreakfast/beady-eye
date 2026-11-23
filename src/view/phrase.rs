@@ -1151,6 +1151,36 @@ pub fn copied() -> &'static str {
     "Copied"
 }
 
+/// The name each cell of a web bead page's grid of fields goes by: `bd
+/// show`'s own word for the field, and beads' word for progress.
+pub mod field {
+    pub const PRIORITY: &str = "Priority";
+    pub const TYPE: &str = "Type";
+    pub const ASSIGNEE: &str = "Assignee";
+    pub const PROGRESS: &str = "Progress";
+    pub const CREATED: &str = "Created";
+    pub const UPDATED: &str = "Updated";
+    pub const CREATED_BY: &str = "Created by";
+    pub const STARTED: &str = "Started";
+    pub const CLOSED: &str = "Closed";
+    pub const DEFERRED_UNTIL: &str = "Deferred until";
+}
+
+/// A bead's priority as `bd` writes it.
+pub fn priority(priority: u8) -> String {
+    format!("P{priority}")
+}
+
+/// The day an instant falls on at `offset`, as a reader writes a date.
+pub fn day(at: DateTime<Utc>, offset: FixedOffset) -> String {
+    at.with_timezone(&offset).format("%-d %b %Y").to_string()
+}
+
+/// How far through a bead's tree is, in words.
+pub fn done_of(finished: usize, total: usize) -> String {
+    format!("{finished} of {total} done")
+}
+
 /// What the band over a web page drawn with one bead as its only root says
 /// before the link to that bead.
 pub fn showing_only() -> &'static str {
