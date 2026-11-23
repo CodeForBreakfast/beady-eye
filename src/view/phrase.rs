@@ -1060,14 +1060,14 @@ pub fn show_all() -> &'static str {
 pub const MATCH_BEFORE: (&str, &str) = ("‹", "previous match");
 pub const MATCH_AFTER: (&str, &str) = ("›", "next match");
 
-/// What following a web page's fold link does to an open fold.
-pub fn shut_the_fold() -> &'static str {
-    "shut"
+/// What a web page's fold control does to `what`, whose fold is open.
+pub fn fold(what: &str) -> String {
+    format!("Fold {what}")
 }
 
-/// What following a web page's fold link does to a shut fold.
-pub fn open_the_fold() -> &'static str {
-    "open"
+/// What a web page's fold control does to `what`, whose fold is shut.
+pub fn unfold(what: &str) -> String {
+    format!("Unfold {what}")
 }
 
 /// The product's name, which a web page calls itself by. `bdi` names only
