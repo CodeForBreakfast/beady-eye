@@ -90,14 +90,16 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     drawing.forest_lines(&mut html, drawn);
     html.push_str("</div>");
     if let Some(key) = &asked.bead {
+        let list = list_name(forest.list());
         html.push_str(&format!(
-            "<aside><a class=\"close\" href=\"{}\">{}</a>\n",
+            "<aside><a class=\"close\" href=\"{}\" aria-label=\"{}\">{}</a>\n",
             escaped(&asked.closing(node.and(forest.place()), forest.list().is_some())),
-            escaped(phrase::back())
+            escaped(&phrase::back_to(&list)),
+            escaped(&list)
         ));
         match node {
             Some(node) => {
-                drawing.rooting(&mut html);
+                drawing.actions(&mut html, node);
                 drawing.bead_view(&mut html, node);
             }
             None => html.push_str(&format!(
@@ -144,7 +146,7 @@ fn head(title: &str, change: Option<u64>) -> String {
     let (named, script) = match change {
         Some(change) => (
             format!(" data-change=\"{change}\""),
-            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}{ESCAPE_CLOSES}</script>"),
+            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"),
         ),
         None => (String::new(), String::new()),
     };
@@ -171,15 +173,9 @@ impl Drawing<'_> {
     /// beside it when the oldest read of the projects it draws was, the one
     /// claim true of every row.
     fn title(&self, html: &mut String, now: DateTime<Utc>, offset: FixedOffset) {
-        let list = self.forest.list();
-        let named = if list == Some(&List::Ready) {
-            phrase::ready_only().to_string()
-        } else {
-            menu_name(list)
-        };
         html.push_str(&format!(
             "<header class=\"title\"><h1>{}</h1>",
-            escaped(&named)
+            escaped(&list_name(self.forest.list()))
         ));
         let lines = self.forest.lines();
         let read_at = &self.forest.snapshot().read_at;
@@ -316,17 +312,24 @@ impl Drawing<'_> {
         ));
     }
 
-    /// The link on the bead view that draws the bead as the only root, as
-    /// `F` does, where the forest is drawn whole. Drawn with one root, the
-    /// key puts every tree back, which the page's head offers.
-    fn rooting(&self, html: &mut String) {
-        let Some(place) = self.forest.place().filter(|_| !self.forest.is_focused()) else {
-            return;
-        };
+    /// The bead view's action bar. Where the forest is drawn whole, it links
+    /// to the page that draws the bead as the only root, as `F` does. Drawn
+    /// with one root, the key puts every tree back, which the page's head
+    /// offers. Then a button that copies the bead's id.
+    fn actions(&self, html: &mut String, node: &Node) {
+        html.push_str("<div class=\"acts\">");
+        if let Some(place) = self.forest.place().filter(|_| !self.forest.is_focused()) {
+            html.push_str(&format!(
+                "<a class=\"root\" href=\"{}\">{}</a>",
+                escaped(&self.asked.rooting(Some(place))),
+                escaped(phrase::only_this_tree())
+            ));
+        }
         html.push_str(&format!(
-            "<a class=\"root\" href=\"{}\">{}</a>\n",
-            escaped(&self.asked.rooting(Some(place))),
-            escaped(phrase::only_this_tree())
+            "<button type=\"button\" class=\"copy\" data-copy=\"{}\" data-copied=\"{}\">{}</button></div>\n",
+            escaped(&node.id),
+            escaped(phrase::copied()),
+            escaped(phrase::copy_id())
         ));
     }
 
@@ -955,6 +958,16 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
         .collect()
 }
 
+/// The name of the list a page draws, which heads a phone's page and which
+/// a bead's page goes back to.
+fn list_name(list: Option<&List>) -> String {
+    if list == Some(&List::Ready) {
+        phrase::ready_only().to_string()
+    } else {
+        menu_name(list)
+    }
+}
+
 /// The name the menu gives `list`. The ready switch is drawn beside the
 /// menu, so the ready list goes by the name of every tree there.
 fn menu_name(list: Option<&List>) -> String {
@@ -1228,13 +1241,30 @@ a{color:inherit;text-decoration:none}\
 a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
 .bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
-aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;padding:8px 12px}\
+aside{--tree:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3h4M5 3v9h4M5 7.5h4'/><circle cx='11.5' cy='7.5' r='1.5'/><circle cx='11.5' cy='12' r='1.5'/></svg>\");\
+--copy:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='8' height='8' rx='1.5'/><path d='M3 10V4a1 1 0 011-1h6'/></svg>\");\
+--cross:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><path d='M4 4l8 8M12 4l-8 8'/></svg>\");\
+position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;\
+display:grid;grid-template-columns:minmax(0,1fr) auto;align-content:start}\
+aside>.acts,aside>.close{grid-row:1;position:sticky;top:0;z-index:1;display:flex;align-items:center;min-height:52px;\
+box-sizing:border-box;background:var(--raised);border-bottom:1px solid var(--line)}\
+aside>.acts{grid-column:1;flex-wrap:wrap;gap:6px;padding:10px 14px}\
+aside>.close{grid-column:2;padding:0 16px 0 6px;font-size:0;color:var(--muted)}\
+aside>.close:hover{color:var(--fg)}\
+aside>.close::before,.acts>::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
+-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
+aside>.close::before{--icon:var(--cross)}.acts>.root::before{--icon:var(--tree)}.acts>.copy::before{--icon:var(--copy)}\
+.acts>*{display:inline-flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 10px;border:0;\
+border-radius:8px;background:none;color:var(--muted);font:500 13px var(--body);white-space:nowrap;cursor:pointer}\
+.acts>:hover{background:var(--sunk);color:var(--fg)}\
+.acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
+aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
 overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
 main.open .line .bead>.project{display:none}}\
 @media (width<1100px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
-aside{position:static;max-height:none;padding:8px 20px 24px}}\
+aside{position:static;max-height:none;overflow:visible}aside>:is(.acts,.close){background:var(--surface)}}\
 .page{white-space:pre-wrap}\
 .page .w{display:none}\
 .page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
@@ -1254,7 +1284,7 @@ border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
 .waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
-.close{display:inline-block;margin-bottom:8px}\
+footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
 padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
@@ -1326,7 +1356,7 @@ nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:
 background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
 @media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
-.line a.fold::before{forced-color-adjust:none;background:CanvasText}\
+.line a.fold::before,aside>.close::before,.acts>::before{forced-color-adjust:none;background:CanvasText}\
 nav :is(.ready,.check).on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
@@ -1340,13 +1370,21 @@ background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5
 .rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
 .rooted .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
 .rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
-.root{display:block;margin-bottom:8px}\
-a.root:hover,a.step:hover{text-decoration:underline}\
+a.step:hover{text-decoration:underline}\
 @media (max-width:720px){header.title{display:flex;align-items:baseline;gap:10px;padding:14px 16px 6px}\
 header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display);overflow-wrap:anywhere}\
 header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
 .rooted{padding:9px 14px}.rooted .all::before{content:none}\
-aside{padding:8px 16px 24px}\
+body:has(main>aside)>nav{display:none}\
+main:has(>aside>.acts){align-content:stretch}\
+aside{align-self:stretch;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
+aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
+border:0;background:none;font-size:16px;color:var(--accent)}\
+aside>.close::before{--icon:var(--chevron);width:20px;height:20px;transform:rotate(90deg)}\
+aside>.acts{grid-row:3;top:auto;bottom:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);\
+padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line)}\
+aside>.acts>*{justify-content:center;height:48px;border:1px solid var(--line);border-radius:12px;color:var(--fg)}\
+aside>:not(.acts,.close){padding:4px 16px 24px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
@@ -1627,6 +1665,34 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
   }
   const close = document.querySelector("aside>a.close");
   if (close) location.assign(close.href);
+});"##;
+
+/// The part of the page's script that copies a bead's id when its copy
+/// button is pressed, and says so on the button for a moment. A browser
+/// gives a page served over plain HTTP no clipboard, so there it copies
+/// from a field it selects.
+const COPIES: &str = r##"addEventListener("click", (event) => {
+  const button = event.target.closest?.("button[data-copy]");
+  if (!button) return;
+  const id = button.dataset.copy;
+  const selected = () => {
+    const field = Object.assign(document.createElement("textarea"), { value: id, readOnly: true });
+    field.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.append(field);
+    field.focus({ preventScroll: true });
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    button.focus({ preventScroll: true });
+    if (!copied) throw new Error("not copied");
+  };
+  (navigator.clipboard ? navigator.clipboard.writeText(id) : Promise.reject())
+    .catch(selected)
+    .then(() => {
+      const said = button.dataset.said ??= button.textContent;
+      button.textContent = button.dataset.copied;
+      setTimeout(() => button.textContent = said, 1500);
+    }, () => {});
 });"##;
 
 #[cfg(test)]
@@ -3281,6 +3347,141 @@ mod tests {
             ".page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;"
         ));
         assert!(!STYLE.contains(".page .head .title"));
+    }
+
+    /// What a bead's page holds beside the forest.
+    fn aside_of(html: &str) -> &str {
+        let open = html.find("<aside>").expect("the bead view") + "<aside>".len();
+        &html[open..html.find("</aside>").expect("the bead view ends")]
+    }
+
+    /// A bead's page opens with the link back to the list, then its action
+    /// bar, then the bead. The bar offers the bead's tree alone and its id
+    /// to copy, and the bead's page has no other control.
+    #[test]
+    fn a_beads_action_bar_offers_its_tree_alone_and_its_id_to_copy() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        let aside = aside_of(&html);
+        assert_eq!(
+            parts(aside).0,
+            ["a.close", "div.acts", "div.page"],
+            "{aside}"
+        );
+        let bar = inside(aside, "acts");
+        assert_eq!(parts(bar).0, ["a.root", "button.copy"], "{bar}");
+        assert_eq!(
+            text_of(bar),
+            [phrase::only_this_tree(), phrase::copy_id()].concat()
+        );
+        assert!(
+            bar.contains(&format!(
+                "<button type=\"button\" class=\"copy\" data-copy=\"smt-4kd3p.6\" data-copied=\"{}\">",
+                phrase::copied()
+            )),
+            "{bar}"
+        );
+    }
+
+    /// Drawn with one bead as its only root, the page's head puts every tree
+    /// back, so the bar offers only the id to copy.
+    #[test]
+    fn a_bead_drawn_as_the_only_root_has_only_its_id_to_copy_on_its_bar() {
+        let page_of_it = page_at(&address(&key("smt-4kd3p.6"))).html;
+        let rooted = page_at(&link_saying(&page_of_it, phrase::only_this_tree())).html;
+        let bar = inside(aside_of(&rooted), "acts");
+        assert_eq!(parts(bar).0, ["button.copy"], "{bar}");
+    }
+
+    /// A bead the forest does not draw has nothing to act on, so its page
+    /// has the link back and no bar.
+    #[test]
+    fn a_bead_the_forest_does_not_draw_has_no_action_bar() {
+        let target = format!("/{PROJECT}/smt-nowhere");
+        let html = page_at(&target).html;
+        assert_eq!(parts(aside_of(&html)).0, ["a.close", "p.missing"]);
+    }
+
+    /// The copy button copies its id in the page's script, which listens on
+    /// the document, so a page the server pushes keeps it working. Where the
+    /// browser offers no clipboard to a page served over plain HTTP, it
+    /// copies the way browsers did before there was one.
+    #[test]
+    fn the_copy_button_copies_its_id_on_every_page_the_server_pushes() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(html.contains(COPIES), "{html}");
+        assert!(COPIES.starts_with("addEventListener(\"click\""), "{COPIES}");
+        assert!(
+            COPIES.contains("closest?.(\"button[data-copy]\")"),
+            "{COPIES}"
+        );
+        assert!(COPIES.contains("navigator.clipboard"), "{COPIES}");
+        assert!(COPIES.contains("execCommand(\"copy\")"), "{COPIES}");
+        for quiet in [
+            "field.style.cssText = \"position:fixed;top:0;left:0;opacity:0\";",
+            "field.focus({ preventScroll: true });",
+            "button.focus({ preventScroll: true });",
+        ] {
+            assert!(COPIES.contains(quiet), "{quiet}: {COPIES}");
+        }
+    }
+
+    /// The link back from a bead's page names the list it goes back to,
+    /// which is the list the page draws, named as a phone's list title
+    /// names it. It is said in full to a reader who hears the page.
+    #[test]
+    fn the_link_back_from_a_bead_names_the_list_it_goes_back_to() {
+        let bead = address(&key("smt-4kd3p.4"));
+        for (target, list) in [
+            (bead.clone(), phrase::every_tree().to_string()),
+            (format!("{bead}?ready=1"), phrase::ready_only().to_string()),
+            (
+                format!("{bead}?view={}", VIEWS[1].0),
+                VIEWS[1].0.to_string(),
+            ),
+        ] {
+            let html = page_at(&target).html;
+            let close = &aside_of(&html)[..element_end(aside_of(&html), 0)];
+            assert!(
+                close.contains(&format!(
+                    "aria-label=\"{}\">{}</a>",
+                    escaped(&phrase::back_to(&list)),
+                    escaped(&list)
+                )),
+                "{target}: {close}"
+            );
+        }
+    }
+
+    /// On a desktop the action bar runs across the top of the bead's panel
+    /// and stays there as the bead scrolls, with the link back as a close
+    /// icon at its end. On a phone the link back heads the page in words,
+    /// the bar runs across its foot, and the list's foot bar is not drawn,
+    /// because its controls do not act on a bead.
+    #[test]
+    fn the_action_bar_heads_a_desktop_panel_and_foots_a_phones_page() {
+        for rule in [
+            "aside>.acts,aside>.close{grid-row:1;position:sticky;top:0;z-index:1;",
+            "aside>.close{grid-column:2;",
+            "aside>.close::before{--icon:var(--cross)}",
+        ] {
+            assert!(STYLE.contains(rule), "{rule}: {STYLE}");
+        }
+        let whole_page = rules_under("(width<1100px)");
+        assert!(
+            whole_page.contains("aside{position:static;max-height:none;overflow:visible}"),
+            "a bar sticks to the nearest box that scrolls, so the page must be it: {whole_page}"
+        );
+        let phone = rules_under("(max-width:720px)");
+        for rule in [
+            "body:has(main>aside)>nav{display:none}",
+            "aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;",
+            "main:has(>aside>.acts){align-content:stretch}",
+            "aside{align-self:stretch;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}",
+            "aside>.acts{grid-row:3;top:auto;bottom:0;",
+            "aside>.acts>*{justify-content:center;height:48px;",
+        ] {
+            assert!(phone.contains(rule), "{rule}: {phone}");
+        }
     }
 
     /// A blocked bead's head lists what it waits on in a band under its
@@ -5110,8 +5311,9 @@ mod tests {
         let target = format!("{}?view={}", address(&key("smt-4kd3p.7")), VIEWS[1].0);
         let answer = page_at(&target);
         assert!(answer.found, "{}", answer.html);
-        let closing = link_saying(&answer.html, phrase::back());
-        let carried = Asked::of(&closing).expect("an address").folds;
+        let closing = closing_link(&answer.html);
+        let (closing, _) = closing.split_once('#').expect("the link lands on a row");
+        let carried = Asked::of(closing).expect("an address").folds;
         assert_eq!(carried, Vec::new(), "{closing}");
     }
 
