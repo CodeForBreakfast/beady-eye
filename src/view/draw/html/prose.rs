@@ -1,6 +1,7 @@
 //! A bead's description or notes as the page draws them: the markdown its
-//! author wrote, read as the terminal reads it, with each line break kept,
-//! each bead it names drawn as a reference, and each web address drawn as a
+//! author wrote, read as the terminal reads it, with each line a wrap broke
+//! filled to the page's width and each line its author ended kept, each
+//! bead it names drawn as a reference, and each web address drawn as a
 //! short link.
 //!
 //! The text is anyone's with access to the tracker, so nothing in it is
@@ -31,10 +32,11 @@ pub(super) fn written(text: &str, named: &dyn Fn(&str) -> Option<String>) -> Str
         in_html: false,
         source: text,
         taken: None,
+        wrapped_at: wrap_width(text),
     };
     for (event, at) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
         if !writing.address_takes(&event, &at) {
-            writing.take(event);
+            writing.take(event, &at);
         }
     }
     writing.write_said();
@@ -59,6 +61,8 @@ struct Writing<'n> {
     /// on through and has taken.
     source: &'n str,
     taken: Option<Range<usize>>,
+    /// The column the text was wrapped at, where it was wrapped.
+    wrapped_at: Option<usize>,
 }
 
 impl Writing<'_> {
@@ -83,8 +87,9 @@ impl Writing<'_> {
         true
     }
 
-    fn take(&mut self, event: Event<'_>) {
+    fn take(&mut self, event: Event<'_>, at: &Range<usize>) {
         match event {
+            Event::SoftBreak if self.is_a_wrap(at.start) => self.said.push(' '),
             Event::Text(text) if self.in_code => self.html.push_str(&escaped(&text)),
             Event::InlineHtml(text) => {
                 self.write_said();
@@ -227,6 +232,26 @@ impl Writing<'_> {
         }
     }
 
+    /// Whether the line break at or after `at` in the source is one a wrap
+    /// put there: the line after it goes on with the text of the line
+    /// before, and its first word would not have fitted on that line.
+    fn is_a_wrap(&self, at: usize) -> bool {
+        let Some(width) = self.wrapped_at else {
+            return false;
+        };
+        let Some(break_at) = self.source[at..].find('\n').map(|n| at + n) else {
+            return false;
+        };
+        let before = self.source[..break_at].rsplit('\n').next().unwrap_or("");
+        let after = self.source[break_at + 1..].split('\n').next().unwrap_or("");
+        let (indent, words) = past_quote_marks(after);
+        let word = words.split_whitespace().next().unwrap_or("");
+        list_marker(words).is_none()
+            && !is_a_label(word)
+            && indent <= text_column(before)
+            && before.trim_end().chars().count() + 1 + word.chars().count() > width
+    }
+
     /// The text that has arrived, each line of it a line of its own. Inside
     /// a link it is the link's words, which name no bead and hold no link,
     /// and HTML holds neither either.
@@ -267,6 +292,76 @@ impl Writing<'_> {
         }
         self.html.push_str(&escaped(&text[from..]));
     }
+}
+
+/// The narrowest column a text is taken to be wrapped at for a terminal. A
+/// text with no line of several words this wide was never wrapped, and
+/// keeps every line break its author wrote.
+const NARROWEST_WRAP: usize = 60;
+
+/// The column `text` was wrapped at, where it was wrapped: its widest line
+/// of several words, since a wrap sets a second word on a line only where
+/// it fits. Code and tables are laid out by their author, and their lines
+/// say nothing of it.
+fn wrap_width(text: &str) -> Option<usize> {
+    let laid_out: Vec<Range<usize>> = Parser::new_ext(text, Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter(|(event, _)| matches!(event, Event::Start(Tag::CodeBlock(_) | Tag::Table(_))))
+        .map(|(_, at)| at)
+        .collect();
+    let mut from = 0;
+    let mut widest = 0;
+    for line in text.split_inclusive('\n') {
+        let at = from..from + line.len();
+        from = at.end;
+        let line = line.trim_end();
+        let in_layout = laid_out
+            .iter()
+            .any(|block| block.start < at.end && at.start < block.end);
+        if !in_layout && line.split_whitespace().nth(1).is_some() {
+            widest = widest.max(line.chars().count());
+        }
+    }
+    (widest >= NARROWEST_WRAP).then_some(widest)
+}
+
+/// How far into `line` its text starts, past any quote's marks, and its
+/// text from there.
+fn past_quote_marks(line: &str) -> (usize, &str) {
+    let words = line.trim_start_matches(|c: char| c.is_whitespace() || c == '>');
+    (line.len() - words.len(), words)
+}
+
+/// How far into `line` its words start, past any quote's marks and any
+/// list item's marker.
+fn text_column(line: &str) -> usize {
+    let (indent, words) = past_quote_marks(line);
+    let marker = list_marker(words).unwrap_or(0);
+    let after_marker = &words[marker..];
+    indent + marker + (after_marker.len() - after_marker.trim_start().len())
+}
+
+/// Whether `word` is a label an author heads a line with, such as
+/// "Options:".
+fn is_a_label(word: &str) -> bool {
+    word.len() > 1 && word.ends_with(':')
+}
+
+/// How long the list item's marker that `words` starts with is, where it
+/// starts with one: a bullet, or a number and its full stop or bracket,
+/// with a space or nothing after it.
+fn list_marker(words: &str) -> Option<usize> {
+    let digits = words.len() - words.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let marker = match words[digits..].chars().next()? {
+        '-' | '*' | '+' if digits == 0 => 1,
+        '.' | ')' if (1..=9).contains(&digits) => digits + 1,
+        _ => return None,
+    };
+    words[marker..]
+        .chars()
+        .next()
+        .is_none_or(char::is_whitespace)
+        .then_some(marker)
 }
 
 /// What has a link a reader follows open in a new tab, keeping this page
@@ -376,8 +471,9 @@ mod tests {
     }
 
     /// An author who puts a line of its own under another means it to stand
-    /// apart, as a question bead's Options and Recommendation do, so a line
-    /// break is kept rather than read as a space.
+    /// apart, as a question bead's Options and Recommendation do. In a text
+    /// with no line as wide as a terminal's wrap, nothing was wrapped, so
+    /// each line break is kept rather than read as a space.
     #[test]
     fn each_line_the_author_wrote_stays_a_line_of_its_own() {
         assert_eq!(
@@ -385,6 +481,112 @@ mod tests {
             "<p>Options: re-silver or replace<br>Recommendation: re-silver</p>\
              <p>Because it is cheaper.</p>"
         );
+    }
+
+    /// A paragraph wrapped at 72 columns, as an author wraps one for a
+    /// terminal.
+    const WRAPPED: &str = "The diaphone sounds twice a minute in fog, and the keeper on watch logs\n\
+                           each burn of it in the signal book. A burn that runs short is logged as\n\
+                           a fault, and the engineer is called out to the lighthouse before the\n\
+                           next tide.";
+
+    /// A description wrapped for a terminal reads as filled paragraphs on a
+    /// page of any width, the words of an item as well as a paragraph's.
+    #[test]
+    fn a_hard_wrapped_paragraph_fills_the_page() {
+        assert_eq!(
+            html(&format!(
+                "{WRAPPED}\n\n- Grease the diaphone before the first burn of the winter, and log the\n  \
+                 grease used against the store."
+            )),
+            "<p>The diaphone sounds twice a minute in fog, and the keeper on watch logs \
+             each burn of it in the signal book. A burn that runs short is logged as \
+             a fault, and the engineer is called out to the lighthouse before the \
+             next tide.</p>\
+             <ul><li>Grease the diaphone before the first burn of the winter, and log the \
+             grease used against the store.</li></ul>"
+        );
+    }
+
+    /// A line that ends short because the word after it would not fit is
+    /// one a wrap broke, however short it is.
+    #[test]
+    fn a_line_cut_short_by_a_word_too_long_for_it_is_a_wrap() {
+        let drawn = html(&format!(
+            "{WRAPPED}\n\nThe procedure for the test is written up at\n\
+             https://trinity-works.example/manuals/fog-signals/diaphone-burn-test-procedure\n\
+             and the keeper follows it to the letter."
+        ));
+        assert!(!drawn.contains("<br>"), "{drawn}");
+    }
+
+    /// In a text wrapped for a terminal, a line the next word would have
+    /// fitted on is one its author ended, so it stays apart.
+    #[test]
+    fn a_line_the_author_ended_stays_apart_in_wrapped_text() {
+        assert_eq!(
+            html(&format!(
+                "{WRAPPED}\n\nOptions: re-silver or replace\nRecommendation: re-silver"
+            )),
+            format!(
+                "<p>{}</p><p>Options: re-silver or replace<br>Recommendation: re-silver</p>",
+                WRAPPED.replace('\n', " ")
+            )
+        );
+    }
+
+    /// A line its author heads with a label, as a question bead heads its
+    /// Options and Recommendation, stays apart however full the line before
+    /// it is.
+    #[test]
+    fn a_line_headed_by_a_label_stays_apart_in_wrapped_text() {
+        let drawn = html(&format!(
+            "{WRAPPED}\n\nOptions: a quick check on the next tide, or a full overhaul after it\n\
+             Recommendation: the overhaul"
+        ));
+        assert!(drawn.contains("after it<br>Recommendation:"), "{drawn}");
+    }
+
+    /// A line that starts a block of its own, an item, a heading, a quote
+    /// or an indented line, stays apart from the line before it, however
+    /// well it would have fitted there.
+    #[test]
+    fn a_line_starting_a_block_stays_apart_in_wrapped_text() {
+        let drawn = html(&format!(
+            "{WRAPPED}\n\n\
+             Before the first burn of the winter, the keeper does each of these:\n\
+             - grease it\n- trim it\n\n\
+             Carried on from the last watch, the steps left to the keeper are now:\n\
+             2. light it\n3. log it\n\n\
+             The signal book for the night of the gale reads, in the keeper's hand:\n    \
+             burn 1, six minutes\n\n\
+             Then:\n> sound it\n\nAnd:\n## Sounded"
+        ));
+        for apart in [
+            "<li>grease it</li><li>trim it</li>",
+            "the keeper are now:<br>2. light it<br>3. log it",
+            "in the keeper&#39;s hand:<br>burn 1, six minutes",
+            "<p>Then:</p><blockquote><p>sound it</p></blockquote>",
+            "<p>And:</p><h4>Sounded</h4>",
+        ] {
+            assert!(drawn.contains(apart), "{apart}\n{drawn}");
+        }
+    }
+
+    /// Code and tables are laid out by their author, so a wide line in one
+    /// says nothing of the column the prose around it was wrapped at.
+    #[test]
+    fn code_says_nothing_of_where_the_prose_was_wrapped() {
+        let drawn = html(
+            "The keeper runs the burn test once a week in winter, and logs\n\
+             how long each burn of the diaphone lasts in the signal book.\n\n\
+             ```\n\
+             log --burn 1 --minutes 6 --keeper on-watch --signal diaphone --tide flood --wind north-east\n\
+             ```\n\n\
+             | burn | minutes | keeper on watch | signal | tide | wind on the gallery at the time |\n\
+             | --- | --- | --- | --- | --- | --- |",
+        );
+        assert!(drawn.contains("and logs how long"), "{drawn}");
     }
 
     #[test]
