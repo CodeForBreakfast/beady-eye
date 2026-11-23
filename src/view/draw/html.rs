@@ -1110,10 +1110,10 @@ a{color:inherit;text-decoration:none}\
 a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
 .bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
-@media (width>=1100px){main.open .line .bead>.project{display:none}}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;padding:8px 12px}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
-overflow:hidden;clip-path:inset(50%);white-space:nowrap}}\
+overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
+main.open .line .bead>.project{display:none}}\
 @media (width<1100px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;padding:8px 20px 24px}}\
@@ -3297,7 +3297,12 @@ mod tests {
             beads: vec![reflector],
             children: vec![vec![]],
             counts: counts(0, 1, 0, 0),
-            ..tree("dunwich", "dun-7", "re-silver the reflector", counts(0, 0, 0, 0))
+            ..tree(
+                "dunwich",
+                "dun-7",
+                "re-silver the reflector",
+                counts(0, 0, 0, 0),
+            )
         };
         let mut trees: Vec<Tree> = ground.trees.iter().map(|tree| (**tree).clone()).collect();
         trees.push(dunwich);
@@ -3315,7 +3320,11 @@ mod tests {
             .map(|line| {
                 let reference = inside(line, "bead");
                 let (shape, _) = parts(reference);
-                assert_eq!(shape[1..], ["span.title", "span.id", "span.project"], "{line}");
+                assert_eq!(
+                    shape[1..],
+                    ["span.title", "span.id", "span.project"],
+                    "{line}"
+                );
                 (
                     text_of(inside(reference, "id")),
                     text_of(inside(reference, "project")),
@@ -3345,7 +3354,10 @@ mod tests {
         let view = Asked::default().listing(listed(Some(VIEWS[1].0.to_string()), false));
         let named = projects_named(&page_of(beside_dunwich(), &view));
         assert!(!named.is_empty());
-        assert!(named.iter().all(|(_, project)| project == PROJECT), "{named:?}");
+        assert!(
+            named.iter().all(|(_, project)| project == PROJECT),
+            "{named:?}"
+        );
     }
 
     /// Where the page says which project a row is in some other way, no row
@@ -3376,9 +3388,9 @@ mod tests {
     #[test]
     fn a_rows_project_is_drawn_after_its_id_and_gives_way_to_an_open_bead() {
         assert!(STYLE.contains(".bead .project{padding:0 8px;border:1px solid var(--line);"));
-        assert!(STYLE.contains(
-            "@media (width>=1100px){main.open .line .bead>.project{display:none}}"
-        ));
+        assert!(
+            rules_under("(width>=1100px)").contains("main.open .line .bead>.project{display:none}")
+        );
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr)",
