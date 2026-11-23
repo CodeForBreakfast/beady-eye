@@ -290,7 +290,7 @@ fn menu_entry(page: &str, said: &str) -> String {
     let menu = &page[page.find("<details class=\"lists\">").expect("a list menu")..];
     let menu = &menu[..menu.find("</details>").expect("the menu ends")];
     let end = menu
-        .find(&format!(">{said}</a>"))
+        .find(&format!(">{said}<span class=\"count\">"))
         .unwrap_or_else(|| panic!("the menu offers {said}: {menu}"));
     let href = &menu[menu[..end]
         .rfind("href=\"")

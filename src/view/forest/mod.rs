@@ -880,6 +880,12 @@ impl Forest {
         self.list.as_ref()
     }
 
+    /// How many beads each view the config names would list, in the
+    /// config's order, counting only ready beads where `ready` is set.
+    pub fn view_counts(&self, ready: bool) -> Vec<usize> {
+        ready::view_counts(&self.snapshot, &self.rooted(), &self.snapshot.views, ready)
+    }
+
     /// Draw `list` in place of the trees, or the trees where it is none, as
     /// the ready and view keys do.
     pub fn draw_list(&mut self, list: Option<List>) {
