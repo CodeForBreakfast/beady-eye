@@ -18,21 +18,21 @@ pub(crate) mod tone;
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::Frame;
 
 use crate::app::Awaited;
-use crate::model::types::PaneStatus;
+use crate::model::types::{PaneStatus, Status};
 use crate::view::fitted::{indent, Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine, Waiting};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::query::Query;
-use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
+use crate::view::row::{status_glyph, Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
 pub use bands::{key_rows, line_at, regions, Regions, TailBand};
@@ -42,7 +42,8 @@ pub use tail::{draw_tail, Band};
 use bead::{bead_line, elided_run, orphaned_line};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
-use project::{absent_line, project_line, unread_line, Dated};
+use project::{absent_line, project_line, unread_line};
+use tone::status_style;
 
 /// What every project line's freshness is drawn from: when each project was
 /// last read, which projects have a read outstanding, which have lapsed, and
@@ -62,8 +63,6 @@ pub(super) struct Reads<'a> {
     /// The projects nothing has vouched for lately.
     lapsed: &'a [String],
     now: DateTime<Utc>,
-    /// How each project line says when it was read.
-    dated: Dated,
 }
 
 impl<'a> Reads<'a> {
@@ -78,16 +77,6 @@ impl<'a> Reads<'a> {
             collecting,
             lapsed,
             now,
-            dated: Dated::Ago,
-        }
-    }
-
-    /// The same reads, with each project line saying the time of day it was
-    /// read at rather than how long ago.
-    pub(super) fn dated_at(self, offset: FixedOffset) -> Self {
-        Self {
-            dated: Dated::At(offset),
-            ..self
         }
     }
 
@@ -212,13 +201,9 @@ pub(super) fn fitted(
     reads: &Reads,
 ) -> Fitted {
     match &line.content {
-        Content::Project(project) => project_line(
-            project,
-            &line.prefix,
-            reads.of(project),
-            reads.now,
-            reads.dated,
-        ),
+        Content::Project(project) => {
+            project_line(project, &line.prefix, reads.of(project), reads.now)
+        }
         Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
         Content::Absent(absent) => absent_line(absent, &line.prefix, widths.of(&Cell::Id)),
         Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
@@ -292,21 +277,29 @@ pub(super) fn pane_marker(pane: &str, status: &PaneStatus) -> String {
     format!("{AGENT} {pane} {}", phrase::pane_state(status))
 }
 
-/// What a reference to a bead says, wherever one is drawn: its glyph, its id
-/// and its title, each in the style the place drawing it gives it, and the
-/// style of the space between them.
+/// What a reference to a bead says, wherever one is drawn: its status, its id
+/// and its title, the last two in the style the place drawing it gives them,
+/// and the style of the space between them.
 pub(crate) struct Reference {
-    pub(crate) glyph: Span<'static>,
+    pub(crate) status: Status,
     pub(crate) id: Vec<Span<'static>>,
     pub(crate) title: Vec<Span<'static>>,
     pub(crate) between: Style,
 }
 
 impl Reference {
+    /// The status's glyph, in its colour.
+    pub(crate) fn glyph(&self) -> Span<'static> {
+        Span::styled(
+            status_glyph(&self.status).to_string(),
+            status_style(&self.status),
+        )
+    }
+
     /// The reference as a run of spans: the glyph and the id a column apart,
     /// as the identity draws them, and the title clear of both.
     pub(crate) fn spans(self) -> Vec<Span<'static>> {
-        let mut spans = vec![self.glyph, Span::styled(" ", self.between)];
+        let mut spans = vec![self.glyph(), Span::styled(" ", self.between)];
         spans.extend(self.id);
         spans.push(Span::styled(indent(), self.between));
         spans.extend(self.title);

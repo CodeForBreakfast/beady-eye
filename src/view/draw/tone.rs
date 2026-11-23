@@ -67,7 +67,7 @@ mod tests {
 
     use crate::model::anomaly::Anomaly;
     use crate::view::draw::bead::{bead_line, elided_run};
-    use crate::view::draw::project::{project_line, Dated};
+    use crate::view::draw::project::project_line;
     use crate::view::draw::tests::*;
     use crate::view::painted::Run;
     use crate::view::row::{self, Layout, Row, AGENT, WARNING};
@@ -573,12 +573,7 @@ mod tests {
     fn a_project_line_is_left_off_the_scale_a_bead_row_is_on() {
         let quiet = project("meadow", counts(7, 7, 0, 0));
 
-        let painted = Painted::of(
-            project_line(&quiet, OPEN, None, drawn_at(), Dated::Ago),
-            60,
-            1,
-        )
-        .row(0);
+        let painted = Painted::of(project_line(&quiet, OPEN, None, drawn_at()), 60, 1).row(0);
 
         assert!(
             painted.iter().all(|run| run.style.fg == Some(Color::Reset)),
