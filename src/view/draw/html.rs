@@ -1640,7 +1640,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
 .line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
-.line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
+.line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}\
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
 nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
@@ -4842,15 +4842,18 @@ mod tests {
         }
     }
 
-    /// A phone row's progress is its fraction alone, with no bar to make the
-    /// row wider than the screen.
+    /// A phone row draws its progress as a desktop row does, the bar beside
+    /// the fraction.
     #[test]
-    fn a_phone_row_draws_its_progress_without_a_bar() {
+    fn a_phone_row_keeps_its_progress_bar() {
         let phone = rules_under("(max-width:720px)");
-        assert!(
-            phone.contains(".line>.bead~.state>.prog>.bar{display:none}"),
-            "{phone}"
-        );
+        for rule in phone.split('}') {
+            let (selector, body) = rule.split_once('{').unwrap_or((rule, ""));
+            assert!(
+                !(selector.contains(".bar") && body.contains("display:none")),
+                "{rule}}}"
+            );
+        }
     }
 
     /// A pill leaves wrapping to its row, so a long badge wraps on a phone
