@@ -1234,7 +1234,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
-.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px}\
+.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
 .line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
@@ -3541,7 +3541,7 @@ mod tests {
     /// A row's project is quiet, and makes room beside an open bead on a
     /// desktop as a flag's words do. A phone draws it on the row's second
     /// line, in a column of its own between the id and the row's other
-    /// cells.
+    /// cells, and breaks a long name there rather than push them aside.
     #[test]
     fn a_rows_project_is_drawn_after_its_id_and_gives_way_to_an_open_bead() {
         assert!(STYLE.contains(".bead .project{padding:0 8px;border:1px solid var(--line);"));
@@ -3551,7 +3551,7 @@ mod tests {
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr)",
-            ".line>.bead>.project{grid-area:2/3;",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}",
             ".line>.more{grid-column:5;",
             ".line>.bead~.state{grid-column:6;",
         ] {
