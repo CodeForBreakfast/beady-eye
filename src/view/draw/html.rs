@@ -958,7 +958,7 @@ border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
-@media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden;margin-right:auto}\
+@media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}\
 .line>.bead>*{flex:none}.line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
@@ -1089,7 +1089,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
-.line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
+.line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
 nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13.5px}\
@@ -2827,10 +2827,10 @@ mod tests {
     }
 
     /// On a desktop a row fits the trees' width. Its title gives way and
-    /// ends in an ellipsis, before its id, but keeps a few characters. On a
-    /// row too crowded for them the reference cuts off its id at its own
-    /// edge rather than lose its title or run under the cells beside it.
-    /// Everything after the reference sits together at the right, with the
+    /// ends in an ellipsis, before its id, but keeps a few characters, and
+    /// the reference keeps room for them however wide the cells beside it.
+    /// On a row too crowded for its id the reference cuts it off at its own
+    /// edge rather than run under those cells. Everything after the reference sits together at the right, with the
     /// progress column a fixed width at the end and its bar at the column's
     /// start, so the bars line up whatever their fractions say. A project's
     /// heading is not a bead's row, and its bar keeps its own width.
@@ -2839,7 +2839,7 @@ mod tests {
         assert!(!STYLE.contains("max-content"), "{STYLE}");
         let desktop = rules_under("(width>720px)");
         for rule in [
-            ".line>.bead{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden;margin-right:auto}",
+            ".line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}",
             ".line>.bead>*{flex:none}",
             ".line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}",
             ".line>.bead~.state{margin-left:0}",
@@ -2847,6 +2847,17 @@ mod tests {
         ] {
             assert!(desktop.contains(rule), "{desktop}");
         }
+    }
+
+    /// A phone row's progress is its fraction alone, with no bar to make the
+    /// row wider than the screen.
+    #[test]
+    fn a_phone_row_draws_its_progress_without_a_bar() {
+        let phone = rules_under("(max-width:720px)");
+        assert!(
+            phone.contains(".line>.bead~.state>.prog>.bar{display:none}"),
+            "{phone}"
+        );
     }
 
     /// A pill leaves wrapping to its row, so a long badge wraps on a phone
