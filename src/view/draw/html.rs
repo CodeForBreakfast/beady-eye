@@ -949,9 +949,9 @@ a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;padding:8px 12px}\
-@media (min-width:1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
+@media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
 overflow:hidden;clip-path:inset(50%);white-space:nowrap}}\
-@media (max-width:1099px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
+@media (width<1100px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;padding:8px 20px 24px}}\
 .page{white-space:pre-wrap}\
@@ -1765,7 +1765,7 @@ mod tests {
                 .contains("main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}"),
             "{STYLE}"
         );
-        let narrower = rules_under("(max-width:1099px)");
+        let narrower = rules_under("(width<1100px)");
         for rule in [
             "main.open{grid-template-columns:minmax(0,1fr)}",
             "main.open::before{content:none}",
@@ -1779,7 +1779,7 @@ mod tests {
     /// and its words stay for a screen reader.
     #[test]
     fn a_flag_shrinks_to_its_icon_beside_an_open_bead() {
-        let beside = rules_under("(min-width:1100px)");
+        let beside = rules_under("(width>=1100px)");
         assert!(
             beside.contains(
                 "main.open .line .flag>span{position:absolute;width:1px;height:1px;\
