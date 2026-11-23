@@ -765,9 +765,25 @@ pub fn pane_report(display_agent: Option<&str>, caption: Option<&str>) -> Option
 /// An agent watching a bead, named by what herdr reports of its pane, or by
 /// herdr's name for the agent where the pane reports nothing.
 pub fn watched_by(agent: &WatchingAgent) -> String {
-    let named = pane_report(agent.display_agent.as_deref(), agent.caption.as_deref())
-        .unwrap_or_else(|| agent.agent.clone());
-    format!("watched by {named}")
+    format!("watched by {}", watcher(agent))
+}
+
+/// An agent watching a bead as [`watched_by`] names it, for a page that
+/// says who watches under a label of its own.
+pub fn watcher(agent: &WatchingAgent) -> String {
+    pane_report(agent.display_agent.as_deref(), agent.caption.as_deref())
+        .unwrap_or_else(|| agent.agent.clone())
+}
+
+/// The agents watching a bead that a web page cannot name, after those it
+/// names, or alone where it names none.
+pub fn unnamed_watchers(count: usize, after_named: bool) -> String {
+    if after_named {
+        let agent = if count == 1 { "agent" } else { "agents" };
+        format!("{count} more {agent}")
+    } else {
+        agents(count)
+    }
 }
 
 /// The agents watching a bead whose agent sessions herdr reports in no live
@@ -1068,12 +1084,17 @@ pub fn tied(ties: Ties) -> &'static str {
     }
 }
 
+/// What a ready bead is said to be.
+pub fn ready() -> &'static str {
+    "ready"
+}
+
 /// Whether a bead is ready, or what it is blocked by, in the words `bd ready`
 /// and `bd list` use. A bead that is neither, such as a deferred one or a
 /// closed one, has nothing said of it.
 pub fn readiness(ready: bool, blocked_by: &[String]) -> Option<String> {
     if ready {
-        Some("ready".to_string())
+        Some(self::ready().to_string())
     } else if blocked_by.is_empty() {
         None
     } else {
@@ -1185,6 +1206,8 @@ pub mod field {
     pub const PRIORITY: &str = "Priority";
     pub const TYPE: &str = "Type";
     pub const ASSIGNEE: &str = "Assignee";
+    pub const AGENT: &str = "Agent";
+    pub const WATCHED_BY: &str = "Watched by";
     pub const PROGRESS: &str = "Progress";
     pub const CREATED: &str = "Created";
     pub const UPDATED: &str = "Updated";
