@@ -70,6 +70,7 @@ mod tests {
     use crate::view::draw::project::project_line;
     use crate::view::draw::tests::*;
     use crate::view::painted::Run;
+    use crate::view::phrase;
     use crate::view::row::{self, Layout, Row, AGENT, WARNING};
 
     // ---- styling ---------------------------------------------------------
@@ -543,7 +544,7 @@ mod tests {
     /// cannot fall out of step and the palette holds one grey, not two.
     #[test]
     fn an_elided_run_is_dimmed_the_same_grey_a_finished_row_is() {
-        let run = Painted::of(elided_run(BRANCH, 4), 60, 1).row(0);
+        let run = Painted::of(elided_run(BRANCH, &phrase::elided(4)), 60, 1).row(0);
         let finished = Painted::of(
             bead_line(
                 &row(&node("smt-4kd3p.1", "a bead", Status::Closed)),
