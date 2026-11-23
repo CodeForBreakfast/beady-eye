@@ -965,7 +965,7 @@ pub fn not_in_the_answer() -> &'static str {
 /// A bead a web page's address names that no tree the forest draws holds.
 pub fn not_drawn(key: &BeadKey) -> String {
     format!(
-        "{} is in no tree bdi draws from project {}",
+        "{} is in no tree {PRODUCT} draws from project {}",
         key.id, key.project
     )
 }
@@ -1019,20 +1019,29 @@ pub fn open_the_fold() -> &'static str {
     "open"
 }
 
-/// What a web page says before bdi has read any tracker.
-pub fn not_read_yet() -> &'static str {
-    "bdi has not finished reading its trackers yet"
+/// The product's name, which a web page calls itself by. `bdi` names only
+/// the command.
+pub const PRODUCT: &str = "beady-eye";
+
+/// A web page's title where the page is about the bead titled `title`.
+pub fn bead_page_title(title: &str) -> String {
+    format!("{title} · {PRODUCT}")
 }
 
-/// What a web page says at an address longer than bdi reads, which only
+/// What a web page says before it has read any tracker.
+pub fn not_read_yet() -> &'static str {
+    "beady-eye has not finished reading its trackers yet"
+}
+
+/// What a web page says at an address longer than it reads, which only
 /// the folds it carries can make it.
 pub fn address_too_long() -> &'static str {
-    "bdi cannot read an address carrying this many folds"
+    "beady-eye cannot read an address carrying this many folds"
 }
 
 /// What a web page says at an address it has no page for.
 pub fn no_page_here() -> &'static str {
-    "bdi has no page at this address"
+    "beady-eye has no page at this address"
 }
 
 /// A kind of edge outside the two `bdi` knows, said as bd's word for it.

@@ -70,7 +70,11 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         selected: (node.is_some() || matched).then(|| forest.selected_line()),
     };
 
-    let mut html = head(node.map_or("bdi", |node| &node.title), Some(drawn.change));
+    let title = node.map_or_else(
+        || phrase::PRODUCT.to_string(),
+        |node| phrase::bead_page_title(&node.title),
+    );
+    let mut html = head(&title, Some(drawn.change));
     html.push_str("<body>");
     drawing.nav(&mut html);
     html.push_str(if shown.bead.is_some() {
@@ -123,7 +127,7 @@ fn said_alone(said: &str, change: Option<u64>) -> String {
     format!(
         "{}<body><footer><p>{}</p>\
          <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
-        head("bdi", change),
+        head(phrase::PRODUCT, change),
         escaped(said),
         escaped(phrase::back())
     )
@@ -165,7 +169,10 @@ impl Drawing<'_> {
     /// puts every tree back, as `F` does.
     fn nav(&self, html: &mut String) {
         let list = self.forest.list();
-        html.push_str("<nav>");
+        html.push_str(&format!(
+            "<nav><span class=\"brand\">{}</span>",
+            phrase::PRODUCT
+        ));
         let views = &self.forest.snapshot().views;
         if !views.is_empty() {
             let ready = only_ready(list);
@@ -827,7 +834,7 @@ nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
 padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13px}\
 nav{background:var(--surface)}.lists>div{background:var(--raised)}\
-nav>*{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}\
+nav>*{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>.brand{display:none}\
 nav summary,nav>.ready,nav input{display:block;box-sizing:border-box;width:100%;padding:7px 4px;\
 border:0;border-radius:8px;background:none;font:inherit;text-align:center;\
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\
@@ -1639,7 +1646,33 @@ mod tests {
     fn an_address_naming_a_bead_the_forest_does_not_draw_says_so_and_is_not_found() {
         let answer = page_at(&address(&key("smt-zzz")));
         assert!(!answer.found);
-        assert!(text_of(&answer.html).contains("smt-zzz is in no tree bdi draws"));
+        assert!(text_of(&answer.html).contains("smt-zzz is in no tree beady-eye draws"));
+    }
+
+    /// The text of the page's `<title>`.
+    fn title_of(html: &str) -> &str {
+        let from = html.find("<title>").expect("the page has a title") + "<title>".len();
+        &html[from..from + html[from..].find("</title>").expect("the title closes")]
+    }
+
+    #[test]
+    fn a_page_is_titled_for_the_product_and_a_bead_page_for_its_bead_too() {
+        assert_eq!(title_of(&page_at("/").html), "beady-eye");
+        assert_eq!(title_of(&saying("said")), "beady-eye");
+        assert_eq!(
+            title_of(&page_at(&address(&key("smt-4kd3p.1"))).html),
+            "wire the niri theme include · beady-eye"
+        );
+    }
+
+    #[test]
+    fn the_page_names_the_product_first_in_its_nav() {
+        let html = page_at("/").html;
+        let nav = &html[html.find("<nav>").expect("the page has a nav")..];
+        assert!(
+            nav.starts_with("<nav><span class=\"brand\">beady-eye</span>"),
+            "{nav}"
+        );
     }
 
     #[test]
