@@ -25,14 +25,14 @@ use ratatui::text::Span;
 use ratatui::Frame;
 
 use crate::app::Awaited;
-use crate::model::types::PaneStatus;
+use crate::model::types::{PaneStatus, Status};
 use crate::view::fitted::{indent, Fitted, GAP};
 use crate::view::forest::Forest;
 use crate::view::lines::{self, Content, Note, ProjectLine, Waiting};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::query::Query;
-use crate::view::row::{Cell, Layout, Widths, AGENT, WARNING};
+use crate::view::row::{status_glyph, Cell, Layout, Widths, AGENT, WARNING};
 use crate::view::{Freshness, Notice, Said};
 
 pub use bands::{key_rows, line_at, regions, Regions, TailBand};
@@ -43,6 +43,7 @@ use bead::{bead_line, elided_run, orphaned_line};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
 use project::{absent_line, project_line, unread_line, Dated};
+use tone::status_style;
 
 /// What every project line's freshness is drawn from: when each project was
 /// last read, which projects have a read outstanding, which have lapsed, and
@@ -292,21 +293,29 @@ pub(super) fn pane_marker(pane: &str, status: &PaneStatus) -> String {
     format!("{AGENT} {pane} {}", phrase::pane_state(status))
 }
 
-/// What a reference to a bead says, wherever one is drawn: its glyph, its id
-/// and its title, each in the style the place drawing it gives it, and the
-/// style of the space between them.
+/// What a reference to a bead says, wherever one is drawn: its status, its id
+/// and its title, the last two in the style the place drawing it gives them,
+/// and the style of the space between them.
 pub(crate) struct Reference {
-    pub(crate) glyph: Span<'static>,
+    pub(crate) status: Status,
     pub(crate) id: Vec<Span<'static>>,
     pub(crate) title: Vec<Span<'static>>,
     pub(crate) between: Style,
 }
 
 impl Reference {
+    /// The status's glyph, in its colour.
+    pub(crate) fn glyph(&self) -> Span<'static> {
+        Span::styled(
+            status_glyph(&self.status).to_string(),
+            status_style(&self.status),
+        )
+    }
+
     /// The reference as a run of spans: the glyph and the id a column apart,
     /// as the identity draws them, and the title clear of both.
     pub(crate) fn spans(self) -> Vec<Span<'static>> {
-        let mut spans = vec![self.glyph, Span::styled(" ", self.between)];
+        let mut spans = vec![self.glyph(), Span::styled(" ", self.between)];
         spans.extend(self.id);
         spans.push(Span::styled(indent(), self.between));
         spans.extend(self.title);
