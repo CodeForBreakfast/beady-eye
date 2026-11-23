@@ -286,16 +286,28 @@ impl Drawing<'_> {
             &[],
             drawn.at,
         );
+        // A project's heading and the lines under it are one section, so the
+        // heading sticks only while its own lines scroll.
+        let mut in_project = false;
         for (at, line) in lines.viewport(0, lines.len()) {
+            if in_project && line.depth == 0 {
+                html.push_str("</section>");
+                in_project = false;
+            }
             match &line.content {
                 // Said at the foot, with the link that shows those beads.
                 Content::Note(Note::ToCheck(_)) => {}
                 Content::Project(project) => {
+                    html.push_str("<section>");
+                    in_project = true;
                     self.open_line(html, at, line, " heading", String::new());
                     self.heading(html, line, project, &reads, drawn.offset);
                 }
                 _ => self.forest_line(html, at, line, &reads),
             }
+        }
+        if in_project {
+            html.push_str("</section>");
         }
     }
 
@@ -951,7 +963,7 @@ vertical-align:top;width:100%;white-space:normal}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
 padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
-.line.heading:not(:first-child){margin-top:18px}\
+.forest>section:not(:first-child){margin-top:18px}\
 .heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
 .heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
@@ -3179,6 +3191,21 @@ mod tests {
             !forest.contains("auto") && !forest.contains("scroll"),
             "{forest}"
         );
+    }
+
+    /// A project's heading and the lines under it are one section, which is
+    /// what holds a stuck heading to its own project's lines.
+    #[test]
+    fn a_projects_heading_and_the_lines_under_it_are_one_section() {
+        let html = page_at("/").html;
+        let opened = html.find("<section>").expect("a section");
+        let section = &html[opened..html.find("</section>").expect("the section ends")];
+
+        assert!(
+            section.starts_with("<section><div class=\"line heading\""),
+            "{section}"
+        );
+        assert_eq!(lines_html(section).len(), lines_html(&html).len());
     }
 
     /// The ready list keeps to the tree the forest is rooted at, as it does
