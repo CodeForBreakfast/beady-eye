@@ -25,6 +25,7 @@ use crate::model::types::{PaneKey, PaneStatus, Status};
 use crate::model::watching::WatchingAgent;
 use crate::view::forest::Spine;
 use crate::view::lines::Section;
+use crate::view::row::WARNING;
 use crate::view::show::{Prose, Ties};
 use crate::view::{Freshness, Mark, Notice, Said};
 
@@ -629,6 +630,11 @@ pub fn agents(count: usize) -> String {
 pub fn anomalies_beneath(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
     format!("{count} {bead} to check")
+}
+
+/// The beads to check where a narrow window has room only for their count.
+pub fn anomalies_beneath_briefly(count: usize) -> String {
+    format!("{WARNING} {count}")
 }
 
 /// The beads with an anomaly that the ready list covers, whose rows saying
@@ -1427,6 +1433,7 @@ mod tests {
             said.push(unfinished_beneath(count));
             said.push(agents_beneath(count));
             said.push(anomalies_beneath(count));
+            said.push(anomalies_beneath_briefly(count));
             said.push(failed_projects(count));
             said.push(conflicts(count));
             for with_findings in [0, 1, count] {
