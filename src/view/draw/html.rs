@@ -1570,7 +1570,7 @@ mod tests {
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
     /// the project's line said as the page's heading says it: the time of
-    /// day it was read, and the fraction done in words.
+    /// day it was read, and the fraction done as what is left in words.
     fn terminal_lines(forest: &Forest) -> Vec<String> {
         let rows = frame_of(forest, 160, 60).rows();
         rows[..forest.lines().len()]
@@ -1583,7 +1583,11 @@ mod tests {
                 row.replace(AGO, READ)
                     .split(' ')
                     .map(|word| match word.split_once('/') {
-                        Some((done, of)) => format!("{done} of {of} done"),
+                        Some((done, of)) => {
+                            let [done, of] =
+                                [done, of].map(|n| n.parse::<usize>().expect("a count"));
+                            phrase::left_of(of - done, of)
+                        }
                         None => word.to_string(),
                     })
                     .collect::<Vec<_>>()

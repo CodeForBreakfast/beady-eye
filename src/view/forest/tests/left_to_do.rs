@@ -46,7 +46,7 @@ fn the_list_holds_each_unfinished_bead_in_the_project_the_most_urgent_first() {
             "harbour",
             "# LeftToDo { project: \"harbour\" } 3",
             "▸ ◐ hbr-1.3 clear the silted channel",
-            "▸ ○ hbr-1 open the harbour",
+            "  ○ hbr-1 open the harbour",
             "▸ ○ hbr-1.1 sign the berth lease",
         ]
     );
