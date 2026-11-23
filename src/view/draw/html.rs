@@ -942,7 +942,8 @@ border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box;\
 width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
-.line.shown{position:relative;background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}#shown{position:absolute;top:0}\
+.line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
+.line.shown{position:relative}#shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
 .line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
