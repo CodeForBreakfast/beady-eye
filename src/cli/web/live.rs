@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::collect::http::{self, close, Head, LINGER};
+use crate::collect::http::{self, close, Encoding, Head, Parts, LINGER};
 use crate::view::address::Asked;
 
 use super::{Answering, DrawnFrom, PATIENCE, TEXT, UNAVAILABLE};
@@ -71,7 +71,8 @@ pub(super) fn keep_current(
     }
     let kept = Kept(Arc::clone(answering));
     let since = since(head);
-    thread::spawn(move || send_changes(&kept.0, &stream, &asked, since));
+    let encoding = head.encoding();
+    thread::spawn(move || send_changes(&kept.0, &stream, &asked, since, encoding));
 }
 
 /// One page being kept current, counted until it is dropped, panic or not.
@@ -96,19 +97,29 @@ fn since(head: &Head) -> Option<u64> {
         .and_then(|change| change.parse().ok())
 }
 
-/// Send `asked`'s page down `stream` each time it would be drawn otherwise,
-/// until the reader goes.
-fn send_changes(answering: &Answering, stream: &TcpStream, asked: &Asked, since: Option<u64>) {
-    const HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
-        Cache-Control: no-store\r\nX-Accel-Buffering: no\r\n\r\n";
-    if http::send(stream, HEAD.as_bytes(), PATIENCE).is_err() {
+/// Send `asked`'s page down `stream` in `encoding` each time it would be
+/// drawn otherwise, until the reader goes.
+fn send_changes(
+    answering: &Answering,
+    stream: &TcpStream,
+    asked: &Asked,
+    since: Option<u64>,
+    encoding: Encoding,
+) {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+         Cache-Control: no-store\r\nX-Accel-Buffering: no\r\n{}\r\n",
+        encoding.headers()
+    );
+    if http::send(stream, head.as_bytes(), PATIENCE).is_err() {
         return;
     }
+    let mut parts = Parts::new(encoding);
     let mut seen: Option<DrawnFrom> = since.map(|change| (change, false));
     let mut sent: Option<Vec<String>> = None;
     loop {
         let Some((held, from)) = answering.latest.after(seen, Instant::now() + QUIET) else {
-            if http::send(stream, b":\n\n", PATIENCE).is_err() {
+            if http::send(stream, &parts.encode(b":\n\n"), PATIENCE).is_err() {
                 return;
             }
             continue;
@@ -123,7 +134,7 @@ fn send_changes(answering: &Answering, stream: &TcpStream, asked: &Asked, since:
         let Some(event) = event else {
             continue;
         };
-        if http::send(stream, event.as_bytes(), PATIENCE).is_err() {
+        if http::send(stream, &parts.encode(event.as_bytes()), PATIENCE).is_err() {
             return;
         }
         sent = Some(page);

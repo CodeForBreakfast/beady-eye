@@ -22,7 +22,7 @@ use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes::Heard;
 use crate::collect::environment::EnvironmentCache;
-use crate::collect::http::{self, close, head, Head, Patient, Unread};
+use crate::collect::http::{self, close, head, Encoding, Head, Patient, Unread};
 use crate::collect::run::RealRunner;
 use crate::collect::watched::Through;
 use crate::config::{Config, Poll};
@@ -378,6 +378,7 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
         deadline: Instant::now() + PATIENCE,
     };
     let read = head(&mut stream, &mut Vec::new());
+    let encoding = read.as_ref().map_or(Encoding::Identity, Head::encoding);
     if let Ok(head) = &read {
         let kept_current = answering.hosts.allow(head.only("Host")) && live::asks_for_changes(head);
         if let Some(asked) = kept_current.then(|| Asked::of(&head.target)).flatten() {
@@ -390,7 +391,14 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
     else {
         return;
     };
-    reply(&stream.stream, status, kind, body.as_bytes());
+    http::reply_in(
+        &stream.stream,
+        status,
+        kind,
+        body.as_bytes(),
+        encoding,
+        PATIENCE,
+    );
     close(stream.stream, stream.deadline);
 }
 
