@@ -852,7 +852,7 @@ impl Drawing<'_> {
                 tied.beads.len()
             ));
         }
-        html.push_str("</h3><ul>");
+        html.push_str("</h3><ul role=\"list\">");
         for related in tied.beads.clone().filter_map(|at| named.get(&at)) {
             html.push_str("<li>");
             if !self.related(html, related) {
@@ -5079,6 +5079,18 @@ mod tests {
             ends(named[2][1], "confirm the wedges are gone smt-4kd3p.7"),
             "{named:?}"
         );
+    }
+
+    /// A list of related beads says it is a list to a reader who hears the
+    /// page, though it draws no bullets. Safari takes the list's role away
+    /// from a list styled without them.
+    #[test]
+    fn a_list_of_related_beads_keeps_its_role_without_bullets() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        let page = inside(&html, "page");
+        let lists = page.matches("<section class=\"tied\">").count();
+        assert!(lists > 0, "{page}");
+        assert_eq!(page.matches("<ul role=\"list\">").count(), lists, "{page}");
     }
 
     /// A bead with no description or notes still has its grid, once, and
