@@ -56,6 +56,9 @@ impl Browser {
                 home.join("chromium").display()
             ))
             .env("HOME", home)
+            // Its singleton socket goes under TMPDIR, which the flake makes too
+            // long for a socket's path; the home is short enough.
+            .env("TMPDIR", home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(File::create(&said).expect("the browser's log is ours to write"));
