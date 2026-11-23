@@ -915,7 +915,7 @@ body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
-.forest{padding:8px 0;min-width:0;overflow-x:auto}\
+.forest{padding:8px 0;min-width:0;overflow-x:clip}\
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box;\
 width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
@@ -948,8 +948,9 @@ vertical-align:top;width:100%;white-space:normal}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
 .page .head .title{font-family:var(--display);font-weight:600}\
 .close{display:inline-block;margin-bottom:8px}\
-.line.heading{align-items:baseline;flex-wrap:wrap;gap:4px 12px;width:auto;padding-block:14px 8px;margin-bottom:4px;\
-border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
+html{scroll-padding-top:44px}\
+.line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
+padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
 .line.heading:not(:first-child){margin-top:18px}\
 .heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
@@ -1066,11 +1067,12 @@ nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([v
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;height:auto;padding:8px 12px;border-radius:0;\
 background:var(--surface);border-bottom:1px solid var(--line)}\
-html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
+html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:96px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
+body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))) .line.heading{top:52px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
 footer .notice{padding:9px 16px}\
-.line.heading{gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
+.line.heading{gap:4px 10px;margin-bottom:0}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
@@ -1197,7 +1199,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const drawn = new DOMParser().parseFromString(text, "text/html");
     const coming = new Set(marks(drawn).map(mark));
     const before = marks();
-    const top = before.findIndex((at) => at.getBoundingClientRect().bottom > 0);
+    const top = before.findIndex((at) => !at.matches(".heading") && at.getBoundingClientRect().bottom > 0);
     const held = top < 0 ? null : before.slice(top).find((at) => coming.has(mark(at)));
     const kept = held && [mark(held), held.getBoundingClientRect().top];
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
@@ -3141,6 +3143,40 @@ mod tests {
         terminal.apply(Action::FocusForest);
         assert_eq!(page_lines(&whole), terminal_lines(&terminal));
         assert!(whole.contains(phrase::only_this_tree()), "{whole}");
+    }
+
+    /// Under the band saying one tree is shown, the project's heading counts
+    /// that tree rather than the whole project.
+    #[test]
+    fn a_heading_over_one_tree_counts_that_tree() {
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&key("smt-4kd3p.6"))).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+
+        assert_eq!(
+            page_lines(&rooted)[0],
+            format!("▾ summit-works {READ} 0 of 3 done")
+        );
+    }
+
+    /// A project's heading is a tinted band that stays at the top of the
+    /// window while its trees scroll. A box between it and the window that
+    /// scrolls on its own would hold it there instead, and it would never
+    /// stick.
+    #[test]
+    fn a_projects_heading_is_a_tinted_band_that_sticks_to_the_top_of_the_window() {
+        let rule = |selector: &str| {
+            let at = STYLE.find(&format!("{selector}{{")).expect(selector);
+            &STYLE[at..at + STYLE[at..].find('}').expect("a rule ends")]
+        };
+        let heading = rule(".line.heading");
+        for said in ["position:sticky", "top:0", "background:var(--sunk)"] {
+            assert!(heading.contains(said), "{heading}");
+        }
+        let forest = rule(".forest");
+        assert!(!forest.contains("auto") && !forest.contains("scroll"), "{forest}");
     }
 
     /// The ready list keeps to the tree the forest is rooted at, as it does

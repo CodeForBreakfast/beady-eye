@@ -19,12 +19,12 @@ use std::sync::Arc;
 
 use crate::config;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Node as Bead, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::{Link, OrphanedDependency};
 use crate::model::types::Edge;
 use crate::view::draw::identity_widths;
 use crate::view::lines::{
-    links_below, marker, notes_of, prefix, root_key, way_below, BeadFacts, Content, Group,
+    beneath, links_below, marker, notes_of, prefix, root_key, way_below, BeadFacts, Content, Group,
     GroupKind, Item, Line, Note, Place, ProjectLine, Unread, INDENT,
 };
 use crate::view::row::{self, Shut, Widths};
@@ -277,6 +277,27 @@ pub(super) fn walked<'a>(snapshot: &'a Snapshot, rooted: &[Rooted]) -> Vec<(&'a 
         );
     }
     drawn
+}
+
+/// The trees drawn from the beads `project`'s line heads while the forest is
+/// rooted: each focused bead and everything beneath it, counted once, which
+/// is the rule each focused bead's own progress keeps.
+fn rooted_counts(snapshot: &Snapshot, rooted: &[Rooted], project: &str) -> Counts {
+    Counts::over(
+        rooted
+            .iter()
+            .filter(|rooted| rooted.place.tree.project == project)
+            .filter_map(|rooted| {
+                let tree = snapshot.tree(&rooted.place.tree)?;
+                let (&at, above) = rooted.way.as_ref().ok()?.split_last()?;
+                Some(
+                    std::iter::once(at)
+                        .chain(beneath(tree, at, above))
+                        .map(|node| &tree.beads[node]),
+                )
+            })
+            .flatten(),
+    )
 }
 
 fn group_of(
@@ -537,7 +558,11 @@ impl<'a> Layout<'a> {
             place: None,
             content: Content::Project(ProjectLine {
                 every_root_read: self.snapshot.every_root_read(&project),
-                counts: self.facts.project(&project),
+                counts: if self.rooted.is_empty() {
+                    self.facts.project(&project)
+                } else {
+                    rooted_counts(self.snapshot, self.rooted, &project)
+                },
                 project: project.clone(),
             }),
         };

@@ -306,6 +306,35 @@ fn no_line_counts_the_seats_and_anomalies_in_the_held_back_roots() {
     );
 }
 
+/// The progress a project's line gives.
+fn project_progress(forest: &Forest, project: &str) -> Progress {
+    forest
+        .lines()
+        .iter()
+        .find_map(|line| match &line.content {
+            Content::Project(line) if line.project == project => Some(Progress {
+                finished: line.counts.finished,
+                total: line.counts.total,
+            }),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{project} has no line"))
+}
+
+/// Rooted at a bead, a project's line counts the tree it heads rather than
+/// the whole project, so it gives the same progress as that bead's own row.
+#[test]
+fn a_project_line_rooted_at_a_bead_counts_the_tree_it_heads() {
+    let mut forest = flatten(snapshot());
+    let whole = project_progress(&forest, "dunwich");
+    focus_on(&mut forest, "dun-7");
+
+    let heads = project_progress(&forest, "dunwich");
+
+    assert_eq!(Some(heads), row_of(&forest, "dun-7").progress);
+    assert_ne!(heads, whole);
+}
+
 /// The reader asked to finish the bead they pressed the key on, so that is
 /// the bead the forest they come back to is standing on, wherever they had
 /// walked to underneath it.
