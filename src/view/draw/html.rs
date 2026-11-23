@@ -770,11 +770,12 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
 /// block's span `from`. One that `marks` names as a link is a link, where it
 /// points somewhere a page may link to, and one it names as a literal is in
 /// its colour as written. One in the code tone is marked as code. A flag in
-/// a line's state holds its words apart from its icon, and is titled with
-/// them, so a page short of room can draw the icon alone.
+/// a line's state, drawn in the attention style, holds its words apart from
+/// its icon, and is titled with them, so a page short of room can draw the
+/// icon alone.
 fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
     for (at, span) in spans.iter().enumerate() {
-        let flagged = (block == Block::State)
+        let flagged = (block == Block::State && span.style == palette::ATTENTION)
             .then(|| span.content.strip_prefix(WARNING))
             .flatten();
         let class = match flagged {
@@ -1245,11 +1246,16 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 });"##;
 
 /// The part of the page's script that closes an open bead on Escape, as
-/// its close link does. Escape is left to a field being typed in and to an
-/// open menu.
+/// its close link does. Escape is left to a field being typed in, and closes
+/// an open menu before the bead.
 const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || event.defaultPrevented || event.target.matches?.("input,textarea,select")
-    || document.querySelector("details[open]")) return;
+  if (event.key !== "Escape" || event.defaultPrevented || event.target.matches?.("input,textarea,select")) return;
+  const menu = document.querySelector("details[open]");
+  if (menu) {
+    menu.open = false;
+    menu.querySelector("summary").focus();
+    return;
+  }
   const close = document.querySelector("aside>a.close");
   if (close) location.assign(close.href);
 });"##;
@@ -1732,6 +1738,16 @@ mod tests {
         );
     }
 
+    /// A badge whose own words open with the warning sign is not a flag, so
+    /// its words stay drawn beside an open bead.
+    #[test]
+    fn a_badge_worded_like_a_flag_keeps_its_words() {
+        let mut html = String::new();
+        let badge = Span::raw(format!("{WARNING} Needs review"));
+        spans(&mut html, &[badge], Block::State, &[], 0);
+        assert!(!html.contains("flag"), "{html}");
+    }
+
     /// The rules the page's style sets under the media query `query`.
     fn rules_under(query: &str) -> &'static str {
         let opened = format!("@media {query}{{");
@@ -1809,6 +1825,19 @@ mod tests {
         assert!(html.contains(ESCAPE_CLOSES), "{html}");
         assert!(ESCAPE_CLOSES.contains("querySelector(\"aside>a.close\")"));
         assert!(html.contains("<aside><a class=\"close\" href=\""), "{html}");
+    }
+
+    /// A menu does not close itself on Escape, so Escape closes an open
+    /// menu first, and the next Escape closes the bead.
+    #[test]
+    fn escape_closes_an_open_menu_before_the_bead() {
+        let menu = ESCAPE_CLOSES
+            .find("menu.open = false")
+            .expect("Escape closes the menu");
+        let close = ESCAPE_CLOSES
+            .find("location.assign")
+            .expect("Escape closes the bead");
+        assert!(menu < close, "{ESCAPE_CLOSES}");
     }
 
     /// A read gone unanswered wears the warning's colour on its mark.
