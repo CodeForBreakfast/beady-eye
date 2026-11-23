@@ -360,46 +360,86 @@ pub fn failed_project(failed: &FailedProject) -> String {
 
 pub fn anomaly(anomaly: &Anomaly) -> String {
     match anomaly {
-        Anomaly::OrphanClaim { refused } => orphan_claim(refused.as_ref()),
+        Anomaly::OrphanClaim { refused } => format!(
+            "claimed · {}",
+            refusal(refused.as_ref()).unwrap_or_else(|| "no live pane".to_string())
+        ),
         Anomaly::StalePane => "closed · its pane is still open".to_string(),
-        Anomaly::StaleClaim { days } => {
-            let day = if *days == 1 { "day" } else { "days" };
-            format!("claimed · untouched for {days} {day}")
-        }
+        Anomaly::StaleClaim { days } => format!("claimed · {}", untouched_for(*days)),
     }
 }
 
-/// Why a claim has no pane, in the words of the disagreement that refused it.
+/// Every rule that fired on a bead, said as one sentence on a web page's row,
+/// where the terminal says each rule apart. `None` where none fired.
+///
+/// A claim the join refused gives the refusal as its reason, in the
+/// terminal's words. One with no reason says what a reader of the page can
+/// see, that no agent is on it, where the terminal names the pane.
+pub fn flag(anomalies: &[Anomaly]) -> Option<String> {
+    if anomalies.contains(&Anomaly::StalePane) {
+        return Some("Closed, but its pane is still open".to_string());
+    }
+    let untouched = anomalies.iter().find_map(|anomaly| match anomaly {
+        Anomaly::StaleClaim { days } => Some(untouched_for(*days)),
+        _ => None,
+    });
+    let orphaned = anomalies.iter().find_map(|anomaly| match anomaly {
+        Anomaly::OrphanClaim { refused } => {
+            Some(refusal(refused.as_ref()).unwrap_or_else(|| "no agent on it".to_string()))
+        }
+        _ => None,
+    });
+    let said: Vec<String> = untouched.into_iter().chain(orphaned).collect();
+    (!said.is_empty()).then(|| format!("Claimed, {}", said.join(", ")))
+}
+
+fn untouched_for(days: i64) -> String {
+    let day = if days == 1 { "day" } else { "days" };
+    format!("untouched for {days} {day}")
+}
+
+/// Why a claim has no pane, in the words of the disagreement that refused it,
+/// where one did.
 ///
 /// The bead's own row is the first place a reader looks, so the reason belongs
 /// on it rather than only in the conflicts group at the foot of the forest.
 /// Each phrase says what to change: a directory no project covers is a config
 /// entry, and a pane several beads name is a key one of them should have
 /// cleared.
-fn orphan_claim(refused: Option<&Conflict>) -> String {
-    match refused {
-        Some(Conflict::PaneInAnotherProject { pane_project, .. }) => format!(
-            "claimed · its pane is in {}",
+fn refusal(refused: Option<&Conflict>) -> Option<String> {
+    match refused? {
+        Conflict::PaneInAnotherProject { pane_project, .. } => Some(format!(
+            "its pane is in {}",
             pane_project.as_deref().unwrap_or("no configured project")
-        ),
-        Some(Conflict::SeveralBeadsNameOnePane { beads, .. }) => {
-            format!("claimed · {} beads claim its pane", beads.len())
+        )),
+        Conflict::SeveralBeadsNameOnePane { beads, .. } => {
+            Some(format!("{} beads claim its pane", beads.len()))
         }
-        Some(Conflict::PaneIdInSeveralSessions { sessions, .. }) => {
-            format!("claimed · its pane id is in {} sessions", sessions.len())
+        Conflict::PaneIdInSeveralSessions { sessions, .. } => {
+            Some(format!("its pane id is in {} sessions", sessions.len()))
         }
-        Some(Conflict::SeveralBeadsNameOneAgentSession { beads, .. }) => {
-            format!("claimed · {} beads claim its agent session", beads.len())
+        Conflict::SeveralBeadsNameOneAgentSession { beads, .. } => {
+            Some(format!("{} beads claim its agent session", beads.len()))
         }
-        Some(Conflict::AgentSessionInSeveralPanes { panes, .. }) => {
-            format!("claimed · its agent session is in {} panes", panes.len())
+        Conflict::AgentSessionInSeveralPanes { panes, .. } => {
+            Some(format!("its agent session is in {} panes", panes.len()))
         }
         // Neither of these ever gets here. A refusal sends the reader to the
         // disagreement's row to find the pane the claim was for, and these two
         // name no one pane, so `join::resolve` refuses no claim with either.
-        Some(Conflict::BeadAndPaneDisagree { .. } | Conflict::SeveralPanesNameOneBead { .. })
-        | None => "claimed · no live pane".to_string(),
+        Conflict::BeadAndPaneDisagree { .. } | Conflict::SeveralPanesNameOneBead { .. } => None,
     }
+}
+
+/// A live agent on a bead, as a web page's row names it in a chip.
+pub fn agent_chip() -> &'static str {
+    "agent"
+}
+
+/// A bead some agent besides the one on its claim watches, as a web page's
+/// row names it in a chip where no agent is on the bead itself.
+pub fn watched_chip() -> &'static str {
+    "watched"
 }
 
 pub fn conflict(conflict: &Conflict) -> String {
@@ -513,6 +553,11 @@ pub fn unreachable(why: &Unreachable) -> String {
 pub fn elided(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
     format!("{count} more finished {bead} with no agent")
+}
+
+/// The same run as a web page's row says it, by its count alone.
+pub fn finished_run(count: usize) -> String {
+    format!("{count} finished")
 }
 
 /// Work still to do behind a closed line resting shut over it.
@@ -2156,6 +2201,57 @@ mod tests {
     #[test]
     fn a_stale_claim_says_how_long_it_has_sat() {
         assert!(anomaly(&Anomaly::StaleClaim { days: 58 }).contains("58"));
+    }
+
+    /// A web page's row says every rule that fired as one sentence, in the
+    /// same order whichever order the rules fired in.
+    #[test]
+    fn a_web_flag_says_every_rule_as_one_sentence() {
+        let stale = Anomaly::StaleClaim { days: 58 };
+        let orphan = Anomaly::OrphanClaim { refused: None };
+
+        assert_eq!(flag(&[]), None);
+        assert_eq!(
+            flag(std::slice::from_ref(&stale)).as_deref(),
+            Some("Claimed, untouched for 58 days")
+        );
+        assert_eq!(
+            flag(std::slice::from_ref(&orphan)).as_deref(),
+            Some("Claimed, no agent on it")
+        );
+        let both = Some("Claimed, untouched for 58 days, no agent on it");
+        assert_eq!(flag(&[stale.clone(), orphan.clone()]).as_deref(), both);
+        assert_eq!(flag(&[orphan, stale]).as_deref(), both);
+        assert_eq!(
+            flag(&[Anomaly::StalePane]).as_deref(),
+            Some("Closed, but its pane is still open")
+        );
+    }
+
+    /// A refused claim gives its reason on a web page in the terminal's words.
+    #[test]
+    fn a_web_flag_on_a_refused_claim_gives_the_terminals_reason() {
+        let refused = Anomaly::OrphanClaim {
+            refused: Some(Conflict::PaneInAnotherProject {
+                bead: key("smt-4kd3p.20"),
+                pane: pane_key("wCM:p9"),
+                pane_project: Some("meadow".into()),
+            }),
+        };
+        let terminal = anomaly(&refused);
+        let reason = terminal.strip_prefix("claimed · ").expect("a claim");
+
+        assert_eq!(
+            flag(&[refused]).as_deref(),
+            Some(format!("Claimed, {reason}").as_str())
+        );
+    }
+
+    /// A web page's row says a run of finished beads by its count alone.
+    #[test]
+    fn a_web_run_of_finished_beads_says_its_count_alone() {
+        assert_eq!(finished_run(13), "13 finished");
+        assert_eq!(elided(13), "13 more finished beads with no agent");
     }
 
     /// The whole of what this sentence is for: the fold is shut over the

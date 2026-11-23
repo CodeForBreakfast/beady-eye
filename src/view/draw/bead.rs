@@ -16,21 +16,21 @@ use crate::view::row::{self, Cell, Layout, Row, Widths, AGENT, WARNING};
 use super::tone::{status_style, tone};
 use super::{beside, done, structure, Reference};
 
-/// A run of closed siblings said as a count, carrying the glyph each of them
-/// would carry on a line of its own.
+/// A run of closed siblings said as `said`, a count, carrying the glyph each
+/// of them would carry on a line of its own.
 ///
 /// `lines::split` builds a run out of closed beads and nothing else, so this
 /// is not a summary over mixed states — it is the one state every member
 /// holds. It goes through `status_glyph` and `status_style` exactly as a
 /// bead's does, so a run cannot drift away from the beads it stands for.
-pub(super) fn elided_run(prefix: &str, count: usize) -> Fitted {
+pub(super) fn elided_run(prefix: &str, said: &str) -> Fitted {
     let status = Status::Closed;
     let glyph = row::status_glyph(&status);
     Fitted::new(
         vec![
             structure(prefix),
             Span::styled(glyph.to_string(), status_style(&status)),
-            Span::raw(format!(" {}", phrase::elided(count))),
+            Span::raw(format!(" {said}")),
         ],
         Vec::new(),
         Vec::new(),
@@ -65,10 +65,17 @@ pub(super) fn orphaned_line(
 /// the forest, so a column of them lines up under one another and the titles
 /// start together.
 pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layout) -> Fitted {
+    said_line(row, prefix, widths, layout, Voice::Terminal)
+}
+
+/// One bead's line as `bead_line` draws it, with its agent and anomalies
+/// said in `voice`.
+fn said_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layout, voice: Voice) -> Fitted {
     let walk = Walk {
         row,
         layout,
         widths,
+        voice,
     };
     let identity = walk.block(
         Block::Identity,
@@ -99,7 +106,8 @@ pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layou
 
 /// The cells a reference to this row's bead is drawn from, the glyph, the id
 /// and the title, each as this row draws it, then the row's progress where
-/// the layout draws it, and the row without any of them.
+/// the layout draws it, and the row without any of them. The row says its
+/// agent and anomalies in a web page's words.
 ///
 /// The id is drawn through the forest's width for it, as the identity draws
 /// it, so the titles of a column of references start together.
@@ -109,11 +117,12 @@ pub(super) fn referenced_line(
     widths: &Widths,
     layout: &Layout,
 ) -> (Reference, Option<row::Progress>, Fitted) {
-    const REFERENCE: [Cell; 4] = [Cell::Glyph, Cell::Id, Cell::Title, Cell::Progress];
+    const DRAWN_APART: [Cell; 4] = [Cell::Glyph, Cell::Id, Cell::Title, Cell::Progress];
     let walk = Walk {
         row,
         layout,
         widths,
+        voice: Voice::Page,
     };
     let drawn = |cell: Cell| {
         let mut walked = Walked::opening(Block::Identity, Vec::new());
@@ -130,7 +139,7 @@ pub(super) fn referenced_line(
     let without = |cells: &[Cell]| {
         cells
             .iter()
-            .filter(|cell| !REFERENCE.contains(cell))
+            .filter(|cell| !DRAWN_APART.contains(cell))
             .cloned()
             .collect()
     };
@@ -143,7 +152,11 @@ pub(super) fn referenced_line(
     let progress = row
         .progress
         .filter(|_| layout.cells().any(|cell| *cell == Cell::Progress));
-    (reference, progress, bead_line(row, prefix, widths, &rest))
+    (
+        reference,
+        progress,
+        said_line(row, prefix, widths, &rest, Voice::Page),
+    )
 }
 
 /// How wide each identity cell of `layout` draws on this row, in columns as
@@ -153,6 +166,7 @@ pub(crate) fn identity_widths(row: &Row, layout: &Layout) -> Widths {
         row,
         layout,
         widths: &Widths::default(),
+        voice: Voice::Terminal,
     };
     layout
         .identity
@@ -166,6 +180,16 @@ struct Walk<'a> {
     row: &'a Row,
     layout: &'a Layout,
     widths: &'a Widths,
+    voice: Voice,
+}
+
+/// Whose words a row's agent and anomalies are said in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Voice {
+    Terminal,
+    /// A web page's: a chip naming an agent, and one sentence for every rule
+    /// that fired.
+    Page,
 }
 
 /// One block of a row as the walk filled it: its spans, and which of them
@@ -265,6 +289,29 @@ impl Walk<'_> {
             Cell::Progress => {
                 if let Some(progress) = row.progress {
                     walked.cell(Span::raw(done(progress.finished, progress.total)));
+                }
+            }
+            Cell::Agent if self.voice == Voice::Page => {
+                let chip = match (&row.agent, row.watched) {
+                    (Some(_), _) => Some(phrase::agent_chip()),
+                    (None, true) => Some(phrase::watched_chip()),
+                    (None, false) => None,
+                };
+                if let Some(chip) = chip {
+                    let at = walked.cell(Span::styled(chip.to_string(), palette::AGENT));
+                    walked.marks.push(Mark {
+                        block: walked.block,
+                        at,
+                        is: Marked::Badge,
+                    });
+                }
+            }
+            Cell::Anomalies if self.voice == Voice::Page => {
+                if let Some(said) = phrase::flag(&row.anomalies) {
+                    walked.cell(Span::styled(
+                        format!("{WARNING} {said}"),
+                        palette::ATTENTION,
+                    ));
                 }
             }
             Cell::Agent => {
