@@ -1673,7 +1673,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}\
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
-nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
+nav{order:1;position:sticky;bottom:0;z-index:3;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:var(--size-row)}\
 nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>:is(.brand,.check){display:none}\
@@ -4984,6 +4984,23 @@ mod tests {
             let of_a_row = selector.contains(".bar") && !selector.contains(".heading");
             assert!(!(of_a_row && body.contains("display:none")), "{rule}}}");
         }
+    }
+
+    /// On a phone the lists menu opens as a sheet inside the bar, so the bar
+    /// stacks above a project's sticky header or the header covers the sheet.
+    #[test]
+    fn a_phone_menu_sheet_stacks_above_a_projects_sticky_header() {
+        let z_index = |rules: &str, selector: &str| -> i32 {
+            rules
+                .split('}')
+                .find_map(|rule| rule.trim().strip_prefix(selector)?.strip_prefix('{'))
+                .and_then(|body| body.split("z-index:").nth(1))
+                .and_then(|after| after.split([';', '}']).next()?.parse().ok())
+                .unwrap_or_else(|| panic!("{selector} sets a z-index"))
+        };
+        let bar = z_index(rules_under("(max-width:720px)"), "nav");
+        let header = z_index(STYLE, ".line.heading");
+        assert!(bar > header, "the bar at {bar}, a header at {header}");
     }
 
     /// A pill leaves wrapping to its row, so a long badge wraps on a phone
