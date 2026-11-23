@@ -1032,7 +1032,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.left>.rails+span{min-width:0}\
 .line i,.line b,.line u{width:14px}.line .deep{display:none}\
 .line i::before,.line u::before,.line u::after{left:10px}\
-.line .rails::after{align-self:flex-start;width:22px;height:20px;line-height:20px}\
+.line .rails::after,.line a.fold::after{align-self:flex-start;width:22px;height:20px;line-height:20px}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
@@ -2737,6 +2737,23 @@ mod tests {
         assert!(!masked.is_empty(), "{STYLE}");
         for selector in masked {
             assert!(selector.ends_with("::after"), "{selector}");
+        }
+    }
+
+    /// A phone sizes a fold's chevron as it sizes the box after any rails,
+    /// with a selector as specific as the one that sizes it on a desktop,
+    /// so a row that folds starts its title where a row that does not does.
+    #[test]
+    fn a_phone_sizes_a_folds_chevron_as_it_sizes_a_rails_box() {
+        let phone = &STYLE[STYLE
+            .find("@media (max-width:720px){")
+            .expect("a phone's rules")..];
+        let sized = phone
+            .split('}')
+            .find(|rule| rule.contains("width:22px"))
+            .expect("a phone sizes the box after the rails");
+        for selector in [".line .rails::after", ".line a.fold::after"] {
+            assert!(sized.contains(selector), "{sized}");
         }
     }
 
