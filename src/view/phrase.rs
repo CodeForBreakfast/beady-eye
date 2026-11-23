@@ -232,28 +232,12 @@ pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
 }
 
-/// What a page that is drawn once says before the time a project's rows
-/// were read. An age would stop being true the moment the page was left
-/// open, with nothing on it to say so.
-pub fn read_at() -> &'static str {
-    "read at"
+/// What a page says before how long ago a project's rows were read.
+pub fn read() -> &'static str {
+    "read"
 }
 
-/// An instant as a time of day at `offset`, and the day too where it falls
-/// on another day than `now`. A page's script says it again in the
-/// reader's own zone, in the same shape.
-pub fn time_of_day(at: DateTime<Utc>, offset: FixedOffset, now: DateTime<Utc>) -> String {
-    let at = at.with_timezone(&offset);
-    let format = if at.date_naive() == now.with_timezone(&offset).date_naive() {
-        "%H:%M"
-    } else {
-        "%H:%M on %-d %b"
-    };
-    at.format(format).to_string()
-}
-
-/// The whole of an instant at `offset`: the seconds, the day, the year and
-/// the zone that `time_of_day` leaves out.
+/// The whole of an instant at `offset`, to the second and with its zone.
 pub fn instant_in_full(at: DateTime<Utc>, offset: FixedOffset) -> String {
     at.with_timezone(&offset)
         .format("%H:%M:%S %:z on %-d %B %Y")

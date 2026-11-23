@@ -41,10 +41,10 @@ pub struct Answer {
     pub html: String,
 }
 
-/// When a page is drawn, the offset from UTC it says a time at where the
-/// browser runs no script to say it in the reader's own zone, the reads out
-/// as it is drawn, and the change to what the server holds that
-/// it is drawn from, which its script asks for the changes since.
+/// When a page is drawn, the reads out as it is drawn, and the change to
+/// what the server holds that it is drawn from, which its script asks for
+/// the changes since. `offset` is the zone a browser that runs no script
+/// sees a time in full in.
 #[derive(Debug, Clone)]
 pub struct Drawn {
     pub at: DateTime<Utc>,
@@ -55,9 +55,8 @@ pub struct Drawn {
 
 /// The page `asked` names, drawn from `snapshot` under `layout`.
 ///
-/// A page may be left open with no script to keep it current, so each
-/// project's line says the time of day it was read at rather than how long
-/// ago, which the terminal says because it redraws itself as the age moves.
+/// Each project's line says how long ago it was read, as the terminal does,
+/// and the page's script keeps that true on a page left open.
 pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) -> Answer {
     let shown = asked.forest(snapshot, layout);
     let forest = &shown.forest;
@@ -340,13 +339,16 @@ impl Drawing<'_> {
                 "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
                 escaped(phrase::mark(how_fresh, reads.now))
             ));
-            if let Some(at) = how_fresh.read_at {
+            if let (Some(ago), Some(at)) = (
+                phrase::last_read(how_fresh, reads.now),
+                how_fresh.read_at,
+            ) {
                 html.push_str(&format!(
                     " {} <time datetime=\"{}\" title=\"{}\">{}</time>",
-                    escaped(phrase::read_at()),
+                    escaped(phrase::read()),
                     at.to_rfc3339(),
                     escaped(&phrase::instant_in_full(at, offset)),
-                    escaped(&phrase::time_of_day(at, offset, reads.now))
+                    escaped(&ago)
                 ));
             }
             html.push_str("</span>");
@@ -1089,30 +1091,31 @@ border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)
 width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
 .bead .g.closed::after{content:none}}";
 
-/// The part of the page's script that says each time on the page again in
-/// the reader's own zone, since what a browser asks the server for never
-/// says which zone the reader is in. It says it in the shapes
-/// `phrase::time_of_day` and `phrase::instant_in_full` draw, as the page
-/// opens and on each page that keeps it current.
-const IN_READERS_ZONE: &str = r##"const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
-  "August", "September", "October", "November", "December"];
+/// The part of the page's script that says each time on the page in the
+/// reader's own words and zone: how long ago, and the instant in full on
+/// hover. A request never says which zone its reader is in, so the server
+/// cannot. It says them as the page opens, on each page that keeps it
+/// current, and again as they age, from the browser's clock alone.
+const IN_READERS_ZONE: &str = r##"const LARGER = [["minute", 60], ["hour", 60], ["day", 24]];
+const ago = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+const inFull = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
 const inReadersZone = (on) => {
-  const two = (number) => String(number).padStart(2, "0");
-  const today = new Date().toDateString();
   for (const time of on.querySelectorAll("time[datetime]")) {
     const at = new Date(time.getAttribute("datetime"));
     if (isNaN(at)) continue;
-    const clock = two(at.getHours()) + ":" + two(at.getMinutes());
-    const month = MONTHS[at.getMonth()];
-    time.textContent = at.toDateString() === today
-      ? clock
-      : `${clock} on ${at.getDate()} ${month.slice(0, 3)}`;
-    const east = -at.getTimezoneOffset();
-    const zone = (east < 0 ? "-" : "+") + two(Math.floor(Math.abs(east) / 60)) + ":" + two(Math.abs(east) % 60);
-    time.title = `${clock}:${two(at.getSeconds())} ${zone} on ${at.getDate()} ${month} ${at.getFullYear()}`;
+    let since = Math.max(0, (Date.now() - at) / 1000), unit = "second";
+    for (const [next, per] of LARGER) {
+      if (since < per) break;
+      since /= per;
+      unit = next;
+    }
+    time.textContent = ago.format(-Math.floor(since), unit);
+    time.title = inFull.format(at);
   }
 };
 addEventListener("DOMContentLoaded", () => inReadersZone(document));
+setInterval(() => document.hidden || inReadersZone(document), 15000);
+document.addEventListener("visibilitychange", () => document.hidden || inReadersZone(document));
 "##;
 
 /// The page's one script, which keeps it current. It asks the page's own
@@ -1333,7 +1336,7 @@ mod tests {
     /// What the terminal says of the project's read, half a minute old, and
     /// what the page says in its place.
     const AGO: &str = "✓ 30s ago";
-    const READ_AT: &str = "✓ read at 11:21";
+    const READ: &str = "✓ read 30s ago";
 
     fn page_at(target: &str) -> Answer {
         let asked = Asked::of(target).expect("a page is at the address");
@@ -1432,8 +1435,8 @@ mod tests {
     }
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
-    /// the project's line said as the page's heading says it: the read dated
-    /// and the fraction done in words.
+    /// the project's line said as the page's heading says it: "read" before
+    /// the read's age, and the fraction done in words.
     fn terminal_lines(forest: &Forest) -> Vec<String> {
         let rows = frame_of(forest, 160, 60).rows();
         rows[..forest.lines().len()]
@@ -1443,7 +1446,7 @@ mod tests {
                 if !row.contains(AGO) {
                     return row;
                 }
-                row.replace(AGO, READ_AT)
+                row.replace(AGO, READ)
                     .split(' ')
                     .map(|word| match word.split_once('/') {
                         Some((done, of)) => format!("{done} of {of} done"),
@@ -1572,17 +1575,16 @@ mod tests {
         assert_eq!(page_lines(&html), terminal_lines(&terminal_forest(&[])));
     }
 
-    /// A page left open says the same thing for as long as it is open, so
-    /// it says when the project was read rather than how long ago, behind
-    /// the same mark, and says how far through it is in words beside a bar.
+    /// A project's heading says how long ago it was read behind the same mark
+    /// as the terminal, and says how far through it is in words beside a bar.
     #[test]
-    fn a_projects_heading_says_the_time_of_day_it_was_read_where_the_terminal_says_how_long_ago() {
+    fn a_projects_heading_says_how_long_ago_it_was_read_as_the_terminal_does() {
         let terminal = frame_of(&terminal_forest(&[]), 160, 60).rows();
         assert_eq!(words(&terminal[0]), format!("▾ summit-works {AGO} 3/9"));
         let html = page_at("/").html;
         assert_eq!(
             page_lines(&html)[0],
-            format!("▾ summit-works {READ_AT} 3 of 9 done")
+            format!("▾ summit-works {READ} 3 of 9 done")
         );
         assert!(lines_html(&html)[0].starts_with(" heading\""), "{html}");
         let heading = line_html(&html, 0);
@@ -1597,8 +1599,8 @@ mod tests {
         );
     }
 
-    /// The short time of day keeps the whole of the read, day and zone
-    /// included, for a reader whose page has been open since another day.
+    /// How long ago keeps the whole of the read, day and zone included, for a
+    /// reader who wants to know when it was.
     #[test]
     fn a_headings_read_time_holds_the_whole_date_and_zone() {
         let html = page_at("/").html;
@@ -1614,9 +1616,9 @@ mod tests {
         assert!(time.starts_with("<time datetime=\""), "{time}");
     }
 
-    /// A page drawn on another day than the read says which day it was.
+    /// A page drawn a day after the read says its age in days.
     #[test]
-    fn a_heading_read_on_another_day_than_the_page_is_drawn_says_the_day() {
+    fn a_heading_drawn_a_day_after_the_read_says_its_age_in_days() {
         let drawn = Drawn {
             at: drawn_at() + chrono::TimeDelta::days(1),
             ..drawing()
@@ -1624,7 +1626,7 @@ mod tests {
         let asked = Asked::of("/").expect("the forest");
         let html = page(ground(), &Layout::default(), &asked, drawn).html;
         assert!(
-            page_lines(&html)[0].contains("read at 11:21 on 30 Aug"),
+            page_lines(&html)[0].contains("read 1d ago"),
             "{}",
             page_lines(&html)[0]
         );
@@ -1641,7 +1643,7 @@ mod tests {
         let html = page(checked, &Layout::default(), &asked, drawing()).html;
         assert_eq!(
             page_lines(&html)[0],
-            format!("▾ summit-works {READ_AT} 3 of 9 done {WARNING} 1 bead to check")
+            format!("▾ summit-works {READ} 3 of 9 done {WARNING} 1 bead to check")
         );
         assert!(
             line_html(&html, 0).contains(&format!(
