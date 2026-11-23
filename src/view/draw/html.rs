@@ -959,9 +959,9 @@ border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 @media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}\
-.line>.bead>*{flex:none}.line>.bead>.title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}\
-.line>.bead~.state{margin-left:0}.line>.state>.prog{width:104px;justify-content:flex-end}}\
-.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);white-space:nowrap;\
+.line>.bead>*{flex:none}.line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}\
+.line>.bead~.state{margin-left:0}.line>.state>.prog{width:104px}}\
+.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
@@ -2827,9 +2827,11 @@ mod tests {
     }
 
     /// On a desktop a row fits the trees' width. Its title gives way and
-    /// ends in an ellipsis, before its id, and everything after the
-    /// reference sits together at the right, with the progress column a
-    /// fixed width at the end.
+    /// ends in an ellipsis, before its id, but keeps a few characters, so a
+    /// row too crowded for them scrolls rather than lose its title.
+    /// Everything after the reference sits together at the right, with the
+    /// progress column a fixed width at the end and its bar at the column's
+    /// start, so the bars line up whatever their fractions say.
     #[test]
     fn a_desktop_row_ellipsises_its_title_before_the_columns_at_its_right() {
         assert!(!STYLE.contains("max-content"), "{STYLE}");
@@ -2837,12 +2839,26 @@ mod tests {
         for rule in [
             ".line>.bead{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}",
             ".line>.bead>*{flex:none}",
-            ".line>.bead>.title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}",
+            ".line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}",
             ".line>.bead~.state{margin-left:0}",
-            ".line>.state>.prog{width:104px;justify-content:flex-end}",
+            ".line>.state>.prog{width:104px}",
         ] {
             assert!(desktop.contains(rule), "{desktop}");
         }
+    }
+
+    /// A pill leaves wrapping to its row, so a long badge wraps on a phone
+    /// rather than push the row wider than the screen.
+    #[test]
+    fn a_pill_wraps_where_its_row_does() {
+        let pill = STYLE
+            .split(".pill{")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next());
+        assert!(
+            pill.is_some_and(|rule| !rule.contains("white-space")),
+            "{STYLE}"
+        );
     }
 
     /// A badge a config gave a literal colour is drawn in that colour on the
