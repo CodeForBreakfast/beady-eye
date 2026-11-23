@@ -558,13 +558,15 @@ impl Drawing<'_> {
             let to_check = Some(List::ToCheck {
                 project: Some(project.project.clone()),
             });
+            let said = escaped(&format!(
+                "{WARNING} {}",
+                phrase::anomalies_beneath(counts.anomalies)
+            ));
             html.push_str(&format!(
-                "<a class=\"flag\" href=\"{}\">{}</a>",
+                "<a class=\"flag\" href=\"{}\" title=\"{said}\" aria-label=\"{said}\" \
+                 data-briefly=\"{}\">{said}</a>",
                 escaped(&self.asked.listing(to_check)),
-                escaped(&format!(
-                    "{WARNING} {}",
-                    phrase::anomalies_beneath(counts.anomalies)
-                ))
+                escaped(&phrase::anomalies_beneath_briefly(counts.anomalies))
             ));
         }
         html.push_str("</span></div>\n");
@@ -1535,13 +1537,16 @@ border-block:1px solid var(--line);white-space:normal;font-family:var(--body)}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
-padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
+padding-block:0;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
 .forest>section:not(:first-child){margin-top:18px}\
-.heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
+.heading .left{display:flex;align-items:center;flex:1000 1 5em;min-width:0;max-width:max-content}\
+.heading h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
 .heading h2{display:inline;margin:0;font:600 var(--size-heading) var(--display);color:var(--fg)}\
-.heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
+.heading .read{display:flex;align-items:center;flex:1 1 0}\
+.heading .read>[data-shown-once-older-than]{width:0;flex-grow:1;overflow:hidden;text-overflow:ellipsis;white-space:pre}\
+.heading .state{display:flex;flex:none;max-width:100%;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>*{white-space:nowrap}\
-.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
+.heading .state:has(>.unread){flex:0 1 auto}.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
 .heading .state a:hover{text-decoration:underline}\
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
@@ -1652,7 +1657,9 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line i::before,.line u::before,.line u::after{left:10px}\
 .line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after\
 {align-self:flex-start;width:32px;height:20px;line-height:20px}\
-.line a.fold{align-self:flex-start;width:32px;height:44px}\
+.line a.fold{align-self:flex-start;width:32px;height:44px}.line.heading a.fold{align-self:center;height:38px}\
+.heading .prog .bar{display:none}\
+.heading a.flag{font-size:0}.heading a.flag::before{content:attr(data-briefly);font-size:var(--size-detail)}\
 .line>:has(+.bead)>a.fold{place-items:start center;padding-top:9px}\
 .line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
@@ -4950,7 +4957,9 @@ mod tests {
     /// heading is not a bead's row, and its bar keeps its own width.
     #[test]
     fn a_desktop_row_ellipsises_its_title_before_the_columns_at_its_right() {
-        assert!(!STYLE.contains("max-content"), "{STYLE}");
+        for as_wide_as_its_content in ["{width:max-content", ";width:max-content"] {
+            assert!(!STYLE.contains(as_wide_as_its_content), "{STYLE}");
+        }
         let desktop = rules_under("(width>720px)");
         for rule in [
             ".line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}",
@@ -4966,16 +4975,14 @@ mod tests {
     }
 
     /// A phone row draws its progress as a desktop row does, the bar beside
-    /// the fraction.
+    /// the fraction. A project's band is not a row.
     #[test]
     fn a_phone_row_keeps_its_progress_bar() {
         let phone = rules_under("(max-width:720px)");
         for rule in phone.split('}') {
             let (selector, body) = rule.split_once('{').unwrap_or((rule, ""));
-            assert!(
-                !(selector.contains(".bar") && body.contains("display:none")),
-                "{rule}}}"
-            );
+            let of_a_row = selector.contains(".bar") && !selector.contains(".heading");
+            assert!(!(of_a_row && body.contains("display:none")), "{rule}}}");
         }
     }
 
@@ -6036,6 +6043,72 @@ mod tests {
             !forest.contains("auto") && !forest.contains("scroll"),
             "{forest}"
         );
+    }
+
+    /// A project's band is one line on any phone, so it keeps its height
+    /// while its mark and its read time change width. The read time takes
+    /// only the room left over, so it gives way first, cut short with an
+    /// ellipsis, while its mark keeps its width. The name gives way next, down
+    /// to a few letters, and the counts never do. Only counts that cannot fit
+    /// beside those few letters wrap to a line of their own, as a failed
+    /// tracker's error does, so nothing is clipped at any zoom and the name
+    /// stays. A name that shrank while the band had room would take a sliver
+    /// of a pixel and lose its last letters to an ellipsis, which the read
+    /// time's zero basis prevents.
+    #[test]
+    fn a_projects_band_is_one_line_that_cuts_its_read_time_and_then_its_name_short() {
+        let rule = |selector: &str| {
+            let at = STYLE.find(&format!("{selector}{{")).expect(selector);
+            &STYLE[at..at + STYLE[at..].find('}').expect("a rule ends")]
+        };
+        let state = rule(".heading .state");
+        for said in ["flex:none", "max-width:100%", "flex-wrap:wrap"] {
+            assert!(state.contains(said), "{state}");
+        }
+        let band = rule(".line.heading");
+        for said in ["flex-wrap:wrap", "min-height:40px", "padding-block:0"] {
+            assert!(band.contains(said), "{band}");
+        }
+        assert!(STYLE.contains(".line.heading a.fold{align-self:center;height:38px}"));
+        assert!(rule(".heading .read").contains("flex:1 1 0"));
+        assert!(!rule(".heading .read").contains("overflow"));
+        let left = rule(".heading .left");
+        for said in ["flex:1000 1 5em", "min-width:0", "max-width:max-content"] {
+            assert!(left.contains(said), "{left}");
+        }
+        for gives_way in [".heading h2", ".heading .read>[data-shown-once-older-than]"] {
+            let cut = rule(gives_way);
+            for said in ["overflow:hidden", "text-overflow:ellipsis"] {
+                assert!(cut.contains(said), "{cut}");
+            }
+        }
+        assert!(!STYLE.contains(".heading h2{white-space:normal"));
+    }
+
+    /// A phone has no room in a project's band for a bar beside the count it
+    /// draws, or for the words after the count of beads to check. The link
+    /// keeps its whole phrase as its name and its title.
+    #[test]
+    fn a_phone_draws_a_projects_band_without_its_bar_and_with_a_short_link_to_check() {
+        let phone = &STYLE[STYLE
+            .find("@media (max-width:720px){")
+            .expect("a phone's rules")..];
+        assert!(phone.contains(".heading .prog .bar{display:none}"));
+        assert!(phone.contains(".heading a.flag{font-size:0}"));
+        assert!(phone.contains(".heading a.flag::before{content:attr(data-briefly);"));
+        let html = checked_at("/");
+        let heading = line_html(&html, 0);
+        let said = escaped(&format!("{WARNING} {}", phrase::anomalies_beneath(1)));
+        let briefly = escaped(&phrase::anomalies_beneath_briefly(1));
+        let flag = &heading[heading.find("<a class=\"flag\"").expect("a link to check")..];
+        let flag = &flag[..flag.find("</a>").expect("the link ends")];
+        for attribute in [
+            format!("title=\"{said}\""),
+            format!("aria-label=\"{said}\""),
+            format!("data-briefly=\"{briefly}\""),
+        ] {
+            assert!(flag.contains(&attribute), "{flag}");
+        }
     }
 
     /// A project's heading and the lines under it are one section, which is
