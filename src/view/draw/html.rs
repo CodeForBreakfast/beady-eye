@@ -78,6 +78,9 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     );
     let mut html = head(&title, Some(drawn.change));
     html.push_str("<body>");
+    if shown.bead.is_none() {
+        drawing.title(&mut html, drawn.at, drawn.offset);
+    }
     drawing.nav(&mut html);
     html.push_str(if shown.bead.is_some() {
         "<main class=\"open\"><div class=\"forest\">"
@@ -164,6 +167,35 @@ struct Drawing<'a> {
 }
 
 impl Drawing<'_> {
+    /// The name of the list the page draws, which heads it on a phone, and
+    /// beside it when the oldest read of the projects it draws was, the one
+    /// claim true of every row.
+    fn title(&self, html: &mut String, now: DateTime<Utc>, offset: FixedOffset) {
+        let list = self.forest.list();
+        let named = if list == Some(&List::Ready) {
+            phrase::ready_only().to_string()
+        } else {
+            menu_name(list)
+        };
+        html.push_str(&format!(
+            "<header class=\"title\"><h1>{}</h1>",
+            escaped(&named)
+        ));
+        let lines = self.forest.lines();
+        let read_at = &self.forest.snapshot().read_at;
+        let reads: Option<Vec<_>> = lines
+            .viewport(0, lines.len())
+            .filter_map(|(_, line)| match &line.content {
+                Content::Project(project) => Some(read_at.get(&project.project)),
+                _ => None,
+            })
+            .collect();
+        if let Some(&oldest) = reads.and_then(|reads| reads.into_iter().min()) {
+            read_time(html, oldest, offset, now);
+        }
+        html.push_str("</header>\n");
+    }
+
     /// What the terminal's keys put in force over the whole page, as links
     /// and a form: the list menu, the ready switch and the search, as `v`,
     /// `r` and `/`. The menu offers the trees, the beads to check and each
@@ -180,11 +212,7 @@ impl Drawing<'_> {
         let every_check = Some(List::ToCheck { project: None });
         let checking_every_project = list == every_check.as_ref();
         let checked = self.asked.listing(every_check);
-        let named = match list {
-            Some(List::ToCheck { .. }) => phrase::to_check().to_string(),
-            Some(List::LeftToDo { project }) => phrase::left_to_do(project),
-            _ => drawn.unwrap_or(phrase::every_tree()).to_string(),
-        };
+        let named = menu_name(list);
         html.push_str(&format!(
             "<nav><span class=\"brand\">{}</span>\
              <details class=\"lists\"><summary><span>{}</span></summary><div>",
@@ -383,15 +411,7 @@ impl Drawing<'_> {
                 escaped(phrase::mark(how_fresh, reads.now))
             ));
             if let Some(at) = how_fresh.read_at {
-                html.push_str(&format!(
-                    "<span data-shown-once-older-than=\"{}\"> {} <time datetime=\"{}\" \
-                     title=\"{}\">{}</time></span>",
-                    READ_SHOWN_ONCE_OLDER_THAN.as_secs(),
-                    escaped(phrase::read()),
-                    at.to_rfc3339(),
-                    escaped(&phrase::instant_in_full(at, offset)),
-                    escaped(&phrase::at_time_of_day(at, offset, reads.now))
-                ));
+                read_time(html, at, offset, reads.now);
             }
             html.push_str("</span>");
         }
@@ -816,6 +836,31 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
         .collect()
 }
 
+/// The name the menu gives `list`. The ready switch is drawn beside the
+/// menu, so the ready list goes by the name of every tree there.
+fn menu_name(list: Option<&List>) -> String {
+    match list {
+        Some(List::ToCheck { .. }) => phrase::to_check().to_string(),
+        Some(List::LeftToDo { project }) => phrase::left_to_do(project),
+        _ => view_of(list).unwrap_or(phrase::every_tree()).to_string(),
+    }
+}
+
+/// When something was read `at`, as the time of day in `offset`, which the
+/// page's script says as how long ago, and shows only once it is old enough
+/// to be news.
+fn read_time(html: &mut String, at: DateTime<Utc>, offset: FixedOffset, now: DateTime<Utc>) {
+    html.push_str(&format!(
+        "<span data-shown-once-older-than=\"{}\"> {} <time datetime=\"{}\" \
+         title=\"{}\">{}</time></span>",
+        READ_SHOWN_ONCE_OLDER_THAN.as_secs(),
+        escaped(phrase::read()),
+        at.to_rfc3339(),
+        escaped(&phrase::instant_in_full(at, offset)),
+        escaped(&phrase::at_time_of_day(at, offset, now))
+    ));
+}
+
 /// How far through something is, `finished` of a `total` above nought, as a
 /// bar filled that far beside `said`, which links to `href` where one is
 /// given.
@@ -1070,8 +1115,10 @@ footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-si
 background:var(--warn-soft);color:var(--warn);border-top:1px solid var(--line)}\
 nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
 --lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
+--list:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><path d='M3 4h10M3 8h10M3 12h6'/></svg>\");\
 display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
 border-bottom:1px solid var(--line);background:var(--surface)}\
+header.title{display:none}\
 nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display);white-space:nowrap}\
 nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
@@ -1125,7 +1172,10 @@ background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5
 .rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover{text-decoration:underline}\
-@media (max-width:720px){.rooted{padding:9px 14px}.rooted .all::before{content:none}\
+@media (max-width:720px){header.title{display:flex;align-items:baseline;gap:10px;padding:14px 16px 6px}\
+header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display);overflow-wrap:anywhere}\
+header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
+.rooted{padding:9px 14px}.rooted .all::before{content:none}\
 aside{padding:8px 16px 24px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
@@ -1154,7 +1204,7 @@ nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13.5px}\
 nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>:is(.brand,.check){display:none}\
-.lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:38px;padding:0 4px;border:0;border-radius:10px;\
+.lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:48px;padding:0 4px;border:0;border-radius:10px;\
 background:none;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden}\
 .lists[open] summary{box-shadow:none}\
 nav .ready::before{width:26px;height:16px;\
@@ -1165,8 +1215,10 @@ nav .ready.on,nav:not(:has(.ready.on))>.lists>summary,.lists[open] summary\
 nav form:focus-within{box-shadow:none}nav input:focus-visible{box-shadow:0 0 0 2px var(--accent)}\
 nav button{display:none}nav button::before{display:none}\
 nav label{justify-content:center;gap:6px;height:100%;cursor:text}\
-nav label::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
--webkit-mask:var(--lens) center/contain no-repeat;mask:var(--lens) center/contain no-repeat}\
+nav label::before,.lists summary>span::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
+-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
+nav label::before{--icon:var(--lens)}\
+.lists summary>span::before{--icon:var(--list);display:inline-block;margin-right:6px;vertical-align:-3px}\
 nav input{flex:none;width:0}nav label span{display:inline}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) label span{display:none}\
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
@@ -1181,7 +1233,7 @@ html{scroll-padding-top:64px}.line.heading{gap:4px 10px;margin-bottom:0}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
-max-height:calc(100dvh - 64px);overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
+max-height:calc(100dvh - 74px - env(safe-area-inset-bottom));overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
 .lists[open]>div::before{content:\"\";display:block;width:38px;height:5px;margin:2px auto 8px;border-radius:3px;background:var(--rail)}\
 .lists[open] a{padding:13px 12px;font-size:16px}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
@@ -1781,6 +1833,138 @@ mod tests {
         let heading = line_html(&html, 0);
         let shown = "<span data-shown-once-older-than=\"120\"> read <time datetime=\"";
         assert!(heading.contains(shown), "{heading}");
+    }
+
+    /// The title over a phone's list, from its opening tag to its close.
+    fn title_over(html: &str) -> &str {
+        let from = html.find("<header class=\"title\">").expect("a title");
+        &html[from..from + html[from..].find("</header>").expect("the title ends")]
+    }
+
+    /// A phone's page is headed by the name of the list it draws.
+    #[test]
+    fn a_phone_page_is_titled_for_the_list_it_draws() {
+        let trees = page_at("/").html;
+        let ready = page_at(&link_saying(&trees, phrase::ready_only())).html;
+        let view = page_at(&link_saying(&trees, "theming")).html;
+        let to_check = checked_at(&link_saying(&trees, phrase::to_check()));
+        let left = page_at(&link_saying(line_html(&trees, 0), &phrase::left_of(6, 9))).html;
+        let left_title = escaped(&phrase::left_to_do(PROJECT));
+        for (html, title) in [
+            (&trees, "All trees"),
+            (&ready, "Ready"),
+            (&view, "theming"),
+            (&to_check, "To check"),
+            (&left, left_title.as_str()),
+        ] {
+            assert!(
+                title_over(html).contains(&format!("<h1>{title}</h1>")),
+                "{}",
+                title_over(html)
+            );
+        }
+    }
+
+    /// Beside its title a phone's page says when the oldest of its reads
+    /// was, the one claim true of every row, once it is old enough to be
+    /// news, as a project's heading does.
+    #[test]
+    fn a_phone_pages_title_says_its_oldest_read_once_that_is_old_enough_to_show() {
+        let oldest = drawn_at() - chrono::TimeDelta::hours(1);
+        let mut snapshot = ground();
+        snapshot.read_at.insert(PROJECT.to_string(), oldest);
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(snapshot, &Layout::default(), &asked, drawing()).html;
+        let title = title_over(&html);
+        let shown = format!(
+            "<span data-shown-once-older-than=\"120\"> read <time datetime=\"{}\"",
+            oldest.to_rfc3339()
+        );
+        assert!(title.contains(&shown), "{title}");
+    }
+
+    /// A project the page does not draw has no say in its title's read
+    /// time, however long ago it was read.
+    #[test]
+    fn a_phone_pages_title_ignores_a_read_of_a_project_it_does_not_draw() {
+        let long_ago = drawn_at() - chrono::TimeDelta::hours(1);
+        let mut snapshot = ground();
+        snapshot.read_at.insert("tidewater".to_string(), long_ago);
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(snapshot, &Layout::default(), &asked, drawing()).html;
+        let title = title_over(&html);
+        assert!(title.contains("<time datetime=\""), "{title}");
+        assert!(!title.contains(&long_ago.to_rfc3339()), "{title}");
+    }
+
+    /// While a project the page draws has yet to be read, no read time is
+    /// true of every row, so the title gives none.
+    #[test]
+    fn a_phone_pages_title_gives_no_read_time_while_a_project_it_draws_is_unread() {
+        let mut snapshot = ground();
+        snapshot.projects.push("tidewater".to_string());
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(snapshot, &Layout::default(), &asked, drawing()).html;
+        assert!(html.contains("<h2>tidewater</h2>"), "{html}");
+        let title = title_over(&html);
+        assert!(!title.contains("<time"), "{title}");
+    }
+
+    /// A bead's page has no list title over it.
+    #[test]
+    fn a_beads_page_has_no_list_title() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(!html.contains("<header"), "{html}");
+    }
+
+    /// The title heads a phone's page and nothing wider, set in the display
+    /// face at the size a phone sets a bead's title.
+    #[test]
+    fn the_list_title_is_drawn_on_a_phone_alone() {
+        assert!(STYLE.contains("header.title{display:none}"), "{STYLE}");
+        let phone = rules_under("(max-width:720px)");
+        assert!(phone.contains("header.title{display:flex;"), "{phone}");
+        assert!(
+            phone.contains(
+                "header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display)"
+            ),
+            "{phone}"
+        );
+    }
+
+    /// A phone's foot bar is 48 pixels tall, and each of its controls
+    /// carries an icon: the menu a list, the switch its knob and the search
+    /// its lens.
+    #[test]
+    fn a_phones_foot_bar_controls_are_48_pixels_tall_with_an_icon() {
+        let phone = rules_under("(max-width:720px)");
+        assert!(
+            phone.contains(
+                ".lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:48px;"
+            ),
+            "{phone}"
+        );
+        assert!(
+            phone.contains(".lists summary>span::before{--icon:var(--list);"),
+            "{phone}"
+        );
+        assert!(
+            phone.contains("nav label::before{--icon:var(--lens)}"),
+            "{phone}"
+        );
+        assert!(STYLE.contains("--list:url("), "{STYLE}");
+    }
+
+    /// The list menu opens above the foot bar and stops short of the top of
+    /// the screen: the bar is its 48 pixel controls, 8 pixels of padding
+    /// either side, a 1 pixel border and the screen's inset at the bottom.
+    #[test]
+    fn a_phones_list_menu_fits_above_the_foot_bar() {
+        let phone = rules_under("(max-width:720px)");
+        assert!(
+            phone.contains("max-height:calc(100dvh - 74px - env(safe-area-inset-bottom))"),
+            "{phone}"
+        );
     }
 
     /// A page drawn on another day than the read says which day it was.
