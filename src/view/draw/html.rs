@@ -22,7 +22,7 @@ use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::markdown::Flow;
-use crate::view::row::{Cell, Layout, Progress, Row, WARNING};
+use crate::view::row::{Cell, Layout, Progress, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
 use super::bead::{elided_run, referenced_line};
@@ -441,29 +441,18 @@ impl Drawing<'_> {
     /// the bars and what is drawn before them line up down the page.
     fn forest_line(&self, html: &mut String, at: usize, line: &Line, reads: &Reads) {
         let widths = self.forest.lines().widths();
-        let (reference, progressed, apart, drawn) = match &line.content {
+        let (reference, progressed, drawn) = match &line.content {
             Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
                 let (reference, progressed, drawn) =
                     referenced_line(row, &line.prefix, widths, self.layout);
-                (
-                    Some(reference),
-                    progressed,
-                    said_apart(row, self.layout),
-                    drawn,
-                )
+                (Some(reference), progressed, drawn)
             }
             Content::Elided { count, .. } => (
                 None,
                 None,
-                Vec::new(),
                 elided_run(&line.prefix, &phrase::finished_run(*count)),
             ),
-            _ => (
-                None,
-                None,
-                Vec::new(),
-                fitted(line, widths, self.layout, reads),
-            ),
+            _ => (None, None, fitted(line, widths, self.layout, reads)),
         };
         let column = reference.is_some() && self.layout.cells().any(|cell| *cell == Cell::Progress);
         let whole = drawn.whole();
@@ -526,12 +515,8 @@ impl Drawing<'_> {
             html.push_str("</span>");
         }
         html.push_str("<span class=\"state\">");
-        html.push_str(&apart.join(&indent()));
-        if !apart.is_empty() && !whole.state.is_empty() {
-            html.push_str(&indent());
-        }
         spans(html, whole.state, Block::State, whole.marks, 0);
-        if column && !(apart.is_empty() && whole.state.is_empty()) {
+        if column && !whole.state.is_empty() {
             html.push_str(&indent());
         }
         match progressed {
@@ -837,33 +822,6 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
         .collect()
 }
 
-/// What a bead's row says in the page's own words where the terminal says it
-/// in its own, each where the layout draws its cell: a chip naming an agent
-/// on the bead, or else one watching it, then every rule that fired as one
-/// flag. The flag holds its words apart from its icon and is titled with
-/// them, as any flag in a row's state is.
-fn said_apart(row: &Row, layout: &Layout) -> Vec<String> {
-    let drawn = |cell: Cell| layout.cells().any(|drawn| *drawn == cell);
-    let mut said = Vec::new();
-    if drawn(Cell::Agent) {
-        let chip = match (&row.agent, row.watched) {
-            (Some(_), _) => Some(phrase::agent_chip()),
-            (None, true) => Some(phrase::watched_chip()),
-            (None, false) => None,
-        };
-        said.extend(
-            chip.map(|chip| format!("<span class=\"pill agent\">{}</span>", escaped(chip))),
-        );
-    }
-    if drawn(Cell::Anomalies) {
-        said.extend(phrase::flag(&row.anomalies).map(|words| {
-            let words = escaped(&words);
-            format!("<span class=\"flag\" title=\"{words}\">{WARNING}<span> {words}</span></span>")
-        }));
-    }
-    said
-}
-
 /// How far through something is, `finished` of a `total` above nought, as a
 /// bar filled that far beside `said`, which links to `href` where one is
 /// given.
@@ -1060,8 +1018,6 @@ position:relative}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
-.pill.agent{display:inline-flex;align-items:center;gap:5px;color:var(--ok)}\
-.pill.agent::before{content:\"\";width:6px;height:6px;border-radius:50%;background:currentColor}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 #shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
@@ -2054,8 +2010,11 @@ mod tests {
         use crate::view::draw::tests::a_pane;
 
         let chips = |row: &str| -> Vec<String> {
-            row.match_indices("<span class=\"pill agent\">")
+            row.match_indices("<span class=\"pill\"")
                 .map(|(at, _)| text_of(&row[at..element_end(row, at)]))
+                .filter(|said| {
+                    [phrase::agent_chip(), phrase::watched_chip()].contains(&said.as_str())
+                })
                 .collect()
         };
         let watching = Watching::Known {
@@ -2094,6 +2053,38 @@ mod tests {
 
         let nobody = row_of(ground(), "smt-4kd3p.6");
         assert!(chips(&nobody).is_empty(), "{nobody}");
+    }
+
+    /// The chip and the flag are drawn in the blocks the layout puts the
+    /// agent and the anomalies in.
+    #[test]
+    fn a_rows_chip_and_flag_keep_the_places_the_layout_gives_them() {
+        use crate::view::draw::tests::a_pane;
+
+        let layout = Layout {
+            title: vec![Cell::Title, Cell::Agent],
+            state: vec![Cell::Progress, Cell::Anomalies],
+            ..Layout::default()
+        };
+        let checked = with_the_bead_changed(|node| {
+            node.agent = Some(a_pane());
+            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+        });
+        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("a page");
+        let html = page(checked, &layout, &asked, drawing()).html;
+        let row = lines_html(&html)
+            .into_iter()
+            .find(|line| text_of(line).contains("smt-4kd3p.6"))
+            .expect("the bead has a row");
+
+        let more = row.find("<span class=\"more\">").expect("a title block");
+        let state = row.find("<span class=\"state\">").expect("a state");
+        let chip = row
+            .find(&format!(">{}</span>", phrase::agent_chip()))
+            .expect("a chip");
+        let flag = row.find("<span class=\"flag\"").expect("a flag");
+        assert!(more < chip && chip < state, "{row}");
+        assert!(state < flag, "{row}");
     }
 
     /// A shut run of finished beads says how many, and nothing about agents.

@@ -65,10 +65,17 @@ pub(super) fn orphaned_line(
 /// the forest, so a column of them lines up under one another and the titles
 /// start together.
 pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layout) -> Fitted {
+    said_line(row, prefix, widths, layout, Voice::Terminal)
+}
+
+/// One bead's line as `bead_line` draws it, with its agent and anomalies
+/// said in `voice`.
+fn said_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layout, voice: Voice) -> Fitted {
     let walk = Walk {
         row,
         layout,
         widths,
+        voice,
     };
     let identity = walk.block(
         Block::Identity,
@@ -99,8 +106,8 @@ pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layou
 
 /// The cells a reference to this row's bead is drawn from, the glyph, the id
 /// and the title, each as this row draws it, then the row's progress where
-/// the layout draws it, and the row without any of them. The row is without
-/// its agent and anomalies too, which a page says in words of its own.
+/// the layout draws it, and the row without any of them. The row says its
+/// agent and anomalies in a web page's words.
 ///
 /// The id is drawn through the forest's width for it, as the identity draws
 /// it, so the titles of a column of references start together.
@@ -110,18 +117,12 @@ pub(super) fn referenced_line(
     widths: &Widths,
     layout: &Layout,
 ) -> (Reference, Option<row::Progress>, Fitted) {
-    const DRAWN_APART: [Cell; 6] = [
-        Cell::Glyph,
-        Cell::Id,
-        Cell::Title,
-        Cell::Progress,
-        Cell::Agent,
-        Cell::Anomalies,
-    ];
+    const DRAWN_APART: [Cell; 4] = [Cell::Glyph, Cell::Id, Cell::Title, Cell::Progress];
     let walk = Walk {
         row,
         layout,
         widths,
+        voice: Voice::Page,
     };
     let drawn = |cell: Cell| {
         let mut walked = Walked::opening(Block::Identity, Vec::new());
@@ -151,7 +152,11 @@ pub(super) fn referenced_line(
     let progress = row
         .progress
         .filter(|_| layout.cells().any(|cell| *cell == Cell::Progress));
-    (reference, progress, bead_line(row, prefix, widths, &rest))
+    (
+        reference,
+        progress,
+        said_line(row, prefix, widths, &rest, Voice::Page),
+    )
 }
 
 /// How wide each identity cell of `layout` draws on this row, in columns as
@@ -161,6 +166,7 @@ pub(crate) fn identity_widths(row: &Row, layout: &Layout) -> Widths {
         row,
         layout,
         widths: &Widths::default(),
+        voice: Voice::Terminal,
     };
     layout
         .identity
@@ -174,6 +180,16 @@ struct Walk<'a> {
     row: &'a Row,
     layout: &'a Layout,
     widths: &'a Widths,
+    voice: Voice,
+}
+
+/// Whose words a row's agent and anomalies are said in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Voice {
+    Terminal,
+    /// A web page's: a chip naming an agent, and one sentence for every rule
+    /// that fired.
+    Page,
 }
 
 /// One block of a row as the walk filled it: its spans, and which of them
@@ -273,6 +289,29 @@ impl Walk<'_> {
             Cell::Progress => {
                 if let Some(progress) = row.progress {
                     walked.cell(Span::raw(done(progress.finished, progress.total)));
+                }
+            }
+            Cell::Agent if self.voice == Voice::Page => {
+                let chip = match (&row.agent, row.watched) {
+                    (Some(_), _) => Some(phrase::agent_chip()),
+                    (None, true) => Some(phrase::watched_chip()),
+                    (None, false) => None,
+                };
+                if let Some(chip) = chip {
+                    let at = walked.cell(Span::styled(chip.to_string(), palette::AGENT));
+                    walked.marks.push(Mark {
+                        block: walked.block,
+                        at,
+                        is: Marked::Badge,
+                    });
+                }
+            }
+            Cell::Anomalies if self.voice == Voice::Page => {
+                if let Some(said) = phrase::flag(&row.anomalies) {
+                    walked.cell(Span::styled(
+                        format!("{WARNING} {said}"),
+                        palette::ATTENTION,
+                    ));
                 }
             }
             Cell::Agent => {
