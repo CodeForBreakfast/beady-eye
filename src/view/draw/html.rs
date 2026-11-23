@@ -1480,17 +1480,20 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// The page's one script, which keeps it current. It asks the page's own
 /// address for its changes since the one the page was drawn from, and the
 /// server sends them down that one connection: the whole page first, and
-/// after it each patch to the page it sent last. Each page replaces the
-/// body. It keeps the line or bead view at the top of the window where it
-/// was, or the next line below it that is still drawn, knowing a line by its
-/// id, and keeps both panes'
-/// scroll, the link that had focus, an open menu, and what is typed in the
-/// find field. A page differing only in its change is not shown again. A
-/// hidden page lets its connection go, and asks again from the change it
-/// last heard once it is shown, so pages left in the background hold none of
-/// the few connections a browser makes to one server. A page the server is
-/// too busy to keep current asks again after as long as a quiet connection
-/// waits for a comment. Without it the page is the same page, drawn once.
+/// after it each patch to the page it sent last. Each page is reconciled
+/// into the body, so only what differs is touched: a line, the bead view or
+/// a menu that is drawn the same is the same element afterwards, keeping its
+/// scroll, its focus, whether the reader opened it, and what is typed in it.
+/// Elements with an id are matched by it and the rest by their place. It
+/// keeps the line or bead view at the top of the window where it was, or the
+/// next line below it that is still drawn, and the link that had focus if
+/// its own element went. A page differing only in its change is not shown
+/// again. A hidden page lets its connection go, and asks again from the
+/// change it last heard once it is shown, so pages left in the background
+/// hold none of the few connections a browser makes to one server. A page
+/// the server is too busy to keep current asks again after as long as a
+/// quiet connection waits for a comment. Without it the page is the same
+/// page, drawn once.
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const asked = location.pathname + (location.search ? location.search + "&" : "?");
@@ -1527,53 +1530,70 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const where = link.matches(".fold") ? "" : new URLSearchParams(link.search).get("at");
     return [link.className, link.pathname, where, link.hash].join(" ");
   };
-  const marks = (on = document) =>
-    [...on.querySelectorAll(".line[id]"), on.querySelector("aside")].filter(Boolean);
-  const mark = (at) => at.matches("aside") ? "aside" : at.id;
   const boxes = () =>
     [document.querySelector(".forest"), document.querySelector("aside"), document.querySelector(".lists>div")];
   const pane = (link) => boxes().findIndex((box) => box?.contains(link));
   const alike = (at, kind) => [...(boxes()[at] ?? document).querySelectorAll("a[href]")]
     .filter((link) => goes(link) === kind);
+  const MARK = ".line[id]:not(.heading),aside";
+  const atTop = () => {
+    const forest = document.querySelector(".forest");
+    if (!forest) return null;
+    const { left, top } = forest.getBoundingClientRect();
+    return document.elementsFromPoint(left + 1, Math.max(top, 0) + 1).find((at) => at.matches(MARK)) ?? null;
+  };
+  const drawnIn = (drawn, at) => at.matches("aside") ? drawn.querySelector("aside") : drawn.getElementById(at.id);
+  const drop = (gone) => {
+    const next = gone.nextSibling;
+    gone.remove();
+    return next;
+  };
+  const same = (now, next) => now.nodeType === next.nodeType && now.nodeName === next.nodeName && !now.id && !next.id;
+  const reconcile = (now, next) => {
+    if (now.isEqualNode(next)) return;
+    if (now.nodeType !== Node.ELEMENT_NODE) return void (now.nodeValue = next.nodeValue);
+    for (const { name } of [...now.attributes]) {
+      if (!next.hasAttribute(name) && !(name === "open" && now.matches("details"))) now.removeAttribute(name);
+    }
+    for (const { name, value } of next.attributes) if (now.getAttribute(name) !== value) now.setAttribute(name, value);
+    const wanted = new Set([...next.children].map((child) => child.id).filter(Boolean));
+    const kept = new Map([...now.children].filter((child) => wanted.has(child.id)).map((child) => [child.id, child]));
+    let at = now.firstChild;
+    for (const want of [...next.childNodes]) {
+      const match = want.id ? kept.get(want.id) : at && same(at, want) ? at : null;
+      if (!match) {
+        now.insertBefore(want, at);
+        continue;
+      }
+      if (match !== at) {
+        let between = at;
+        while (between && between !== match && !wanted.has(between.id)) between = between.nextSibling;
+        if (between !== match) now.insertBefore(match, at);
+        else while (at !== match) at = drop(at);
+      }
+      if (match === at) at = at.nextSibling;
+      reconcile(match, want);
+    }
+    while (at) at = drop(at);
+  };
   const show = (page) => {
     const text = page.join("\n").replace(/ data-change="\d+"/, "");
     if (text === shown) return;
     shown = text;
     const drawn = new DOMParser().parseFromString(text, "text/html");
-    const coming = new Set(marks(drawn).map(mark));
-    const before = marks();
-    const top = before.findIndex((at) => !at.matches(".heading") && at.getBoundingClientRect().bottom > 0);
-    const held = top < 0 ? null : before.slice(top).find((at) => coming.has(mark(at)));
-    const kept = held && [mark(held), held.getBoundingClientRect().top];
+    const top = atTop();
+    const marks = top ? [...document.querySelectorAll(MARK)] : [];
+    const held = marks.slice(marks.indexOf(top)).find((at) => drawnIn(drawn, at));
+    const kept = held && [held, held.id, held.getBoundingClientRect().top];
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
     const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
-    const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
-    const opened = [...document.querySelectorAll("details[open]")].map((menu) => menu.className);
-    const summary = document.activeElement?.matches("summary") && document.activeElement.parentElement.className;
-    const field = document.querySelector("input[type=search]");
-    const typed = field && field.value !== field.defaultValue ? field.value : null;
-    const caret = field && field === document.activeElement
-      && [field.selectionStart, field.selectionEnd, field.selectionDirection];
     inReadersZone(drawn);
     document.title = drawn.title;
-    document.body.replaceWith(drawn.body);
-    const menus = [...document.querySelectorAll("details")];
-    menus.forEach((menu) => menu.open ||= opened.includes(menu.className));
-    const menu = summary ? menus.find((menu) => menu.className === summary) : null;
-    menu?.querySelector("summary")?.focus({ preventScroll: true });
-    const typing = document.querySelector("input[type=search]");
-    if (typing && typed !== null) typing.value = typed;
-    if (typing && caret) {
-      typing.focus({ preventScroll: true });
-      typing.setSelectionRange(...caret);
-    }
-    const again = kept && marks().find((at) => mark(at) === kept[0]);
-    if (again) scrollBy(0, again.getBoundingClientRect().top - kept[1]);
-    boxes().forEach((box, at) => {
-      if (box && scrolled[at]) [box.scrollLeft, box.scrollTop] = scrolled[at];
-    });
-    if (focused) alike(focused[0], focused[1])[focused[2]]?.focus({ preventScroll: true });
+    reconcile(document.body, drawn.body);
+    const again = kept && (kept[0].isConnected ? kept[0] : document.getElementById(kept[1]));
+    if (again) scrollBy(0, again.getBoundingClientRect().top - kept[2]);
+    if (focused && !focus.isConnected) alike(focused[0], focused[1])[focused[2]]?.focus({ preventScroll: true });
   };
 });"##;
 

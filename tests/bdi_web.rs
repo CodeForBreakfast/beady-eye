@@ -4,6 +4,8 @@
 //! The cases run the binary, because what is under test is the process a
 //! supervisor starts and the port it answers on.
 
+#[cfg(target_os = "linux")]
+mod browser;
 mod terminal;
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -329,6 +331,67 @@ fn patched(mut page: Vec<String>, patch: &[String]) -> Vec<String> {
         page.splice(at..at + going, came);
     }
     page
+}
+
+/// A change to one bead, pushed to a page open on another, redraws that
+/// bead's line alone. Every element of the page is the one it was, each other
+/// bead's line and the open bead say what they said, and the window and the
+/// bead view are scrolled where the reader left them. The project's heading
+/// is left out, because it says when the project was read, and a change is
+/// a new read.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
+    const CHANGED: &str = "A pager or an editor that cannot be run is reported as git's failure";
+    const RETITLED: &str = "A title the tracker gave a sibling after the page was drawn";
+    let home = a_home_naming_one_project_settled("web-redraw", "[tui]\nrefresh_seconds = 1\n");
+    let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", A_BEAD_BENEATH.0),
+        1200,
+        240,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('aside')",
+        GIVING_UP,
+    );
+    let scrolled = page.evaluate(
+        r#"scrollTo(0, document.scrollingElement.scrollHeight);
+        document.querySelector("aside").scrollTop = 40;
+        window.before = [...document.body.querySelectorAll("*")];
+        window.BEADS = ".line[id]:not(.heading), aside";
+        window.said = (at) => at.matches(".line[id$='/arkham:dun-0tp.9']") ? null : at.outerHTML;
+        window.lines = [...document.querySelectorAll(BEADS)].map(said);
+        [scrollY, document.querySelector("aside").scrollTop]"#,
+    );
+    let [window_at, bead_at] =
+        [&scrolled[0], &scrolled[1]].map(|at| at.as_f64().expect("a scroll"));
+    assert!(
+        window_at > 0.0 && bead_at > 0.0,
+        "the page scrolls: {scrolled}"
+    );
+
+    tracker.holds(&THE_DESCRIBED_SUBTREE.replace(CHANGED, RETITLED));
+    page.until(
+        &format!("document.querySelector(\".line[id$='/arkham:dun-0tp.9']\").textContent.includes({RETITLED:?})"),
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate("before.filter((at) => !at.isConnected).map((at) => at.outerHTML)"),
+        serde_json::json!([]),
+        "every element is still the page's own"
+    );
+    assert_eq!(
+        page.evaluate("[...document.querySelectorAll(BEADS)].map(said)"),
+        page.evaluate("lines"),
+        "only the changed bead's line says something new"
+    );
+    assert_eq!(
+        page.evaluate("[scrollY, document.querySelector('aside').scrollTop]"),
+        scrolled,
+        "the window and the bead view stay where the reader scrolled them"
+    );
 }
 
 /// Where the entry of `page`'s list menu that says `said` goes.

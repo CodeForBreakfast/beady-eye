@@ -4198,6 +4198,11 @@ and a second line"
             touch $out
           '';
 
+        # The browser the tests run the web view's page script in. It comes
+        # from this flake's nixpkgs and so moves with each bump of that pin,
+        # from the binary cache. Linux only, where CI runs.
+        browser = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.chromium ];
+
         rustTools = [
           pkgs.git
           pkgs.cargo
@@ -4256,7 +4261,7 @@ and a second line"
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = rustTools ++ pluginTools;
+          buildInputs = rustTools ++ pluginTools ++ browser;
 
           shellHook = ''
             # The banner is diagnostic, so it goes where nix puts its own
@@ -4270,7 +4275,7 @@ and a second line"
         # tracker. Entering this shell is opt-in: select it locally with an
         # untracked `.envrc.local` containing `devshell=maintainer`.
         devShells.maintainer = pkgs.mkShell {
-          buildInputs = rustTools ++ pluginTools ++ [ bd ];
+          buildInputs = rustTools ++ pluginTools ++ browser ++ [ bd ];
 
           shellHook = ''
             # Neither the tracker's coordinates nor its password are checked
@@ -4409,7 +4414,8 @@ and a second line"
           # tests/no_config.rs runs the binary as a fresh machine would, and
           # bdi asks bd where the tracker is. The worktree-listing test builds
           # a repository and adds a worktree to it, so git has to be here too.
-          # One test runs a `jq` filter README documents.
+          # One test runs a `jq` filter README documents, and one runs the web
+          # view's page script in a browser.
           #
           # cargo test runs one test binary at a time, so the run costs the sum
           # of every binary. nextest runs every test of every binary at once,
@@ -4424,7 +4430,7 @@ and a second line"
           # /tmp to a user the build cannot see, so `bdi` will not trust it with
           # a socket, and there the sockets go in the build's own directory.
           test = checkOf "test" artifacts.dev
-            [ bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
+            ([ bd pkgs.git pkgs.jq pkgs.cargo-nextest ] ++ browser)
             (pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export BDI_TEST_SOCKET_DIR="$TMPDIR/sockets"
             '' + ''
