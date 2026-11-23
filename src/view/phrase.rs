@@ -25,7 +25,7 @@ use crate::model::types::{PaneKey, PaneStatus, Status};
 use crate::model::watching::WatchingAgent;
 use crate::view::forest::Spine;
 use crate::view::lines::Section;
-use crate::view::show::Ties;
+use crate::view::show::{Prose, Ties};
 use crate::view::{Freshness, Mark, Notice, Said};
 
 /// The oldest bd whose command line `bdi` runs, as README states it. A
@@ -1026,6 +1026,15 @@ pub fn status_said(status: &Status) -> String {
 pub fn waiting_on(count: usize) -> String {
     let bead = if count == 1 { "bead" } else { "beads" };
     format!("Waiting on {count} {bead}")
+}
+
+/// What heads the section of a bead's web page that holds `prose`:
+/// `bd show`'s own section name, in sentence case.
+pub fn prose(prose: Prose) -> &'static str {
+    match prose {
+        Prose::Description => "Description",
+        Prose::Notes => "Notes",
+    }
 }
 
 /// What heads a list on a bead's web page of the beads tied to it by

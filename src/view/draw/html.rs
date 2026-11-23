@@ -844,8 +844,9 @@ impl Drawing<'_> {
         html.push_str("</ul></section>");
     }
 
-    /// The bead's description or its notes, as written prose. A bead it names
-    /// is drawn as the reference that opens it.
+    /// The section of the bead's page that holds its description or its
+    /// notes, as written prose under its name. A bead the prose names is
+    /// drawn as the reference that opens it.
     fn prose(&self, html: &mut String, node: &Node, which: Prose) {
         let text = match which {
             Prose::Description => node.description(),
@@ -857,9 +858,12 @@ impl Drawing<'_> {
             let mut reference = String::new();
             self.related(&mut reference, &related).then_some(reference)
         };
-        html.push_str("<div class=\"prose\">");
+        html.push_str(&format!(
+            "<section class=\"written\"><h3>{}</h3><div class=\"prose\">",
+            escaped(phrase::prose(which))
+        ));
         html.push_str(&prose::written(&text, &named));
-        html.push_str("</div>");
+        html.push_str("</div></section>");
     }
 
     /// The bead's own fields as a grid of named cells, each a place an edit
@@ -1320,16 +1324,25 @@ fn escaped(text: &str) -> String {
 /// Its colours are `palette::page_colours`. The type is three faces:
 /// `--body` for the page, `--display` for a heading, and `--code` for code.
 /// Each names its face first and falls back to the reader's own.
+///
+/// Text is set in five sizes, and every size the page sets names one of
+/// them: `--size-title` for a bead's title, `--size-heading` for a project's
+/// name, `--size-row` for a row, `--size-detail` for a detail and
+/// `--size-label` for a small capitals label. A phone sets a row at
+/// `--size-row-phone`. A search field is set at `--size-field` because iOS
+/// zooms the page into any field set smaller than 16 pixels.
 const STYLE: &str = "\
-:root{--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
+:root{--size-title:22px;--size-heading:15px;--size-row:14px;--size-detail:12.5px;--size-label:11.5px;\
+--size-row-phone:15.5px;--size-field:16px;\
+--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
 --body:Inter,system-ui,-apple-system,\"Segoe UI\",sans-serif;\
 --display:\"Space Grotesk\",Inter,system-ui,sans-serif;\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
-body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
+body{margin:0;background:var(--surface);color:var(--fg);font:var(--size-row)/1.45 var(--body)}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto;align-content:start}\
 .code{font-family:var(--code)}\
-.code{font-size:.9em}.line .bead .code{font-size:inherit}\
+.code{font-size:var(--size-detail)}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}\
 main.open::before{content:\"\";position:absolute;inset:0 0 0 auto;width:500px;box-sizing:border-box;\
@@ -1346,7 +1359,7 @@ position:relative}\
 .line>.more{display:flex;align-items:center;gap:8px;min-width:0;padding-left:2ch;overflow:hidden}\
 .line>.more>.pill{min-width:0;overflow:hidden;text-overflow:ellipsis}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
-.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
+.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 var(--size-label)/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 #shown{position:absolute;top:0}\
@@ -1359,7 +1372,7 @@ border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:colo
 .line u::after{top:var(--arm,16px);width:10px;border-top-width:1.5px}\
 .line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
 .line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after{content:\"\";flex:none;align-self:center;\
-width:28px;height:28px;font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
+width:28px;height:28px;font-size:var(--size-detail);line-height:28px;text-align:center;color:var(--faint)}\
 .line>.rails:has(>u.up):not(:has(>.fold))::after{content:\"\\2191\"}\
 .line :has(>a.fold){display:inline-flex;vertical-align:middle;font-size:0}\
 .line a.fold{flex:none;align-self:center;display:grid;place-items:center;width:28px;height:28px;\
@@ -1371,8 +1384,8 @@ box-sizing:border-box;border-radius:6px;color:var(--faint)}\
 .line a.fold:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 a{color:inherit;text-decoration:none}\
 a.bead:hover .title,a.close:hover{text-decoration:underline}\
-.bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
-.missing>.project,.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
+.bead .id{font:500 var(--size-detail) var(--body);color:var(--muted);letter-spacing:.01em}\
+.missing>.project,.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 var(--size-label)/18px var(--body);color:var(--muted)}\
 aside{--tree:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3h4M5 3v9h4M5 7.5h4'/><circle cx='11.5' cy='7.5' r='1.5'/><circle cx='11.5' cy='12' r='1.5'/></svg>\");\
 --copy:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='8' height='8' rx='1.5'/><path d='M3 10V4a1 1 0 011-1h6'/></svg>\");\
 --cross:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><path d='M4 4l8 8M12 4l-8 8'/></svg>\");\
@@ -1387,7 +1400,7 @@ aside>.close::before,.acts>::before{content:\"\";flex:none;width:16px;height:16p
 -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
 aside>.close::before{--icon:var(--cross)}.acts>.root::before{--icon:var(--tree)}.acts>.copy::before{--icon:var(--copy)}\
 .acts>*{display:inline-flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 10px;border:0;\
-border-radius:8px;background:none;color:var(--muted);font:500 13px var(--body);white-space:nowrap;cursor:pointer}\
+border-radius:8px;background:none;color:var(--muted);font:500 var(--size-detail) var(--body);white-space:nowrap;cursor:pointer}\
 .acts>:hover{background:var(--sunk);color:var(--fg)}\
 .acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
 aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
@@ -1398,37 +1411,38 @@ main.open .line .bead>.project{display:none}}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;overflow:visible}aside>:is(.acts,.close){background:var(--surface)}}\
 .page{white-space:pre-wrap}\
-.prose{white-space:normal;font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
+.prose{white-space:normal;font-size:var(--size-row);line-height:1.5;overflow-wrap:anywhere}\
 .prose>*{margin:0 0 10px}.prose>:last-child{margin-bottom:0}\
 .prose :is(ul,ol){padding-left:22px}.prose li+li{margin-top:4px}\
-.prose h3{font:600 15px var(--display);line-height:1.4}\
+.prose h4{font:600 var(--size-heading) var(--display);line-height:1.4}\
 .prose blockquote{margin-inline:0;padding-left:12px;border-left:3px solid var(--rail);color:var(--muted)}\
 .prose pre{white-space:pre-wrap;padding:8px 10px;border-radius:6px;background:var(--sunk);border:1px solid var(--line)}\
 .prose :not(pre)>code{padding:1px 5px;border-radius:4px;background:var(--sunk);border:1px solid var(--line)}\
-.prose table{border-collapse:collapse;font-size:13.5px}\
+.prose table{border-collapse:collapse;font-size:var(--size-detail)}\
 .prose :is(th,td){padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left}\
 .prose hr{border:0;border-top:1px solid var(--line)}\
 .prose a.link{color:var(--accent);text-decoration:underline;text-decoration-color:var(--rail);text-underline-offset:3px}\
 .prose a.address{display:inline-block;max-width:calc(100% - 1ch);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\
 vertical-align:bottom}\
 .page .prose .bead{display:inline;width:auto}.page .prose .bead>span:not([class]){display:inline}\
-.page .prose .bead .title{font-size:inherit;line-height:inherit;color:var(--accent)}.page .prose .bead .id{font-size:12px}\
+.page .prose .bead .title{font-size:inherit;line-height:inherit;color:var(--accent)}.page .prose .bead .id{font-size:var(--size-detail)}\
 .page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
 .page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
-.page .head .state>.id,.waits>.id,.missing>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
+.page .head .state>.id,.waits>.id,.missing>.id{font:500 var(--size-detail) var(--body);color:var(--muted);letter-spacing:.01em}\
 .status{--status:var(--muted);display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 8px;\
-border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color-mix(in srgb,var(--status) 12%,transparent)}\
+border-radius:999px;font:600 var(--size-detail) var(--body);color:var(--fg);background:color-mix(in srgb,var(--status) 12%,transparent)}\
 .status>.g{color:var(--status)}\
 .status.open{--status:var(--status-open)}.status.in-progress{--status:var(--status-in-progress)}\
 .status.blocked{--status:var(--status-blocked)}.status.closed{--status:var(--status-closed)}\
 .status.deferred{--status:var(--status-deferred)}\
-.page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
+.page .head h2{margin:0;font:600 var(--size-title)/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
-.waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
-.page .tied{margin-top:18px;white-space:normal}\
-.page .tied h3{display:flex;gap:8px;margin:0 0 6px;font:600 11px var(--body);letter-spacing:.07em;\
-text-transform:uppercase;color:var(--faint)}\
+.waits>p,.page section>h3,.fields dt,.lists .hd{font:600 var(--size-label) var(--body);letter-spacing:.07em;\
+text-transform:uppercase}\
+.waits>p{margin:0;color:var(--muted)}\
+.page section{margin-top:18px;white-space:normal}\
+.page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}\
 .page .tied .count{font-weight:500;letter-spacing:0}\
 .page .tied ul{margin:0;padding:0;list-style:none;border:1px solid var(--line);border-radius:10px;overflow:hidden;\
 background:var(--surface)}\
@@ -1441,16 +1455,16 @@ background:var(--surface)}\
 .fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;margin:14px 0 0;padding:14px 0;\
 border-block:1px solid var(--line);white-space:normal;font-family:var(--body)}\
 .fields>div{min-width:0}\
-.fields dt{font:600 11px var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}\
-.fields dd{margin:2px 0 0;font-size:13.5px;overflow-wrap:anywhere}\
+.fields dt{color:var(--muted)}\
+.fields dd{margin:2px 0 0;font-size:var(--size-row);overflow-wrap:anywhere}\
 .labels{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;white-space:normal;color:var(--muted)}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
-padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
+padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
 .forest>section:not(:first-child){margin-top:18px}\
 .heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
-.heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
+.heading h2{display:inline;margin:0;font:600 var(--size-heading) var(--display);color:var(--fg)}\
 .heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>*{white-space:nowrap}\
 .heading .state a:hover{text-decoration:underline}\
@@ -1458,7 +1472,7 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
 .projects{border-bottom:1px solid var(--line)}\
 .projects>summary{list-style:none;cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;\
-min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:13px;color:var(--muted)}\
+min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:var(--size-detail);color:var(--muted)}\
 .projects>summary::-webkit-details-marker{display:none}\
 .projects .fresh{color:var(--fg);font-weight:600}.projects .fresh>span{color:var(--muted);font-weight:400}\
 .projects>summary::after{content:\"\";flex:none;width:13px;height:13px;margin-left:auto;background:var(--accent);\
@@ -1471,7 +1485,7 @@ min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:13px;color:var(
 .prog .bar>span{display:block;height:100%;background:var(--ok)}\
 footer p,.missing{margin:0}\
 footer .said{padding:8px 12px;background:var(--surface)}\
-footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;\
+footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:var(--size-detail);\
 background:var(--warn-soft);color:var(--warn);border-top:1px solid var(--line)}\
 nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
 --lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
@@ -1479,7 +1493,7 @@ nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' view
 display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
 border-bottom:1px solid var(--line);background:var(--surface)}\
 header.title{display:none}\
-nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display);white-space:nowrap}\
+nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 var(--size-heading) var(--display);white-space:nowrap}\
 nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
 .lists summary::after,.lists a::before,nav button::before{content:\"\";flex:none;background:currentColor;\
@@ -1499,16 +1513,15 @@ background:var(--raised);border:1px solid var(--line);border-radius:12px;box-sha
 .lists a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}\
 .lists a.on::before{background:currentColor}\
 .lists a:hover:not(.on){background:var(--sunk)}\
-.lists .count{flex:none;margin-left:auto;font-size:12.5px;font-weight:normal;color:var(--muted)}\
-.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);\
-font:600 11px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}\
+.lists .count{flex:none;margin-left:auto;font-size:var(--size-detail);font-weight:normal;color:var(--muted)}\
+.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);color:var(--faint)}\
 nav .ready{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:8px;font-weight:500;color:var(--muted)}\
 nav .ready::before{content:\"\";flex:none;width:30px;height:18px;border-radius:9px;\
 background:radial-gradient(circle at 9px 50%,var(--surface) 7px,transparent 7.5px),var(--rail)}\
 nav .ready.on{color:var(--fg)}\
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
 nav .check{display:flex;align-items:center;height:30px;padding:0 11px;border-radius:999px;\
-background:var(--warn-soft);color:var(--warn);font-weight:600;font-size:13px;white-space:nowrap}\
+background:var(--warn-soft);color:var(--warn);font-weight:600;font-size:var(--size-detail);white-space:nowrap}\
 nav .check.on{box-shadow:inset 0 0 0 1.5px currentColor}\
 nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--muted)}\
@@ -1525,7 +1538,7 @@ nav input::placeholder{color:var(--muted);opacity:1}\
 nav label span{display:none}\
 nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .rooted,nav+.missing{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
-border-bottom:1px solid var(--line);font-size:13.5px}\
+border-bottom:1px solid var(--line);font-size:var(--size-row)}\
 .rooted{flex-wrap:nowrap;white-space:nowrap;background:var(--accent-soft)}\
 .missing{background:var(--warn-soft);color:var(--warn)}aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
 .rooted .said{color:var(--muted)}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
@@ -1534,14 +1547,14 @@ border-bottom:1px solid var(--line);font-size:13.5px}\
 .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 a.step:hover{text-decoration:underline}\
 @media (max-width:720px){header.title{display:flex;align-items:baseline;gap:10px;padding:14px 16px 6px}\
-header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display);overflow-wrap:anywhere}\
-header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
+header.title h1{flex:1;min-width:0;margin:0;font:600 var(--size-title) var(--display);overflow-wrap:anywhere}\
+header.title>span{font-size:var(--size-detail);color:var(--muted);white-space:nowrap}\
 .rooted,nav+.missing{padding:9px 14px}.all::before{content:none}\
 body:has(main>aside)>nav{display:none}\
 main:has(>aside>.acts){align-content:stretch}\
 aside{align-self:stretch;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
 aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
-border:0;background:none;font-size:16px;color:var(--accent)}\
+border:0;background:none;font-size:var(--size-row-phone);color:var(--accent)}\
 aside>.close::before{--icon:var(--chevron);width:20px;height:20px;transform:rotate(90deg)}\
 aside>.acts{grid-row:3;top:auto;bottom:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line)}\
@@ -1564,10 +1577,10 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
-.line .g{grid-area:1/1;align-self:start;font-size:14px;text-align:center}\
+.line .g{grid-area:1/1;align-self:start;font-size:var(--size-row);text-align:center}\
 .line .g:is(.open,.in-progress,.blocked,.closed,.deferred){margin-top:4px}\
-.line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
-.line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
+.line .title{grid-area:1/2/2/-1;min-width:10em;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
+.line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:var(--size-detail)}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
 .line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
@@ -1575,7 +1588,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
 nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
-font-size:13.5px}\
+font-size:var(--size-row)}\
 nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>:is(.brand,.check){display:none}\
 .lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:48px;padding:0 4px;border:0;border-radius:10px;\
 background:none;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden}\
@@ -1599,27 +1612,27 @@ nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([v
 background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:116px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
 body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))) .line.heading{top:52px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
-footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:var(--size-field);font-weight:normal}\
+footer a.step{display:inline-block;padding:0 10px;font-size:var(--size-row-phone)}\
 footer .notice{padding:9px 16px}\
 html{scroll-padding-top:64px}.line.heading{gap:4px 10px;margin-bottom:0}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:var(--size-row-phone)}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
 max-height:calc(100dvh - 74px - env(safe-area-inset-bottom));overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
 .lists[open]>div::before{content:\"\";display:block;width:38px;height:5px;margin:2px auto 8px;border-radius:3px;background:var(--rail)}\
-.lists[open] a{padding:13px 12px;font-size:16px}\
+.lists[open] a{padding:13px 12px;font-size:var(--size-row-phone)}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
 .page .tied .bead{width:auto;grid-template-columns:12px minmax(0,1fr)}.page .tied .bead .id{grid-area:2/2}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
-.page .bead .g{grid-area:1/1;font-size:14px;text-align:center}\
-.page .bead .title{grid-area:1/2;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
-.page .bead .id{grid-area:2/2;font-size:12px;font-family:var(--body)}\
+.page .bead .g{grid-area:1/1;font-size:var(--size-row);text-align:center}\
+.page .bead .title{grid-area:1/2;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
+.page .bead .id{grid-area:2/2;font-size:var(--size-detail);font-family:var(--body)}\
 .waits>.bead{width:100%}\
-.fields{grid-template-columns:repeat(2,minmax(0,1fr))}}\
+.fields{grid-template-columns:repeat(2,minmax(0,1fr))}.prose{font-size:var(--size-row-phone)}}\
 :is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
 font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
@@ -2411,7 +2424,7 @@ mod tests {
         assert!(phone.contains("header.title{display:flex;"), "{phone}");
         assert!(
             phone.contains(
-                "header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display)"
+                "header.title h1{flex:1;min-width:0;margin:0;font:600 var(--size-title) var(--display)"
             ),
             "{phone}"
         );
@@ -3467,8 +3480,9 @@ mod tests {
     /// on the page is the terminal's, row for row. The page leaves out the
     /// row saying what the bead is blocked by, because the head's band says
     /// it, and the rows saying the bead's own fields, because its grid says
-    /// them. Its description and its notes are each a block of prose where
-    /// the terminal has their rows.
+    /// them. Its description and its notes are each a section of prose where
+    /// the terminal has their rows, its heading and the blank over it among
+    /// them, and a section stands on lines of its own.
     #[test]
     fn the_bead_view_draws_the_terminals_rows_down_to_its_related_beads() {
         const PROSE_BLOCK: &str = "¶";
@@ -3492,14 +3506,14 @@ mod tests {
             &view[element_end(view, head)..grid],
             &view[element_end(view, grid)..lists]
         );
-        while let Some(prose) = under_head.find("<div class=\"prose\">") {
+        while let Some(prose) = under_head.find("<section class=\"written\">") {
             let end = element_end(&under_head, prose);
             under_head.replace_range(prose..end, &format!("\n{PROSE_BLOCK}\n"));
         }
         let page_rows: Vec<String> = text_of(&in_the_terminals_order(&under_head))
             .lines()
-            .skip(1)
             .map(words)
+            .filter(|row| !row.is_empty())
             .collect();
 
         let mut forest = flatten(described());
@@ -3577,7 +3591,7 @@ mod tests {
     #[test]
     fn a_bead_pages_title_is_set_large_in_the_display_face() {
         assert!(STYLE.contains(
-            ".page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;"
+            ".page .head h2{margin:0;font:600 var(--size-title)/1.25 var(--display);white-space:pre-wrap;"
         ));
         assert!(!STYLE.contains(".page .head .title"));
     }
@@ -5066,7 +5080,7 @@ mod tests {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         assert!(html.contains(&palette::page_colours()), "{html}");
         assert!(
-            STYLE.contains("body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}"),
+            STYLE.contains("body{margin:0;background:var(--surface);color:var(--fg);font:var(--size-row)/1.45 var(--body)}"),
             "{STYLE}"
         );
         assert_eq!(
@@ -5082,7 +5096,7 @@ mod tests {
             "{STYLE}"
         );
         assert!(
-            STYLE.contains(".bead .id{font:500 12px var(--body);color:var(--muted);"),
+            STYLE.contains(".bead .id{font:500 var(--size-detail) var(--body);color:var(--muted);"),
             "{STYLE}"
         );
     }
@@ -5195,6 +5209,130 @@ mod tests {
             .map(|(heading, _)| heading)
             .collect();
         assert_eq!(headings, ["Parent", "Blocks 1"]);
+    }
+
+    /// Every section of a bead's page is headed alike, the description's and
+    /// the notes' as much as each list's of related beads: a heading in
+    /// sentence case over what the section holds.
+    #[test]
+    fn every_section_of_a_beads_page_is_headed_alike() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying("Trim the wick.", "Checked at dusk.");
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let page = inside(&html, "page");
+        let sections: Vec<(String, Vec<String>)> = page
+            .match_indices("<section class=")
+            .map(|(open, _)| {
+                let section = &page[open..element_end(page, open)];
+                let held = &section[section.find('>').expect("the tag ends") + 1
+                    ..section.len() - "</section>".len()];
+                let heading = &held[..held.find("</h3>").expect("a heading")];
+                (words(&text_of(heading)), parts(held).0)
+            })
+            .collect();
+        let shape = |parts: &[&str]| parts.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            sections,
+            [
+                ("Description".to_string(), shape(&["h3", "div.prose"])),
+                ("Notes".to_string(), shape(&["h3", "div.prose"])),
+                ("Parent".to_string(), shape(&["h3", "ul"])),
+                ("Depends on 1".to_string(), shape(&["h3", "ul"])),
+            ],
+            "{page}"
+        );
+        assert!(
+            !page.contains("DESCRIPTION") && !page.contains("NOTES"),
+            "{page}"
+        );
+        assert!(
+            STYLE.contains(
+                ".page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}"
+            ),
+            "{STYLE}"
+        );
+    }
+
+    /// The declarations of `property` the stylesheet makes, each as its value.
+    fn declared(property: &str) -> Vec<&'static str> {
+        let opened = format!("{property}:");
+        STYLE
+            .match_indices(&opened)
+            .filter(|(at, _)| STYLE[..*at].ends_with(['{', ';']))
+            .map(|(at, _)| {
+                let value = &STYLE[at + opened.len()..];
+                &value[..value.find([';', '}']).expect("the declaration ends")]
+            })
+            .collect()
+    }
+
+    /// The page's text is set in the review's five sizes, named once at the
+    /// head of the stylesheet, with a phone's rows a little larger, and
+    /// every size of text the stylesheet sets names one of them. A search
+    /// field is the one exception, since iOS zooms into a smaller one.
+    #[test]
+    fn the_pages_text_is_set_in_five_named_sizes() {
+        assert!(
+            STYLE.starts_with(
+                ":root{--size-title:22px;--size-heading:15px;--size-row:14px;--size-detail:12.5px;\
+                 --size-label:11.5px;--size-row-phone:15.5px;--size-field:16px;"
+            ),
+            "{STYLE}"
+        );
+        let named = |size: &str| {
+            [
+                "title",
+                "heading",
+                "row",
+                "detail",
+                "label",
+                "row-phone",
+                "field",
+            ]
+            .iter()
+            .any(|name| size == format!("var(--size-{name})"))
+        };
+        for size in declared("font-size") {
+            assert!(
+                named(size) || ["0", "inherit"].contains(&size),
+                "font-size:{size}"
+            );
+        }
+        for font in declared("font")
+            .into_iter()
+            .filter(|font| *font != "inherit")
+        {
+            let size = font
+                .split_whitespace()
+                .find(|part| part.starts_with("var(--size-") || part.contains("px"))
+                .map(|part| part.split('/').next().expect("a size"));
+            assert!(size.is_some_and(named), "font:{font}");
+        }
+        assert_eq!(
+            STYLE.matches("--size-field)").count(),
+            1,
+            "only the search field: {STYLE}"
+        );
+    }
+
+    /// Every small capitals label on the page is set by one rule at the
+    /// label size: a section's heading on a bead's page, a field's name in
+    /// its grid, what a bead waits on, and a heading in the menu of lists.
+    #[test]
+    fn every_small_capitals_label_is_set_alike() {
+        assert_eq!(
+            STYLE.matches("text-transform:uppercase").count(),
+            1,
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(
+                ".waits>p,.page section>h3,.fields dt,.lists .hd{font:600 var(--size-label) var(--body);\
+                 letter-spacing:.07em;text-transform:uppercase}"
+            ),
+            "{STYLE}"
+        );
     }
 
     /// A parent's page lists its children, as `bd show` does, with a count
