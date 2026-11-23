@@ -22,13 +22,13 @@ use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::markdown::Flow;
-use crate::view::row::{Layout, WARNING};
+use crate::view::row::{Cell, Layout, Progress, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
 use super::bead::referenced_line;
 use super::foot::notices;
 use super::project::wants_attention;
-use super::{fitted, Reads, Reference};
+use super::{done, fitted, Reads, Reference};
 
 /// The columns the bead view wraps its prose at, which is what `bd show`
 /// wraps at.
@@ -356,12 +356,13 @@ impl Drawing<'_> {
         html.push_str("<span class=\"state\">");
         // Nothing counted means no root here read at all, which a bar would
         // say the opposite of.
-        if let Some(percent) = (counts.finished * 100).checked_div(counts.total) {
-            html.push_str(&format!(
-                "<span class=\"prog\"><span class=\"bar\" aria-hidden=\"true\">\
-                 <span style=\"width:{percent}%\"></span></span>{}</span>",
-                escaped(&phrase::done_of(counts.finished, counts.total))
-            ));
+        if counts.total > 0 {
+            progress(
+                html,
+                counts.finished,
+                counts.total,
+                &phrase::done_of(counts.finished, counts.total),
+            );
         }
         if counts.live_agents > 0 {
             html.push_str(&format!(
@@ -382,16 +383,21 @@ impl Drawing<'_> {
     }
 
     /// One line of the forest. A bead's row is the terminal's row with its
-    /// glyph, id and title drawn as a reference to the bead.
+    /// glyph, id and title drawn as a reference to the bead, and its progress
+    /// drawn last, as a bar in a column of its own. Where the layout draws
+    /// progress, every bead's row has that column, empty where the bead has
+    /// none, so the bars and what is drawn before them line up down the page.
     fn forest_line(&self, html: &mut String, at: usize, line: &Line, reads: &Reads) {
         let widths = self.forest.lines().widths();
-        let (reference, drawn) = match &line.content {
+        let (reference, progressed, drawn) = match &line.content {
             Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
-                let (reference, drawn) = referenced_line(row, &line.prefix, widths, self.layout);
-                (Some(reference), drawn)
+                let (reference, progressed, drawn) =
+                    referenced_line(row, &line.prefix, widths, self.layout);
+                (Some(reference), progressed, drawn)
             }
-            _ => (None, fitted(line, widths, self.layout, reads)),
+            _ => (None, None, fitted(line, widths, self.layout, reads)),
         };
+        let column = reference.is_some() && self.layout.cells().any(|cell| *cell == Cell::Progress);
         let whole = drawn.whole();
         self.open_line(html, at, line, "", palette::css(whole.under));
         let (mut identity, mut from) = (whole.identity, 0);
@@ -444,6 +450,13 @@ impl Drawing<'_> {
         }
         html.push_str("<span class=\"state\">");
         spans(html, whole.state, Block::State, whole.marks, 0);
+        match progressed {
+            Some(Progress { finished, total }) => {
+                progress(html, finished, total, &done(finished, total));
+            }
+            None if column => html.push_str("<span class=\"prog\"></span>"),
+            None => {}
+        }
         html.push_str("</span></div>\n");
     }
 
@@ -766,26 +779,39 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
         .collect()
 }
 
+/// How far through something is, `finished` of a `total` above nought, as a
+/// bar filled that far beside `said`.
+fn progress(html: &mut String, finished: usize, total: usize, said: &str) {
+    html.push_str(&format!(
+        "<span class=\"prog\"><span class=\"bar\" aria-hidden=\"true\">\
+         <span style=\"width:{}%\"></span></span>{}</span>",
+        finished * 100 / total,
+        escaped(said)
+    ));
+}
+
 /// Spans of one block as HTML, each in its own style, the first of them the
 /// block's span `from`. One that `marks` names as a link is a link, where it
 /// points somewhere a page may link to, and one it names as a literal is in
-/// its colour as written. One in the code tone is marked as code. A flag in
-/// a line's state, drawn in the attention style, holds its words apart from
-/// its icon, and is titled with them, so a page short of room can draw the
-/// icon alone.
+/// its colour as written, and one it names as a badge is a pill. One in the
+/// code tone is marked as code. A flag in a line's state, drawn in the
+/// attention style, holds its words apart from its icon, and is titled with
+/// them, so a page short of room can draw the icon alone.
 fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
     for (at, span) in spans.iter().enumerate() {
-        let flagged = (block == Block::State && span.style == palette::ATTENTION)
+        let mut marked = marks
+            .iter()
+            .filter(|mark| mark.block == block && mark.at == from + at);
+        let badge = marked.clone().any(|mark| matches!(mark.is, Marked::Badge));
+        let flagged = (!badge && block == Block::State && span.style == palette::ATTENTION)
             .then(|| span.content.strip_prefix(WARNING))
             .flatten();
         let class = match flagged {
             Some(words) => format!(" class=\"flag\" title=\"{}\"", escaped(words.trim())),
+            None if badge => " class=\"pill\"".to_string(),
             None if span.style.fg == palette::CODE.fg => " class=\"code\"".to_string(),
             None => String::new(),
         };
-        let mut marked = marks
-            .iter()
-            .filter(|mark| mark.block == block && mark.at == from + at);
         let css = if marked
             .clone()
             .any(|mark| matches!(mark.is, Marked::Literal))
@@ -927,9 +953,13 @@ main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}\
 main.open::before{content:\"\";position:absolute;inset:0 0 0 auto;width:500px;box-sizing:border-box;\
 border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24px -18px rgba(23,32,42,.35)}\
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
-.line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box;\
-width:max-content;min-width:100%}\
+.line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
+@media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}\
+.line>.bead>*{flex:none}.line>.bead>.title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.line>.bead~.state{margin-left:0}.line>.state>.prog{width:104px;justify-content:flex-end}}\
+.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);white-space:nowrap;\
+border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
@@ -2715,6 +2745,97 @@ mod tests {
             "{more}"
         );
         assert_eq!(words(&text_of(more)), "⇢ #12");
+        assert_eq!(parts(more).0, ["a.pill"], "{more}");
+    }
+
+    /// The beads of the ground's lines on the trees, in order.
+    fn bead_lines(html: &str) -> Vec<&str> {
+        (0..lines_html(html).len())
+            .map(|at| line_html(html, at))
+            .filter(|line| line.contains("class=\"bead\""))
+            .collect()
+    }
+
+    /// A bead's progress is the last thing on its row, a bar filled as far
+    /// as the bead is through beside the fraction. A row with no progress
+    /// keeps the column empty, so what comes before it lines up with the
+    /// rows that have one.
+    #[test]
+    fn a_bead_rows_progress_is_drawn_last_as_a_bar() {
+        let html = page_at("/").html;
+        let rows = bead_lines(&html);
+        for row in &rows {
+            let (state, _) = parts(inside(row, "state"));
+            assert_eq!(state.last().map(String::as_str), Some("span.prog"), "{row}");
+        }
+        let root = inside(rows[0], "prog");
+        assert_eq!(words(&text_of(root)), "3/9", "{root}");
+        assert!(root.contains("<span style=\"width:33%\"></span>"), "{root}");
+        assert_eq!(text_of(inside(rows[0], "state")).trim(), "3/9");
+        let leaf = rows
+            .iter()
+            .find(|row| text_of(row).contains("smt-4kd3p.4"))
+            .expect("the leaf has a row");
+        assert!(
+            leaf.ends_with("<span class=\"prog\"></span></span>"),
+            "{leaf}"
+        );
+    }
+
+    /// Progress is drawn last on the row whichever block or place the
+    /// layout gives it, so a flag drawn after it in the terminal comes
+    /// before it on the page.
+    #[test]
+    fn a_rows_progress_is_drawn_last_wherever_the_layout_puts_it() {
+        let checked = with_the_bead_changed(|node| {
+            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+        });
+        let layout = Layout {
+            title: vec![Cell::Title, Cell::Progress, Cell::Badges],
+            ..Layout::default()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(checked, &layout, &asked, drawing()).html;
+        let row = bead_lines(&html)
+            .into_iter()
+            .find(|row| text_of(row).contains("smt-4kd3p.6"))
+            .expect("the bead has a row");
+        let (state, _) = parts(inside(row, "state"));
+        assert_eq!(state, ["span.flag", "span.prog"], "{row}");
+        assert!(!row.contains("class=\"more\""), "{row}");
+    }
+
+    /// A layout that draws no progress gives no row a column for it.
+    #[test]
+    fn a_layout_without_progress_draws_no_progress_column() {
+        let layout = Layout {
+            state: vec![Cell::Agent, Cell::Anomalies],
+            ..Layout::default()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &layout, &asked, drawing()).html;
+        for row in bead_lines(&html) {
+            assert!(!row.contains("prog"), "{row}");
+        }
+    }
+
+    /// On a desktop a row fits the trees' width. Its title gives way and
+    /// ends in an ellipsis, before its id, and everything after the
+    /// reference sits together at the right, with the progress column a
+    /// fixed width at the end.
+    #[test]
+    fn a_desktop_row_ellipsises_its_title_before_the_columns_at_its_right() {
+        assert!(!STYLE.contains("max-content"), "{STYLE}");
+        let desktop = rules_under("(width>720px)");
+        for rule in [
+            ".line>.bead{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}",
+            ".line>.bead>*{flex:none}",
+            ".line>.bead>.title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}",
+            ".line>.bead~.state{margin-left:0}",
+            ".line>.state>.prog{width:104px;justify-content:flex-end}",
+        ] {
+            assert!(desktop.contains(rule), "{desktop}");
+        }
     }
 
     /// A badge a config gave a literal colour is drawn in that colour on the
