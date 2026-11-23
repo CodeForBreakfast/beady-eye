@@ -687,7 +687,7 @@ impl Drawing<'_> {
                 "<p class=\"notice\">{}<a href=\"{}\">{}</a></p>",
                 escaped(&format!(
                     "{WARNING} {}",
-                    phrase::to_check_outside_the_list(count)
+                    phrase::to_check_in_these_trees(count)
                 )),
                 escaped(&self.asked.listing(None)),
                 escaped(phrase::show_them(count))
@@ -968,6 +968,7 @@ nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([v
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
 footer{position:static}footer .notice{padding:9px 16px}\
 .line.heading{flex-wrap:wrap;gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
+.heading .state{flex:0 1 auto;flex-wrap:wrap;gap:4px 14px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
@@ -1508,7 +1509,7 @@ mod tests {
     /// a bar at the foot rather than a line of the list, and its link draws
     /// the trees, whose rows say what is wrong with them.
     #[test]
-    fn the_beads_to_check_a_list_leaves_out_are_a_bar_at_the_foot_that_links_to_the_trees() {
+    fn the_beads_to_check_under_a_list_are_a_bar_at_the_foot_that_links_to_their_trees() {
         let checked = || {
             with_the_bead_changed(|node| {
                 node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
@@ -1517,7 +1518,7 @@ mod tests {
         let asked = Asked::of(&link_saying(&page_at("/").html, phrase::ready_only()))
             .expect("the ready list");
         let ready = page(checked(), &Layout::default(), &asked, drawing()).html;
-        let said = phrase::to_check_outside_the_list(1);
+        let said = phrase::to_check_in_these_trees(1);
         assert!(
             !page_lines(&ready)
                 .iter()

@@ -569,9 +569,9 @@ pub fn to_check_in_the_forest(count: usize) -> String {
     format!("{} in the forest", anomalies_beneath(count))
 }
 
-/// The same beads, said on a web page under a list that leaves them out.
-pub fn to_check_outside_the_list(count: usize) -> String {
-    format!("{}, not in this list", anomalies_beneath(count))
+/// The same beads, said at the foot of a web page's list beside a link to their trees.
+pub fn to_check_in_these_trees(count: usize) -> String {
+    format!("{} in these trees", anomalies_beneath(count))
 }
 
 /// The web page's link from that count to the trees, which draw those beads.
