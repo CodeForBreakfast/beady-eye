@@ -240,11 +240,7 @@ fn short(address: &str) -> String {
         .map_or((rest, ""), |at| rest.split_at(at));
     let site = site.rsplit('@').next().unwrap_or(site);
     let site = site.strip_prefix("www.").unwrap_or(site);
-    match path
-        .split(['/', '?', '#'])
-        .filter(|part| !part.is_empty())
-        .last()
-    {
+    match path.rsplit(['/', '?', '#']).find(|part| !part.is_empty()) {
         Some(last) => format!("{site}{SITE_TO_PART}{last}"),
         None => site.to_string(),
     }
