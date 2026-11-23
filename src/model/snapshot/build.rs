@@ -175,6 +175,7 @@ pub fn build_tree(
                 metadata: bead.metadata.clone(),
                 parent: tied.parent,
                 depends_on: tied.depends_on,
+                children: tied.children,
                 blocks: tied.blocks,
             }
         })

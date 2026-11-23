@@ -33,6 +33,7 @@ const DESCRIPTION: &str = "DESCRIPTION";
 const NOTES: &str = "NOTES";
 const PARENT: &str = "PARENT";
 const DEPENDS_ON: &str = "DEPENDS ON";
+const CHILDREN: &str = "CHILDREN";
 const BLOCKS: &str = "BLOCKS";
 
 /// The section for the beads the description names. Neither `bd show` nor
@@ -56,9 +57,10 @@ const DATE: &str = "%Y-%m-%d";
 const BETWEEN_LABELS: &str = ", ";
 
 /// `bd show`'s own arrows: up to the parent, out to what a bead waits on,
-/// back from what waits on it.
+/// down to its children, back from what waits on it.
 const UP: char = '↑';
 const OUT: char = '→';
+const DOWN: char = '↳';
 const BACK: char = '←';
 
 /// What stands in the place of an arrow for a bead only the prose names:
@@ -231,14 +233,22 @@ pub fn at(node: &Node, mentioned: &[Related], id: &str) -> Option<usize> {
         .position(|named| named.id == id)
 }
 
+/// Whether `at` is the first place `related` names its bead. A bead can be
+/// named in two sections, such as an epic that depends on its own child, and
+/// the ring stands on a bead by its id, so it stops only at the first.
+pub fn first_naming(related: &[&Related], at: usize) -> bool {
+    related.iter().position(|named| named.id == related[at].id) == Some(at)
+}
+
 /// Every bead this one names, in the order the window draws them: its
-/// parent, then what it waits on, then what waits on it, which is `bd
-/// show`'s own order and the order `said` builds its sections in, and last
-/// the beads its description names.
+/// parent, then what it waits on, then its children, then what waits on
+/// it, which is `bd show`'s own order and the order `said` builds its
+/// sections in, and last the beads its description names.
 pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related> {
     node.parent
         .iter()
         .chain(&node.depends_on)
+        .chain(&node.children)
         .chain(&node.blocks)
         .chain(mentioned)
         .collect()
@@ -400,6 +410,7 @@ enum Holds {
 pub enum Ties {
     Parent,
     DependsOn,
+    Children,
     Blocks,
     Mentions,
 }
@@ -725,6 +736,11 @@ pub fn said(
             DEPENDS_ON,
             tied(OUT, &node.depends_on),
             Holds::Beads(Ties::DependsOn),
+        ),
+        (
+            CHILDREN,
+            tied(DOWN, &node.children),
+            Holds::Beads(Ties::Children),
         ),
         (BLOCKS, tied(BACK, &node.blocks), Holds::Beads(Ties::Blocks)),
         (
@@ -1092,6 +1108,12 @@ mod tests {
                 Status::Closed,
                 "lay the feeder cable",
             )],
+            children: vec![related(
+                "dun-7.1.1",
+                Edge::ParentChild,
+                Status::Open,
+                "align the feed horn",
+            )],
             blocks: vec![related(
                 "dun-7.4",
                 Edge::Blocks,
@@ -1142,7 +1164,7 @@ mod tests {
     #[test]
     fn the_bead_is_shown_as_bd_show_shows_it() {
         assert_eq!(
-            drawn(&a_bead(), &mut Show::default(), 44, 24),
+            drawn(&a_bead(), &mut Show::default(), 44, 27),
             vec![
                 "┌dun-7.1───────────────────────────────────┐",
                 "│                                          │",
@@ -1163,6 +1185,9 @@ mod tests {
                 "│                                          │",
                 "│ DEPENDS ON                               │",
                 "│   → ✓ dun-7.3  lay the feeder cable      │",
+                "│                                          │",
+                "│ CHILDREN                                 │",
+                "│   ↳ ○ dun-7.1.1  align the feed horn     │",
                 "│                                          │",
                 "│ BLOCKS                                   │",
                 "│   ← ○ dun-7.4  file the licence          │",
@@ -1188,6 +1213,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -1430,7 +1456,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 7),
             vec![
-                "┌dun-7.1 · 1–3 of 20───────────────────────┐",
+                "┌dun-7.1 · 1–3 of 23───────────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  Thirty-three of thirty-four … │",
                 "│   in_progress · P2 · task · kim          │",
@@ -1474,6 +1500,7 @@ mod tests {
             agent: None,
             row: Printed::saying("", ""),
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -1501,7 +1528,7 @@ mod tests {
     fn a_window_too_short_for_the_bead_scrolls_by_motion() {
         let mut view = Show::default();
         let top = drawn(&a_bead(), &mut view, 44, 6);
-        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 20───────────────────────┐");
+        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 23───────────────────────┐");
         assert_eq!(top[2], "│ ◐ dun-7.1  re-point the dish             │");
 
         assert!(!view.scroll(Motion::PreviousRow), "already at the top");
@@ -1539,7 +1566,7 @@ mod tests {
     #[test]
     fn a_bead_that_fits_the_window_neither_scrolls_nor_says_it_does() {
         let mut view = Show::default();
-        drawn(&a_bead(), &mut view, 44, 24);
+        drawn(&a_bead(), &mut view, 44, 27);
 
         assert!(!view.scroll(Motion::NextRow));
         assert!(!view.scroll(Motion::LastRow));
@@ -1739,7 +1766,7 @@ mod tests {
                 under_the_blank_row,
                 &nothing_followable,
             ),
-            Drawn::Related("dun-7.3"),
+            Drawn::Related("dun-7.1.1"),
             "no reference is drawn there, so this says nothing: {rows:#?}"
         );
         assert_eq!(
@@ -1760,7 +1787,7 @@ mod tests {
     /// Wide enough for the bead's own rows to be drawn whole, and tall enough
     /// for every section of it.
     const WIDE: u16 = 44;
-    const TALL: u16 = 24;
+    const TALL: u16 = 27;
 
     /// The whole of a screen of that size.
     fn over(width: u16, height: u16) -> Rect {
@@ -1970,6 +1997,7 @@ mod tests {
             row: Printed::saying(SAID, ""),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -2179,7 +2207,7 @@ mod tests {
     /// the colour the forest gives it.
     #[test]
     fn the_agent_marker_is_painted_live_as_the_forest_paints_it() {
-        let marker = painted(&a_bead(), 44, 24).row(4);
+        let marker = painted(&a_bead(), 44, 27).row(4);
 
         assert_eq!(
             run_saying(&marker, "◍ lifting the mast · working").style.fg,
@@ -2192,7 +2220,7 @@ mod tests {
     /// is always this blue, whatever the status.
     #[test]
     fn the_id_is_painted_the_blue_bd_show_paints_it() {
-        let top = painted(&a_bead(), 44, 24).row(2);
+        let top = painted(&a_bead(), 44, 27).row(2);
 
         assert_eq!(
             run_saying(&top, "dun-7.1").style.fg,
@@ -2236,9 +2264,9 @@ mod tests {
     /// the brightness of the row it sits on, which on the page is the page's.
     #[test]
     fn a_related_beads_glyph_is_painted_the_colour_of_its_status() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
         let depends_on = painted.row(18);
-        let blocks = painted.row(21);
+        let blocks = painted.row(24);
 
         assert_eq!(
             run_saying(&depends_on, "✓").style.fg,
@@ -2257,9 +2285,9 @@ mod tests {
     /// the page's, as a row nobody is on is the forest's middle rung.
     #[test]
     fn a_closed_related_bead_is_dimmed_as_bd_show_dims_one() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
         let depends_on = painted.row(18);
-        let blocks = painted.row(21);
+        let blocks = painted.row(24);
 
         assert_eq!(
             run_saying(&depends_on, "dun-7.3  lay the feeder cable")
@@ -2284,7 +2312,7 @@ mod tests {
     /// window draws it as `bd show` does.
     #[test]
     fn a_heading_is_bold_and_no_colour_as_bd_show_prints_one() {
-        let heading = run_saying(&painted(&a_bead(), 44, 24).row(6), DESCRIPTION);
+        let heading = run_saying(&painted(&a_bead(), 44, 27).row(6), DESCRIPTION);
 
         assert!(
             heading.style.add_modifier.contains(Modifier::BOLD),
@@ -2335,7 +2363,7 @@ mod tests {
     #[test]
     fn what_the_window_draws_at_a_weight_is_its_title_and_its_section_names() {
         let bead = a_bead();
-        let painted = painted(&bead, 44, 24);
+        let painted = painted(&bead, 44, 27);
 
         let own: Vec<String> = said_where(&painted, |run| {
             run.style.add_modifier.contains(Modifier::BOLD)
@@ -2349,6 +2377,7 @@ mod tests {
                 NOTES.to_string(),
                 PARENT.to_string(),
                 DEPENDS_ON.to_string(),
+                CHILDREN.to_string(),
                 BLOCKS.to_string(),
             ],
             "{painted:?}"
@@ -2363,7 +2392,7 @@ mod tests {
     /// takes a tone of its own again this list is where it turns up.
     #[test]
     fn the_only_tones_the_window_draws_are_the_ones_it_quotes() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
 
         let toned: Vec<String> = said_where(&painted, |run| run.style.fg != Some(Color::Reset));
 
@@ -2389,7 +2418,7 @@ mod tests {
     /// dim.
     #[test]
     fn the_page_is_drawn_at_the_terminals_own_foreground_as_the_head_is() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
 
         for (y, said) in [
             (7, "Point it at the new bird."),
@@ -2406,7 +2435,7 @@ mod tests {
     /// reader sees which rows `Tab` will stop on before they press it.
     #[test]
     fn a_related_beads_id_is_blue_only_where_the_forest_can_be_gone_to_it() {
-        let painted = painted_where(&a_bead(), 44, 24, &only("dun-7"));
+        let painted = painted_where(&a_bead(), 44, 27, &only("dun-7"));
 
         let drawn = painted.row(15);
         assert_eq!(
@@ -2420,7 +2449,7 @@ mod tests {
             "the title beside it: {drawn:?}"
         );
 
-        let undrawn = painted.row(21);
+        let undrawn = painted.row(24);
         assert_eq!(
             run_saying(&undrawn, "dun-7.4").style.fg,
             palette::PAGE.fg,
@@ -2433,7 +2462,7 @@ mod tests {
     /// forest has, and the blue on its id.
     #[test]
     fn a_closed_bead_the_forest_draws_is_finished_toned_with_a_blue_id() {
-        let drawn = painted_where(&a_bead(), 44, 24, &only("dun-7.3")).row(18);
+        let drawn = painted_where(&a_bead(), 44, 27, &only("dun-7.3")).row(18);
 
         assert_eq!(
             run_saying(&drawn, "dun-7.3").style.fg,
@@ -2501,7 +2530,7 @@ mod tests {
     }
 
     /// The order the window draws them in, which is `bd show`'s: the parent,
-    /// then what it waits on, then what waits on it.
+    /// then what it waits on, then its children, then what waits on it.
     #[test]
     fn the_beads_a_bead_names_are_listed_in_the_order_the_window_draws_them() {
         assert_eq!(
@@ -2509,7 +2538,7 @@ mod tests {
                 .iter()
                 .map(|it| it.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["dun-7", "dun-7.3", "dun-7.4"]
+            vec!["dun-7", "dun-7.3", "dun-7.1.1", "dun-7.4"]
         );
     }
 
@@ -2594,7 +2623,7 @@ mod tests {
         // Found by what the row says rather than by its number: the window is
         // centred, so a page row and a screen row are not the same count.
         let reversed = |said: &str, view: &mut Show| {
-            Painted::drawn_by(60, 24, |frame| {
+            Painted::drawn_by(60, 27, |frame| {
                 show(
                     frame,
                     frame.area(),
@@ -2611,7 +2640,7 @@ mod tests {
             .find(|(_, row)| row.contains(said))
             .map(|(at, _)| at)
             .map(|at| {
-                Painted::drawn_by(60, 24, |frame| {
+                Painted::drawn_by(60, 27, |frame| {
                     show(
                         frame,
                         frame.area(),
@@ -2648,7 +2677,10 @@ mod tests {
         let page = said(&bead, &[], None, 58, 60, &nothing_followable);
 
         let ties: Vec<Ties> = page.tied.iter().map(|tied| tied.ties).collect();
-        assert_eq!(ties, [Ties::Parent, Ties::DependsOn, Ties::Blocks]);
+        assert_eq!(
+            ties,
+            [Ties::Parent, Ties::DependsOn, Ties::Children, Ties::Blocks]
+        );
         for tied in &page.tied {
             assert!(page.rows[tied.from].is_empty(), "{tied:?}");
             assert_eq!(tied.from + 2, tied.beads.start, "{tied:?}");
@@ -2659,6 +2691,51 @@ mod tests {
             .flat_map(|tied| tied.beads.clone())
             .collect();
         assert_eq!(rows, page.related);
+    }
+
+    /// Each child is a row under `bd show`'s heading and behind its arrow.
+    #[test]
+    fn a_beads_children_are_listed_under_bd_shows_heading() {
+        let bead = a_bead();
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+        let said: Vec<String> = page
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+
+        let heading = said
+            .iter()
+            .position(|row| row.trim() == CHILDREN)
+            .expect("a heading over the children");
+        assert!(
+            said[heading + 1].contains("↳ ○ dun-7.1.1  align the feed horn"),
+            "{said:?}"
+        );
+    }
+
+    /// A bead nothing hangs under has no section for its children, rather
+    /// than a heading over nothing.
+    #[test]
+    fn a_bead_with_no_children_has_no_section_for_them() {
+        let bead = Node {
+            children: Vec::new(),
+            ..a_bead()
+        };
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+
+        assert!(
+            !page.tied.iter().any(|tied| tied.ties == Ties::Children),
+            "{:?}",
+            page.tied
+        );
+        assert!(
+            !page
+                .rows
+                .iter()
+                .any(|row| row.iter().any(|span| span.content.trim() == CHILDREN)),
+            "a heading over nothing"
+        );
     }
 
     /// A ring nobody can see is a ring the reader has lost: stepping on to a

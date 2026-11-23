@@ -1,5 +1,5 @@
 //! Every bead an answer ties a bead to, as `bd show` lists them: its parent,
-//! what it depends on, and what it blocks.
+//! what it depends on, its children, and what it blocks.
 //!
 //! Read once for the whole answer rather than per tree, because what a bead
 //! blocks is the reverse of an edge on some other bead, and that bead can sit
@@ -33,6 +33,9 @@ pub struct Relations {
     /// What this bead waits on: every dependency but the parent edge, in the
     /// order the row lists them.
     pub depends_on: Vec<Related>,
+    /// The beads that hang under this one: every bead whose parent-child
+    /// edge names it, in id order.
+    pub children: Vec<Related>,
     /// What waits on this bead: every bead whose `blocks` edge names it, in
     /// id order.
     pub blocks: Vec<Related>,
@@ -73,11 +76,20 @@ pub fn relations(beads: &[Arc<Bead>]) -> BTreeMap<String, Relations> {
 
     for bead in by_id.values() {
         for dependency in &bead.dependencies {
-            if dependency.edge != Edge::Blocks || dependency.project.is_some() {
+            if dependency.project.is_some() {
                 continue;
             }
-            if let Some(blocker) = relations.get_mut(&dependency.on) {
-                blocker.blocks.push(related(&bead.id, None, Edge::Blocks));
+            let Some(named) = relations.get_mut(&dependency.on) else {
+                continue;
+            };
+            match dependency.edge {
+                Edge::Blocks => named.blocks.push(related(&bead.id, None, Edge::Blocks)),
+                Edge::ParentChild => {
+                    named
+                        .children
+                        .push(related(&bead.id, None, Edge::ParentChild));
+                }
+                Edge::Other(_) => {}
             }
         }
     }
@@ -281,6 +293,30 @@ mod tests {
             vec![],
             "a parent is waited on by nothing; its children hang under it"
         );
+    }
+
+    /// The reverse of the parent edge, as what a bead blocks is the reverse
+    /// of the blocks edge.
+    #[test]
+    fn a_beads_children_are_read_off_the_beads_that_hang_under_it() {
+        assert_eq!(
+            tied()["dun-3"].children,
+            vec![
+                held(
+                    "dun-3.1",
+                    Edge::ParentChild,
+                    Status::Open,
+                    "the waiting one"
+                ),
+                held(
+                    "dun-3.2",
+                    Edge::ParentChild,
+                    Status::Closed,
+                    "the one waited on"
+                ),
+            ]
+        );
+        assert_eq!(tied()["dun-3.1"].children, vec![], "a leaf has no children");
     }
 
     #[test]

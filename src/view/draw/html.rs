@@ -1926,6 +1926,12 @@ mod tests {
         for bead in &mut beads[1..] {
             bead.parent = Some(root.clone());
         }
+        let mut children: Vec<Related> = beads[1..]
+            .iter()
+            .map(|bead| related(bead, Edge::ParentChild))
+            .collect();
+        children.sort_by(|a, b| a.id.cmp(&b.id));
+        beads[0].children = children;
         let link = |bead| Link {
             bead,
             edge: Edge::ParentChild,
@@ -5189,6 +5195,38 @@ mod tests {
             .map(|(heading, _)| heading)
             .collect();
         assert_eq!(headings, ["Parent", "Blocks 1"]);
+    }
+
+    /// A parent's page lists its children, as `bd show` does, with a count
+    /// and one reference to each child on a line.
+    #[test]
+    fn a_parents_children_are_listed_with_a_count() {
+        let html = page_at(&address(&key("smt-4kd3p"))).html;
+        let lists = tied_lists(inside(&html, "page"));
+
+        let (heading, lines) = lists
+            .iter()
+            .find(|(heading, _)| heading.starts_with("Children"))
+            .expect("a list of children");
+        assert_eq!(heading, "Children 8");
+        let first = &lines[0];
+        assert_eq!(first.0, ["a.bead"], "{lines:?}");
+        assert!(
+            first.1.ends_with("wire the niri theme include smt-4kd3p.1"),
+            "{lines:?}"
+        );
+    }
+
+    /// A bead nothing hangs under has no list of children.
+    #[test]
+    fn a_bead_with_no_children_has_no_list_of_them() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(
+            !tied_lists(inside(&html, "page"))
+                .iter()
+                .any(|(heading, _)| heading.starts_with("Children")),
+            "{html}"
+        );
     }
 
     /// A bead the tracker's answer does not hold is still a line of its
