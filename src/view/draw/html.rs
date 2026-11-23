@@ -2964,9 +2964,6 @@ mod tests {
         count[..count.find('<').expect("the count ends")].to_string()
     }
 
-    /// Beside each view the menu says how many beads picking it lists, and
-    /// with only ready beads listed it counts only those, as picking it
-    /// then keeps to them.
     #[test]
     fn the_search_field_prompts_for_a_title_or_id_under_a_short_label() {
         let html = page_at("/").html;
@@ -2974,6 +2971,9 @@ mod tests {
         assert!(html.contains(&format!("<span>{}</span></label>", phrase::find())));
     }
 
+    /// Beside each view the menu says how many beads picking it lists, and
+    /// with only ready beads listed it counts only those, as picking it
+    /// then keeps to them.
     #[test]
     fn the_menu_counts_the_beads_each_view_lists() {
         let trees = page_at("/").html;
