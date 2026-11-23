@@ -200,7 +200,7 @@ impl Drawing<'_> {
         }
         let ready = only_ready(list);
         html.push_str(&format!(
-            "<a class=\"ready{}\" role=\"switch\" aria-checked=\"{ready}\" href=\"{}\">{}</a>",
+            "<a class=\"ready{}\" href=\"{}\">{}</a>",
             if ready { " on" } else { "" },
             escaped(&self.asked.toggling_ready()),
             escaped(phrase::ready_only())
@@ -219,8 +219,8 @@ impl Drawing<'_> {
         }
         let typed = self.asked.find.as_ref().map_or("", |find| &find.text);
         html.push_str(&format!(
-            "<input type=\"search\" name=\"{FIND}\" value=\"{}\" aria-label=\"{}\" \
-             placeholder=\"{}\"><button>{}</button></form>",
+            "<label><input type=\"search\" name=\"{FIND}\" value=\"{}\" aria-label=\"{}\" \
+             placeholder=\"{}\"></label><button>{}</button></form>",
             escaped(typed),
             escaped(phrase::find()),
             escaped(phrase::find()),
@@ -819,12 +819,12 @@ padding:0 12px;border:1px solid var(--line);border-radius:8px;font-weight:500}\
 .lists[open] summary{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}\
 .lists>div{position:absolute;top:calc(100% + 8px);left:0;z-index:5;width:290px;box-sizing:border-box;padding:6px;\
 background:var(--raised);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}\
-.lists a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px}\
+.lists a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;overflow-wrap:anywhere}\
 .lists a::before{--icon:var(--tick);width:16px;height:14px;background:none}\
 .lists a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}\
 .lists a.on::before{background:currentColor}\
 .lists a:hover:not(.on){background:var(--sunk)}\
-.lists .count{margin-left:auto;font-size:12.5px;font-weight:normal;color:var(--muted)}\
+.lists .count{flex:none;margin-left:auto;font-size:12.5px;font-weight:normal;color:var(--muted)}\
 .lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);\
 font:600 11px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}\
 nav .ready{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:8px;font-weight:500;color:var(--muted)}\
@@ -836,6 +836,7 @@ nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px
 padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--faint)}\
 nav button{--icon:var(--lens);order:-1;width:16px;height:16px;padding:0;border:0;color:inherit;font-size:0;cursor:pointer}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
+nav label{flex:1;min-width:0;display:flex;align-items:center}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
 nav input::placeholder{color:var(--faint);opacity:1}\
 nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
@@ -889,7 +890,8 @@ nav .ready.on,nav:not(:has(.ready.on))>.lists>summary,.lists[open] summary\
 {background:var(--accent-soft);color:var(--accent);font-weight:600}\
 nav form:focus-within{box-shadow:none}\
 nav button{display:none}\
-nav form::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
+nav label{justify-content:center;gap:6px;height:100%;cursor:text}\
+nav label::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
 -webkit-mask:var(--lens) center/contain no-repeat;mask:var(--lens) center/contain no-repeat}\
 nav input{flex:0 1 auto;width:3.2em;text-overflow:ellipsis}\
 nav input::placeholder{color:inherit}\
