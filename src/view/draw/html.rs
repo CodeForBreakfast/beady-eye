@@ -1594,7 +1594,7 @@ background:var(--raised);border:1px solid var(--line);border-radius:12px;box-sha
 .lists a.on::before{background:currentColor}\
 .lists a:hover:not(.on){background:var(--sunk)}\
 .lists .count{flex:none;margin-left:auto;font-size:var(--size-detail);font-weight:normal;color:var(--muted)}\
-.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);color:var(--faint)}\
+.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);color:var(--muted)}\
 nav .ready{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:8px;font-weight:500;color:var(--muted)}\
 nav .ready::before{content:\"\";flex:none;width:30px;height:18px;border-radius:9px;\
 background:radial-gradient(circle at 9px 50%,var(--surface) 7px,transparent 7.5px),var(--rail)}\
@@ -5646,6 +5646,29 @@ mod tests {
             ),
             "{STYLE}"
         );
+    }
+
+    /// Every small capitals label is drawn in the muted grey, which reads as
+    /// small text on every ground, the menu's included.
+    #[test]
+    fn every_small_capitals_label_is_drawn_in_the_muted_grey() {
+        for label in [
+            ".waits>p",
+            ".page section>h3",
+            ".fields dt",
+            ".lists .hd",
+            ".line.section>h2",
+        ] {
+            let rule = STYLE
+                .split('}')
+                .find_map(|rule| {
+                    let mut parts = rule.rsplit('{');
+                    let body = parts.next()?;
+                    (parts.next()? == label).then_some(body)
+                })
+                .unwrap_or_else(|| panic!("{label} has a rule of its own"));
+            assert!(rule.contains("color:var(--muted)"), "{label}{{{rule}}}");
+        }
     }
 
     /// The ready list heads its in progress and ready sections with the
