@@ -1685,7 +1685,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
 .line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}\
-.line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
+.line>.bead~.state>.flag{display:inline-block;vertical-align:top}.line .prog:empty{display:none}\
 nav{order:1;position:sticky;bottom:0;z-index:3;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:var(--size-row)}\
@@ -5050,6 +5050,16 @@ mod tests {
             let of_a_row = selector.contains(".bar") && !selector.contains(".heading");
             assert!(!(of_a_row && body.contains("display:none")), "{rule}}}");
         }
+    }
+
+    /// A phone row with no progress ends at its flag. Its empty progress
+    /// column would otherwise wrap under the flag as a blank line. A desktop
+    /// row keeps the empty column, which lines up the bars below it.
+    #[test]
+    fn a_phone_row_without_progress_draws_no_progress_column() {
+        let hidden = ".line .prog:empty{display:none}";
+        assert!(rules_under("(max-width:720px)").contains(hidden), "{STYLE}");
+        assert_eq!(STYLE.matches(hidden).count(), 1, "{STYLE}");
     }
 
     /// On a phone the lists menu opens as a sheet inside the bar, so the bar
