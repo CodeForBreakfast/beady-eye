@@ -232,16 +232,28 @@ pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
 }
 
-/// When a project's rows were read, as a date and a time of day at `offset`,
-/// for a page that is drawn once. An age would stop being true the moment
-/// the page was left open, with nothing on it to say so.
-pub fn read_at(freshness: Freshness, offset: FixedOffset) -> Option<String> {
+/// When a project's rows were read, as a time of day at `offset`, for a
+/// page that is drawn once. An age would stop being true the moment the page
+/// was left open, with nothing on it to say so. A read on another day than
+/// the page was drawn on, `now`, says which day too.
+pub fn read_at(freshness: Freshness, offset: FixedOffset, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| {
-        format!(
-            "read {}",
-            at.with_timezone(&offset).format("%Y-%m-%d %H:%M:%S %:z")
-        )
+        let at = at.with_timezone(&offset);
+        let format = if at.date_naive() == now.with_timezone(&offset).date_naive() {
+            "read at %H:%M"
+        } else {
+            "read at %H:%M on %-d %b"
+        };
+        at.format(format).to_string()
     })
+}
+
+/// The whole of when a project's rows were read, at `offset`: the day, the
+/// year and the zone that `read_at` leaves out.
+pub fn read_in_full(at: DateTime<Utc>, offset: FixedOffset) -> String {
+    at.with_timezone(&offset)
+        .format("read at %H:%M:%S %:z on %-d %B %Y")
+        .to_string()
 }
 
 /// Which frame the collecting mark is on at this instant.
@@ -539,8 +551,13 @@ pub fn unblocks_as_above() -> &'static str {
 /// fraction beside it is said in. Drawn out to a sentence it took the title
 /// off the row at the widths this is read at.
 pub fn agents_beneath(count: usize) -> String {
+    format!("{} beneath", agents(count))
+}
+
+/// The agents working on a project's beads, said on its line.
+pub fn agents(count: usize) -> String {
     let agent = if count == 1 { "agent" } else { "agents" };
-    format!("{count} {agent} beneath")
+    format!("{count} {agent}")
 }
 
 /// The beads behind a line resting shut over them that want looking at.
@@ -558,6 +575,22 @@ pub fn anomalies_beneath(count: usize) -> String {
 /// what is wrong are the forest's.
 pub fn to_check_in_the_forest(count: usize) -> String {
     format!("{} in the forest", anomalies_beneath(count))
+}
+
+/// The same beads, said at the foot of a web page's list beside a link to their trees.
+pub fn to_check_in_these_trees(count: usize) -> String {
+    format!("{} in these trees", anomalies_beneath(count))
+}
+
+/// The web page's link from that count to the trees, which draw those beads.
+pub fn show_the_trees() -> &'static str {
+    "show the trees"
+}
+
+/// How far through a project's trees are, said in a web page's project
+/// heading beside a bar that draws the same fraction.
+pub fn done_of(finished: usize, total: usize) -> String {
+    format!("{finished} of {total} done")
 }
 
 /// The roots the ready list covers whose tracker gave no rows for them, so

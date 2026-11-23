@@ -21,13 +21,14 @@ use crate::model::types::{Edge, Status};
 use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
-use crate::view::lines::{self, Content, Level, Line, Waiting};
+use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::markdown::Flow;
 use crate::view::row::{Layout, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
 use super::bead::referenced_line;
 use super::foot::notices;
+use super::project::wants_attention;
 use super::{fitted, Reads, Reference};
 
 /// The columns the bead view wraps its prose at, which is what `bd show`
@@ -278,11 +279,102 @@ impl Drawing<'_> {
             &drawn.collecting,
             &[],
             drawn.at,
-        )
-        .dated_at(drawn.offset);
+        );
         for (at, line) in lines.viewport(0, lines.len()) {
-            self.forest_line(html, at, line, &reads);
+            match &line.content {
+                // Said at the foot, with the link that shows those beads.
+                Content::Note(Note::ToCheck(_)) => {}
+                Content::Project(project) => {
+                    self.open_line(html, at, line, " heading", String::new());
+                    self.heading(html, line, project, &reads, drawn.offset);
+                }
+                _ => self.forest_line(html, at, line, &reads),
+            }
         }
+    }
+
+    /// A line's opening tag, classed `kind` and styled `css`, and the anchor
+    /// a bead's page lands on where the line is the one it asked for.
+    fn open_line(&self, html: &mut String, at: usize, line: &Line, kind: &str, css: String) {
+        let selected = self.selected == Some(at);
+        let anchor = line_name(line, self.listed())
+            .map_or_else(String::new, |name| format!(" id=\"{name}\""));
+        html.push_str(&format!(
+            "<div class=\"line{kind}{}\"{anchor}{}>",
+            if selected { " shown" } else { "" },
+            styled(css)
+        ));
+        if selected {
+            html.push_str(&format!("<a id=\"{SHOWN}\"></a>"));
+        }
+    }
+
+    /// A project's line as the heading over its trees: its name, when it was
+    /// read, how far through it is, the agents on it and the beads in it to
+    /// check. The terminal says the same on the project's line.
+    fn heading(
+        &self,
+        html: &mut String,
+        line: &Line,
+        project: &ProjectLine,
+        reads: &Reads,
+        offset: FixedOffset,
+    ) {
+        html.push_str("<span class=\"left\">");
+        self.prefix(html, line, &Span::raw(line.prefix.clone()));
+        html.push_str(&format!("<h2>{}</h2></span>", escaped(&project.project)));
+        if let Some(how_fresh) = reads.of(project) {
+            let tone = if wants_attention(how_fresh.mark) {
+                " warn"
+            } else if how_fresh.mark == crate::view::Mark::Read {
+                " ok"
+            } else {
+                ""
+            };
+            html.push_str(&format!(
+                "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
+                escaped(phrase::mark(how_fresh, reads.now))
+            ));
+            if let (Some(when), Some(at)) = (
+                phrase::read_at(how_fresh, offset, reads.now),
+                how_fresh.read_at,
+            ) {
+                html.push_str(&format!(
+                    " <time datetime=\"{}\" title=\"{}\">{}</time>",
+                    at.to_rfc3339(),
+                    escaped(&phrase::read_in_full(at, offset)),
+                    escaped(&when)
+                ));
+            }
+            html.push_str("</span>");
+        }
+        let counts = &project.counts;
+        html.push_str("<span class=\"state\">");
+        // Nothing counted means no root here read at all, which a bar would
+        // say the opposite of.
+        if let Some(percent) = (counts.finished * 100).checked_div(counts.total) {
+            html.push_str(&format!(
+                "<span class=\"prog\"><span class=\"bar\" aria-hidden=\"true\">\
+                 <span style=\"width:{percent}%\"></span></span>{}</span>",
+                escaped(&phrase::done_of(counts.finished, counts.total))
+            ));
+        }
+        if counts.live_agents > 0 {
+            html.push_str(&format!(
+                "<span class=\"agents\">{}</span>",
+                escaped(&phrase::agents(counts.live_agents))
+            ));
+        }
+        if counts.anomalies > 0 {
+            html.push_str(&format!(
+                "<span class=\"flag\">{}</span>",
+                escaped(&format!(
+                    "{WARNING} {}",
+                    phrase::anomalies_beneath(counts.anomalies)
+                ))
+            ));
+        }
+        html.push_str("</span></div>\n");
     }
 
     /// One line of the forest. A bead's row is the terminal's row with its
@@ -297,17 +389,7 @@ impl Drawing<'_> {
             _ => (None, fitted(line, widths, self.layout, reads)),
         };
         let whole = drawn.whole();
-        let selected = self.selected == Some(at);
-        let anchor = line_name(line, self.listed())
-            .map_or_else(String::new, |name| format!(" id=\"{name}\""));
-        html.push_str(&format!(
-            "<div class=\"line{}\"{anchor}{}>",
-            if selected { " shown" } else { "" },
-            styled(palette::css(whole.under))
-        ));
-        if selected {
-            html.push_str(&format!("<a id=\"{SHOWN}\"></a>"));
-        }
+        self.open_line(html, at, line, "", palette::css(whole.under));
         let (mut identity, mut from) = (whole.identity, 0);
         let prefix = identity
             .split_first()
@@ -572,12 +654,22 @@ impl Drawing<'_> {
         }
     }
 
-    /// Every notice the terminal says at its foot, one to a line, after
-    /// what it says of where a search came to, with the links that step to
-    /// the match before and the match after, as `N` and `n` do.
+    /// Every notice the terminal says at its foot, one to a bar, after what
+    /// it says of where a search came to, with the links that step to the
+    /// match before and the match after, as `N` and `n` do. Under a list,
+    /// the beads to check that it leaves out are a bar too, with a link to
+    /// the trees, whose rows say what is wrong with them.
     fn foot(&self, html: &mut String, landed: Option<Landed>, searched: &Asked) {
         let notices = notices(self.forest.snapshot(), &[]);
-        if notices.is_empty() && landed.is_none() {
+        let to_check = self
+            .forest
+            .lines()
+            .iter()
+            .find_map(|line| match line.content {
+                Content::Note(Note::ToCheck(count)) => Some(count),
+                _ => None,
+            });
+        if notices.is_empty() && landed.is_none() && to_check.is_none() {
             return;
         }
         html.push_str("<footer>");
@@ -608,8 +700,19 @@ impl Drawing<'_> {
         }
         for notice in &notices {
             html.push_str(&format!(
-                "<p>{}</p>",
+                "<p class=\"notice\">{}</p>",
                 escaped(&format!("{WARNING} {}", phrase::notice(notice)))
+            ));
+        }
+        if let Some(count) = to_check {
+            html.push_str(&format!(
+                "<p class=\"notice\">{}<a href=\"{}\">{}</a></p>",
+                escaped(&format!(
+                    "{WARNING} {}",
+                    phrase::to_check_in_these_trees(count)
+                )),
+                escaped(&self.asked.listing(None)),
+                escaped(phrase::show_the_trees())
             ));
         }
         html.push_str("</footer>");
@@ -799,6 +902,7 @@ const STYLE: &str = "\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
 body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
+body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto;align-content:start}\
 .line>:has(+.bead),.line>.left>:not(:last-child),.code{font-family:var(--code)}\
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
@@ -821,9 +925,23 @@ vertical-align:top;width:100%;white-space:normal}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
 .page .head .title{font-family:var(--display);font-weight:600}\
 .close{display:inline-block;margin-bottom:8px}\
-footer{padding:8px 12px;color:var(--warn)}\
+.line.heading{align-items:baseline;flex-wrap:wrap;gap:4px 12px;width:auto;padding-block:14px 8px;margin-bottom:4px;\
+border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
+.line.heading:not(:first-child){margin-top:18px}\
+.heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
+.heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
+.heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
+.heading .read,.heading .state>span{white-space:nowrap}\
+.mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
+.prog{display:inline-flex;align-items:center;gap:6px}\
+.prog .bar{width:44px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}\
+.prog .bar>span{display:block;height:100%;background:var(--ok)}\
 footer p,.missing{margin:0}\
-footer .said{color:var(--fg)}\
+footer .said{padding:8px 12px;background:var(--surface)}\
+footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;\
+background:var(--warn-soft);color:var(--warn);border-top:1px solid var(--line)}\
+footer .notice a{margin-left:auto;font-weight:600}\
+footer .notice a:hover{text-decoration:underline}\
 nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--line)}\
 nav form{display:flex;gap:4px;margin-left:auto}\
 nav input,nav button{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);padding:1px 6px}\
@@ -872,7 +990,6 @@ border:0 solid var(--rail)}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
-body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
 nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
 padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13px}\
@@ -891,6 +1008,8 @@ background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
+footer .notice{padding:9px 16px}\
+.line.heading{gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
@@ -1025,6 +1144,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use crate::model::anomaly::Anomaly;
     use crate::model::snapshot::{ProviderState, Tree};
     use crate::model::tree::Link;
     use crate::model::types::{Edge, Status};
@@ -1137,7 +1257,7 @@ mod tests {
     /// What the terminal says of the project's read, half a minute old, and
     /// what the page says in its place.
     const AGO: &str = "✓ 30s ago";
-    const READ_AT: &str = "✓ read 2026-08-30 11:21:44 +01:00";
+    const READ_AT: &str = "✓ read at 11:21";
 
     fn page_at(target: &str) -> Answer {
         let asked = Asked::of(target).expect("a page is at the address");
@@ -1200,11 +1320,15 @@ mod tests {
     }
 
     /// Each line of the forest on the page, as a reader sees it, with the
-    /// state block apart from the rest as the terminal sets it apart.
+    /// state block and a heading's read apart from the rest as the terminal
+    /// sets them apart.
     fn page_lines(html: &str) -> Vec<String> {
         (0..lines_html(html).len())
             .map(|at| {
-                let line = line_html(html, at).replace("<span class=\"state\">", " ");
+                let line = line_html(html, at)
+                    .replace("<span class=\"state\">", " ")
+                    .replace("<span class=\"read\">", " ")
+                    .replace("<span class=\"flag\">", " ");
                 words(&text_of(&in_the_terminals_order(&line)))
             })
             .collect()
@@ -1232,12 +1356,26 @@ mod tests {
     }
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
-    /// the read dated as the page dates it.
+    /// the project's line said as the page's heading says it: the read dated
+    /// and the fraction done in words.
     fn terminal_lines(forest: &Forest) -> Vec<String> {
         let rows = frame_of(forest, 160, 60).rows();
         rows[..forest.lines().len()]
             .iter()
-            .map(|row| words(row).replace(AGO, READ_AT))
+            .map(|row| {
+                let row = words(row);
+                if !row.contains(AGO) {
+                    return row;
+                }
+                row.replace(AGO, READ_AT)
+                    .split(' ')
+                    .map(|word| match word.split_once('/') {
+                        Some((done, of)) => format!("{done} of {of} done"),
+                        None => word.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
             .collect()
     }
 
@@ -1358,17 +1496,137 @@ mod tests {
         assert_eq!(page_lines(&html), terminal_lines(&terminal_forest(&[])));
     }
 
-    /// The one difference: a page left open says the same thing for as long
-    /// as it is open, so it says when the project was read rather than how
-    /// long ago, in the same place and behind the same mark.
+    /// A page left open says the same thing for as long as it is open, so
+    /// it says when the project was read rather than how long ago, behind
+    /// the same mark, and says how far through it is in words beside a bar.
     #[test]
-    fn a_projects_line_says_the_time_of_day_it_was_read_where_the_terminal_says_how_long_ago() {
+    fn a_projects_heading_says_the_time_of_day_it_was_read_where_the_terminal_says_how_long_ago() {
         let terminal = frame_of(&terminal_forest(&[]), 160, 60).rows();
         assert_eq!(words(&terminal[0]), format!("▾ summit-works {AGO} 3/9"));
+        let html = page_at("/").html;
         assert_eq!(
-            page_lines(&page_at("/").html)[0],
-            format!("▾ summit-works {READ_AT} 3/9")
+            page_lines(&html)[0],
+            format!("▾ summit-works {READ_AT} 3 of 9 done")
         );
+        assert!(lines_html(&html)[0].starts_with(" heading\""), "{html}");
+        let heading = line_html(&html, 0);
+        assert!(heading.contains("<h2>summit-works</h2>"), "{heading}");
+        assert!(
+            heading.contains("<span class=\"mark ok\">✓</span>"),
+            "{heading}"
+        );
+        assert!(
+            heading.contains("<span style=\"width:33%\"></span>"),
+            "{heading}"
+        );
+    }
+
+    /// The short time of day keeps the whole of the read, day and zone
+    /// included, for a reader whose page has been open since another day.
+    #[test]
+    fn a_headings_read_time_holds_the_whole_date_and_zone() {
+        let html = page_at("/").html;
+        let heading = line_html(&html, 0);
+        let time = &heading[heading.find("<time ").expect("a time")..];
+        let full = time
+            .split("title=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("a title");
+        assert!(full.starts_with("read at 11:21:"), "{full}");
+        assert!(full.contains(" on "), "{full}");
+        assert!(time.starts_with("<time datetime=\""), "{time}");
+    }
+
+    /// A page drawn on another day than the read says which day it was.
+    #[test]
+    fn a_heading_read_on_another_day_than_the_page_is_drawn_says_the_day() {
+        let drawn = Drawn {
+            at: drawn_at() + chrono::TimeDelta::days(1),
+            ..drawing()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &Layout::default(), &asked, drawn).html;
+        assert!(
+            page_lines(&html)[0].contains("read at 11:21 on 30 Aug"),
+            "{}",
+            page_lines(&html)[0]
+        );
+    }
+
+    /// The beads in a project to check are said in its heading, in the
+    /// warning's colour.
+    #[test]
+    fn a_heading_says_the_beads_in_the_project_to_check() {
+        let checked = with_the_bead_changed(|node| {
+            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+        });
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(checked, &Layout::default(), &asked, drawing()).html;
+        assert_eq!(
+            page_lines(&html)[0],
+            format!("▾ summit-works {READ_AT} 3 of 9 done {WARNING} 1 bead to check")
+        );
+        assert!(
+            line_html(&html, 0).contains(&format!(
+                "<span class=\"flag\">{WARNING} 1 bead to check</span>"
+            )),
+            "{}",
+            line_html(&html, 0)
+        );
+    }
+
+    /// A read gone unanswered wears the warning's colour on its mark.
+    #[test]
+    fn a_heading_whose_read_went_badly_marks_it_in_the_warnings_colour() {
+        let drawn = Drawn {
+            collecting: vec![Awaited {
+                wanted: crate::app::Wanted::Everything,
+                asked_at: drawn_at() - chrono::TimeDelta::seconds(60),
+                patience: chrono::TimeDelta::seconds(30),
+            }],
+            ..drawing()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &Layout::default(), &asked, drawn).html;
+        assert!(
+            line_html(&html, 0).contains("<span class=\"mark warn\">"),
+            "{}",
+            line_html(&html, 0)
+        );
+    }
+
+    /// The beads to check that the ready list leaves out are said once, in
+    /// a bar at the foot rather than a line of the list, and its link draws
+    /// the trees, whose rows say what is wrong with them.
+    #[test]
+    fn the_beads_to_check_under_a_list_are_a_bar_at_the_foot_that_links_to_their_trees() {
+        let checked = || {
+            with_the_bead_changed(|node| {
+                node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+            })
+        };
+        let asked = Asked::of(&link_saying(&page_at("/").html, phrase::ready_only()))
+            .expect("the ready list");
+        let ready = page(checked(), &Layout::default(), &asked, drawing()).html;
+        let said = phrase::to_check_in_these_trees(1);
+        assert!(
+            !page_lines(&ready)
+                .iter()
+                .any(|line| line.contains(&phrase::to_check_in_the_forest(1))),
+            "{:#?}",
+            page_lines(&ready)
+        );
+        let footer = &ready[ready.find("<footer>").expect("a foot")..];
+        assert!(
+            footer.contains(&format!("<p class=\"notice\">{WARNING} {said}<a href=")),
+            "{footer}"
+        );
+
+        let trees = Asked::of(&link_saying(footer, phrase::show_the_trees())).expect("the trees");
+        let trees = page(checked(), &Layout::default(), &trees, drawing()).html;
+        assert!(!trees.contains("<a class=\"ready on\""), "{trees}");
+        assert!(!trees.contains("<footer>"), "{trees}");
     }
 
     /// A read out for longer than it may be is drawn as the terminal draws
