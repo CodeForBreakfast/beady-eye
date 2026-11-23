@@ -256,24 +256,35 @@ impl Head {
             .and_then(|(_, value)| value.as_deref())
     }
 
-    /// gzip where the request's Accept-Encoding takes it at a weight above
-    /// nothing, and the body as it is otherwise.
+    /// gzip where the request's Accept-Encoding fields take it at a weight
+    /// above nothing, by name or else by `*`, and the body as it is otherwise.
     pub(crate) fn encoding(&self) -> Encoding {
-        let takes_gzip = self.header("Accept-Encoding").is_some_and(|accepted| {
-            accepted.split(',').any(|coding| {
+        let codings: Vec<(&str, bool)> = self
+            .headers
+            .iter()
+            .filter(|(named, _)| named.eq_ignore_ascii_case("Accept-Encoding"))
+            .filter_map(|(_, value)| value.as_deref())
+            .flat_map(|accepted| accepted.split(','))
+            .map(|coding| {
                 let mut said = coding.split(';').map(str::trim);
                 let name = said.next().unwrap_or_default();
-                (name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip"))
-                    && said.all(|parameter| match parameter.split_once('=') {
-                        Some((key, weight)) if key.trim().eq_ignore_ascii_case("q") => weight
-                            .trim()
-                            .parse::<f32>()
-                            .is_ok_and(|weight| weight > 0.0),
-                        _ => true,
-                    })
+                let taken = said.all(|parameter| match parameter.split_once('=') {
+                    Some((key, weight)) if key.trim().eq_ignore_ascii_case("q") => weight
+                        .trim()
+                        .parse::<f32>()
+                        .is_ok_and(|weight| weight > 0.0),
+                    _ => true,
+                });
+                (name, taken)
             })
-        });
-        if takes_gzip {
+            .collect();
+        let taken_as = |names: &[&str]| {
+            codings
+                .iter()
+                .find(|(name, _)| names.iter().any(|named| name.eq_ignore_ascii_case(named)))
+                .map(|(_, taken)| *taken)
+        };
+        if taken_as(&["gzip", "x-gzip"]).or_else(|| taken_as(&["*"])) == Some(true) {
             Encoding::Gzip
         } else {
             Encoding::Identity
@@ -357,6 +368,9 @@ mod tests {
             "Accept-Encoding: br;q=1.0, GZIP;q=0.5",
             "Accept-Encoding: x-gzip",
             "accept-encoding: deflate , gzip ; q = 0.1",
+            "Accept-Encoding: br\r\nAccept-Encoding: gzip, identity;q=0",
+            "Accept-Encoding: *;q=1, identity;q=0",
+            "Accept-Encoding: br, *",
         ] {
             assert_eq!(encoding_for(taking), Encoding::Gzip, "{taking}");
         }
@@ -368,6 +382,8 @@ mod tests {
             "Accept-Encoding: gzip;q=0.000",
             "Accept-Encoding: gzip;q=nonsense",
             "Accept-Encoding: gzipped",
+            "Accept-Encoding: *;q=0",
+            "Accept-Encoding: gzip;q=0, *",
         ] {
             assert_eq!(encoding_for(refusing), Encoding::Identity, "{refusing}");
         }

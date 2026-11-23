@@ -204,23 +204,23 @@ fn a_beads_address_answers_with_that_bead_shown() {
 /// connection its script opens, and asks for nothing else.
 #[test]
 fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
-    an_open_page_kept_current("");
+    an_open_page_kept_current("web-live", "");
 }
 
 /// A reader offering gzip is sent the page and its changes gzipped, and a
 /// change still reaches it without waiting on the one after.
 #[test]
 fn a_reader_offering_gzip_is_sent_the_page_and_its_changes_gzipped() {
-    an_open_page_kept_current("Accept-Encoding: gzip, deflate, br\r\n");
+    an_open_page_kept_current("web-live-gzipped", "Accept-Encoding: gzip, deflate, br\r\n");
 }
 
 /// A page fetched and then kept current by a reader sending the header
-/// lines `offering`, which says gzip where it offers it.
-fn an_open_page_kept_current(offering: &str) {
+/// lines `offering`, which says gzip where it offers it, in a home `named`.
+fn an_open_page_kept_current(named: &str, offering: &str) {
     const GZIPPED: &str = "Content-Encoding: gzip\r\n";
     const RETITLED: &str = "A title the tracker gave the root after the page was drawn";
     let gzipped = offering.contains("gzip");
-    let home = a_home_naming_one_project_settled("web-live", "[tui]\nrefresh_seconds = 1\n");
+    let home = a_home_naming_one_project_settled(named, "[tui]\nrefresh_seconds = 1\n");
     let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
     let (head, page) = fetched(&address, &address, "/", offering);
     assert_eq!(head.contains(GZIPPED), gzipped, "{head}");
