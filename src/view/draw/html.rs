@@ -202,14 +202,14 @@ impl Drawing<'_> {
         let views = &self.forest.snapshot().views;
         if !views.is_empty() {
             html.push_str(&format!("<p class=\"hd\">{}</p>", escaped(phrase::views())));
-        }
-        for (view, count) in views.iter().zip(self.forest.view_counts(ready)) {
-            html.push_str(&format!(
-                "<a href=\"{}\"{}>{}<span class=\"count\">{count}</span></a>",
-                escaped(&self.asked.listing(listed(Some(view.clone()), ready))),
-                on(Some(view.as_str()) == drawn),
-                escaped(view)
-            ));
+            for (view, count) in views.iter().zip(self.forest.view_counts(ready)) {
+                html.push_str(&format!(
+                    "<a href=\"{}\"{}>{}<span class=\"count\">{count}</span></a>",
+                    escaped(&self.asked.listing(listed(Some(view.clone()), ready))),
+                    on(Some(view.as_str()) == drawn),
+                    escaped(view)
+                ));
+            }
         }
         html.push_str("</div></details>");
         html.push_str(&format!(
