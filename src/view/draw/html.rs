@@ -339,7 +339,12 @@ impl Drawing<'_> {
         offset: FixedOffset,
     ) {
         html.push_str("<span class=\"left\">");
-        self.prefix(html, line, &Span::raw(line.prefix.clone()));
+        self.prefix(
+            html,
+            line,
+            &Span::raw(line.prefix.clone()),
+            &project.project,
+        );
         html.push_str(&format!("<h2>{}</h2></span>", escaped(&project.project)));
         if let Some(how_fresh) = reads.of(project) {
             let tone = if wants_attention(how_fresh.mark) {
@@ -423,7 +428,16 @@ impl Drawing<'_> {
             html.push_str("<span class=\"left\">");
         }
         if let Some((prefix, _)) = prefix {
-            self.prefix(html, line, prefix);
+            let what = match &line.content {
+                Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => row.title.clone(),
+                _ => identity
+                    .iter()
+                    .chain(whole.title)
+                    .flat_map(|span| span.content.split_whitespace())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            };
+            self.prefix(html, line, prefix, &what);
         }
         if !bead {
             html.push_str("<span>");
@@ -464,36 +478,31 @@ impl Drawing<'_> {
         self.forest.list().is_some()
     }
 
-    /// What a line hangs under, drawn as rails, which is the link that
-    /// toggles the line's fold where it has one.
-    fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>) {
-        let (drawn, rails) = match railed(&prefix.content, self.listed()) {
-            Some(drawn) => (drawn, " rails"),
+    /// What a line hangs under, drawn as rails, then the control that
+    /// toggles the line's fold where it has one, named for `what` it folds.
+    fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>, what: &str) {
+        let (drawn, class) = match railed(&prefix.content, self.listed()) {
+            Some(drawn) => (drawn, " class=\"rails\""),
             None => (escaped(&prefix.content), ""),
         };
-        let Some(href) = self.asked.toggling(line, self.listed()) else {
-            let class = if rails.is_empty() {
-                ""
-            } else {
-                " class=\"rails\""
-            };
-            html.push_str(&format!(
-                "<span{class}{}>{drawn}</span>",
-                styled(palette::css(prefix.style)),
-            ));
-            return;
-        };
-        let (said, shut) = if line.folded == Some(true) {
-            (phrase::shut_the_fold(), "")
-        } else {
-            (phrase::open_the_fold(), " shut")
-        };
         html.push_str(&format!(
-            "<a class=\"fold{shut}{rails}\" href=\"{}\" aria-label=\"{}\"{}>{drawn}</a>",
-            escaped(&href),
-            escaped(said),
+            "<span{class}{}>{drawn}",
             styled(palette::css(prefix.style)),
         ));
+        if let Some(href) = self.asked.toggling(line, self.listed()) {
+            let open = line.folded == Some(true);
+            let (said, shut) = if open {
+                (phrase::fold(what), "")
+            } else {
+                (phrase::unfold(what), " shut")
+            };
+            html.push_str(&format!(
+                "<a class=\"fold{shut}\" href=\"{}\" aria-expanded=\"{open}\" aria-label=\"{}\"></a>",
+                escaped(&href),
+                escaped(&said),
+            ));
+        }
+        html.push_str("</span>");
     }
 
     /// The one component every reference to a bead is drawn by: its status
@@ -940,10 +949,13 @@ main.open::before{content:\"\";position:absolute;inset:0 0 0 auto;width:500px;bo
 border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24px -18px rgba(23,32,42,.35)}\
 .forest{padding:8px 0;min-width:0;overflow-x:clip}\
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box;\
-width:max-content;min-width:100%}\
+width:max-content;min-width:100%;position:relative}\
+.line>a.bead::after{content:\"\";position:absolute;inset:0}\
+.line a:not(.bead){position:relative;z-index:1}\
+@media (hover:hover){.line:not(.shown):has(>a.bead):hover{background:var(--sunk)}}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
-.line.shown{position:relative}#shown{position:absolute;top:0}\
+#shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
 .line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
@@ -952,15 +964,19 @@ width:max-content;min-width:100%}\
 .line u.last::before{bottom:auto;height:var(--arm,16px)}\
 .line u::after{top:var(--arm,16px);width:10px;border-top-width:1.5px}\
 .line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
-.line>:has(+.bead)::after,.line .rails::after,.line a.fold::after{content:\"\";flex:none;align-self:center;width:28px;height:28px;\
-font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
-.line a.fold::after{background:var(--faint);\
+.line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after{content:\"\";flex:none;align-self:center;\
+width:28px;height:28px;font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
+.line>.rails:has(>u.up):not(:has(>.fold))::after{content:\"\\2191\"}\
+.line :has(>a.fold){display:inline-flex;vertical-align:middle;font-size:0}\
+.line a.fold{flex:none;align-self:center;display:grid;place-items:center;width:28px;height:28px;\
+box-sizing:border-box;border-radius:6px;color:var(--faint)}\
+.line a.fold::before{content:\"\";width:14px;height:14px;background:currentColor;\
 -webkit-mask:var(--chevron) center/14px no-repeat;mask:var(--chevron) center/14px no-repeat}\
-.line a.fold.shut::after{transform:rotate(-90deg)}\
-.line>.rails:has(>u.up)::after{content:\"\\2191\"}\
-.line a.fold:not(.rails){display:inline-flex;vertical-align:middle;font-size:0}\
+.line a.fold.shut::before{transform:rotate(-90deg)}\
+.line a.fold:hover{background:var(--line);color:var(--fg)}\
+.line a.fold:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 a{color:inherit;text-decoration:none}\
-a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
+a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;padding:8px 12px}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
@@ -1032,7 +1048,7 @@ nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:
 background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
 @media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
-.line a.fold::after{forced-color-adjust:none;background:CanvasText}\
+.line a.fold::before{forced-color-adjust:none;background:CanvasText}\
 nav .ready.on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
@@ -1050,7 +1066,7 @@ background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5
 a.root:hover,a.step:hover{text-decoration:underline}\
 @media (max-width:720px){.rooted{padding:9px 14px}.rooted .all::before{content:none}\
 aside{padding:8px 16px 24px}\
-.line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;position:relative;--arm:9px}\
+.line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
@@ -1059,11 +1075,13 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.left>.rails+span{min-width:0}\
 .line i,.line b,.line u{width:14px}.line .deep{display:none}\
 .line i::before,.line u::before,.line u::after{left:10px}\
-.line>:has(+.bead)::after,.line .rails::after,.line a.fold::after{align-self:flex-start;width:22px;height:20px;line-height:20px}\
+.line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after\
+{align-self:flex-start;width:32px;height:20px;line-height:20px}\
+.line a.fold{align-self:flex-start;width:32px;height:44px}\
+.line>:has(+.bead)>a.fold{place-items:start center;padding-top:9px}\
+.line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
-.line>.bead::after{content:\"\";position:absolute;inset:0}\
-.line a:not(.bead){position:relative;z-index:1}\
 .line .g{grid-area:1/1;font-size:14px;text-align:center}\
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
@@ -2131,6 +2149,62 @@ mod tests {
         assert!(text_of(&opened).contains("land the session shell"));
     }
 
+    /// The fold control on line `at` of a page, whole.
+    fn fold_on(html: &str, at: usize) -> &str {
+        let line = line_html(html, at);
+        let fold = &line[line.find("<a class=\"fold").expect("the line folds")..];
+        &fold[..fold.find("</a>").expect("the fold ends") + "</a>".len()]
+    }
+
+    /// The fold is a control of its own beside what its line hangs under,
+    /// rather than a link around it, so the rails and the rest of the row
+    /// are not a fold target. It says whether its fold is open, and is
+    /// named for what it folds.
+    #[test]
+    fn a_fold_is_a_control_of_its_own_named_for_what_it_folds() {
+        let html = page_at("/").html;
+        let shut = lines_titled(&html, "apply the two niri settings")[0];
+        assert!(
+            fold_on(&html, shut).ends_with(
+                " aria-expanded=\"false\" aria-label=\"Unfold apply the two niri settings\"></a>"
+            ),
+            "{}",
+            fold_on(&html, shut)
+        );
+
+        let opened = page_at(&fold_link(&html, shut)).html;
+        assert!(
+            fold_on(&opened, shut).ends_with(
+                " aria-expanded=\"true\" aria-label=\"Fold apply the two niri settings\"></a>"
+            ),
+            "{}",
+            fold_on(&opened, shut)
+        );
+    }
+
+    /// Every fold on the trees and on the ready list is the same control,
+    /// drawing nothing of the line it folds.
+    #[test]
+    fn every_fold_in_the_trees_and_the_ready_list_is_a_control_of_its_own() {
+        for target in ["/", "/?ready=1"] {
+            let html = page_at(target).html;
+            let folding: Vec<usize> = (0..lines_html(&html).len())
+                .filter(|&at| line_html(&html, at).contains("<a class=\"fold"))
+                .collect();
+            assert!(!folding.is_empty(), "{target} draws a fold");
+            for at in folding {
+                let fold = fold_on(&html, at);
+                let named =
+                    fold.contains(" aria-label=\"Fold ") || fold.contains(" aria-label=\"Unfold ");
+                let says = fold.contains(" aria-expanded=\"");
+                assert!(
+                    named && says && fold.ends_with("\"></a>"),
+                    "{target}: {fold}"
+                );
+            }
+        }
+    }
+
     /// The ground with `smt-4kd3p.6` reached a second way, under
     /// `smt-4kd3p.4`, so the forest draws it and its child twice.
     fn reached_twice() -> Snapshot {
@@ -2649,16 +2723,10 @@ mod tests {
             .filter(|&at| line_html(&html, at).contains("class=\"bead\""))
             .collect();
         assert_eq!(beads, [1, 2, 3, 4]);
-        let (leaf, shut) = (3, 4);
         for at in beads {
             let line = line_html(&html, at);
             let (shape, between) = parts(line);
-            let hung = match at {
-                _ if at == leaf => "span.rails",
-                _ if at == shut => "a.fold shut rails",
-                _ => "a.fold rails",
-            };
-            assert_eq!(shape, [hung, "a.bead", "span.state"], "{line}");
+            assert_eq!(shape, ["span.rails", "a.bead", "span.state"], "{line}");
             assert_eq!(between, "", "{line}");
 
             let (reference, between) = parts(inside(line, "bead"));
@@ -2720,7 +2788,7 @@ mod tests {
         let line = line_html(&html, 2);
         assert_eq!(
             parts(line).0,
-            ["a.fold rails", "a.bead", "span.more", "span.state"],
+            ["span.rails", "a.bead", "span.more", "span.state"],
             "{line}"
         );
         let more = inside(line, "more");
@@ -2829,12 +2897,16 @@ mod tests {
     }
 
     /// The elements drawn as rails on line `at`, each as its tag and its
-    /// class: the levels inside what the line hangs under.
+    /// class: the levels inside what the line hangs under, without its fold.
     fn rails(html: &str, at: usize) -> Vec<String> {
         let line = line_html(html, at);
         let hung = &line[..element_end(line, 0)];
         let content = hung.find('>').expect("the tag ends") + 1;
-        parts(&hung[content..hung.rfind('<').expect("a closing tag")]).0
+        parts(&hung[content..hung.rfind('<').expect("a closing tag")])
+            .0
+            .into_iter()
+            .filter(|part| !part.starts_with("a.fold"))
+            .collect()
     }
 
     /// Each level a line hangs under is a rail, except the column a
@@ -2893,8 +2965,8 @@ mod tests {
         assert_eq!(rails(&open, waiting), ["u.last up"]);
     }
 
-    /// A fold's chevron is masked on a box of its own, never on the fold's
-    /// link, whose focus ring a mask would clip.
+    /// A fold's chevron is masked on a box of its own inside the fold, never
+    /// on the fold itself, whose focus ring a mask would clip.
     #[test]
     fn no_fold_link_is_masked_itself() {
         let masked: Vec<&str> = STYLE
@@ -2906,33 +2978,36 @@ mod tests {
             .collect();
         assert!(!masked.is_empty(), "{STYLE}");
         for selector in masked {
-            assert!(selector.ends_with("::after"), "{selector}");
+            assert!(selector.ends_with("::before"), "{selector}");
         }
     }
 
-    /// Whatever a line hangs under ends in one box for a chevron, folding or
-    /// not, sized by one rule at each width, with a selector as specific as
-    /// the other width's. So a row that folds starts its title where a row
-    /// beside it that does not fold starts its own.
+    /// Whatever a line hangs under ends in a box as wide as the fold, folding
+    /// or not, sized at each width by selectors as specific as the other
+    /// width's. So a row that folds starts its title where a row beside it
+    /// that does not fold starts its own.
     #[test]
-    fn every_prefix_ends_in_one_box_for_a_chevron_at_each_width() {
+    fn every_prefix_ends_in_a_box_as_wide_as_the_fold_at_each_width() {
         let phone = STYLE
             .find("@media (max-width:720px){")
             .expect("a phone's rules");
         for (rules, width) in [
             (&STYLE[..phone], "width:28px"),
-            (&STYLE[phone..], "width:22px"),
+            (&STYLE[phone..], "width:32px"),
         ] {
-            let sized = rules
+            let sized: Vec<&str> = rules
                 .split('}')
-                .find(|rule| rule.contains(width))
-                .expect("the width sizes the box a prefix ends in");
+                .filter(|rule| rule.contains(width))
+                .collect();
             for selector in [
-                ".line>:has(+.bead)::after",
-                ".line .rails::after",
-                ".line a.fold::after",
+                ".line>:has(+.bead):not(:has(>.fold))::after",
+                ".line .rails:not(:has(>.fold))::after",
+                ".line a.fold{",
             ] {
-                assert!(sized.contains(selector), "{width}: {sized}");
+                assert!(
+                    sized.iter().any(|rule| rule.contains(selector)),
+                    "{width}: {selector}: {sized:#?}"
+                );
             }
         }
     }
@@ -2944,12 +3019,12 @@ mod tests {
         let html = page_at("/").html;
         let folds: Vec<(String, bool)> = (0..lines_html(&html).len())
             .filter(|&at| line_html(&html, at).contains("class=\"bead"))
-            .filter(|&at| line_html(&html, at).starts_with("<a class=\"fold"))
+            .filter(|&at| line_html(&html, at).contains("<a class=\"fold"))
             .map(|at| {
                 let line = line_html(&html, at);
                 (
                     words(&text_of(inside(line, "title"))),
-                    line.starts_with("<a class=\"fold shut"),
+                    line.contains("<a class=\"fold shut"),
                 )
             })
             .collect();
