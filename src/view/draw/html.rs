@@ -839,10 +839,13 @@ fn linked(said: &str, href: Option<&str>) -> String {
 /// Spans of one block as HTML, each in its own style, the first of them the
 /// block's span `from`. One that `marks` names as a link is a link, where it
 /// points somewhere a page may link to, and one it names as a literal is in
-/// its colour as written, and one it names as a badge is a pill. One in the
-/// code tone is marked as code. A flag in a line's state, drawn in the
-/// attention style, holds its words apart from its icon, and is titled with
-/// them, so a page short of room can draw the icon alone.
+/// its colour as written, and one it names as a badge is a pill in the
+/// colour its config gave it. Any other span drawn in a status's colour is
+/// drawn without it, because a status mark is the one thing the page draws
+/// in that colour. One in the code tone is marked as code. A flag in a
+/// line's state, drawn in the attention style, holds its words apart from
+/// its icon, and is titled with them, so a page short of room can draw the
+/// icon alone.
 fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
     for (at, span) in spans.iter().enumerate() {
         let mut marked = marks
@@ -863,8 +866,10 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
             .any(|mark| matches!(mark.is, Marked::Literal))
         {
             palette::css_as_written(span.style)
-        } else {
+        } else if badge {
             palette::css(span.style)
+        } else {
+            palette::css_without_status(span.style)
         };
         let style = format!("{class}{}", styled(css));
         let text = match flagged {
@@ -3039,6 +3044,37 @@ mod tests {
             assert!(statuses.iter().any(|said| said == status), "{statuses:?}");
         }
         assert!(html.contains("class=\"g closed\""), "{html}");
+    }
+
+    /// A status's colour is drawn on the bead's status mark and nowhere
+    /// else: not on an id, a count, a rail or a word beside it. Colour alone
+    /// then says the status, because nothing else on the page is that colour.
+    #[test]
+    fn only_a_status_mark_carries_a_status_colour() {
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        tree.beads[6].status = Status::Blocked;
+        tree.beads[8].status = Status::Deferred;
+        snapshot.collected = snapshot.trees.clone();
+        let targets = ["/", "/?ready=1"]
+            .map(String::from)
+            .into_iter()
+            .chain(
+                ["smt-4kd3p", "smt-4kd3p.2", "smt-4kd3p.6", "smt-4kd3p.8"]
+                    .map(|id| address(&key(id))),
+            );
+        let mut coloured = Vec::new();
+        for target in targets {
+            let html = page_of(snapshot.clone(), &target);
+            let body = &html[html.find("<body").expect("the page has a body")..];
+            coloured.extend(
+                body.split('<')
+                    .map(|tag| &tag[..tag.find('>').unwrap_or(tag.len())])
+                    .filter(|tag| tag.contains("--status-") && !tag.contains("class=\"g "))
+                    .map(|tag| format!("{target}: <{tag}>")),
+            );
+        }
+        assert_eq!(coloured, Vec::<String>::new());
     }
 
     /// The row's cells other than the reference are drawn together, after
