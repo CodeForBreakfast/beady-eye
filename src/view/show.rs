@@ -383,8 +383,8 @@ pub struct Page {
     pub related: Vec<usize>,
     /// The sections that name beads, in the order they are drawn.
     pub tied: Vec<Tied>,
-    /// The rows the description and the notes are drawn on, each with
-    /// which of the two it is.
+    /// The rows the description's and the notes' sections each take, from
+    /// the blank over the heading, with which of the two each is.
     pub prose: Vec<(Range<usize>, Prose)>,
     /// Which spans of which rows are marked, and as what, for
     /// the rows that hold a mark at all.
@@ -757,7 +757,7 @@ pub fn said(
         rows.push(vec![Span::styled(heading, palette::SECTION)]);
         let drawn = rows.len()..rows.len() + body.len();
         match holds {
-            Holds::Prose(prose) => written.push((drawn, prose)),
+            Holds::Prose(prose) => written.push((from..drawn.end, prose)),
             Holds::Beads(ties) => {
                 related.extend(drawn.clone());
                 lists.push(Tied {
