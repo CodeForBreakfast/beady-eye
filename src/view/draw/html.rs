@@ -335,8 +335,16 @@ impl Drawing<'_> {
                 "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
                 escaped(phrase::mark(how_fresh, reads.now))
             ));
-            if let Some(when) = phrase::read_at(how_fresh, offset, reads.now) {
-                html.push_str(&format!(" {}", escaped(&when)));
+            if let (Some(when), Some(at)) = (
+                phrase::read_at(how_fresh, offset, reads.now),
+                how_fresh.read_at,
+            ) {
+                html.push_str(&format!(
+                    " <time datetime=\"{}\" title=\"{}\">{}</time>",
+                    at.to_rfc3339(),
+                    escaped(&phrase::read_in_full(at, offset)),
+                    escaped(&when)
+                ));
             }
             html.push_str("</span>");
         }
@@ -1511,6 +1519,23 @@ mod tests {
             heading.contains("<span style=\"width:33%\"></span>"),
             "{heading}"
         );
+    }
+
+    /// The short time of day keeps the whole of the read, day and zone
+    /// included, for a reader whose page has been open since another day.
+    #[test]
+    fn a_headings_read_time_holds_the_whole_date_and_zone() {
+        let html = page_at("/").html;
+        let heading = line_html(&html, 0);
+        let time = &heading[heading.find("<time ").expect("a time")..];
+        let full = time
+            .split("title=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("a title");
+        assert!(full.starts_with("read at 11:21:"), "{full}");
+        assert!(full.contains(" on "), "{full}");
+        assert!(time.starts_with("<time datetime=\""), "{time}");
     }
 
     /// A page drawn on another day than the read says which day it was.

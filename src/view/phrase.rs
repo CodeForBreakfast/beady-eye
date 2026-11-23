@@ -248,6 +248,14 @@ pub fn read_at(freshness: Freshness, offset: FixedOffset, now: DateTime<Utc>) ->
     })
 }
 
+/// The whole of when a project's rows were read, at `offset`: the day, the
+/// year and the zone that `read_at` leaves out.
+pub fn read_in_full(at: DateTime<Utc>, offset: FixedOffset) -> String {
+    at.with_timezone(&offset)
+        .format("read at %H:%M:%S %:z on %-d %B %Y")
+        .to_string()
+}
+
 /// Which frame the collecting mark is on at this instant.
 ///
 /// Taken from the clock rather than counted, so every redraw inside one
