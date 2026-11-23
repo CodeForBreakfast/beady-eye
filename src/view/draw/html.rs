@@ -24,7 +24,7 @@ use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::markdown::Flow;
 use crate::view::row::{Layout, WARNING};
-use crate::view::{palette, phrase, show, Mark, Said};
+use crate::view::{palette, phrase, show, Said};
 
 use super::bead::referenced_line;
 use super::foot::notices;
@@ -323,7 +323,7 @@ impl Drawing<'_> {
         if let Some(how_fresh) = reads.of(project) {
             let tone = if wants_attention(how_fresh.mark) {
                 " warn"
-            } else if how_fresh.mark == Mark::Read {
+            } else if how_fresh.mark == crate::view::Mark::Read {
                 " ok"
             } else {
                 ""
