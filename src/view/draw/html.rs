@@ -799,7 +799,7 @@ nav input::placeholder{color:transparent}\
 .lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
 .rooted{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
 background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5px}\
-.rooted .said{color:var(--muted);white-space:nowrap}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
+.rooted .said{color:var(--muted);min-width:0;overflow-wrap:anywhere}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
 .rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
 .rooted .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
 .rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
