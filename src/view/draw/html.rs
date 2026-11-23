@@ -339,10 +339,9 @@ impl Drawing<'_> {
                 "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
                 escaped(phrase::mark(how_fresh, reads.now))
             ));
-            if let (Some(ago), Some(at)) = (
-                phrase::last_read(how_fresh, reads.now),
-                how_fresh.read_at,
-            ) {
+            if let (Some(ago), Some(at)) =
+                (phrase::last_read(how_fresh, reads.now), how_fresh.read_at)
+            {
                 html.push_str(&format!(
                     " {} <time datetime=\"{}\" title=\"{}\">{}</time>",
                     escaped(phrase::read()),
