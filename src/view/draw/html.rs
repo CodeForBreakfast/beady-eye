@@ -928,13 +928,13 @@ width:max-content;min-width:100%}\
 .line u.last::before{bottom:auto;height:var(--arm,16px)}\
 .line u::after{top:var(--arm,16px);width:10px;border-top-width:1.5px}\
 .line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
-.line .rails::after{content:\"\";flex:none;align-self:center;width:28px;height:28px;\
+.line .rails::after,.line a.fold::after{content:\"\";flex:none;align-self:center;width:28px;height:28px;\
 font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
-.line a.fold.rails::after,.line a.fold:not(.rails){background:var(--faint);\
+.line a.fold::after{background:var(--faint);\
 -webkit-mask:var(--chevron) center/14px no-repeat;mask:var(--chevron) center/14px no-repeat}\
-.line a.fold.shut.rails::after,.line a.fold.shut:not(.rails){transform:rotate(-90deg)}\
+.line a.fold.shut::after{transform:rotate(-90deg)}\
 .line>.rails:has(>u.up)::after{content:\"\\2191\"}\
-.line a.fold:not(.rails){display:inline-block;width:28px;height:28px;vertical-align:middle;font-size:0}\
+.line a.fold:not(.rails){display:inline-flex;vertical-align:middle;font-size:0}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
@@ -1003,7 +1003,7 @@ nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:
 background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
 @media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
-.line a.fold.rails::after,.line a.fold:not(.rails){forced-color-adjust:none;background:CanvasText}\
+.line a.fold::after{forced-color-adjust:none;background:CanvasText}\
 nav .ready.on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
@@ -2721,6 +2721,23 @@ mod tests {
         let waiting = lines_titled(&open, "soak it in oil")[0];
         assert_eq!(rails(&open, row), Vec::<String>::new());
         assert_eq!(rails(&open, waiting), ["u.last up"]);
+    }
+
+    /// A fold's chevron is masked on a box of its own, never on the fold's
+    /// link, whose focus ring a mask would clip.
+    #[test]
+    fn no_fold_link_is_masked_itself() {
+        let masked: Vec<&str> = STYLE
+            .split('}')
+            .filter(|rule| rule.contains("mask:"))
+            .filter_map(|rule| rule.split('{').rev().nth(1))
+            .flat_map(|selectors| selectors.split(','))
+            .filter(|selector| selector.contains("fold"))
+            .collect();
+        assert!(!masked.is_empty(), "{STYLE}");
+        for selector in masked {
+            assert!(selector.ends_with("::after"), "{selector}");
+        }
     }
 
     /// The page draws a fold's chevron itself, so a fold says whether it is
