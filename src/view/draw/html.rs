@@ -145,7 +145,7 @@ fn said_alone(said: &str) -> String {
 /// version, and a reader already showing it is sent nothing.
 fn kept_current(title: &str, body: &str) -> String {
     let mut digest = DefaultHasher::new();
-    (title, body).hash(&mut digest);
+    (head(title, Some("")), body).hash(&mut digest);
     head(title, Some(&format!("{:016x}", digest.finish()))) + body
 }
 
@@ -1557,7 +1557,6 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// page, drawn once.
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
-  const asked = location.pathname + (location.search ? location.search + "&" : "?");
   const drawn = document.documentElement.dataset.version;
   let since, changes, page;
   const heard = (event, lines) => {
@@ -1565,7 +1564,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     show(page = lines);
   };
   const listen = () => {
-    const source = changes = new EventSource(asked + (since ? "since=" + since : ""));
+    const asked = new URLSearchParams(location.search);
+    asked.delete("since");
+    if (since) asked.set("since", since);
+    const source = changes = new EventSource(location.pathname + "?" + asked);
     source.addEventListener("error", () => {
       if (source.readyState !== EventSource.CLOSED || changes !== source) return;
       changes = null;
@@ -1582,7 +1584,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     });
   };
   fetch(location.href, { cache: "only-if-cached", mode: "same-origin" })
-    .then((answer) => answer.ok ? answer.text() : "")
+    .then((answer) => answer.text())
     .catch(() => "")
     .then((text) => {
       const lines = text.replace(/\r/g, "&#13;").split("\n");

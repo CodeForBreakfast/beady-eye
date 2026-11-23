@@ -476,7 +476,7 @@ fn opening_a_page_and_returning_to_it_after_a_change_each_send_it_once() {
     };
     assert!(listened.contains("since="), "{listened}");
     assert!(
-        stream_bytes * 2 < page_bytes * 3,
+        stream_bytes * 4 < *page_bytes,
         "returning sent {stream_bytes} bytes for a page of {page_bytes}"
     );
 }
