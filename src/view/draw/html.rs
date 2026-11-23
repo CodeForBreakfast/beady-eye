@@ -3007,7 +3007,10 @@ mod tests {
             "{shown}"
         );
         let head = inside(&answer.html, "head");
-        assert!(head.contains("<h2>apply the two niri settings</h2>"), "{head}");
+        assert!(
+            head.contains("<h2>apply the two niri settings</h2>"),
+            "{head}"
+        );
     }
 
     #[test]
@@ -3222,7 +3225,11 @@ mod tests {
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
         let (references, rest) = references_and_the_rest(inside(&html, "waits"));
         std::iter::once(words(&text_of(&rest)))
-            .chain(references.iter().map(|reference| words(&text_of(reference))))
+            .chain(
+                references
+                    .iter()
+                    .map(|reference| words(&text_of(reference))),
+            )
             .collect()
     }
 
