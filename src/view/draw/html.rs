@@ -866,7 +866,7 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
 /// How many levels a phone indents a line by before it stops. A line deeper
 /// than that is drawn at that depth, and drawing its tree as the only root
 /// is the way further down.
-const PHONE_LEVELS: usize = 5;
+const PHONE_LEVELS: usize = 4;
 
 /// The connectors a line hangs under, with each level drawn as a rail in an
 /// element of its own: a trunk as `i`, a gap as `b`, and the line's elbow as
@@ -1122,7 +1122,8 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
-.line .g{grid-area:1/1;font-size:14px;text-align:center}\
+.line .g{grid-area:1/1;align-self:start;font-size:14px;text-align:center}\
+.line .g:is(.open,.in-progress,.blocked,.closed,.deferred){margin-top:4px}\
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
@@ -3174,9 +3175,9 @@ mod tests {
     /// that level, a gap where none does, and the line's own elbow, marked
     /// where it is the last there and where it hangs on a blocking edge. On
     /// a line deeper than a phone indents, the levels between its outermost
-    /// five and its elbow are marked as past a phone's indent.
+    /// four and its elbow are marked as past a phone's indent.
     #[test]
-    fn each_level_a_line_hangs_under_is_a_rail_and_a_phone_indents_five() {
+    fn each_level_a_line_hangs_under_is_a_rail_and_a_phone_indents_four() {
         let html = page_of(deep(), "/");
         let drawn: Vec<(String, Vec<String>)> = (1..lines_html(&html).len())
             .map(|at| {
@@ -3201,8 +3202,11 @@ mod tests {
                 rails("trace the feed", &["i", "i", "u"]),
                 rails("open the junction box", &["i", "i", "u.last"]),
                 rails("free the seized screw", &["i", "i", "b", "u.last"]),
-                rails("soak it in oil", &["i", "i", "b", "b", "u.last"]),
-                rails("wait a night", &["i", "i", "b", "b", "b.deep", "u.last"]),
+                rails("soak it in oil", &["i", "i", "b", "b.deep", "u.last"]),
+                rails(
+                    "wait a night",
+                    &["i", "i", "b", "b.deep", "b.deep", "u.last"]
+                ),
                 rails("log the burn", &["i", "u.last blocks"]),
                 rails("test the fog signal", &["u"]),
                 rails("log the burn", &["u.last"]),
