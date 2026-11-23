@@ -379,7 +379,7 @@ fn a_failed_projects_loose_panes_hang_under_its_own_line() {
             "▾ ferry",
             "  └── [Unattributed ferry] 1",
             "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None, claim_refused: false })",
-            "▸ [FailedProjects] 1",
+            "▾ [FailedProjects] 1",
         ]
     );
 }

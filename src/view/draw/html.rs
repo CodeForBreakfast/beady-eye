@@ -24,7 +24,7 @@ use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::row::{Cell, Layout, Progress, WARNING};
 use crate::view::show::{Prose, Tied, Ties};
-use crate::view::{palette, phrase, show, Said};
+use crate::view::{palette, phrase, show, Freshness, Said};
 
 use super::bead::{elided_run, referenced_line};
 use super::foot::notices;
@@ -378,7 +378,7 @@ impl Drawing<'_> {
         // A project's heading and the lines under it are one section, so the
         // heading sticks only while its own lines scroll.
         let mut in_project = false;
-        let mut folding = false;
+        let mut folding = self.across_projects() && self.folded_line(html, &reads, drawn.offset);
         for (at, line) in lines.viewport(0, lines.len()) {
             if in_project && line.depth == 0 {
                 html.push_str("</section>");
@@ -386,17 +386,15 @@ impl Drawing<'_> {
             }
             let heading = matches!(line.content, Content::Project(_));
             if folding && line.depth == 0 && !heading {
-                html.push_str("</details>");
+                self.unfolded_end(html, &reads, drawn.offset);
                 folding = false;
             }
             match &line.content {
                 // Counted in the top bar and the menu, which list those beads.
                 Content::Note(Note::ToCheck(_)) => {}
+                // Listed with what its tracker said once the headings end.
+                Content::Project(project) if folding && self.unread(&project.project) => {}
                 Content::Project(project) => {
-                    if !folding && self.across_projects() {
-                        self.folded_line(html, &reads, drawn.offset);
-                        folding = true;
-                    }
                     html.push_str("<section>");
                     in_project = true;
                     self.open_line(html, at, line, " heading", String::new());
@@ -416,51 +414,85 @@ impl Drawing<'_> {
             html.push_str("</section>");
         }
         if folding {
-            html.push_str("</details>");
+            self.unfolded_end(html, &reads, drawn.offset);
         }
     }
 
     /// The one line a list across projects folds their headings into, which
-    /// opens to them: how many projects have no read gone badly and, once
-    /// every one of those has been read, when the oldest of them was, then
+    /// opens to them: how many projects there are and, once every one with
+    /// no read gone badly has been read, when the oldest of those was, then
     /// each project whose read went badly, named in the colour of a flag
     /// beside the mark its heading draws. A project whose first read is still
-    /// out is counted and holds the time back, as it does in the title.
-    fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) {
+    /// out holds the time back, as it does in the title. A project whose
+    /// tracker could not be read is named as one whose read went badly, from
+    /// its failure rather than any heading it keeps. Nothing is drawn, and
+    /// the answer is false, where there is no project to say anything of.
+    fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) -> bool {
         let lines = self.forest.lines();
         let (troubled, fresh): (Vec<_>, Vec<_>) = lines
             .viewport(0, lines.len())
             .filter_map(|(_, line)| match &line.content {
-                Content::Project(project) => Some((project, reads.of(project))),
+                Content::Project(project) if !self.unread(&project.project) => {
+                    Some((project, reads.of(project)))
+                }
                 _ => None,
             })
             .partition(|(_, how_fresh)| how_fresh.is_some_and(|fresh| wants_attention(fresh.mark)));
-        html.push_str("<details class=\"projects\"><summary>");
-        if !fresh.is_empty() {
-            html.push_str(&format!(
-                "<span class=\"fresh\">{}",
-                escaped(&phrase::projects(fresh.len()))
-            ));
-            let read: Option<Vec<_>> = fresh
-                .iter()
-                .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
-                .collect();
-            if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
-                read_time(html, oldest, offset, reads.now);
-            }
-            html.push_str("</span>");
+        let failed = &self.forest.snapshot().failed_projects;
+        if troubled.is_empty() && fresh.is_empty() && failed.is_empty() {
+            return false;
         }
+        html.push_str(&format!(
+            "<details class=\"projects\"><summary><span class=\"fresh\">{}",
+            escaped(&phrase::projects(
+                fresh.len() + troubled.len() + failed.len()
+            ))
+        ));
+        let read: Option<Vec<_>> = fresh
+            .iter()
+            .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
+            .collect();
+        if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
+            read_time(html, oldest, offset, reads.now);
+        }
+        html.push_str("</span>");
+        let unread = failed
+            .iter()
+            .filter_map(|failed| Some((failed.project.as_str(), reads.of_failed(failed)?)));
         let troubled = troubled
             .into_iter()
-            .filter_map(|(project, how_fresh)| Some((project, how_fresh?)));
+            .filter_map(|(project, how_fresh)| Some((project.project.as_str(), how_fresh?)))
+            .chain(unread);
         for (project, how_fresh) in troubled {
             html.push_str(&format!(
                 "<span class=\"flag\">{} {}</span>",
                 escaped(phrase::mark(how_fresh, reads.now)),
-                escaped(&project.project)
+                escaped(project)
             ));
         }
         html.push_str("</summary>");
+        true
+    }
+
+    /// What the folded line opens to after the headings, and the end of it:
+    /// each project whose tracker could not be read, drawn where its heading
+    /// would be, with the mark of a read that went badly and what its
+    /// tracker said in place of what it holds.
+    fn unfolded_end(&self, html: &mut String, reads: &Reads, offset: FixedOffset) {
+        for failed in &self.forest.snapshot().failed_projects {
+            html.push_str(&format!(
+                "<section><div class=\"line heading\"><span class=\"left\"><h2>{}</h2></span>",
+                escaped(&failed.project)
+            ));
+            if let Some(how_fresh) = reads.of_failed(failed) {
+                read_mark(html, how_fresh, reads.now, offset);
+            }
+            html.push_str(&format!(
+                "<span class=\"state\"><span class=\"flag unread\">{}</span></span></div>\n</section>",
+                escaped(&phrase::tracker_failure(&failed.tracker))
+            ));
+        }
+        html.push_str("</details>");
     }
 
     /// A line's opening tag, classed `kind` and styled `css`, and the anchor
@@ -500,21 +532,7 @@ impl Drawing<'_> {
         );
         html.push_str(&format!("<h2>{}</h2></span>", escaped(&project.project)));
         if let Some(how_fresh) = reads.of(project) {
-            let tone = if wants_attention(how_fresh.mark) {
-                " warn"
-            } else if how_fresh.mark == crate::view::Mark::Read {
-                " ok"
-            } else {
-                ""
-            };
-            html.push_str(&format!(
-                "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
-                escaped(phrase::mark(how_fresh, reads.now))
-            ));
-            if let Some(at) = how_fresh.read_at {
-                read_time(html, at, offset, reads.now);
-            }
-            html.push_str("</span>");
+            read_mark(html, how_fresh, reads.now, offset);
         }
         let counts = &project.counts;
         html.push_str("<span class=\"state\">");
@@ -663,6 +681,15 @@ impl Drawing<'_> {
             (Content::Bead(_), Some(place)) if self.across_projects() => Some(&place.key().project),
             _ => None,
         }
+    }
+
+    /// Whether `project`'s tracker could not be read.
+    fn unread(&self, project: &str) -> bool {
+        self.forest
+            .snapshot()
+            .failed_projects
+            .iter()
+            .any(|failed| failed.project == project)
     }
 
     /// Whether the lines are a list that draws beads of more than one
@@ -1121,6 +1148,26 @@ fn menu_name(list: Option<&List>) -> String {
     }
 }
 
+/// The mark beside a project's name, toned for how its read went, then when
+/// it was read.
+fn read_mark(html: &mut String, how_fresh: Freshness, now: DateTime<Utc>, offset: FixedOffset) {
+    let tone = if wants_attention(how_fresh.mark) {
+        " warn"
+    } else if how_fresh.mark == crate::view::Mark::Read {
+        " ok"
+    } else {
+        ""
+    };
+    html.push_str(&format!(
+        "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
+        escaped(phrase::mark(how_fresh, now))
+    ));
+    if let Some(at) = how_fresh.read_at {
+        read_time(html, at, offset, now);
+    }
+    html.push_str("</span>");
+}
+
 /// When something was read `at`, as the time of day in `offset`, which the
 /// page's script says as how long ago, and shows only once it is old enough
 /// to be news.
@@ -1475,6 +1522,7 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .heading h2{display:inline;margin:0;font:600 var(--size-heading) var(--display);color:var(--fg)}\
 .heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>*{white-space:nowrap}\
+.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
 .heading .state a:hover{text-decoration:underline}\
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
@@ -4487,8 +4535,8 @@ mod tests {
     }
 
     /// Only a project whose read went badly is named on the folded line, in
-    /// the colour of a flag with the mark its heading draws. The rest are
-    /// counted, and the read time is the oldest of theirs.
+    /// the colour of a flag with the mark its heading draws. Every project is
+    /// counted, and the read time is the oldest of the rest.
     #[test]
     fn the_folded_line_names_only_a_project_whose_read_went_badly() {
         let (both, _) = dunwich_read_an_hour_ago();
@@ -4507,7 +4555,7 @@ mod tests {
 
         let line = folded(&html);
         assert!(
-            words(&text_of(line)).starts_with("1 project read "),
+            words(&text_of(line)).starts_with("2 projects read "),
             "{line}"
         );
         assert!(line.contains(&fresh.to_rfc3339()), "{line}");
@@ -4523,6 +4571,139 @@ mod tests {
             "{line}"
         );
         assert!(!text_of(line).contains(PROJECT), "{line}");
+    }
+
+    /// The ground beside dunwich, whose tracker could not be read, so it was
+    /// read and has no tree.
+    fn beside_unread_dunwich() -> Snapshot {
+        let mut ground = ground();
+        ground.projects.push("dunwich".to_string());
+        ground.read_at.insert("dunwich".to_string(), drawn_at());
+        ground.failed_projects = vec![crate::model::snapshot::FailedProject {
+            project: "dunwich".to_string(),
+            tracker: crate::model::snapshot::TrackerFailure::Unavailable,
+        }];
+        ground
+    }
+
+    /// What dunwich's tracker said when it would not be read.
+    fn dunwich_said() -> String {
+        phrase::tracker_failure(&crate::model::snapshot::TrackerFailure::Unavailable)
+    }
+
+    /// A project whose tracker could not be read has no heading, and the
+    /// folded line still names it, in the colour of a flag with the mark of
+    /// a read that went badly. Opened, the line lists it after the headings
+    /// with what its tracker said.
+    #[test]
+    fn the_folded_line_names_a_project_whose_tracker_could_not_be_read() {
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(beside_unread_dunwich(), &ready);
+
+        let line = folded(&html);
+        assert!(
+            words(&text_of(line)).starts_with("2 projects read "),
+            "{line}"
+        );
+        let refused = phrase::mark(
+            crate::view::Freshness {
+                mark: crate::view::Mark::Refused,
+                read_at: None,
+            },
+            drawn_at(),
+        );
+        assert!(
+            line.contains(&format!("<span class=\"flag\">{refused} dunwich</span>")),
+            "{line}"
+        );
+
+        let opened = inside(&html, "projects");
+        let unread = opened
+            .split("<div class=\"line heading\"")
+            .find(|heading| heading.contains("<h2>dunwich</h2>"))
+            .expect("dunwich is listed");
+        assert!(
+            unread.contains(&format!("<span class=\"mark warn\">{refused}</span>")),
+            "{unread}"
+        );
+        assert!(text_of(unread).contains(&dunwich_said()), "{unread}");
+    }
+
+    /// A pane working in a project whose tracker could not be read keeps the
+    /// project's heading, and the folded line still counts and names the
+    /// project once, opening to it once with what its tracker said.
+    #[test]
+    fn the_folded_line_names_an_unread_project_with_a_pane_in_it_once() {
+        let mut unread = beside_unread_dunwich();
+        unread.unattributed.push(crate::model::snapshot::LoosePane {
+            pane: crate::model::types::PaneKey {
+                session: "default".to_string(),
+                id: "w:nobody".to_string(),
+            },
+            project: "dunwich".to_string(),
+            cwd: "/srv/work/dunwich".to_string(),
+            pane_status: crate::model::types::PaneStatus::Working,
+            display_agent: None,
+            title: None,
+            claim_refused: false,
+        });
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(unread, &ready);
+
+        let line = folded(&html);
+        assert!(
+            line.contains(&format!("<span class=\"fresh\">{}", phrase::projects(2))),
+            "{line}"
+        );
+        assert_eq!(text_of(line).matches("dunwich").count(), 1, "{line}");
+        let opened = inside(&html, "projects");
+        assert_eq!(opened.matches("<h2>dunwich</h2>").count(), 1, "{opened}");
+        assert!(text_of(opened).contains(&dunwich_said()), "{opened}");
+    }
+
+    /// Every project the list covers could fail to be read, and the folded
+    /// line still names them, though none has a heading to fold.
+    #[test]
+    fn the_folded_line_names_unread_projects_where_none_has_a_heading() {
+        let mut unread = beside_unread_dunwich();
+        unread.trees.clear();
+        unread.collected.clear();
+        unread
+            .failed_projects
+            .push(crate::model::snapshot::FailedProject {
+                project: PROJECT.to_string(),
+                tracker: crate::model::snapshot::TrackerFailure::Auth,
+            });
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(unread, &ready);
+
+        let line = folded(&html);
+        assert!(
+            line.contains(&format!(
+                "<span class=\"fresh\">{}</span>",
+                phrase::projects(2)
+            )),
+            "{line}"
+        );
+        assert!(line.contains("dunwich"), "{line}");
+        assert!(line.contains(PROJECT), "{line}");
+    }
+
+    /// The trees draw a project whose tracker could not be read below them,
+    /// named with what its tracker said, without the reader opening anything.
+    #[test]
+    fn the_trees_name_a_project_whose_tracker_could_not_be_read() {
+        let html = page_of(beside_unread_dunwich(), "/");
+        let failed = crate::model::snapshot::FailedProject {
+            project: "dunwich".to_string(),
+            tracker: crate::model::snapshot::TrackerFailure::Unavailable,
+        };
+        assert!(
+            lines_html(&html)
+                .iter()
+                .any(|line| text_of(line).contains(&phrase::failed_project(&failed))),
+            "{html}"
+        );
     }
 
     /// The trees keep a heading over each project's own trees, a list kept

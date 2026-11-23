@@ -647,7 +647,7 @@ impl<'a> Layout<'a> {
     ) -> Node {
         let handle = Handle::Group(group.kind, group.project.clone());
         let pointed = self.folds.pointed(&handle, over);
-        let open = pointed.unwrap_or(group.kind.live());
+        let open = pointed.unwrap_or(group.kind.rests_open());
         let over = self.folds.beneath(&handle, over);
         let prefix = if trunk.is_empty() && group.project.is_none() {
             marker(open).to_string()
