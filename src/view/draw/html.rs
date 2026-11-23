@@ -958,9 +958,9 @@ border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
-@media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}\
+@media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden;margin-right:auto}\
 .line>.bead>*{flex:none}.line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}\
-.line>.bead~.state{margin-left:0}.line>.state>.prog{width:104px}}\
+.line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
@@ -2827,21 +2827,23 @@ mod tests {
     }
 
     /// On a desktop a row fits the trees' width. Its title gives way and
-    /// ends in an ellipsis, before its id, but keeps a few characters, so a
-    /// row too crowded for them scrolls rather than lose its title.
+    /// ends in an ellipsis, before its id, but keeps a few characters. On a
+    /// row too crowded for them the reference cuts off its id at its own
+    /// edge rather than lose its title or run under the cells beside it.
     /// Everything after the reference sits together at the right, with the
     /// progress column a fixed width at the end and its bar at the column's
-    /// start, so the bars line up whatever their fractions say.
+    /// start, so the bars line up whatever their fractions say. A project's
+    /// heading is not a bead's row, and its bar keeps its own width.
     #[test]
     fn a_desktop_row_ellipsises_its_title_before_the_columns_at_its_right() {
         assert!(!STYLE.contains("max-content"), "{STYLE}");
         let desktop = rules_under("(width>720px)");
         for rule in [
-            ".line>.bead{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}",
+            ".line>.bead{display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden;margin-right:auto}",
             ".line>.bead>*{flex:none}",
             ".line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}",
             ".line>.bead~.state{margin-left:0}",
-            ".line>.state>.prog{width:104px}",
+            ".line>.bead~.state>.prog{width:104px}",
         ] {
             assert!(desktop.contains(rule), "{desktop}");
         }
