@@ -176,7 +176,8 @@ impl Drawing<'_> {
         let ready = only_ready(list);
         let drawn = view_of(list);
         let checking = matches!(list, Some(List::ToCheck { .. }));
-        let to_check = self.forest.to_check();
+        let counts = self.forest.list_counts(ready);
+        let to_check = counts.to_check;
         let every_check = Some(List::ToCheck { project: None });
         let checking_every_project = list == every_check.as_ref();
         let checked = self.asked.listing(every_check);
@@ -204,7 +205,7 @@ impl Drawing<'_> {
         let views = &self.forest.snapshot().views;
         if !views.is_empty() {
             html.push_str(&format!("<p class=\"hd\">{}</p>", escaped(phrase::views())));
-            for (view, count) in views.iter().zip(self.forest.view_counts(ready)) {
+            for (view, count) in views.iter().zip(counts.views) {
                 html.push_str(&format!(
                     "<a href=\"{}\"{}>{}<span class=\"count\">{count}</span></a>",
                     escaped(&self.asked.listing(listed(Some(view.clone()), ready))),

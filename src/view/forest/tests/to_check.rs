@@ -80,7 +80,7 @@ fn a_list_narrowed_to_a_project_holds_only_its_beads_to_check() {
 #[test]
 fn the_count_to_check_is_what_the_list_holds() {
     let forest = flatten(two_to_check());
-    assert_eq!(forest.to_check(), 2);
+    assert_eq!(forest.list_counts(false).to_check, 2);
 
     let mut ready = flatten(two_to_check());
     ready.apply(Action::ToggleReadyList);

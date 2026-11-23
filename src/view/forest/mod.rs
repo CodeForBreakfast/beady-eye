@@ -27,7 +27,7 @@ use drawn::{Beneath, Node};
 use facts::{Facts, TreeFacts};
 use handle::{handle_of, root_handle, selectable, Folds, Handle};
 use layout::Rooted;
-pub use ready::{listed, only_ready, ready_list, view_of, List};
+pub use ready::{listed, only_ready, ready_list, view_of, List, ListCounts};
 use search::{Listed, Matches, Sought, Walked};
 pub use spine::Spine;
 
@@ -880,15 +880,10 @@ impl Forest {
         self.list.as_ref()
     }
 
-    /// How many beads each view the config names would list, in the
-    /// config's order, counting only ready beads where `ready` is set.
-    pub fn view_counts(&self, ready: bool) -> Vec<usize> {
-        ready::view_counts(&self.snapshot, &self.rooted(), &self.snapshot.views, ready)
-    }
-
-    /// How many beads the list of the beads to check would hold.
-    pub fn to_check(&self) -> usize {
-        ready::to_check_count(&self.snapshot, &self.rooted())
+    /// How many beads each list the menu offers would hold, with each view
+    /// counting only ready beads where `ready` is set.
+    pub fn list_counts(&self, ready: bool) -> ListCounts {
+        ready::list_counts(&self.snapshot, &self.rooted(), &self.snapshot.views, ready)
     }
 
     /// Draw `list` in place of the trees, or the trees where it is none, as
