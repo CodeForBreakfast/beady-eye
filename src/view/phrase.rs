@@ -232,27 +232,29 @@ pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
 }
 
-/// When a project's rows were read, as a time of day at `offset`, for a
-/// page that is drawn once. An age would stop being true the moment the page
-/// was left open, with nothing on it to say so. A read on another day than
-/// the page was drawn on, `now`, says which day too.
-pub fn read_at(freshness: Freshness, offset: FixedOffset, now: DateTime<Utc>) -> Option<String> {
-    freshness.read_at.map(|at| {
-        let at = at.with_timezone(&offset);
-        let format = if at.date_naive() == now.with_timezone(&offset).date_naive() {
-            "read at %H:%M"
-        } else {
-            "read at %H:%M on %-d %b"
-        };
-        at.format(format).to_string()
-    })
+/// What a page says before when a project's rows were read.
+pub fn read() -> &'static str {
+    "read"
 }
 
-/// The whole of when a project's rows were read, at `offset`: the day, the
-/// year and the zone that `read_at` leaves out.
-pub fn read_in_full(at: DateTime<Utc>, offset: FixedOffset) -> String {
+/// When an instant was, as a time of day at `offset`, for a page whose
+/// browser runs no script to say how long ago. It names the day too where
+/// that is not the day of `now`. It holds for as long as the page is open,
+/// and a page redrawn later the same day says it the same way.
+pub fn at_time_of_day(at: DateTime<Utc>, offset: FixedOffset, now: DateTime<Utc>) -> String {
+    let at = at.with_timezone(&offset);
+    let format = if at.date_naive() == now.with_timezone(&offset).date_naive() {
+        "at %H:%M"
+    } else {
+        "at %H:%M on %-d %b"
+    };
+    at.format(format).to_string()
+}
+
+/// The whole of an instant at `offset`, to the second and with its zone.
+pub fn instant_in_full(at: DateTime<Utc>, offset: FixedOffset) -> String {
     at.with_timezone(&offset)
-        .format("read at %H:%M:%S %:z on %-d %B %Y")
+        .format("%H:%M:%S %:z on %-d %B %Y")
         .to_string()
 }
 
