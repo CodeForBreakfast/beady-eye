@@ -141,7 +141,7 @@ fn head(title: &str, change: Option<u64>) -> String {
     let (named, script) = match change {
         Some(change) => (
             format!(" data-change=\"{change}\""),
-            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}</script>"),
+            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}{ESCAPE_CLOSES}</script>"),
         ),
         None => (String::new(), String::new()),
     };
@@ -769,13 +769,19 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
 /// Spans of one block as HTML, each in its own style, the first of them the
 /// block's span `from`. One that `marks` names as a link is a link, where it
 /// points somewhere a page may link to, and one it names as a literal is in
-/// its colour as written. One in the code tone is marked as code.
+/// its colour as written. One in the code tone is marked as code. A flag in
+/// a line's state, drawn in the attention style, holds its words apart from
+/// its icon, and is titled with them, so a page short of room can draw the
+/// icon alone.
 fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
     for (at, span) in spans.iter().enumerate() {
-        let code = if span.style.fg == palette::CODE.fg {
-            " class=\"code\""
-        } else {
-            ""
+        let flagged = (block == Block::State && span.style == palette::ATTENTION)
+            .then(|| span.content.strip_prefix(WARNING))
+            .flatten();
+        let class = match flagged {
+            Some(words) => format!(" class=\"flag\" title=\"{}\"", escaped(words.trim())),
+            None if span.style.fg == palette::CODE.fg => " class=\"code\"".to_string(),
+            None => String::new(),
         };
         let mut marked = marks
             .iter()
@@ -788,8 +794,11 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
         } else {
             palette::css(span.style)
         };
-        let style = format!("{code}{}", styled(css));
-        let text = escaped(&span.content);
+        let style = format!("{class}{}", styled(css));
+        let text = match flagged {
+            Some(words) => format!("{WARNING}<span>{}</span>", escaped(words)),
+            None => escaped(&span.content),
+        };
         let to = marked
             .find_map(Mark::link)
             .filter(|to| to.starts_with("https://") || to.starts_with("http://"));
@@ -914,12 +923,14 @@ body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}
 .code{font-family:var(--code)}\
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
-main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
+main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}\
+main.open::before{content:\"\";position:absolute;inset:0 0 0 auto;width:500px;box-sizing:border-box;\
+border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24px -18px rgba(23,32,42,.35)}\
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box;\
 width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
-.line.shown{background:var(--sel)}\
+.line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
 .line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
@@ -938,8 +949,12 @@ font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
-aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;\
-padding:8px 12px;border-left:1px solid var(--line)}\
+aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;padding:8px 12px}\
+@media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
+overflow:hidden;clip-path:inset(50%);white-space:nowrap}}\
+@media (width<1100px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
+main.open:has(.page)>.forest{display:none}\
+aside{position:static;max-height:none;padding:8px 20px 24px}}\
 .page{white-space:pre-wrap}\
 .page .w{display:none}\
 .page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
@@ -1019,10 +1034,8 @@ background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5
 .rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover{text-decoration:underline}\
-@media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
-.rooted{padding:9px 14px}.rooted .all::before{content:none}\
-main.open:has(.page)>.forest{display:none}\
-aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
+@media (max-width:720px){.rooted{padding:9px 14px}.rooted .all::before{content:none}\
+aside{padding:8px 16px 24px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;position:relative;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
@@ -1230,6 +1243,21 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     });
     if (focused) alike(focused[0], focused[1])[focused[2]]?.focus({ preventScroll: true });
   };
+});"##;
+
+/// The part of the page's script that closes an open bead on Escape, as
+/// its close link does. Escape is left to a field being typed in, and closes
+/// an open menu before the bead.
+const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || event.target.matches?.("input,textarea,select")) return;
+  const menu = document.querySelector("details[open]");
+  if (menu) {
+    menu.open = false;
+    menu.querySelector("summary").focus();
+    return;
+  }
+  const close = document.querySelector("aside>a.close");
+  if (close) location.assign(close.href);
 });"##;
 
 #[cfg(test)]
@@ -1682,6 +1710,134 @@ mod tests {
             "{}",
             line_html(&html, 0)
         );
+    }
+
+    /// A row's flag holds its icon apart from its words, so a page with a
+    /// bead open beside the trees can draw the icon alone, and the flag keeps
+    /// its words as its title.
+    #[test]
+    fn a_rows_flag_holds_its_words_apart_from_its_icon() {
+        let checked = with_the_bead_changed(|node| {
+            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+        });
+        let html = page_of(checked, &address(&key("smt-4kd3p.6")));
+        let row = lines_html(&html)
+            .into_iter()
+            .find(|line| text_of(line).contains("smt-4kd3p.6"))
+            .expect("the bead has a row");
+        let open = row
+            .find("<span class=\"flag\"")
+            .expect("the row has a flag");
+        let flag = &row[open..element_end(row, open)];
+        let title = flag.split("title=\"").nth(1).expect("the flag is titled");
+        let title = &title[..title.find('"').expect("the title ends")];
+        assert!(!title.is_empty(), "{flag}");
+        assert!(
+            flag.contains(&format!(">{WARNING}<span> {title}</span></span>")),
+            "{flag}"
+        );
+    }
+
+    /// A badge whose own words open with the warning sign is not a flag, so
+    /// its words stay drawn beside an open bead.
+    #[test]
+    fn a_badge_worded_like_a_flag_keeps_its_words() {
+        let mut html = String::new();
+        let badge = Span::raw(format!("{WARNING} Needs review"));
+        spans(&mut html, &[badge], Block::State, &[], 0);
+        assert!(!html.contains("flag"), "{html}");
+    }
+
+    /// The rules the page's style sets under the media query `query`.
+    fn rules_under(query: &str) -> &'static str {
+        let opened = format!("@media {query}{{");
+        let from = STYLE.find(&opened).expect("the style has the query") + opened.len();
+        let mut depth = 1;
+        for (at, c) in STYLE[from..].char_indices() {
+            depth += match c {
+                '{' => 1,
+                '}' => -1,
+                _ => 0,
+            };
+            if depth == 0 {
+                return &STYLE[from..from + at];
+            }
+        }
+        panic!("the query's rules end")
+    }
+
+    /// On a desktop a bead opens in a 500 pixel panel beside the trees,
+    /// which take the rest. Narrower than that, the bead takes the whole
+    /// page and the trees are not drawn beside it.
+    #[test]
+    fn a_bead_opens_beside_the_trees_on_a_desktop_and_takes_the_page_below_it() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(
+            html.contains("<main class=\"open\"><div class=\"forest\">"),
+            "{html}"
+        );
+        assert!(
+            STYLE
+                .contains("main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}"),
+            "{STYLE}"
+        );
+        let narrower = rules_under("(width<1100px)");
+        for rule in [
+            "main.open{grid-template-columns:minmax(0,1fr)}",
+            "main.open::before{content:none}",
+            "main.open:has(.page)>.forest{display:none}",
+        ] {
+            assert!(narrower.contains(rule), "{narrower}");
+        }
+    }
+
+    /// With a bead open beside the trees, a row's flag draws its icon alone,
+    /// and its words stay for a screen reader.
+    #[test]
+    fn a_flag_shrinks_to_its_icon_beside_an_open_bead() {
+        let beside = rules_under("(width>=1100px)");
+        assert!(
+            beside.contains(
+                "main.open .line .flag>span{position:absolute;width:1px;height:1px;\
+                 overflow:hidden;clip-path:inset(50%);white-space:nowrap}"
+            ),
+            "{beside}"
+        );
+    }
+
+    /// The row of the bead open is marked by the selection's tint and an
+    /// edge in the accent.
+    #[test]
+    fn the_row_of_the_bead_open_is_marked_by_an_edge() {
+        assert!(
+            STYLE.contains(
+                ".line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}"
+            ),
+            "{STYLE}"
+        );
+    }
+
+    /// Escape follows the open bead's close link, which is the one the page
+    /// draws in the panel.
+    #[test]
+    fn escape_follows_the_link_that_closes_the_bead() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(html.contains(ESCAPE_CLOSES), "{html}");
+        assert!(ESCAPE_CLOSES.contains("querySelector(\"aside>a.close\")"));
+        assert!(html.contains("<aside><a class=\"close\" href=\""), "{html}");
+    }
+
+    /// A menu does not close itself on Escape, so Escape closes an open
+    /// menu first, and the next Escape closes the bead.
+    #[test]
+    fn escape_closes_an_open_menu_before_the_bead() {
+        let menu = ESCAPE_CLOSES
+            .find("menu.open = false")
+            .expect("Escape closes the menu");
+        let close = ESCAPE_CLOSES
+            .find("location.assign")
+            .expect("Escape closes the bead");
+        assert!(menu < close, "{ESCAPE_CLOSES}");
     }
 
     /// A read gone unanswered wears the warning's colour on its mark.
