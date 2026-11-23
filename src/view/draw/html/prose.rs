@@ -28,9 +28,14 @@ pub(super) fn written(text: &str, named: &dyn Fn(&str) -> Option<String>) -> Str
         links: Vec::new(),
         in_code: false,
         in_head: false,
+        in_html: false,
+        source: text,
+        taken_to: 0,
     };
-    for event in Parser::new_ext(text, Options::ENABLE_TABLES) {
-        writing.take(event);
+    for (event, at) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
+        if at.start >= writing.taken_to {
+            writing.take(event, at);
+        }
     }
     writing.write_said();
     writing.html
@@ -48,15 +53,31 @@ struct Writing<'n> {
     links: Vec<(usize, String)>,
     in_code: bool,
     in_head: bool,
+    /// Whether the text arriving is HTML, which is said as it was written.
+    in_html: bool,
+    /// The text being written, and how far into it an address that ran on
+    /// through markdown has already taken it.
+    source: &'n str,
+    taken_to: usize,
 }
 
 impl Writing<'_> {
-    fn take(&mut self, event: Event<'_>) {
+    fn take(&mut self, event: Event<'_>, at: Range<usize>) {
         match event {
             Event::Text(text) if self.in_code => self.html.push_str(&escaped(&text)),
+            Event::Start(Tag::Emphasis | Tag::Strong) if self.address_runs_on() => {
+                self.said.push_str(&self.source[at.clone()]);
+                self.taken_to = at.end;
+            }
+            Event::InlineHtml(text) => {
+                self.write_said();
+                self.said.push_str(&text);
+                self.in_html = true;
+                self.write_said();
+                self.in_html = false;
+            }
             Event::Text(text)
             | Event::Html(text)
-            | Event::InlineHtml(text)
             | Event::InlineMath(text)
             | Event::DisplayMath(text)
             | Event::FootnoteReference(text) => self.said.push_str(&text),
@@ -88,7 +109,11 @@ impl Writing<'_> {
 
     fn open(&mut self, tag: Tag<'_>) -> String {
         match tag {
-            Tag::Paragraph | Tag::HtmlBlock => "<p>".to_string(),
+            Tag::Paragraph => "<p>".to_string(),
+            Tag::HtmlBlock => {
+                self.in_html = true;
+                "<p>".to_string()
+            }
             Tag::Heading { .. } => "<h3>".to_string(),
             Tag::BlockQuote(_) => "<blockquote>".to_string(),
             Tag::CodeBlock(_) => {
@@ -120,7 +145,11 @@ impl Writing<'_> {
 
     fn close(&mut self, tag: TagEnd) {
         let closed = match tag {
-            TagEnd::Paragraph | TagEnd::HtmlBlock => "</p>",
+            TagEnd::Paragraph => "</p>",
+            TagEnd::HtmlBlock => {
+                self.in_html = false;
+                "</p>"
+            }
             TagEnd::Heading(_) => "</h3>",
             TagEnd::BlockQuote(_) => "</blockquote>",
             TagEnd::CodeBlock => {
@@ -181,19 +210,27 @@ impl Writing<'_> {
     }
 
     /// The text that has arrived, each line of it a line of its own. Inside
-    /// a link it is the link's words, which name no bead and hold no link.
+    /// a link it is the link's words, which name no bead and hold no link,
+    /// and HTML holds neither either.
     fn write_said(&mut self) {
         let said = std::mem::take(&mut self.said);
         for (nth, line) in said.trim_end_matches('\n').split('\n').enumerate() {
             if nth > 0 {
                 self.html.push_str("<br>");
             }
-            if self.links.is_empty() {
+            if self.links.is_empty() && !self.in_html {
                 self.linked(line);
             } else {
                 self.html.push_str(&escaped(line));
             }
         }
+    }
+
+    /// Whether the text that has arrived ends part-way through a web
+    /// address, which runs on through whatever markdown comes next.
+    fn address_runs_on(&self) -> bool {
+        let word = self.said.rsplit(char::is_whitespace).next().unwrap_or("");
+        address_in(word).is_some_and(|address| address.end == word.len())
     }
 
     /// `text` with each web address in it a short link.
@@ -472,6 +509,37 @@ mod tests {
         assert_eq!(
             html("Trim it & <i>then</i> 'light' it"),
             "<p>Trim it &amp; &lt;i&gt;then&lt;/i&gt; &#39;light&#39; it</p>"
+        );
+    }
+
+    /// HTML is shown as it was written, so an address or an id inside it
+    /// is no link and no reference.
+    #[test]
+    fn html_in_the_text_holds_no_link_or_bead() {
+        for text in [
+            "<div title=\"https://arkham.example/docs\">\nlgt-4.2\n</div>",
+            "Write <a href=\"https://arkham.example/docs\"> for it.",
+        ] {
+            let drawn = html(text);
+            assert!(!drawn.contains("<a "), "{drawn}");
+            assert!(drawn.contains("https://arkham.example/docs&quot;"), "{drawn}");
+        }
+    }
+
+    /// A bare address holding what markdown would read as emphasis keeps
+    /// it, so the link goes where the address says.
+    #[test]
+    fn a_bare_address_keeps_what_markdown_reads_as_emphasis() {
+        let drawn = html("See https://arkham.example/docs/_draft_/index and *this*.");
+        assert!(
+            drawn.contains("href=\"https://arkham.example/docs/_draft_/index\""),
+            "{drawn}"
+        );
+        assert!(drawn.contains("<em>this</em>"), "{drawn}");
+        let drawn = html("https://arkham.example/a*b*c/**d**");
+        assert!(
+            drawn.contains("href=\"https://arkham.example/a*b*c/**d**\""),
+            "{drawn}"
         );
     }
 
