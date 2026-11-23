@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Node as Bead, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::numeric_id_order;
 use crate::model::types::{Edge, Status};
 use crate::view::lines::{
@@ -41,6 +41,11 @@ pub enum List {
     ToCheck {
         project: Option<String>,
     },
+    /// The beads in `project`'s trees not yet finished, which its heading
+    /// counts as left to do.
+    LeftToDo {
+        project: String,
+    },
 }
 
 impl List {
@@ -48,6 +53,7 @@ impl List {
     fn project(&self) -> Option<&str> {
         match self {
             List::ToCheck { project } => project.as_deref(),
+            List::LeftToDo { project } => Some(project),
             List::Ready | List::View { .. } => None,
         }
     }
@@ -75,7 +81,7 @@ pub fn only_ready(list: Option<&List>) -> bool {
     match list {
         Some(List::Ready) => true,
         Some(List::View { ready, .. }) => *ready,
-        Some(List::ToCheck { .. }) | None => false,
+        Some(List::ToCheck { .. } | List::LeftToDo { .. }) | None => false,
     }
 }
 
@@ -102,13 +108,21 @@ pub(super) fn lay_out(
                 name: name.clone(),
                 ready: *ready,
             },
-            in_view(&reached, name, *ready),
+            most_urgent_first(&reached, |bead, tree, way| {
+                lists(bead, tree, way, name, *ready)
+            }),
         )],
         List::ToCheck { project } => vec![(
             Section::ToCheck {
                 project: project.clone(),
             },
-            to_check(&reached),
+            most_urgent_first(&reached, |bead, _, _| !bead.anomalies.is_empty()),
+        )],
+        List::LeftToDo { project } => vec![(
+            Section::LeftToDo {
+                project: project.clone(),
+            },
+            most_urgent_first(&reached, |bead, _, _| !bead.status.is_finished()),
         )],
     };
 
@@ -125,7 +139,7 @@ pub(super) fn lay_out(
                 place: None,
                 content: Content::Project(ProjectLine {
                     every_root_read: snapshot.every_root_read(project),
-                    counts: facts.project(project),
+                    counts: project_counts(snapshot, rooted, facts, project),
                     project: project.clone(),
                 }),
             })
@@ -159,7 +173,7 @@ pub(super) fn lay_out(
     // The list of the beads to check counts them in its section.
     let to_check = match list {
         List::ToCheck { .. } => 0,
-        List::Ready | List::View { .. } => anomalies(&reached),
+        List::Ready | List::View { .. } | List::LeftToDo { .. } => anomalies(&reached),
     };
     let orphaned = reached
         .values()
@@ -190,6 +204,17 @@ pub(super) fn lay_out(
 pub fn ready_list(snapshot: &Snapshot) -> [Vec<&Bead>; 2] {
     let (covered, _) = covered(snapshot, &[], None);
     sections(&each_once(&covered)).map(|beads| beads.into_iter().map(|(bead, ..)| bead).collect())
+}
+
+/// What `project`'s heading counts over a list: every bead in its trees, or
+/// where the forest is rooted, each bead at or beneath its roots, as the
+/// forest's own heading counts it.
+fn project_counts(snapshot: &Snapshot, rooted: &[Rooted], facts: &Facts, project: &str) -> Counts {
+    if rooted.is_empty() {
+        return facts.project(project);
+    }
+    let (covered, _) = covered(snapshot, rooted, Some(project));
+    Counts::over(each_once(&covered).values().map(|(bead, ..)| *bead))
 }
 
 fn anomalies(reached: &BTreeMap<BeadKey, Reached<'_>>) -> usize {
@@ -311,29 +336,14 @@ fn ready_section(bead: &Bead, tree: &Tree, way: &[usize]) -> Option<Section> {
     }
 }
 
-/// The unfinished beads the view `name` lists, the most urgent first: only
-/// those the ready list would draw, where `ready` is set.
-fn in_view<'r, 'a>(
+/// The beads `keep` keeps, the most urgent first.
+fn most_urgent_first<'r, 'a>(
     reached: &'r BTreeMap<BeadKey, Reached<'a>>,
-    name: &str,
-    ready: bool,
+    keep: impl Fn(&Bead, &Tree, &[usize]) -> bool,
 ) -> Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)> {
     let mut listed: Vec<_> = reached
         .values()
-        .filter(|(bead, tree, way)| lists(bead, tree, way, name, ready))
-        .map(|(bead, tree, way)| (*bead, *tree, way))
-        .collect();
-    listed.sort_by(|a, b| next_first(a.0, b.0));
-    listed
-}
-
-/// The beads with an anomaly, the most urgent first.
-fn to_check<'r, 'a>(
-    reached: &'r BTreeMap<BeadKey, Reached<'a>>,
-) -> Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)> {
-    let mut listed: Vec<_> = reached
-        .values()
-        .filter(|(bead, ..)| !bead.anomalies.is_empty())
+        .filter(|(bead, tree, way)| keep(bead, tree, way))
         .map(|(bead, tree, way)| (*bead, *tree, way))
         .collect();
     listed.sort_by(|a, b| next_first(a.0, b.0));

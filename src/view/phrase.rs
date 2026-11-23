@@ -584,10 +584,15 @@ pub fn to_check() -> &'static str {
     "To check"
 }
 
-/// How far through a project's trees are, said in a web page's project
-/// heading beside a bar that draws the same fraction.
-pub fn done_of(finished: usize, total: usize) -> String {
-    format!("{finished} of {total} done")
+/// How much of a project's trees is left, said in a web page's project
+/// heading beside a bar filled by the share that is done.
+pub fn left_of(left: usize, total: usize) -> String {
+    format!("{left} left of {total}")
+}
+
+/// The list of the beads in `project` not yet finished, as a web page names it.
+pub fn left_to_do(project: &str) -> String {
+    format!("{project}, left to do")
 }
 
 /// The roots the ready list covers whose tracker gave no rows for them, so
@@ -599,8 +604,8 @@ pub fn unread_trees(count: usize) -> String {
 
 /// The heading over one of a list's sections, with how many beads it holds.
 /// A view's heading is the name the config gave it, saying when only its
-/// ready beads are listed. The beads to check name the one project they are
-/// kept to.
+/// ready beads are listed. The beads to check and the beads left to do name
+/// the one project they are kept to.
 pub fn section(section: &Section, count: usize) -> String {
     let heading = match section {
         Section::Ready => "Ready",
@@ -611,6 +616,7 @@ pub fn section(section: &Section, count: usize) -> String {
         Section::ToCheck {
             project: Some(project),
         } => return format!("{} in {project} · {count}", to_check()),
+        Section::LeftToDo { project } => return format!("{} · {count}", left_to_do(project)),
     };
     format!("{heading} · {count}")
 }
@@ -2571,5 +2577,19 @@ mod tests {
             section(&checking(Some("harbour")), 1),
             "To check in harbour · 1"
         );
+    }
+
+    #[test]
+    fn the_heading_over_the_beads_left_to_do_names_their_project() {
+        let left = Section::LeftToDo {
+            project: "harbour".to_string(),
+        };
+
+        assert_eq!(section(&left, 2), "harbour, left to do · 2");
+    }
+
+    #[test]
+    fn a_heading_says_what_is_left_of_the_whole() {
+        assert_eq!(left_of(1412, 3880), "1412 left of 3880");
     }
 }

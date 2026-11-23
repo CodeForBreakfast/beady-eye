@@ -4519,6 +4519,15 @@ everything waiting on it, in any project, as it does in the ready list. The
 terminal has no key for it yet, and its lists still count those beads at
 their foot.
 
+**A project's heading links to what it counts.** Beside its bar it says how
+much of the project is left, such as "6 left of 9", where the terminal's
+project line keeps its fraction. That phrase links to a list of the
+project's beads not yet finished, the most urgent first, so the list holds
+as many beads as the heading says are left. Its beads to check link to that
+list narrowed to the project. Rooted at a bead, the heading and both lists
+count that bead's tree. No list of the finished beads is offered, because
+nobody acts on one and the bar already says how much is done.
+
 **A bead's page offers its tree alone, as `F` does.** The bead the forest is
 rooted at rides in the address too. A page drawn with one root says so as
 the terminal's foot does, names the bead by its reference, and links to the
