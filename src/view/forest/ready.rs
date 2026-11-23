@@ -166,6 +166,13 @@ pub fn ready_list(snapshot: &Snapshot) -> [Vec<&Bead>; 2] {
     sections(&each_once(&covered)).map(|beads| beads.into_iter().map(|(bead, ..)| bead).collect())
 }
 
+/// How many beads the view `name` lists over what the forest would draw,
+/// counting only ready beads where `ready` is set.
+pub(super) fn view_count(snapshot: &Snapshot, rooted: &[Rooted], name: &str, ready: bool) -> usize {
+    let (covered, _) = covered(snapshot, rooted);
+    in_view(&each_once(&covered), name, ready).len()
+}
+
 /// A bead with the tree and the way down it was reached by.
 type Reached<'a> = (&'a Bead, &'a Tree, Vec<usize>);
 

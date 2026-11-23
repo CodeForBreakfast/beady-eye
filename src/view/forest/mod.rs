@@ -880,6 +880,12 @@ impl Forest {
         self.list.as_ref()
     }
 
+    /// How many beads the view `name` would list, counting only ready beads
+    /// where `ready` is set.
+    pub fn view_count(&self, name: &str, ready: bool) -> usize {
+        ready::view_count(&self.snapshot, &self.rooted(), name, ready)
+    }
+
     /// Draw `list` in place of the trees, or the trees where it is none, as
     /// the ready and view keys do.
     pub fn draw_list(&mut self, list: Option<List>) {

@@ -8,7 +8,6 @@
 //! component that opens the bead.
 
 use std::collections::HashMap;
-use std::iter;
 
 use chrono::{DateTime, FixedOffset, Utc};
 use ratatui::text::Span;
@@ -163,8 +162,9 @@ struct Drawing<'a> {
 
 impl Drawing<'_> {
     /// What the terminal's keys put in force over the whole page, as links
-    /// and a form: the list menu where the config names views, the ready
-    /// switch and the search, as `v`, `r` and `/`. Then, where the forest is
+    /// and a form: the list menu where the config names views, each with how
+    /// many beads it lists, the ready switch and the search, as `v`, `r` and
+    /// `/`. Then, where the forest is
     /// drawn with one bead as its only root, that bead and the link that
     /// puts every tree back, as `F` does.
     fn nav(&self, html: &mut String) {
@@ -181,24 +181,28 @@ impl Drawing<'_> {
                 "<details class=\"lists\"><summary>{}</summary><div>",
                 escaped(drawn.unwrap_or(phrase::every_tree()))
             ));
-            let entries = iter::once((None, phrase::every_tree())).chain(
-                views
-                    .iter()
-                    .map(|name| (Some(name.as_str()), name.as_str())),
-            );
-            for (view, said) in entries {
+            html.push_str(&format!(
+                "<a href=\"{}\"{}>{}</a><p class=\"hd\">{}</p>",
+                escaped(&self.asked.listing(listed(None, ready))),
+                on(drawn.is_none()),
+                escaped(phrase::every_tree()),
+                escaped(phrase::views())
+            ));
+            for view in views {
                 html.push_str(&format!(
-                    "<a href=\"{}\"{}>{}</a>",
-                    escaped(&self.asked.listing(listed(view.map(str::to_string), ready))),
-                    on(view == drawn),
-                    escaped(said)
+                    "<a href=\"{}\"{}>{}<span class=\"count\">{}</span></a>",
+                    escaped(&self.asked.listing(listed(Some(view.clone()), ready))),
+                    on(Some(view.as_str()) == drawn),
+                    escaped(view),
+                    self.forest.view_count(view, ready)
                 ));
             }
             html.push_str("</div></details>");
         }
+        let ready = only_ready(list);
         html.push_str(&format!(
-            "<a class=\"ready{}\" href=\"{}\">{}</a>",
-            if only_ready(list) { " on" } else { "" },
+            "<a class=\"ready{}\" role=\"switch\" aria-checked=\"{ready}\" href=\"{}\">{}</a>",
+            if ready { " on" } else { "" },
             escaped(&self.asked.toggling_ready()),
             escaped(phrase::ready_only())
         ));
@@ -787,16 +791,48 @@ vertical-align:top;width:100%;white-space:normal}\
 footer{padding:8px 12px;color:var(--warn)}\
 footer p,.missing{margin:0}\
 footer .said{color:var(--fg)}\
-nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--line)}\
-nav form{display:flex;gap:4px;margin-left:auto}\
-nav input,nav button{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);padding:1px 6px}\
-nav input::placeholder{color:transparent}\
-.lists{position:relative}.lists summary{cursor:pointer}\
-.lists[open] a{display:block;padding:2px 0}\
-.lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
+nav{--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
+--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
+--lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
+display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
+border-bottom:1px solid var(--line);background:var(--surface)}\
+nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display)}\
+nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
+background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
+.lists summary::after,.lists a::before,nav form::before{content:\"\";flex:none;background:currentColor;\
+-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
+.lists{position:relative}\
+.lists summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
+padding:0 12px;border:1px solid var(--line);border-radius:8px;font-weight:500}\
+.lists summary::-webkit-details-marker{display:none}\
+.lists summary::after{--icon:var(--chevron);width:13px;height:13px}\
+.lists[open] summary{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}\
+.lists>div{position:absolute;top:calc(100% + 8px);left:0;z-index:5;width:290px;box-sizing:border-box;padding:6px;\
+background:var(--raised);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}\
+.lists a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px}\
+.lists a::before{--icon:var(--tick);width:16px;height:14px;background:none}\
+.lists a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}\
+.lists a.on::before{background:currentColor}\
+.lists a:hover:not(.on){background:var(--sunk)}\
+.lists .count{margin-left:auto;font-size:12.5px;font-weight:normal;color:var(--muted)}\
+.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);\
+font:600 11px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}\
+nav .ready{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:8px;font-weight:500;color:var(--muted)}\
+nav .ready::before{content:\"\";flex:none;width:30px;height:18px;border-radius:9px;\
+background:radial-gradient(circle at 9px 50%,var(--surface) 7px,transparent 7.5px),var(--rail)}\
+nav .ready.on{color:var(--fg)}\
+nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
+nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
+padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--faint)}\
+nav form::before{--icon:var(--lens);width:16px;height:16px}\
+nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
+nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
+nav input::placeholder{color:var(--faint);opacity:1}\
+nav button{display:none}\
+nav a:focus-visible,nav summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .rooted{margin:0;padding:4px 12px;background:var(--accent-soft)}\
 .root{display:block;margin-bottom:8px}\
-a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
+a.root:hover,a.step:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
@@ -830,31 +866,33 @@ border:0 solid var(--rail)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
-nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
-padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
-font-size:13px}\
-nav{background:var(--surface)}.lists>div{background:var(--raised)}\
-nav>*{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>.brand{display:none}\
-nav summary,nav>.ready,nav input{display:block;box-sizing:border-box;width:100%;padding:7px 4px;\
-border:0;border-radius:8px;background:none;font:inherit;text-align:center;\
-white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\
-nav summary{list-style:none}nav summary::-webkit-details-marker{display:none}nav summary::after{content:\" \\25BE\"}\
-nav .ready.on,.lists[open] summary{background:var(--accent-soft);color:var(--accent);font-weight:bold;text-decoration:none}\
-nav input::placeholder{color:var(--fg);opacity:1}\
-nav button{display:none}\
+nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
+padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
+font-size:13.5px}\
+nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>.brand{display:none}\
+.lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:38px;padding:0 4px;border:0;border-radius:10px;\
+background:none;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden}\
+.lists[open] summary{box-shadow:none}\
+nav .ready::before{width:26px;height:16px;\
+background:radial-gradient(circle at 8px 50%,var(--surface) 6px,transparent 6.5px),var(--rail)}\
+nav .ready.on::before{background:radial-gradient(circle at calc(100% - 8px) 50%,var(--surface) 6px,transparent 6.5px),var(--accent)}\
+nav .ready.on,nav:not(:has(.ready.on))>.lists>summary,.lists[open] summary\
+{background:var(--accent-soft);color:var(--accent);font-weight:600}\
+nav form:focus-within{box-shadow:none}\
+nav input{flex:0 1 auto;width:3.2em;text-overflow:ellipsis}\
+nav input::placeholder{color:inherit}\
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;height:auto;padding:8px 12px;border-radius:0;\
 background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
-.lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
-max-height:calc(100dvh - 64px);overflow-y:auto;\
-border-radius:16px 16px 0 0;box-shadow:var(--shadow)}\
-.lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--line)}\
-.lists a.on{color:var(--accent);text-decoration:none}\
+.lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
+max-height:calc(100dvh - 64px);overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
+.lists[open]>div::before{content:\"\";display:block;width:38px;height:5px;margin:2px auto 8px;border-radius:3px;background:var(--rail)}\
+.lists[open] a{padding:13px 12px;font-size:16px}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
 .page .arrow{display:none}\
@@ -2397,8 +2435,9 @@ mod tests {
     /// The address the link a page draws with the words `said` goes to, as a
     /// browser asks for it: without its fragment, which stays in the browser.
     fn link_saying(html: &str, said: &str) -> String {
-        let end = html
-            .find(&format!(">{}</a>", escaped(said)))
+        let end = [">{}</a>", ">{}<span class=\"count\">"]
+            .iter()
+            .find_map(|form| html.find(&form.replace("{}", &escaped(said))))
             .unwrap_or_else(|| panic!("a link says {said:?}: {html}"));
         let tag = &html[html[..end].rfind("<a ").expect("the link opens")..end];
         let href = tag
@@ -2468,6 +2507,51 @@ mod tests {
         ))
         .html;
         assert_eq!(page_lines(&left), terminal_lines(&pressed(&[])));
+    }
+
+    /// The beads the terminal's list counts in its one section.
+    fn listed_count(forest: &Forest) -> usize {
+        forest
+            .lines()
+            .iter()
+            .find_map(|line| match line.content {
+                Content::Section { count, .. } => Some(count),
+                _ => None,
+            })
+            .expect("a view's list has a section")
+    }
+
+    /// The count of beads the menu gives beside `view`.
+    fn count_beside(html: &str, view: &str) -> String {
+        let at = html
+            .find(&format!(">{}<span class=\"count\">", escaped(view)))
+            .unwrap_or_else(|| panic!("the menu counts {view:?}: {html}"));
+        let count = &html[at..];
+        let count = &count[count.find("\"count\">").expect("a count") + 8..];
+        count[..count.find('<').expect("the count ends")].to_string()
+    }
+
+    /// Beside each view the menu says how many beads picking it lists, and
+    /// with only ready beads listed it counts only those, as picking it
+    /// then keeps to them.
+    #[test]
+    fn the_menu_counts_the_beads_each_view_lists() {
+        let trees = page_at("/").html;
+        let ready_trees = page_at(&link_saying(&trees, phrase::ready_only())).html;
+        for (nth, (view, _)) in VIEWS.iter().enumerate() {
+            let mut keys = vec![Action::NextView; nth + 1];
+            assert_eq!(
+                count_beside(&trees, view),
+                listed_count(&pressed(&keys)).to_string(),
+                "{view}"
+            );
+            keys.push(Action::ToggleReadyList);
+            assert_eq!(
+                count_beside(&ready_trees, view),
+                listed_count(&pressed(&keys)).to_string(),
+                "{view} ready"
+            );
+        }
     }
 
     #[test]

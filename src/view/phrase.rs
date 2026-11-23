@@ -979,17 +979,22 @@ pub fn back() -> &'static str {
 /// The entry in a web page's list menu that draws the trees, as leaving the
 /// last view does in the terminal.
 pub fn every_tree() -> &'static str {
-    "every tree"
+    "All trees"
+}
+
+/// The heading over the views the config names, in the web page's menu.
+pub fn views() -> &'static str {
+    "Views"
 }
 
 /// The web page's switch that lists only ready beads, as `r` does.
 pub fn ready_only() -> &'static str {
-    "ready"
+    "Ready"
 }
 
 /// The web page's search, as `/` is.
 pub fn find() -> &'static str {
-    "find"
+    "Find"
 }
 
 /// The link on a web page's bead view that draws the bead as the only root,
