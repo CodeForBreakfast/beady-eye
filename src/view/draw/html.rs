@@ -8,6 +8,7 @@
 //! component that opens the bead.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use chrono::{DateTime, FixedOffset, Utc};
 use ratatui::text::Span;
@@ -41,17 +42,18 @@ pub struct Answer {
     pub html: String,
 }
 
-/// When a page is drawn, the reads out as it is drawn, and the change to
-/// what the server holds that it is drawn from, which its script asks for
-/// the changes since. `offset` is the zone a browser that runs no script
-/// sees a time in full in.
+/// When a page is drawn, and the reads out as it is drawn. `offset` is the
+/// zone a browser that runs no script sees a time in full in.
 #[derive(Debug, Clone)]
 pub struct Drawn {
     pub at: DateTime<Utc>,
     pub offset: FixedOffset,
     pub collecting: Vec<Awaited>,
-    pub change: u64,
 }
+
+/// The attribute of a kept-current page's root element that names its
+/// version, which its script asks for the changes since.
+const VERSION: &str = " data-version=\"";
 
 /// The page `asked` names, drawn from `snapshot` under `layout`.
 ///
@@ -76,8 +78,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         || phrase::PRODUCT.to_string(),
         |node| phrase::bead_page_title(&node.title),
     );
-    let mut html = head(&title, Some(drawn.change));
-    html.push_str("<body>");
+    let mut html = String::from("<body>");
     if shown.bead.is_none() {
         drawing.title(&mut html, drawn.at, drawn.offset);
     }
@@ -114,7 +115,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     html.push_str("</body></html>\n");
     Answer {
         found: asked.bead.is_none() || node.is_some(),
-        html,
+        html: kept_current(&title, &html),
     }
 }
 
@@ -132,39 +133,56 @@ fn not_in_any_tree(key: &BeadKey) -> String {
 /// A page with nothing on it but one sentence and a link to the forest, for
 /// an address that has no forest to draw.
 pub fn saying(said: &str) -> String {
-    said_alone(said, None)
+    head(phrase::PRODUCT, None) + &said_alone(said)
 }
 
 /// The same, for an address that will have a forest to draw once the server
-/// holds a later change than `change`, which the page is kept current to.
-pub fn saying_kept_current(said: &str, change: u64) -> String {
-    said_alone(said, Some(change))
+/// has read one, which the page is kept current to.
+pub fn saying_kept_current(said: &str) -> String {
+    kept_current(phrase::PRODUCT, &said_alone(said))
 }
 
-fn said_alone(said: &str, change: Option<u64>) -> String {
+fn said_alone(said: &str) -> String {
     format!(
-        "{}<body><footer><p>{}</p>\
+        "<body><footer><p>{}</p>\
          <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
-        head(phrase::PRODUCT, change),
         escaped(said),
         escaped(phrase::back())
     )
 }
 
-/// A page's head, titled `title`. Where the page is drawn from `change`, it
-/// carries the script that keeps it current.
-fn head(title: &str, change: Option<u64>) -> String {
-    let (named, script) = match change {
-        Some(change) => (
-            format!(" data-change=\"{change}\""),
+/// The page titled `title` whose body is `body`, naming its version: a
+/// digest of what it draws, so a page drawn again the same names the same
+/// version, and a reader already showing it is sent nothing.
+fn kept_current(title: &str, body: &str) -> String {
+    let mut digest = DefaultHasher::new();
+    (head(title, Some("")), body).hash(&mut digest);
+    head(title, Some(&format!("{:016x}", digest.finish()))) + body
+}
+
+/// The version a kept-current page names, or nothing for a page that is not.
+pub fn version(page: &str) -> Option<&str> {
+    let (head, _) = page.split_once("<head>")?;
+    let (_, named) = head.split_once(VERSION)?;
+    Some(named.split_once('"')?.0)
+}
+
+/// A page's head, titled `title`. Where the page names a `version`, it
+/// carries the script that keeps it current. The version and the title each
+/// end their line, so a patch that changes either leaves the line holding
+/// the style and the script alone.
+fn head(title: &str, version: Option<&str>) -> String {
+    let (named, script) = match version {
+        Some(version) => (
+            format!("{VERSION}{version}\""),
             format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"),
         ),
         None => (String::new(), String::new()),
     };
     format!(
-        "<!doctype html><html lang=\"en\"{named}><head><meta charset=\"utf-8\">\
+        "<!doctype html><html lang=\"en\"{named}>\n<head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{}</title><style>{}{STYLE}</style>{script}</head>",
+         <title>{}</title>\n<style>{}{STYLE}</style>{script}</head>",
         escaped(title),
         palette::page_colours()
     )
@@ -1531,10 +1549,12 @@ setInterval(() => document.hidden || inReadersZone(document), 15000);
 document.addEventListener("visibilitychange", () => document.hidden || inReadersZone(document));
 "##;
 
-/// The page's one script, which keeps it current. It asks the page's own
-/// address for its changes since the one the page was drawn from, and the
-/// server sends them down that one connection: the whole page first, and
-/// after it each patch to the page it sent last. Each page is reconciled
+/// The page's one script, which keeps it current. It takes the page as it
+/// came from the browser's cache, never the network, so that it holds the
+/// page's lines without asking for them again. It asks the page's own
+/// address for its changes since the version it holds, and the server sends
+/// them down that one connection, each a patch to the lines it holds, or
+/// the whole page where it holds none or the server cannot patch them. Each page is reconciled
 /// into the body, so only what differs is touched: a line, the bead view or
 /// a menu that is drawn the same is the same element afterwards, keeping its
 /// scroll, its focus, whether the reader opened it, and what is typed in it.
@@ -1545,23 +1565,25 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// keeps the line or bead view at the top of the window where it was, or the
 /// next line below it that is still drawn. The link that had focus keeps
 /// it while it goes where it went. Otherwise a link going there takes it,
-/// and where none does the focus goes. A page differing only in its change is not shown
-/// again. A hidden page lets its connection go, and asks again from the
-/// change it last heard once it is shown, so pages left in the background
+/// and where none does the focus goes. A hidden page lets its connection
+/// go, and asks again from the version it holds once it is shown, so pages left in the background
 /// hold none of the few connections a browser makes to one server. A page
 /// the server is too busy to keep current asks again after as long as a
 /// quiet connection waits for a comment. Without it the page is the same
 /// page, drawn once.
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
-  const asked = location.pathname + (location.search ? location.search + "&" : "?");
-  let since = document.documentElement.dataset.change, changes, page, shown;
+  const drawn = document.documentElement.dataset.version;
+  let since, changes, page;
   const heard = (event, lines) => {
     since = event.lastEventId;
     show(page = lines);
   };
   const listen = () => {
-    const source = changes = new EventSource(asked + "since=" + since);
+    const asked = new URLSearchParams(location.search);
+    asked.delete("since");
+    if (since) asked.set("since", since);
+    const source = changes = new EventSource(location.pathname + "?" + asked);
     source.addEventListener("error", () => {
       if (source.readyState !== EventSource.CLOSED || changes !== source) return;
       changes = null;
@@ -1577,12 +1599,19 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
       heard(event, page);
     });
   };
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) return changes || listen();
-    changes?.close();
-    changes = null;
-  });
-  if (!document.hidden) listen();
+  fetch(location.href, { cache: "only-if-cached", mode: "same-origin" })
+    .then((answer) => answer.text())
+    .catch(() => "")
+    .then((text) => {
+      const lines = text.replace(/\r/g, "&#13;").split("\n");
+      if (lines[0].includes(` data-version="${drawn}"`)) [since, page] = [drawn, lines];
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) return changes || listen();
+        changes?.close();
+        changes = null;
+      });
+      if (!document.hidden) listen();
+    });
   const goes = (link) => {
     if (link.origin !== location.origin) return [link.className, link.href].join(" ");
     const where = link.matches(".fold") ? "" : new URLSearchParams(link.search).get("at");
@@ -1645,10 +1674,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     while (at) at = drop(at);
   };
   const show = (page) => {
-    const text = page.join("\n").replace(/ data-change="\d+"/, "");
-    if (text === shown) return;
-    shown = text;
-    const drawn = new DOMParser().parseFromString(text, "text/html");
+    const drawn = new DOMParser().parseFromString(page.join("\n"), "text/html");
     const top = atTop();
     const marks = top ? [...document.querySelectorAll(MARK)] : [];
     const held = marks.slice(marks.indexOf(top)).find((at) => drawnIn(drawn, at));
@@ -1822,7 +1848,6 @@ mod tests {
             at: drawn_at(),
             offset: FixedOffset::east_opt(3600).expect("an offset"),
             collecting: Vec::new(),
-            change: 7,
         }
     }
 
@@ -1834,6 +1859,26 @@ mod tests {
     fn page_at(target: &str) -> Answer {
         let asked = Asked::of(target).expect("a page is at the address");
         page(ground(), &Layout::default(), &asked, drawing())
+    }
+
+    /// A page drawn again from the same snapshot is the same page, version
+    /// and all, at another instant too, so a reader already showing it is
+    /// sent nothing. A page drawing something else names another version.
+    #[test]
+    fn a_page_drawn_again_the_same_names_the_same_version() {
+        let asked = Asked::of("/").expect("a page is at the address");
+        let once = page_at("/").html;
+        let later = Drawn {
+            at: drawn_at() + chrono::TimeDelta::seconds(1),
+            ..drawing()
+        };
+        assert_eq!(page(ground(), &Layout::default(), &asked, later).html, once);
+        let drawn = version(&once).expect("the page names its version");
+        let retitled = with_the_bead_changed(|node| node.title = "Retitled".to_string());
+        let other = page(retitled, &Layout::default(), &asked, drawing()).html;
+        assert_ne!(version(&other), Some(drawn));
+        assert_ne!(version(&saying_kept_current("Reading")), Some(drawn));
+        assert_eq!(version(&saying("Nothing here")), None);
     }
 
     /// What a reader sees of some HTML: its text, tags taken out and

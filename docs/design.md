@@ -4568,20 +4568,23 @@ server's offset from UTC, behind the same mark.
 
 **An open page is kept current by the server, and the browser never polls.**
 Graeme: *"a live view just like the tui ... of course server push as we do
-not poll unless absolutely necessary"*. Each change to what the server holds,
-a read starting or landing, has a number. A page names the number it was
-drawn from, and its one script asks the page's own address for the changes
-since, as Server-Sent Events. The server tells that request from a page's by
-its `Accept: text/event-stream`, so the address names the same page either
-way. It sends nothing until it holds a later change, and then the page that
-address now draws. The first event on a connection is the whole page. Each
-event after it is a patch of lines against the page sent before it, or the
-whole page where that is the smaller. Each event carries its change as its
-id, so a browser that reconnects names the last it heard. The count starts at
-the time the server started, so a page from a server since restarted is sent
-the new one's page. A read that goes unanswered changes the page with no
-change held, so a connection also wakes when the read out passes
-`unanswered_after_seconds`.
+not poll unless absolutely necessary"*. A page names its version, a digest of
+what it draws, so a page drawn again the same names the same version. Its one
+script takes the page's lines from the browser's cache, never the network,
+and asks the page's own address for the changes since that version, as
+Server-Sent Events. The server tells that request from a page's by its
+`Accept: text/event-stream`, so the address names the same page either way.
+Each change to what the server holds, a read starting or landing, wakes the
+connection to draw the page again, and nothing is sent while it is the
+version the browser holds. Graeme found the page fetched twice on every open
+when the first event was always the whole page, and on an iPhone again on
+every return to the tab. So the server remembers the last few pages it sent,
+by version, and each event is a patch of lines against the page the browser
+holds. The whole page goes only where the server no longer remembers that
+page, the browser's cache held none, or the page is the smaller. Each event
+carries its version as its id, so a browser that reconnects names the last it
+heard. A read that goes unanswered changes the page with no change held, so
+a connection also wakes when the read out passes `unanswered_after_seconds`.
 
 The script reconciles each page into the body, so an element drawn the same
 stays the same element, with its scroll, its focus, whether the reader opened
@@ -4595,7 +4598,9 @@ few seconds while agents write beads, mostly one project's read time and a
 few rows. Whole pages would send the forest again each time, where a patch
 is a few kilobytes. A line's anchor is its fold's name, so a bead appearing
 changes the lines around it and leaves the lines below it alone. Past 1,024 lines inserted or removed
-the page is sent whole, which also bounds the work of finding the patch. A connection holds no request
+the page is sent whole, which also bounds the work of finding the patch. The
+server remembers the last eight pages it sent, of any address, so memory
+holds at most eight pages. A connection holds no request
 slot: the eight requests drawn at once are apart from the 32 pages kept
 current, and the pages kept current draw one at a time. Over 32 the
 connection is refused, and the page asks again 15 seconds later. A connection

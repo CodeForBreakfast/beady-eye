@@ -66,9 +66,7 @@ struct Held {
     /// The read being made, so a page drawn while it is out says so, and
     /// says a tracker has stopped answering once it has been out too long.
     collecting: Option<Awaited>,
-    /// Which change this is. The count starts at the time the server
-    /// started, in milliseconds, so a page drawn by a server since restarted
-    /// never names a change the new one holds, and is sent the new one's.
+    /// Which change this is.
     change: u64,
 }
 
@@ -78,11 +76,10 @@ type DrawnFrom = (u64, bool);
 
 impl Latest {
     fn new() -> Self {
-        let started = Utc::now().timestamp_millis();
         Self::holding(Held {
             snapshot: None,
             collecting: None,
-            change: u64::try_from(started).unwrap_or_default(),
+            change: 0,
         })
     }
 
@@ -391,6 +388,7 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
     else {
         return;
     };
+    answering.live.remember(&body);
     http::reply_in(
         &stream.stream,
         status,
@@ -458,14 +456,13 @@ fn drawn(asked: &Asked, held: &Held, cfg: &Config) -> (&'static str, String) {
         at: Utc::now(),
         offset: Local::now().offset().fix(),
         collecting: Vec::from_iter(held.collecting.clone()),
-        change: held.change,
     };
     let Some(snapshot) = held.snapshot.clone() else {
         // Until the first read answers, the forest is each project's line
         // with its mark saying it is being read, as the terminal opens on.
         // Whether a bead is there cannot be said yet.
         if asked.bead.is_some() {
-            let page = html::saying_kept_current(phrase::not_read_yet(), held.change);
+            let page = html::saying_kept_current(phrase::not_read_yet());
             return (UNAVAILABLE, page);
         }
         let awaiting = Snapshot::awaiting(
