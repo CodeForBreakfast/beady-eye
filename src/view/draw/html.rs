@@ -175,28 +175,27 @@ impl Drawing<'_> {
         let list = self.forest.list();
         let ready = only_ready(list);
         let drawn = view_of(list);
-        let checking = matches!(list, Some(List::ToCheck { .. }));
         let counts = self.forest.list_counts(ready);
         let to_check = counts.to_check;
         let every_check = Some(List::ToCheck { project: None });
         let checking_every_project = list == every_check.as_ref();
         let checked = self.asked.listing(every_check);
-        let named = if checking {
-            phrase::to_check()
-        } else {
-            drawn.unwrap_or(phrase::every_tree())
+        let named = match list {
+            Some(List::ToCheck { .. }) => phrase::to_check().to_string(),
+            Some(List::LeftToDo { project }) => phrase::left_to_do(project),
+            _ => drawn.unwrap_or(phrase::every_tree()).to_string(),
         };
         html.push_str(&format!(
             "<nav><span class=\"brand\">{}</span>\
              <details class=\"lists\"><summary><span>{}</span></summary><div>",
             phrase::PRODUCT,
-            escaped(named)
+            escaped(&named)
         ));
         html.push_str(&format!(
             "<a href=\"{}\"{}>{}</a>\
              <a href=\"{}\"{}>{}<span class=\"count\">{to_check}</span></a>",
             escaped(&self.asked.listing(listed(None, ready))),
-            on(drawn.is_none() && !checking),
+            on(matches!(list, None | Some(List::Ready))),
             escaped(phrase::every_tree()),
             escaped(&checked),
             on(checking_every_project),
@@ -353,7 +352,8 @@ impl Drawing<'_> {
 
     /// A project's line as the heading over its trees: its name, when it was
     /// read, how far through it is, the agents on it and the beads in it to
-    /// check. The terminal says the same on the project's line.
+    /// check. The terminal says the same on the project's line. What is left
+    /// and what is to check each link to a list of those beads.
     fn heading(
         &self,
         html: &mut String,
@@ -400,11 +400,15 @@ impl Drawing<'_> {
         // Nothing counted means no root here read at all, which a bar would
         // say the opposite of.
         if counts.total > 0 {
+            let left = Some(List::LeftToDo {
+                project: project.project.clone(),
+            });
             progress(
                 html,
                 counts.finished,
                 counts.total,
-                &phrase::done_of(counts.finished, counts.total),
+                &phrase::left_of(counts.unfinished(), counts.total),
+                Some(&self.asked.listing(left)),
             );
         }
         if counts.live_agents > 0 {
@@ -414,8 +418,12 @@ impl Drawing<'_> {
             ));
         }
         if counts.anomalies > 0 {
+            let to_check = Some(List::ToCheck {
+                project: Some(project.project.clone()),
+            });
             html.push_str(&format!(
-                "<span class=\"flag\">{}</span>",
+                "<a class=\"flag\" href=\"{}\">{}</a>",
+                escaped(&self.asked.listing(to_check)),
                 escaped(&format!(
                     "{WARNING} {}",
                     phrase::anomalies_beneath(counts.anomalies)
@@ -507,7 +515,7 @@ impl Drawing<'_> {
         }
         match progressed {
             Some(Progress { finished, total }) => {
-                progress(html, finished, total, &done(finished, total));
+                progress(html, finished, total, &done(finished, total), None);
             }
             None if column => html.push_str("<span class=\"prog\"></span>"),
             None => {}
@@ -809,14 +817,23 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
 }
 
 /// How far through something is, `finished` of a `total` above nought, as a
-/// bar filled that far beside `said`.
-fn progress(html: &mut String, finished: usize, total: usize, said: &str) {
+/// bar filled that far beside `said`, which links to `href` where one is
+/// given.
+fn progress(html: &mut String, finished: usize, total: usize, said: &str, href: Option<&str>) {
     html.push_str(&format!(
         "<span class=\"prog\"><span class=\"bar\" aria-hidden=\"true\">\
          <span style=\"width:{}%\"></span></span>{}</span>",
         finished * 100 / total,
-        escaped(said)
+        linked(said, href)
     ));
+}
+
+/// `said` as a link to `href`, or as it is where there is none.
+fn linked(said: &str, href: Option<&str>) -> String {
+    match href {
+        Some(href) => format!("<a href=\"{}\">{}</a>", escaped(href), escaped(said)),
+        None => escaped(said),
+    }
 }
 
 /// Spans of one block as HTML, each in its own style, the first of them the
@@ -1040,7 +1057,9 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
 .heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
-.heading .read,.heading .state>span{white-space:nowrap}\
+.heading .read,.heading .state>*{white-space:nowrap}\
+.heading .state a:hover{text-decoration:underline}\
+.heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
 .prog{display:inline-flex;align-items:center;gap:6px}\
 .prog .bar{width:44px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}\
@@ -1539,7 +1558,8 @@ mod tests {
                 let line = line_html(html, at)
                     .replace("<span class=\"state\">", " ")
                     .replace("<span class=\"read\">", " ")
-                    .replace("<span class=\"flag\">", " ");
+                    .replace("<span class=\"flag\">", " ")
+                    .replace("<a class=\"flag\"", " <a class=\"flag\"");
                 words(&text_of(&in_the_terminals_order(&line)))
             })
             .collect()
@@ -1568,7 +1588,7 @@ mod tests {
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
     /// the project's line said as the page's heading says it: the time of
-    /// day it was read, and the fraction done in words.
+    /// day it was read, and the fraction done as what is left in words.
     fn terminal_lines(forest: &Forest) -> Vec<String> {
         let rows = frame_of(forest, 160, 60).rows();
         rows[..forest.lines().len()]
@@ -1581,7 +1601,11 @@ mod tests {
                 row.replace(AGO, READ)
                     .split(' ')
                     .map(|word| match word.split_once('/') {
-                        Some((done, of)) => format!("{done} of {of} done"),
+                        Some((done, of)) => {
+                            let [done, of] =
+                                [done, of].map(|n| n.parse::<usize>().expect("a count"));
+                            phrase::left_of(of - done, of)
+                        }
                         None => word.to_string(),
                     })
                     .collect::<Vec<_>>()
@@ -1708,8 +1732,8 @@ mod tests {
     }
 
     /// A project's heading says the time of day it was read behind the same
-    /// mark as the terminal, and says how far through it is in words beside
-    /// a bar.
+    /// mark as the terminal, and says how much of it is left beside a bar
+    /// filled by the share that is done.
     #[test]
     fn a_projects_heading_says_the_time_of_day_it_was_read_where_the_terminal_says_how_long_ago() {
         let terminal = frame_of(&terminal_forest(&[]), 160, 60).rows();
@@ -1717,7 +1741,7 @@ mod tests {
         let html = page_at("/").html;
         assert_eq!(
             page_lines(&html)[0],
-            format!("▾ summit-works {READ} 3 of 9 done")
+            format!("▾ summit-works {READ} 6 left of 9")
         );
         assert!(lines_html(&html)[0].starts_with(" heading\""), "{html}");
         let heading = line_html(&html, 0);
@@ -1791,25 +1815,112 @@ mod tests {
     }
 
     /// The beads in a project to check are said in its heading, in the
-    /// warning's colour.
+    /// warning's colour, as a link to the To check view narrowed to the
+    /// project, which lists exactly those beads.
     #[test]
-    fn a_heading_says_the_beads_in_the_project_to_check() {
-        let checked = with_the_bead_changed(|node| {
-            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
-        });
-        let asked = Asked::of("/").expect("the forest");
-        let html = page(checked, &Layout::default(), &asked, drawing()).html;
+    fn a_headings_beads_to_check_link_to_them_in_the_to_check_view() {
+        let html = checked_at("/");
         assert_eq!(
             page_lines(&html)[0],
-            format!("▾ summit-works {READ} 3 of 9 done {WARNING} 1 bead to check")
+            format!("▾ summit-works {READ} 6 left of 9 {WARNING} 1 bead to check")
         );
+        let heading = line_html(&html, 0);
+        assert!(heading.contains("<a class=\"flag\" href="), "{heading}");
+
+        let to = link_saying(heading, &format!("{WARNING} 1 bead to check"));
+        assert_eq!(
+            Asked::of(&to).expect("a page is at the address").list,
+            Some(List::ToCheck {
+                project: Some(PROJECT.to_string())
+            })
+        );
+        assert_eq!(under_the_heading(&checked_at(&to)), checking(Some(PROJECT)));
+    }
+
+    /// The terminal's lines, set apart as `as_both_draw` sets them, with the
+    /// ground drawing the beads left to do in its project.
+    fn left_to_do() -> Vec<String> {
+        let mut forest = flatten(ground());
+        forest.draw_list(Some(List::LeftToDo {
+            project: PROJECT.to_string(),
+        }));
+        as_both_draw(terminal_lines(&forest))
+    }
+
+    /// What a project's heading says is left is a link to a list of exactly
+    /// those beads, named for the project.
+    #[test]
+    fn a_headings_count_of_what_is_left_links_to_those_beads() {
+        let html = page_at("/").html;
+        let to = link_saying(line_html(&html, 0), &phrase::left_of(6, 9));
+        assert_eq!(
+            Asked::of(&to).expect("a page is at the address").list,
+            Some(List::LeftToDo {
+                project: PROJECT.to_string()
+            })
+        );
+
+        let left = page_at(&to).html;
+        assert_eq!(under_the_heading(&left), left_to_do());
+        let section = phrase::section(
+            &lines::Section::LeftToDo {
+                project: PROJECT.to_string(),
+            },
+            6,
+        );
+        assert!(page_lines(&left).contains(&section), "{left}");
         assert!(
-            line_html(&html, 0).contains(&format!(
-                "<span class=\"flag\">{WARNING} 1 bead to check</span>"
+            left.contains(&format!(
+                "<summary><span>{}</span>",
+                escaped(&phrase::left_to_do(PROJECT))
             )),
-            "{}",
-            line_html(&html, 0)
+            "{left}"
         );
+        assert!(!inside(&left, "lists").contains(" class=\"on\""), "{left}");
+    }
+
+    /// A heading with nothing to check links only to what is left.
+    #[test]
+    fn a_heading_with_nothing_to_check_has_only_the_one_link() {
+        let html = page_at("/").html;
+        let state = inside(line_html(&html, 0), "state");
+        assert_eq!(state.matches("<a ").count(), 1, "{state}");
+    }
+
+    /// Rooted at one bead, the heading counts that tree, and its link lists
+    /// what is left of that tree under a heading counting the same.
+    #[test]
+    fn a_heading_over_one_tree_links_to_what_is_left_of_that_tree() {
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&key("smt-4kd3p.6"))).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+        let left = page_at(&link_saying(line_html(&rooted, 0), &phrase::left_of(3, 3))).html;
+        let heading = &page_lines(&left)[0];
+        assert!(heading.ends_with(&phrase::left_of(3, 3)), "{heading}");
+        let section = phrase::section(
+            &lines::Section::LeftToDo {
+                project: PROJECT.to_string(),
+            },
+            3,
+        );
+        assert!(page_lines(&left).contains(&section), "{left}");
+    }
+
+    /// An address keeps the list of what is left to one project, whatever
+    /// its name holds, and reads back as that list.
+    #[test]
+    fn the_beads_left_to_do_in_one_project_have_an_address_that_reads_back() {
+        for project in [PROJECT, "dock & yard/east #2"] {
+            let list = Some(List::LeftToDo {
+                project: project.to_string(),
+            });
+            let address = Asked::default().listing(list.clone());
+            let asked = Asked::of(&address).expect("a page is at the address");
+            assert_eq!(asked.list, list, "{address}");
+        }
+        assert_eq!(Asked::of("/?left=1").expect("the forest").list, None);
     }
 
     /// A row's flag holds its icon apart from its words, so a page with a
@@ -3693,7 +3804,7 @@ mod tests {
 
         assert_eq!(
             page_lines(&rooted)[0],
-            format!("▾ summit-works {READ} 0 of 3 done")
+            format!("▾ summit-works {READ} 3 left of 3")
         );
     }
 
