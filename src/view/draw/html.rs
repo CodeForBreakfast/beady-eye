@@ -1094,11 +1094,13 @@ width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inheri
 /// reader's own words and zone: how long ago, and the instant in full on
 /// hover. A request never says which zone its reader is in, so the server
 /// cannot. It says them as the page opens, on each page that keeps it
-/// current, and again as they age, from the browser's clock alone.
+/// current, and again as they age, from the browser's clock alone. A
+/// browser that cannot say an age keeps the time the server drew.
 const IN_READERS_ZONE: &str = r##"const LARGER = [["minute", 60], ["hour", 60], ["day", 24]];
-const ago = new Intl.RelativeTimeFormat(undefined, { numeric: "always" });
-const inFull = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
 const inReadersZone = (on) => {
+  if (!window.Intl?.RelativeTimeFormat) return;
+  const ago = new Intl.RelativeTimeFormat(undefined, { numeric: "always" });
+  const inFull = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
   for (const time of on.querySelectorAll("time[datetime]")) {
     const at = new Date(time.getAttribute("datetime"));
     if (isNaN(at)) continue;
