@@ -1546,7 +1546,7 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
 .mark.reading{display:inline-block;box-sizing:border-box;width:10px;height:10px;border:1.75px solid currentColor;\
-border-top-color:transparent;border-radius:50%;vertical-align:-1px;animation:reading 1s linear infinite}\
+border-top-color:transparent;border-radius:50%;vertical-align:-1px;animation:reading 1s linear 5}\
 .mark.reading.held{animation:none}\
 @keyframes reading{to{transform:rotate(360deg)}}\
 @media (prefers-reduced-motion:reduce){.mark.reading{animation:none}}\
@@ -3029,6 +3029,13 @@ mod tests {
             folded(&listed)
         );
         assert!(!has_braille(&listed), "{listed}");
+    }
+
+    /// The ring turns for five seconds at most, and then rests where it
+    /// started, so motion the reader cannot stop ends of itself.
+    #[test]
+    fn the_ring_stops_turning_after_five_seconds() {
+        assert!(STYLE.contains("animation:reading 1s linear 5}"), "{STYLE}");
     }
 
     /// The ring stops turning for a reader who has asked for less motion,

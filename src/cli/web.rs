@@ -743,7 +743,13 @@ path = "/home/user/dev/arkham"
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];
-        assert!(line.contains("⠿"), "{body}");
+        assert!(
+            line.contains(&format!(
+                "aria-label=\"{}\"",
+                crate::view::phrase::not_answering()
+            )),
+            "{body}"
+        );
     }
 
     #[test]
