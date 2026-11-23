@@ -1142,7 +1142,7 @@ aside{position:static;max-height:none;padding:8px 20px 24px}}\
 vertical-align:top;width:100%;white-space:normal}\
 .page .lead{white-space:pre}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
-.page .head{display:flex;flex-direction:column;gap:10px;margin-bottom:14px;white-space:normal}\
+.page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
 .page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
 .page .head .state>.id,.waits>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
 .status{display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 8px;border-radius:999px;\
