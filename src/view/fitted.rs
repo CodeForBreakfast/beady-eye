@@ -119,6 +119,8 @@ pub(crate) enum Marked {
     /// own draws it as written rather than as whatever the theme makes of
     /// the same value.
     Literal,
+    /// It is a badge, which a page draws as a pill.
+    Badge,
 }
 
 impl Mark {
@@ -126,7 +128,7 @@ impl Mark {
     pub(crate) fn link(&self) -> Option<&str> {
         match &self.is {
             Marked::Link(to) => Some(to),
-            Marked::Literal => None,
+            Marked::Literal | Marked::Badge => None,
         }
     }
 }
