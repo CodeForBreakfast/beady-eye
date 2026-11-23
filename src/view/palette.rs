@@ -256,12 +256,13 @@ pub(crate) fn colour_named(written: &str) -> Option<Color> {
 ///   reader came to.
 /// - `--warn` wants looking at, over `--warn-soft`. `--ok` is live or done.
 /// - `--status-*` is a bead's status, in `bd`'s hues made legible on each
-///   ground.
+///   ground, drawn on its status mark alone. In-progress is blue where `bd`'s
+///   is orange, because amber on the page means `--warn` and nothing else.
 const PAGE_LIGHT: &str = "\
 --surface:#ffffff;--sunk:#f3f5f8;--raised:#ffffff;--fg:#17202a;--muted:#5d6874;--faint:#8b96a2;\
 --line:#e2e6eb;--rail:#cfd6dd;--accent:#0b6e82;--accent-soft:#e1f1f4;--on-accent:#ffffff;--sel:#e9f3f6;\
 --warn:#a85700;--warn-soft:#fdf1e3;--ok:#2b8a57;--shadow:0 10px 30px rgba(23,32,42,.14);\
---status-open:#46525e;--status-in-progress:#b86e00;--status-blocked:#c92a3a;--status-closed:#93a0ac;\
+--status-open:#46525e;--status-in-progress:#2f6bd8;--status-blocked:#c92a3a;--status-closed:#84919d;\
 --status-deferred:#6e62a8;--ink:#17202a";
 
 /// The same colours on a dark page.
@@ -269,7 +270,7 @@ const PAGE_DARK: &str = "\
 --surface:#141b21;--sunk:#1a2229;--raised:#1d262e;--fg:#e3e8ec;--muted:#9aa6b1;--faint:#6c7884;\
 --line:#263039;--rail:#34404a;--accent:#5cc6d4;--accent-soft:#143840;--on-accent:#0c1115;--sel:#17323a;\
 --warn:#f0b35a;--warn-soft:#33281a;--ok:#5cc28a;--shadow:0 10px 30px rgba(0,0,0,.5);\
---status-open:#c3ccd4;--status-in-progress:#f2a93b;--status-blocked:#f0707a;--status-closed:#66737f;\
+--status-open:#c3ccd4;--status-in-progress:#6ea8ff;--status-blocked:#f0707a;--status-closed:#66737f;\
 --status-deferred:#a99ee0;--ink:#0c1115";
 
 /// The terminal's sixteen colours as the page's, which is what a pane's own
@@ -308,6 +309,28 @@ const PAGE_TOKENS: [(Style, &str); 5] = [
 /// `--status-*`, so the page's own theme resolves them.
 pub(crate) fn css(style: Style) -> String {
     declarations(style, true)
+}
+
+/// `bd`'s colours for a status, which the page draws on a status mark and
+/// nowhere else. A hooked bead's is also `IDENTITY`'s, so an id drawn in it
+/// is neutral on the page, as every id is.
+const STATUSES: [Style; 6] = [
+    STATUS_IN_PROGRESS,
+    STATUS_BLOCKED,
+    STATUS_CLOSED,
+    STATUS_DEFERRED,
+    STATUS_PINNED,
+    STATUS_HOOKED,
+];
+
+/// A style as [`css`] gives it, for anything on the page but a status mark:
+/// a status's colour is left out, so the words take their parent's.
+pub(crate) fn css_without_status(style: Style) -> String {
+    if STATUSES.iter().any(|status| status.fg == style.fg) {
+        css(Style { fg: None, ..style })
+    } else {
+        css(style)
+    }
 }
 
 /// A style as [`css`] gives it, for a style whose colour a config wrote: a
@@ -455,6 +478,35 @@ mod tests {
         assert!(names(PAGE_LIGHT).contains(&"--surface".to_string()));
         assert_eq!(names(PAGE_LIGHT), names(PAGE_DARK));
         assert!(page_colours().contains("prefers-color-scheme:dark"));
+    }
+
+    /// A closed bead's mark is filled like a blocked one's, so its tick is
+    /// what tells the two apart, and it is drawn in the page's own colour over
+    /// the closed colour. WCAG asks 3:1 of a graphic a reader has to make out.
+    #[test]
+    fn a_closed_marks_tick_stands_out_from_the_closed_colour_in_both_themes() {
+        let token = |theme: &str, name: &str| -> (f64, f64, f64) {
+            let value = theme
+                .split(';')
+                .find_map(|declaration| declaration.strip_prefix(&format!("{name}:#")))
+                .unwrap_or_else(|| panic!("{name} is a colour"));
+            let channel = |at: usize| {
+                let c = f64::from(u8::from_str_radix(&value[at..at + 2], 16).expect("hex")) / 255.0;
+                if c <= 0.039_28 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            (channel(0), channel(2), channel(4))
+        };
+        let luminance = |(r, g, b): (f64, f64, f64)| 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        for (name, theme) in [("light", PAGE_LIGHT), ("dark", PAGE_DARK)] {
+            let tick = luminance(token(theme, "--surface"));
+            let fill = luminance(token(theme, "--status-closed"));
+            let contrast = (tick.max(fill) + 0.05) / (tick.min(fill) + 0.05);
+            assert!(contrast >= 3.0, "{name}: {contrast:.2}:1");
+        }
     }
 
     /// Past the sixteen, an index is the colour xterm puts there.

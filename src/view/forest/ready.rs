@@ -50,7 +50,7 @@ pub enum List {
 
 impl List {
     /// The project the list keeps to, where it keeps to one.
-    fn project(&self) -> Option<&str> {
+    pub(crate) fn project(&self) -> Option<&str> {
         match self {
             List::ToCheck { project } => project.as_deref(),
             List::LeftToDo { project } => Some(project),

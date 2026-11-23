@@ -306,6 +306,7 @@ impl Drawing<'_> {
                 html,
                 show::named(node, vec![Span::raw(node.title.clone())]),
                 Some(self.opening(root.key())),
+                None,
             );
         }
         html.push_str(&format!(
@@ -515,7 +516,7 @@ impl Drawing<'_> {
                 Content::Bead(_) => self.asked.opening_at(place),
                 _ => self.opening(place.key()),
             });
-            self.reference(html, reference, href);
+            self.reference(html, reference, href, self.named_project(line));
         }
         if more {
             html.push_str("<span class=\"more\">");
@@ -554,6 +555,18 @@ impl Drawing<'_> {
         self.forest.list().is_some()
     }
 
+    /// The project a list's own row names, where the list draws beads of
+    /// more than one project and no heading sits over each project's rows.
+    /// A row waiting under a list's row is not the list's own.
+    fn named_project<'l>(&self, line: &'l Line) -> Option<&'l str> {
+        let list = self.forest.list()?;
+        let several = list.project().is_none() && self.forest.snapshot().projects.len() > 1;
+        match (&line.content, &line.place) {
+            (Content::Bead(_), Some(place)) if several => Some(&place.key().project),
+            _ => None,
+        }
+    }
+
     /// What a line hangs under, drawn as rails, then the control that
     /// toggles the line's fold where it has one, named for `what` it folds.
     fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>, what: &str) {
@@ -586,7 +599,15 @@ impl Drawing<'_> {
     /// the page can open the bead. The mark is labelled with `bd`'s word for
     /// the status. The id takes no colour from the place drawing it, because
     /// a status colour or a finished row's tone would make it fainter still.
-    fn reference(&self, html: &mut String, reference: Reference, href: Option<String>) {
+    /// Where the reference names its `project`, a quiet tag after the id
+    /// says it.
+    fn reference(
+        &self,
+        html: &mut String,
+        reference: Reference,
+        href: Option<String>,
+        project: Option<&str>,
+    ) {
         let linked = href.is_some();
         match href {
             Some(href) => html.push_str(&format!("<a class=\"bead\" href=\"{}\">", escaped(&href))),
@@ -616,6 +637,12 @@ impl Drawing<'_> {
             "<span class=\"id\">{}</span>",
             escaped(id.trim_end())
         ));
+        if let Some(project) = project {
+            html.push_str(&format!(
+                "<span class=\"project\">{}</span>",
+                escaped(project)
+            ));
+        }
         html.push_str(if linked { "</a>" } else { "</span>" });
     }
 
@@ -754,7 +781,7 @@ impl Drawing<'_> {
             return false;
         };
         let key = show::key_of(self.forest, related).filter(|_| followable);
-        self.reference(html, reference, key.map(|key| self.opening(&key)));
+        self.reference(html, reference, key.map(|key| self.opening(&key)), None);
         true
     }
 
@@ -911,10 +938,13 @@ fn linked(said: &str, href: Option<&str>) -> String {
 /// Spans of one block as HTML, each in its own style, the first of them the
 /// block's span `from`. One that `marks` names as a link is a link, where it
 /// points somewhere a page may link to, and one it names as a literal is in
-/// its colour as written, and one it names as a badge is a pill. One in the
-/// code tone is marked as code. A flag in a line's state, drawn in the
-/// attention style, holds its words apart from its icon, and is titled with
-/// them, so a page short of room can draw the icon alone.
+/// its colour as written, and one it names as a badge is a pill in the
+/// colour its config gave it. Any other span drawn in a status's colour is
+/// drawn without it, because a status mark is the one thing the page draws
+/// in that colour. One in the code tone is marked as code. A flag in a
+/// line's state, drawn in the attention style, holds its words apart from
+/// its icon, and is titled with them, so a page short of room can draw the
+/// icon alone.
 fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
     for (at, span) in spans.iter().enumerate() {
         let mut marked = marks
@@ -935,8 +965,10 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
             .any(|mark| matches!(mark.is, Marked::Literal))
         {
             palette::css_as_written(span.style)
-        } else {
+        } else if badge {
             palette::css(span.style)
+        } else {
+            palette::css_without_status(span.style)
         };
         let style = format!("{class}{}", styled(css));
         let text = match flagged {
@@ -1130,9 +1162,11 @@ box-sizing:border-box;border-radius:6px;color:var(--faint)}\
 a{color:inherit;text-decoration:none}\
 a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
+.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;padding:8px 12px}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
-overflow:hidden;clip-path:inset(50%);white-space:nowrap}}\
+overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
+main.open .line .bead>.project{display:none}}\
 @media (width<1100px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;padding:8px 20px 24px}}\
@@ -1238,7 +1272,7 @@ header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
 .rooted{padding:9px 14px}.rooted .all::before{content:none}\
 aside{padding:8px 16px 24px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
-.line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
+.line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
@@ -1258,8 +1292,9 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
-.line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
-.line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
+.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
+.line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
+.line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
 nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
@@ -3506,6 +3541,44 @@ mod tests {
         assert!(html.contains("class=\"g closed\""), "{html}");
     }
 
+    /// A status's colour is drawn on the bead's status mark and nowhere
+    /// else: not on an id, a count, a rail or a word beside it. Colour alone
+    /// then says the status, because nothing else on the page is that colour.
+    #[test]
+    fn only_a_status_mark_carries_a_status_colour() {
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        tree.beads[6].status = Status::Blocked;
+        tree.beads[8].status = Status::Deferred;
+        tree.beads[1].status = Status::Hooked;
+        snapshot.collected = snapshot.trees.clone();
+        let targets = ["/", "/?ready=1"].map(String::from).into_iter().chain(
+            [
+                "smt-4kd3p",
+                "smt-4kd3p.1",
+                "smt-4kd3p.2",
+                "smt-4kd3p.6",
+                "smt-4kd3p.8",
+            ]
+            .map(|id| address(&key(id))),
+        );
+        let mut coloured = Vec::new();
+        for target in targets {
+            let html = page_of(snapshot.clone(), &target);
+            let body = &html[html.find("<body").expect("the page has a body")..];
+            coloured.extend(
+                body.split('<')
+                    .map(|tag| &tag[..tag.find('>').unwrap_or(tag.len())])
+                    .filter(|tag| {
+                        let status = tag.contains("--status-") || tag.contains("--accent");
+                        status && !tag.contains("role=\"img\"")
+                    })
+                    .map(|tag| format!("{target}: <{tag}>")),
+            );
+        }
+        assert_eq!(coloured, Vec::<String>::new());
+    }
+
     /// The row's cells other than the reference are drawn together, after
     /// it and before the state, where a phone draws them after the id.
     #[test]
@@ -3534,6 +3607,122 @@ mod tests {
         );
         assert_eq!(words(&text_of(more)), "⇢ #12");
         assert_eq!(parts(more).0, ["a.pill"], "{more}");
+    }
+
+    /// The ground beside a second project, whose one tree is a bead ready
+    /// to start.
+    fn beside_dunwich() -> Snapshot {
+        let mut ground = ground();
+        let mut reflector = node("dun-7", "re-silver the reflector", Status::Open);
+        reflector.project = "dunwich".to_string();
+        reflector.ready = true;
+        let dunwich = Tree {
+            beads: vec![reflector],
+            children: vec![vec![]],
+            counts: counts(0, 1, 0, 0),
+            ..tree(
+                "dunwich",
+                "dun-7",
+                "re-silver the reflector",
+                counts(0, 0, 0, 0),
+            )
+        };
+        let mut trees: Vec<Tree> = ground.trees.iter().map(|tree| (**tree).clone()).collect();
+        trees.push(dunwich);
+        let mut both = snapshot(trees, Vec::new(), ProviderState::Absent);
+        both.views = std::mem::take(&mut ground.views);
+        both
+    }
+
+    /// Each reference among the lines of `html` that names a project, as
+    /// its id and the project it names.
+    fn projects_named(html: &str) -> Vec<(String, String)> {
+        bead_lines(html)
+            .into_iter()
+            .filter(|line| line.contains("class=\"project\""))
+            .map(|line| {
+                let reference = inside(line, "bead");
+                let (shape, _) = parts(reference);
+                assert_eq!(
+                    shape[1..],
+                    ["span.title", "span.id", "span.project"],
+                    "{line}"
+                );
+                (
+                    text_of(inside(reference, "id")),
+                    text_of(inside(reference, "project")),
+                )
+            })
+            .collect()
+    }
+
+    /// A list of beads from more than one project has no heading over each
+    /// project's rows, so each of its rows names its project in a quiet tag
+    /// after its id.
+    #[test]
+    fn a_row_of_a_list_across_projects_names_its_project_after_its_id() {
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(beside_dunwich(), &ready);
+        let named = projects_named(&html);
+        assert_eq!(named.len(), bead_lines(&html).len(), "{html}");
+        assert!(
+            named.contains(&("dun-7".to_string(), "dunwich".to_string())),
+            "{named:?}"
+        );
+        assert!(
+            named.contains(&("smt-4kd3p.4".to_string(), PROJECT.to_string())),
+            "{named:?}"
+        );
+
+        let view = Asked::default().listing(listed(Some(VIEWS[1].0.to_string()), false));
+        let named = projects_named(&page_of(beside_dunwich(), &view));
+        assert!(!named.is_empty());
+        assert!(
+            named.iter().all(|(_, project)| project == PROJECT),
+            "{named:?}"
+        );
+    }
+
+    /// Where the page says which project a row is in some other way, no row
+    /// names it: under the trees each project has its heading, a list kept
+    /// to one project is headed by it, and with one project there is no
+    /// other the row could be in.
+    #[test]
+    fn a_row_names_no_project_where_the_page_already_says_it() {
+        let ready = Asked::default().listing(listed(None, true));
+        let left = Asked::default().listing(Some(List::LeftToDo {
+            project: PROJECT.to_string(),
+        }));
+        for (snapshot, target) in [
+            (beside_dunwich(), "/".to_string()),
+            (beside_dunwich(), left),
+            (ground(), ready),
+        ] {
+            let html = page_of(snapshot, &target);
+            assert!(!bead_lines(&html).is_empty(), "{target}");
+            assert!(!html.contains("class=\"project\""), "{target}: {html}");
+        }
+    }
+
+    /// A row's project is quiet, and makes room beside an open bead on a
+    /// desktop as a flag's words do. A phone draws it on the row's second
+    /// line, in a column of its own between the id and the row's other
+    /// cells, and breaks a long name there rather than push them aside.
+    #[test]
+    fn a_rows_project_is_drawn_after_its_id_and_gives_way_to_an_open_bead() {
+        assert!(STYLE.contains(".bead .project{padding:0 8px;border:1px solid var(--line);"));
+        assert!(
+            rules_under("(width>=1100px)").contains("main.open .line .bead>.project{display:none}")
+        );
+        let phone = rules_under("(max-width:720px)");
+        for rule in [
+            "grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr)",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}",
+            ".line>.more{grid-column:5;",
+            ".line>.bead~.state{grid-column:6;",
+        ] {
+            assert!(phone.contains(rule), "{rule}");
+        }
     }
 
     /// The beads of the ground's lines on the trees, in order.
