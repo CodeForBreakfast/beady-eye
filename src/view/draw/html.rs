@@ -1484,7 +1484,8 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// into the body, so only what differs is touched: a line, the bead view or
 /// a menu that is drawn the same is the same element afterwards, keeping its
 /// scroll, its focus, whether the reader opened it, and what is typed in it.
-/// Elements with an id are matched by it and the rest by their place. It
+/// Elements with an id are matched by it, and the rest by the next element
+/// of their kind, so one that is no longer drawn does not shift the rest. It
 /// keeps the line or bead view at the top of the window where it was, or the
 /// next line below it that is still drawn. The link that had focus keeps
 /// it, or a link going to the same place takes it if that link went. A page differing only in its change is not shown
@@ -1554,6 +1555,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     return next;
   };
   const same = (now, next) => now.nodeType === next.nodeType && now.nodeName === next.nodeName && !now.id && !next.id;
+  const nextLike = (at, want, wanted) => {
+    while (at && !same(at, want) && !wanted.has(at.id)) at = at.nextSibling;
+    return at && same(at, want) ? at : null;
+  };
   const reconcile = (now, next) => {
     if (now.isEqualNode(next)) return;
     if (now.nodeType !== Node.ELEMENT_NODE) return void (now.nodeValue = next.nodeValue);
@@ -1565,7 +1570,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const kept = new Map([...now.children].filter((child) => wanted.has(child.id)).map((child) => [child.id, child]));
     let at = now.firstChild;
     for (const want of [...next.childNodes]) {
-      const match = want.id ? kept.get(want.id) : at && same(at, want) ? at : null;
+      const match = want.id ? kept.get(want.id) : nextLike(at, want, wanted);
       if (!match) {
         now.insertBefore(want, at);
         continue;

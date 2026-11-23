@@ -366,6 +366,8 @@ fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
             .map((at) => at.cloneNode(true))
             .map((at) => (at.querySelector(".rails")?.remove(), at.outerHTML));
         window.lines = unchanged();
+        window.field = document.querySelector("input[type=search]");
+        field.value = "typed but not sent";
         window.focused = document.querySelector(CHANGED + " a[href]");
         focused.focus();
         [scrollY, document.querySelector("aside").scrollTop]"#,
@@ -405,6 +407,11 @@ fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
         page.evaluate("document.activeElement === focused"),
         serde_json::json!(true),
         "the link the reader focused keeps the focus as its line moves"
+    );
+    assert_eq!(
+        page.evaluate("field.isConnected && field.value"),
+        serde_json::json!("typed but not sent"),
+        "the find field keeps what the reader typed"
     );
     assert_eq!(
         page.evaluate("[scrollY, document.querySelector('aside').scrollTop]"),

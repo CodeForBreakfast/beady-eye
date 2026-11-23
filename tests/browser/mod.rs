@@ -10,7 +10,7 @@
 //! put it on Linux.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -30,7 +30,9 @@ const ANSWERING: Duration = Duration::from_secs(60);
 pub struct Browser {
     chromium: Child,
     to: File,
-    from: BufReader<File>,
+    from: File,
+    /// What the browser has said that is not yet read as a whole message.
+    unread: Vec<u8>,
     asked: u64,
     page: String,
     said: std::path::PathBuf,
@@ -84,7 +86,8 @@ impl Browser {
         let mut browser = Self {
             chromium,
             to: File::from(to),
-            from: BufReader::new(File::from(from)),
+            from: File::from(from),
+            unread: Vec::new(),
             asked: 0,
             page: String::new(),
             said,
@@ -147,7 +150,8 @@ impl Browser {
     }
 
     /// Send `message` numbered, and read what comes back until the answer
-    /// bearing its number, passing over the events between.
+    /// bearing its number, passing over the events between. The answer has
+    /// `ANSWERING` to come.
     fn sent(&mut self, mut message: Value) -> Value {
         self.asked += 1;
         message["id"] = json!(self.asked);
@@ -156,31 +160,35 @@ impl Browser {
         self.to
             .write_all(&sending)
             .expect("the browser takes a message");
+        let giving_up = Instant::now() + ANSWERING;
         loop {
-            if self.from.buffer().is_empty() && !self.answers_within(ANSWERING) {
+            while let Some(end) = self.unread.iter().position(|&byte| byte == 0) {
+                let heard: Vec<u8> = self.unread.drain(..=end).collect();
+                let heard: Value =
+                    serde_json::from_slice(&heard[..end]).expect("the browser says JSON");
+                if heard["id"] == message["id"] {
+                    assert!(
+                        heard.get("error").is_none(),
+                        "{message} was refused: {heard}"
+                    );
+                    return heard["result"].clone();
+                }
+            }
+            if !self.answers_within(giving_up.saturating_duration_since(Instant::now())) {
                 panic!(
                     "the browser gave no answer to {message} within {ANSWERING:?}, saying:\n{}",
                     self.said()
                 );
             }
-            let mut heard = Vec::new();
-            self.from
-                .read_until(0, &mut heard)
-                .expect("the browser answers");
-            if heard.pop() != Some(0) {
+            let mut said = [0; 1 << 16];
+            let got = self.from.read(&mut said).expect("the browser answers");
+            if got == 0 {
                 panic!(
                     "the browser went before answering {message}, saying:\n{}",
                     self.said()
                 );
             }
-            let heard: Value = serde_json::from_slice(&heard).expect("the browser says JSON");
-            if heard["id"] == message["id"] {
-                assert!(
-                    heard.get("error").is_none(),
-                    "{message} was refused: {heard}"
-                );
-                return heard["result"].clone();
-            }
+            self.unread.extend_from_slice(&said[..got]);
         }
     }
 }
@@ -189,7 +197,7 @@ impl Browser {
     /// Whether the browser has something to say before `within` passes.
     fn answers_within(&self, within: Duration) -> bool {
         let mut answer = libc::pollfd {
-            fd: self.from.get_ref().as_raw_fd(),
+            fd: self.from.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         };
