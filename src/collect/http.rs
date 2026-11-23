@@ -5,12 +5,16 @@
 //! Every limit on what a request may cost is one set here or by the caller,
 //! which is why there is no server crate between this and the socket.
 
+use std::borrow::Cow;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 /// The most of a request's line and headers read before they must have
 /// ended.
@@ -66,6 +70,41 @@ impl Drop for Answering {
 /// Answer with `status` and `body`, as `kind`, taking no longer than
 /// `patience` to send it.
 pub(crate) fn reply(stream: &TcpStream, status: &str, kind: &str, body: &[u8], patience: Duration) {
+    answer_with(stream, status, kind, "", body, patience);
+}
+
+/// Answer as [`reply`] does, with `body` sent in `encoding`, the one the
+/// request was found to take.
+pub(crate) fn reply_in(
+    stream: &TcpStream,
+    status: &str,
+    kind: &str,
+    body: &[u8],
+    encoding: Encoding,
+    patience: Duration,
+) {
+    let body = match encoding {
+        Encoding::Identity => Cow::Borrowed(body),
+        Encoding::Gzip => {
+            let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+            Cow::Owned(
+                gzip.write_all(body)
+                    .and_then(|()| gzip.finish())
+                    .expect("deflating into memory cannot fail"),
+            )
+        }
+    };
+    answer_with(stream, status, kind, encoding.headers(), &body, patience);
+}
+
+fn answer_with(
+    stream: &TcpStream,
+    status: &str,
+    kind: &str,
+    headers: &str,
+    body: &[u8],
+    patience: Duration,
+) {
     let mut hurried = Hurried {
         stream,
         deadline: Instant::now() + patience,
@@ -74,12 +113,55 @@ pub(crate) fn reply(stream: &TcpStream, status: &str, kind: &str, body: &[u8], p
         .write_all(
             format!(
                 "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\
-                 Connection: close\r\n\r\n",
+                 {headers}Connection: close\r\n\r\n",
                 body.len()
             )
             .as_bytes(),
         )
         .and_then(|()| hurried.write_all(body));
+}
+
+/// How an answer's body goes on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Encoding {
+    Identity,
+    Gzip,
+}
+
+impl Encoding {
+    /// The header lines saying how the body is encoded, and that a request
+    /// taking another encoding may be answered otherwise.
+    pub(crate) fn headers(self) -> &'static str {
+        match self {
+            Encoding::Identity => "Vary: Accept-Encoding\r\n",
+            Encoding::Gzip => "Content-Encoding: gzip\r\nVary: Accept-Encoding\r\n",
+        }
+    }
+}
+
+/// A body sent a part at a time for as long as the connection lasts, each
+/// part encoded so the reader can decode it the moment it arrives.
+pub(crate) struct Parts(Option<GzEncoder<Vec<u8>>>);
+
+impl Parts {
+    pub(crate) fn new(encoding: Encoding) -> Self {
+        Self(match encoding {
+            Encoding::Identity => None,
+            Encoding::Gzip => Some(GzEncoder::new(Vec::new(), Compression::default())),
+        })
+    }
+
+    /// `part` as it goes on the wire. A gzipped part is flushed whole, so
+    /// nothing of it waits for the parts after it.
+    pub(crate) fn encode<'a>(&mut self, part: &'a [u8]) -> Cow<'a, [u8]> {
+        let Some(gzip) = &mut self.0 else {
+            return Cow::Borrowed(part);
+        };
+        gzip.write_all(part)
+            .and_then(|()| gzip.flush())
+            .expect("deflating into memory cannot fail");
+        Cow::Owned(std::mem::take(gzip.get_mut()))
+    }
 }
 
 /// Send `bytes` down `stream`, taking no longer than `patience`, and say
@@ -174,6 +256,30 @@ impl Head {
             .and_then(|(_, value)| value.as_deref())
     }
 
+    /// gzip where the request's Accept-Encoding takes it at a weight above
+    /// nothing, and the body as it is otherwise.
+    pub(crate) fn encoding(&self) -> Encoding {
+        let takes_gzip = self.header("Accept-Encoding").is_some_and(|accepted| {
+            accepted.split(',').any(|coding| {
+                let mut said = coding.split(';').map(str::trim);
+                let name = said.next().unwrap_or_default();
+                (name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip"))
+                    && said.all(|parameter| match parameter.split_once('=') {
+                        Some((key, weight)) if key.trim().eq_ignore_ascii_case("q") => weight
+                            .trim()
+                            .parse::<f32>()
+                            .is_ok_and(|weight| weight > 0.0),
+                        _ => true,
+                    })
+            })
+        });
+        if takes_gzip {
+            Encoding::Gzip
+        } else {
+            Encoding::Identity
+        }
+    }
+
     /// The value of the one header of this name, in any case, where there is
     /// exactly one and its value is text.
     pub(crate) fn only(&self, name: &str) -> Option<&str> {
@@ -235,6 +341,63 @@ pub(crate) fn head(from: &mut impl Read, held: &mut Vec<u8>) -> Result<Head, Unr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encoding_for(accepting: &str) -> Encoding {
+        let sent = format!("GET / HTTP/1.1\r\nHost: localhost\r\n{accepting}\r\n\r\n");
+        head(&mut sent.as_bytes(), &mut Vec::new())
+            .expect("a head")
+            .encoding()
+    }
+
+    #[test]
+    fn gzip_is_sent_only_where_the_request_takes_it() {
+        for taking in [
+            "Accept-Encoding: gzip",
+            "Accept-Encoding: gzip, deflate, br",
+            "Accept-Encoding: br;q=1.0, GZIP;q=0.5",
+            "Accept-Encoding: x-gzip",
+            "accept-encoding: deflate , gzip ; q = 0.1",
+        ] {
+            assert_eq!(encoding_for(taking), Encoding::Gzip, "{taking}");
+        }
+        for refusing in [
+            "Accept: text/html",
+            "Accept-Encoding: identity",
+            "Accept-Encoding: br, deflate",
+            "Accept-Encoding: gzip;q=0",
+            "Accept-Encoding: gzip;q=0.000",
+            "Accept-Encoding: gzip;q=nonsense",
+            "Accept-Encoding: gzipped",
+        ] {
+            assert_eq!(encoding_for(refusing), Encoding::Identity, "{refusing}");
+        }
+    }
+
+    /// A reader holding only the parts sent so far decodes every one of
+    /// them, so no part waits on the next to be read.
+    #[test]
+    fn each_gzipped_part_decodes_the_moment_it_arrives() {
+        let mut parts = Parts::new(Encoding::Gzip);
+        let mut reader = flate2::write::GzDecoder::new(Vec::new());
+        let mut sent = Vec::new();
+        for part in [
+            "event: page\ndata: <p>\n\n",
+            ":\n\n",
+            "event: patch\ndata: 0 1 1\n\n",
+        ] {
+            reader
+                .write_all(&parts.encode(part.as_bytes()))
+                .and_then(|()| reader.flush())
+                .expect("a part decodes");
+            sent.extend_from_slice(part.as_bytes());
+            assert_eq!(reader.get_ref(), &sent);
+        }
+    }
+
+    #[test]
+    fn a_part_sent_as_it_is_goes_unchanged() {
+        assert_eq!(&*Parts::new(Encoding::Identity).encode(b":\n\n"), b":\n\n");
+    }
 
     /// A reader taking a little at a time keeps every single write moving,
     /// so only a deadline on the whole answer stops it in time.

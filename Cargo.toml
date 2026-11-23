@@ -50,6 +50,9 @@ anyhow = "1.0.104"
 base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4.6.6", features = ["derive"] }
+# `bdi web` sends its pages and its event stream gzipped, and nothing in `std`
+# deflates. The default backend is miniz_oxide, which is Rust throughout.
+flate2 = "1.1.11"
 # The signature GitHub puts on each webhook delivery is an HMAC-SHA256 of its
 # body, and nothing in `std` computes one. RustCrypto's pair, which move
 # together because both are built on one version of `digest`, and
