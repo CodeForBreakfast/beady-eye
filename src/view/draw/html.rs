@@ -960,6 +960,8 @@ border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 @media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}\
 .line>.bead>*{flex:none}.line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}\
+.line>.more{display:flex;align-items:center;gap:8px;min-width:0;padding-left:2ch;overflow:hidden}\
+.line>.more>.pill{min-width:0;overflow:hidden;text-overflow:ellipsis}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
@@ -2830,7 +2832,9 @@ mod tests {
     /// ends in an ellipsis, before its id, but keeps a few characters, and
     /// the reference keeps room for them however wide the cells beside it.
     /// On a row too crowded for its id the reference cuts it off at its own
-    /// edge rather than run under those cells. Everything after the reference sits together at the right, with the
+    /// edge rather than run under those cells, and badges too wide for the
+    /// row end in an ellipsis rather than push the bar out of its column.
+    /// Everything after the reference sits together at the right, with the
     /// progress column a fixed width at the end and its bar at the column's
     /// start, so the bars line up whatever their fractions say. A project's
     /// heading is not a bead's row, and its bar keeps its own width.
@@ -2842,6 +2846,8 @@ mod tests {
             ".line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}",
             ".line>.bead>*{flex:none}",
             ".line>.bead>.title{flex:0 1 auto;min-width:8ch;overflow:hidden;text-overflow:ellipsis}",
+            ".line>.more{display:flex;align-items:center;gap:8px;min-width:0;padding-left:2ch;overflow:hidden}",
+            ".line>.more>.pill{min-width:0;overflow:hidden;text-overflow:ellipsis}",
             ".line>.bead~.state{margin-left:0}",
             ".line>.bead~.state>.prog{width:104px}",
         ] {
