@@ -93,18 +93,33 @@ fn get(address: &str, path: &str) -> (String, String) {
 /// What `address` answers a GET of `path` sent to the host `host` with: its
 /// status line and its body.
 fn get_from(address: &str, host: &str, path: &str) -> (String, String) {
+    let (head, body) = fetched(address, host, path, "");
+    let status = head.lines().next().unwrap_or_default().to_string();
+    (status, String::from_utf8(body).expect("a page is text"))
+}
+
+/// What `address` answers a GET of `path` sent to the host `host` with the
+/// header lines `offering`: its head and its body as it came on the wire.
+fn fetched(address: &str, host: &str, path: &str, offering: &str) -> (String, Vec<u8>) {
     let mut stream = TcpStream::connect(address).expect("bdi web takes the connection");
     stream
         .set_read_timeout(Some(GIVING_UP))
         .expect("a read timeout");
-    write!(stream, "GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n").expect("the request is sent");
-    let mut answer = String::new();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\n{offering}\r\n"
+    )
+    .expect("the request is sent");
+    let mut answer = Vec::new();
     stream
-        .read_to_string(&mut answer)
+        .read_to_end(&mut answer)
         .expect("bdi web answers and closes");
-    let (head, body) = answer.split_once("\r\n\r\n").expect("a head and a body");
-    let status = head.lines().next().unwrap_or_default().to_string();
-    (status, body.to_string())
+    let end = answer
+        .windows(4)
+        .position(|four| four == b"\r\n\r\n")
+        .expect("a head and a body");
+    let head = String::from_utf8(answer[..end + 2].to_vec()).expect("a head is text");
+    (head, answer[end + 4..].to_vec())
 }
 
 /// `bdi web` over the described subtree, answering for the host names
@@ -189,10 +204,35 @@ fn a_beads_address_answers_with_that_bead_shown() {
 /// connection its script opens, and asks for nothing else.
 #[test]
 fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
+    an_open_page_kept_current("web-live", "");
+}
+
+/// A reader offering gzip is sent the page and its changes gzipped, and a
+/// change still reaches it without waiting on the one after.
+#[test]
+fn a_reader_offering_gzip_is_sent_the_page_and_its_changes_gzipped() {
+    an_open_page_kept_current("web-live-gzipped", "Accept-Encoding: gzip, deflate, br\r\n");
+}
+
+/// A page fetched and then kept current by a reader sending the header
+/// lines `offering`, which says gzip where it offers it, in a home `named`.
+fn an_open_page_kept_current(named: &str, offering: &str) {
+    const GZIPPED: &str = "Content-Encoding: gzip\r\n";
     const RETITLED: &str = "A title the tracker gave the root after the page was drawn";
-    let home = a_home_naming_one_project_settled("web-live", "[tui]\nrefresh_seconds = 1\n");
+    let gzipped = offering.contains("gzip");
+    let home = a_home_naming_one_project_settled(named, "[tui]\nrefresh_seconds = 1\n");
     let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
-    let (_, page) = get(&address, "/");
+    let (head, page) = fetched(&address, &address, "/", offering);
+    assert_eq!(head.contains(GZIPPED), gzipped, "{head}");
+    let page = if gzipped {
+        let mut unzipped = String::new();
+        flate2::read::GzDecoder::new(&page[..])
+            .read_to_string(&mut unzipped)
+            .expect("the page decodes");
+        unzipped
+    } else {
+        String::from_utf8(page).expect("a page is text")
+    };
     let change = page
         .split_once("data-change=\"")
         .and_then(|(_, rest)| rest.split_once('"'))
@@ -205,7 +245,7 @@ fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
         .expect("a read timeout");
     write!(
         stream,
-        "GET /?since={change} HTTP/1.1\r\nHost: {address}\r\nAccept: text/event-stream\r\n\r\n"
+        "GET /?since={change} HTTP/1.1\r\nHost: {address}\r\nAccept: text/event-stream\r\n{offering}\r\n"
     )
     .expect("the request is sent");
     let mut events = BufReader::new(stream);
@@ -221,6 +261,12 @@ fn an_open_page_is_sent_each_change_down_the_one_connection_it_holds() {
         head.contains("Content-Type: text/event-stream\r\n"),
         "{head}"
     );
+    assert_eq!(head.contains(GZIPPED), gzipped, "{head}");
+    let mut events: Box<dyn BufRead> = if gzipped {
+        Box::new(BufReader::new(flate2::bufread::GzDecoder::new(events)))
+    } else {
+        Box::new(events)
+    };
 
     tracker.holds(&THE_DESCRIBED_SUBTREE.replace(THE_ROOT.1, RETITLED));
     let giving_up = Instant::now() + GIVING_UP;
