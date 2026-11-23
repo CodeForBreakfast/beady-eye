@@ -997,7 +997,7 @@ impl Drawing<'_> {
         ));
         if node.ready {
             html.push_str(&format!(
-                "<span class=\"pill\">{}</span>",
+                " <span class=\"pill\">{}</span>",
                 escaped(phrase::ready())
             ));
         }
@@ -4096,24 +4096,38 @@ mod tests {
 
     /// A ready bead's state line says so in a pill after its id, and each
     /// of its badges is a pill after that, linked where the badge points.
+    /// Each pill is a word of the line's text, apart from what comes before
+    /// it, as it is apart on the screen.
     #[test]
     fn a_beads_state_line_says_it_is_ready_and_holds_its_badges() {
+        let next = crate::model::badges::Badged {
+            text: "⇢ #13".to_string(),
+            link: Some("https://example.invalid/dunwich/13".to_string()),
+            ..a_badge()
+        };
         let badged = with_the_bead_changed(|bead| {
             bead.ready = true;
-            bead.badges = vec![a_badge()];
+            bead.badges = vec![a_badge(), next.clone()];
         });
         let html = page_of(badged, &address(&key("smt-4kd3p.6")));
         let state = inside(inside(&html, "head"), "state");
         assert_eq!(
             parts(state).0[1..],
-            ["span.id", "span.pill", "a.pill"],
+            ["span.id", "span.pill", "a.pill", "a.pill"],
             "{state}"
         );
         assert_eq!(text_of(inside(state, "pill")), phrase::ready());
-        assert!(
-            state.contains("href=\"https://example.invalid/dunwich/12\""),
-            "{state}"
-        );
+        for link in ["12", "13"] {
+            assert!(
+                state.contains(&format!("href=\"https://example.invalid/dunwich/{link}\"")),
+                "{state}"
+            );
+        }
+        let text = text_of(state);
+        for pill in [phrase::ready(), "⇢ #12", "⇢ #13"] {
+            let at = text.find(pill).expect("the line holds the pill");
+            assert!(text[..at].ends_with(char::is_whitespace), "{text:?}");
+        }
     }
 
     /// The agent on a bead and who watches it are cells of its grid, each
