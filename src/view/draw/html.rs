@@ -3240,13 +3240,9 @@ mod tests {
         tree.beads[6].status = Status::Blocked;
         tree.beads[8].status = Status::Deferred;
         snapshot.collected = snapshot.trees.clone();
-        let targets = ["/", "/?ready=1"]
-            .map(String::from)
-            .into_iter()
-            .chain(
-                ["smt-4kd3p", "smt-4kd3p.2", "smt-4kd3p.6", "smt-4kd3p.8"]
-                    .map(|id| address(&key(id))),
-            );
+        let targets = ["/", "/?ready=1"].map(String::from).into_iter().chain(
+            ["smt-4kd3p", "smt-4kd3p.2", "smt-4kd3p.6", "smt-4kd3p.8"].map(|id| address(&key(id))),
+        );
         let mut coloured = Vec::new();
         for target in targets {
             let html = page_of(snapshot.clone(), &target);
