@@ -1486,8 +1486,8 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// scroll, its focus, whether the reader opened it, and what is typed in it.
 /// Elements with an id are matched by it and the rest by their place. It
 /// keeps the line or bead view at the top of the window where it was, or the
-/// next line below it that is still drawn, and the link that had focus if
-/// its own element went. A page differing only in its change is not shown
+/// next line below it that is still drawn. The link that had focus keeps
+/// it, or a link going to the same place takes it if that link went. A page differing only in its change is not shown
 /// again. A hidden page lets its connection go, and asks again from the
 /// change it last heard once it is shown, so pages left in the background
 /// hold none of the few connections a browser makes to one server. A page
@@ -1537,10 +1537,15 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     .filter((link) => goes(link) === kind);
   const MARK = ".line[id]:not(.heading),aside";
   const atTop = () => {
-    const forest = document.querySelector(".forest");
-    if (!forest) return null;
-    const { left, top } = forest.getBoundingClientRect();
-    return document.elementsFromPoint(left + 1, Math.max(top, 0) + 1).find((at) => at.matches(MARK)) ?? null;
+    const box = [document.querySelector(".forest"), document.querySelector("aside")]
+      .find((box) => box?.getClientRects().length);
+    if (!box) return null;
+    const { left, top } = box.getBoundingClientRect();
+    for (let y = Math.max(top, 0) + 1; y < innerHeight; y += 8) {
+      const hit = document.elementsFromPoint(left + 1, y).find((at) => at.matches(MARK));
+      if (hit) return hit;
+    }
+    return null;
   };
   const drawnIn = (drawn, at) => at.matches("aside") ? drawn.querySelector("aside") : drawn.getElementById(at.id);
   const drop = (gone) => {
@@ -1593,7 +1598,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     reconcile(document.body, drawn.body);
     const again = kept && (kept[0].isConnected ? kept[0] : document.getElementById(kept[1]));
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[2]);
-    if (focused && !focus.isConnected) alike(focused[0], focused[1])[focused[2]]?.focus({ preventScroll: true });
+    if (focused) {
+      const back = focus.isConnected && goes(focus) === focused[1] ? focus : alike(focused[0], focused[1])[focused[2]];
+      if (back !== document.activeElement) back?.focus({ preventScroll: true });
+    }
   };
 });"##;
 

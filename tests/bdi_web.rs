@@ -342,7 +342,6 @@ fn patched(mut page: Vec<String>, patch: &[String]) -> Vec<String> {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
-    const CHANGED: &str = "A pager or an editor that cannot be run is reported as git's failure";
     const RETITLED: &str = "A title the tracker gave a sibling after the page was drawn";
     let home = a_home_naming_one_project_settled("web-redraw", "[tui]\nrefresh_seconds = 1\n");
     let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
@@ -361,8 +360,14 @@ fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
         document.querySelector("aside").scrollTop = 40;
         window.before = [...document.body.querySelectorAll("*")];
         window.BEADS = ".line[id]:not(.heading), aside";
-        window.said = (at) => at.matches(".line[id$='/arkham:dun-0tp.9']") ? null : at.outerHTML;
-        window.lines = [...document.querySelectorAll(BEADS)].map(said);
+        window.CHANGED = ".line[id$='/arkham:dun-0tp.9']";
+        window.unchanged = () => [...document.querySelectorAll(BEADS)]
+            .filter((at) => !at.matches(CHANGED))
+            .map((at) => at.cloneNode(true))
+            .map((at) => (at.querySelector(".rails")?.remove(), at.outerHTML));
+        window.lines = unchanged();
+        window.focused = document.querySelector(CHANGED + " a[href]");
+        focused.focus();
         [scrollY, document.querySelector("aside").scrollTop]"#,
     );
     let [window_at, bead_at] =
@@ -372,9 +377,18 @@ fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
         "the page scrolls: {scrolled}"
     );
 
-    tracker.holds(&THE_DESCRIBED_SUBTREE.replace(CHANGED, RETITLED));
+    let mut beads: serde_json::Value =
+        serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+    let sibling = beads
+        .as_array_mut()
+        .and_then(|beads| beads.iter_mut().find(|bead| bead["id"] == "dun-0tp.9"))
+        .expect("the fixture holds the sibling");
+    sibling["title"] = RETITLED.into();
+    // A higher priority moves its line above its siblings'.
+    sibling["priority"] = 1.into();
+    tracker.holds(&beads.to_string());
     page.until(
-        &format!("document.querySelector(\".line[id$='/arkham:dun-0tp.9']\").textContent.includes({RETITLED:?})"),
+        &format!("document.querySelector(CHANGED).textContent.includes({RETITLED:?})"),
         GIVING_UP,
     );
     assert_eq!(
@@ -383,9 +397,14 @@ fn a_change_pushed_to_an_open_page_redraws_only_the_bead_it_changed() {
         "every element is still the page's own"
     );
     assert_eq!(
-        page.evaluate("[...document.querySelectorAll(BEADS)].map(said)"),
+        page.evaluate("unchanged()"),
         page.evaluate("lines"),
-        "only the changed bead's line says something new"
+        "only the changed bead's line says something new, apart from the rails its move redrew"
+    );
+    assert_eq!(
+        page.evaluate("document.activeElement === focused"),
+        serde_json::json!(true),
+        "the link the reader focused keeps the focus as its line moves"
     );
     assert_eq!(
         page.evaluate("[scrollY, document.querySelector('aside').scrollTop]"),

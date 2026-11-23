@@ -21,6 +21,10 @@ use serde_json::{json, Value};
 
 use crate::terminal::die_with;
 
+/// How long the browser has to answer one message before the test fails
+/// rather than hangs.
+const ANSWERING: Duration = Duration::from_secs(60);
+
 /// One page open in a headless Chromium, killed and reaped when it is
 /// dropped.
 pub struct Browser {
@@ -153,13 +157,21 @@ impl Browser {
             .write_all(&sending)
             .expect("the browser takes a message");
         loop {
+            if self.from.buffer().is_empty() && !self.answers_within(ANSWERING) {
+                panic!(
+                    "the browser gave no answer to {message} within {ANSWERING:?}, saying:\n{}",
+                    self.said()
+                );
+            }
             let mut heard = Vec::new();
             self.from
                 .read_until(0, &mut heard)
                 .expect("the browser answers");
             if heard.pop() != Some(0) {
-                let said = std::fs::read_to_string(&self.said).unwrap_or_default();
-                panic!("the browser went before answering {message}, saying:\n{said}");
+                panic!(
+                    "the browser went before answering {message}, saying:\n{}",
+                    self.said()
+                );
             }
             let heard: Value = serde_json::from_slice(&heard).expect("the browser says JSON");
             if heard["id"] == message["id"] {
@@ -170,6 +182,23 @@ impl Browser {
                 return heard["result"].clone();
             }
         }
+    }
+}
+
+impl Browser {
+    /// Whether the browser has something to say before `within` passes.
+    fn answers_within(&self, within: Duration) -> bool {
+        let mut answer = libc::pollfd {
+            fd: self.from.get_ref().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let waiting = i32::try_from(within.as_millis()).expect("a wait poll can take");
+        unsafe { libc::poll(&mut answer, 1, waiting) > 0 }
+    }
+
+    fn said(&self) -> String {
+        std::fs::read_to_string(&self.said).unwrap_or_default()
     }
 }
 
