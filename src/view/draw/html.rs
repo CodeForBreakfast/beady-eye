@@ -7,7 +7,7 @@
 //! to a bead, a row of the forest or a bead the bead view names, is one
 //! component that opens the bead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, FixedOffset, Utc};
 use ratatui::text::Span;
@@ -685,14 +685,7 @@ impl Drawing<'_> {
                 0,
             )
         };
-        let glyph = reference.glyph();
-        html.push_str(&format!(
-            "<span class=\"g{}\" role=\"img\" aria-label=\"{}\"{}>{}</span>",
-            drawn_mark(&reference.status).map_or_else(String::new, |mark| format!(" {mark}")),
-            escaped(&phrase::status_word(&reference.status)),
-            styled(palette::css(glyph.style)),
-            escaped(&glyph.content)
-        ));
+        mark(html, &reference.status, &reference.glyph(), true);
         between(html, " ");
         html.push_str("<span class=\"title\">");
         spans(html, &reference.title, Block::Identity, &[], 0);
@@ -739,15 +732,13 @@ impl Drawing<'_> {
             .collect();
 
         html.push_str("<div class=\"page\"><div class=\"head\">");
-        self.reference(
-            html,
-            show::named(node, vec![Span::raw(node.title.clone())]),
-            forest.place().map(|place| self.asked.opening_at(place)),
-            None,
-        );
+        self.head(html, node, page.blocked_by.is_some());
         html.push_str("</div>");
         let mut in_prose = false;
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
+            if page.blocked_by == Some(at) {
+                continue;
+            }
             let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
             // A row of prose starts with two spans: the indent the page gives
             // it, and the lead or the hang the text gives it.
@@ -785,26 +776,6 @@ impl Drawing<'_> {
                 if !self.related(html, related) {
                     spans(html, rest, Block::Identity, &[], 0);
                 }
-            } else if page.blocked_by == Some(at) {
-                html.push_str(&indent());
-                html.push_str(&escaped(phrase::blocked_by_ahead()));
-                for (nth, blocker) in node.blocked_by.iter().enumerate() {
-                    if nth > 0 {
-                        html.push_str(&escaped(phrase::BETWEEN_BLOCKERS));
-                    }
-                    let named = blocking(forest.snapshot(), node, blocker);
-                    if named.is_empty() {
-                        html.push_str(&escaped(blocker));
-                    }
-                    for (nth, related) in named.iter().enumerate() {
-                        if nth > 0 {
-                            html.push_str(&escaped(phrase::BETWEEN_BLOCKERS));
-                        }
-                        if !self.related(html, related) {
-                            html.push_str(&escaped(blocker));
-                        }
-                    }
-                }
             } else {
                 spans(html, row, Block::Identity, marks, 0);
             }
@@ -813,6 +784,57 @@ impl Drawing<'_> {
             html.push_str("</span></span>");
         }
         html.push_str("\n</div>");
+    }
+
+    /// The head of the bead's page: its status in words beside its id, its
+    /// title as the page's heading, and where it is `blocked`, a band naming
+    /// each bead it waits on.
+    fn head(&self, html: &mut String, node: &Node, blocked: bool) {
+        html.push_str(&format!(
+            "<p class=\"state\"><span class=\"status{}\">",
+            drawn_mark(&node.status).map_or_else(String::new, |mark| format!(" {mark}"))
+        ));
+        let glyph = show::named(node, Vec::new()).glyph();
+        mark(html, &node.status, &glyph, false);
+        html.push_str(&format!(
+            " {}</span> <span class=\"id\">{}</span></p><h2>{}</h2>",
+            escaped(&phrase::status_said(&node.status)),
+            escaped(&node.id),
+            escaped(&node.title)
+        ));
+        if blocked {
+            self.waits(html, node);
+        }
+    }
+
+    /// The band naming each bead `node` waits on, each by the reference that
+    /// opens it, under what it says of how many there are. A blocker the
+    /// answer does not hold is named by its id, and one named twice is
+    /// waited on once.
+    fn waits(&self, html: &mut String, node: &Node) {
+        let mut named = String::new();
+        let mut count = 0;
+        let by_id = |named: &mut String, blocker: &str| {
+            named.push_str(&format!("<span class=\"id\">{}</span>", escaped(blocker)));
+        };
+        let mut seen = HashSet::new();
+        for blocker in node.blocked_by.iter().filter(|id| seen.insert(id.as_str())) {
+            let blocking = blocking(self.forest.snapshot(), node, blocker);
+            if blocking.is_empty() {
+                by_id(&mut named, blocker);
+                count += 1;
+            }
+            for related in &blocking {
+                if !self.related(&mut named, related) {
+                    by_id(&mut named, blocker);
+                }
+                count += 1;
+            }
+        }
+        html.push_str(&format!(
+            "<div class=\"waits\"><p>{}</p>{named}</div>",
+            escaped(&phrase::waiting_on(count))
+        ));
     }
 
     /// A bead the bead view names, as a reference to it that opens it where
@@ -1082,6 +1104,28 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
 
 /// The class of the mark the page draws for `status` in place of its glyph,
 /// where it draws one. Any other status keeps its glyph.
+/// A bead's status mark: the shape the stylesheet draws for a status it has
+/// one for, or else `glyph`, the status's glyph. Where nothing beside it
+/// says the status, the mark says it, as an image named for the status in
+/// its colour. Beside the status in words it is hidden from a reader who
+/// hears the page, and takes the colour of what holds it.
+fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool) {
+    let said = if says_the_status {
+        format!(
+            " role=\"img\" aria-label=\"{}\"{}",
+            escaped(&phrase::status_word(status)),
+            styled(palette::css(glyph.style))
+        )
+    } else {
+        " aria-hidden=\"true\"".to_string()
+    };
+    html.push_str(&format!(
+        "<span class=\"g{}\"{said}>{}</span>",
+        drawn_mark(status).map_or_else(String::new, |mark| format!(" {mark}")),
+        escaped(&glyph.content)
+    ));
+}
+
 fn drawn_mark(status: &Status) -> Option<&'static str> {
     match status {
         Status::Open => Some("open"),
@@ -1197,7 +1241,19 @@ aside{position:static;max-height:none;padding:8px 20px 24px}}\
 vertical-align:top;width:100%;white-space:normal}\
 .page .lead{white-space:pre}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
-.page .head .title{font-family:var(--display);font-weight:600}\
+.page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
+.page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
+.page .head .state>.id,.waits>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
+.status{--status:var(--muted);display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 8px;\
+border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color-mix(in srgb,var(--status) 12%,transparent)}\
+.status>.g{color:var(--status)}\
+.status.open{--status:var(--status-open)}.status.in-progress{--status:var(--status-in-progress)}\
+.status.blocked{--status:var(--status-blocked)}.status.closed{--status:var(--status-closed)}\
+.status.deferred{--status:var(--status-deferred)}\
+.page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
+.waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
+background:var(--sunk);border:1px solid var(--line)}\
+.waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
 .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
@@ -1361,20 +1417,19 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead .g{grid-area:1/1;font-size:14px;text-align:center}\
 .page .bead .title{grid-area:1/2;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .page .bead .id{grid-area:2/2;font-size:12px;font-family:var(--body)}\
-.page .head .bead{width:100%;margin-bottom:4px}\
-.page .head .title{font-size:18px}}\
-.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
+.waits>.bead{width:100%}}\
+:is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
 font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
 .bead .g.open{color:var(--status-open)}\
-.bead .g.in-progress{background:linear-gradient(90deg,currentColor 50%,transparent 50%)}\
-.bead .g.blocked,.bead .g.closed{background:currentColor}\
-.bead .g.closed::after{content:\"\";position:absolute;left:2.6px;top:.6px;width:3px;height:6px;\
+:is(.bead,.status) .g.in-progress{background:linear-gradient(90deg,currentColor 50%,transparent 50%)}\
+:is(.bead,.status) .g:is(.blocked,.closed){background:currentColor}\
+:is(.bead,.status) .g.closed::after{content:\"\";position:absolute;left:2.6px;top:.6px;width:3px;height:6px;\
 border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)}\
-.bead .g.deferred{border-style:dashed}\
-@media print,(forced-colors:active){.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
+:is(.bead,.status) .g.deferred{border-style:dashed}\
+@media print,(forced-colors:active){:is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
 width:auto;height:auto;margin-top:0;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
-.bead .g.closed::after{content:none}}";
+:is(.bead,.status) .g.closed::after{content:none}}";
 
 /// How old a project's read is before its heading says when it was. A
 /// project kept current is read or vouched for well inside this, by its
@@ -3027,8 +3082,11 @@ mod tests {
                 .contains("apply the two niri settings"),
             "{shown}"
         );
-        let aside = &answer.html[answer.html.find("<aside>").expect("the bead view")..];
-        assert!(words(&text_of(aside)).contains("○ apply the two niri settings smt-4kd3p.6"));
+        let head = inside(&answer.html, "head");
+        assert!(
+            head.contains("<h2>apply the two niri settings</h2>"),
+            "{head}"
+        );
     }
 
     #[test]
@@ -3095,20 +3153,21 @@ mod tests {
         }
     }
 
-    /// The bead view on the page is the terminal's, row for row, with every
-    /// bead it names drawn as a reference to that bead. The row saying what
-    /// the bead is blocked by is the one the page draws differently, because
-    /// the terminal names the blocker by its id alone.
+    /// Under its head, the bead view on the page is the terminal's, row for
+    /// row, with every bead it names drawn as a reference to that bead. The
+    /// row saying what the bead is blocked by is the one the page leaves
+    /// out, because the head's band says it.
     #[test]
     fn the_bead_view_draws_the_terminals_rows_with_every_bead_named_by_a_reference() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
-        let page_rows: Vec<String> = text_of(&in_the_terminals_order(
-            &view[..view.find("</aside>").unwrap()],
-        ))
-        .lines()
-        .map(words)
-        .collect();
+        let head = view.find("<div class=\"head\">").expect("the head");
+        let under_head = &view[element_end(view, head)..view.find("</aside>").unwrap()];
+        let page_rows: Vec<String> = text_of(&in_the_terminals_order(under_head))
+            .lines()
+            .skip(1)
+            .map(words)
+            .collect();
 
         let mut forest = flatten(ground());
         assert!(forest.go_to(&key("smt-4kd3p.6")));
@@ -3126,7 +3185,10 @@ mod tests {
         let terminal_rows: Vec<String> = said
             .rows
             .iter()
-            .map(|row| {
+            .enumerate()
+            .skip(said.head)
+            .filter(|(at, _)| *at != blocked_by)
+            .map(|(_, row)| {
                 words(
                     &row.iter()
                         .map(|span| span.content.as_ref())
@@ -3135,25 +3197,75 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(page_rows.len(), terminal_rows.len(), "{page_rows:#?}");
-        for (at, (page, terminal)) in page_rows.iter().zip(&terminal_rows).enumerate() {
-            if at == blocked_by {
-                assert_eq!(terminal, "blocked by: smt-4kd3p.1");
-                assert_eq!(
-                    page,
-                    "blocked by: ○ smt-4kd3p.1 wire the niri theme include"
-                );
-            } else {
-                assert_eq!(page, terminal, "row {at}");
-            }
-        }
+        assert_eq!(page_rows, terminal_rows);
         assert!(terminal_rows
             .iter()
             .any(|row| row == "→ ○ smt-4kd3p.1 wire the niri theme include"));
     }
 
+    /// The head of a bead's page says its status in words and its id, then
+    /// its title as the page's heading.
+    #[test]
+    fn a_bead_page_heads_with_its_status_in_words_and_its_id_over_its_title() {
+        let html = page_at(&address(&key("smt-4kd3p"))).html;
+        let head = inside(&html, "head");
+        assert_eq!(parts(head).0, ["p.state", "h2"], "{head}");
+        assert_eq!(
+            words(&text_of(inside(head, "state"))),
+            "◐ In progress smt-4kd3p"
+        );
+        assert!(head.contains("<h2>lift the ground station</h2>"), "{head}");
+    }
+
+    /// The status pill takes its status's colour from the stylesheet, and
+    /// its mark is hidden from a reader who hears the page, because the
+    /// words beside it say the status.
+    #[test]
+    fn a_bead_pages_status_pill_is_classed_by_its_status_and_says_it_once() {
+        let html = page_at(&address(&key("smt-4kd3p"))).html;
+        let state = inside(inside(&html, "head"), "state");
+        assert_eq!(
+            parts(state).0,
+            ["span.status in-progress", "span.id"],
+            "{state}"
+        );
+        let pill = inside(state, "status in-progress");
+        assert!(!pill.contains("style="), "{pill}");
+        assert!(!pill.contains("role=\"img\""), "{pill}");
+        assert!(pill.contains("aria-hidden=\"true\""), "{pill}");
+    }
+
+    /// A bead's title is set as the page's heading in the display face at
+    /// 22 pixels, at every width, keeping the spaces its author typed as
+    /// the terminal does.
+    #[test]
+    fn a_bead_pages_title_is_set_large_in_the_display_face() {
+        assert!(STYLE.contains(
+            ".page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;"
+        ));
+        assert!(!STYLE.contains(".page .head .title"));
+    }
+
+    /// A blocked bead's head lists what it waits on in a band under its
+    /// title, each blocker drawn as a reference, and the rows under the head
+    /// no longer say it.
+    #[test]
+    fn a_blocked_beads_head_says_what_it_waits_on_under_its_title() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        let head = inside(&html, "head");
+        assert_eq!(parts(head).0, ["p.state", "h2", "div.waits"], "{head}");
+        assert_eq!(
+            waiting_on(ground()),
+            [
+                "Waiting on 1 bead",
+                "○ wire the niri theme include smt-4kd3p.1"
+            ]
+        );
+        assert!(!text_of(&html).contains(phrase::blocked_by_ahead()));
+    }
+
     /// Ids are per tracker, so a bead can depend on two beads of one id. The
-    /// one the blocked-by line names is the one that blocks it.
+    /// one the band names is the one that blocks it.
     #[test]
     fn a_blocker_is_named_by_its_blocking_edge_where_another_tracker_holds_its_id() {
         let namesake = Related {
@@ -3168,16 +3280,12 @@ mod tests {
             let tree = std::sync::Arc::make_mut(tree);
             tree.beads[6].depends_on.insert(0, namesake.clone());
         }
-        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("an address");
-        let html = page(ground, &Layout::default(), &asked, drawing()).html;
-        let line = text_of(&html)
-            .lines()
-            .find(|line| line.contains(phrase::blocked_by_ahead()))
-            .map(words)
-            .expect("the bead says what blocks it");
         assert_eq!(
-            line,
-            "blocked by: ○ wire the niri theme include smt-4kd3p.1"
+            waiting_on(ground),
+            [
+                "Waiting on 1 bead",
+                "○ wire the niri theme include smt-4kd3p.1"
+            ]
         );
     }
 
@@ -3190,16 +3298,18 @@ mod tests {
         ground
     }
 
-    /// The words of the bead view's line saying what a bead is blocked by
-    /// or that it is ready.
-    fn readiness_line(snapshot: Snapshot) -> String {
+    /// What the band a blocked bead's head draws under its title says above
+    /// its blockers, then the words of each blocker's reference.
+    fn waiting_on(snapshot: Snapshot) -> Vec<String> {
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
-        let aside = &html[html.find("<aside>").expect("the bead view")..];
-        text_of(aside)
-            .lines()
-            .find(|line| line.contains(phrase::blocked_by_ahead()) || line.trim() == "ready")
-            .map(words)
-            .expect("the bead says whether it is ready")
+        let (references, rest) = references_and_the_rest(inside(&html, "waits"));
+        std::iter::once(words(&text_of(&rest)))
+            .chain(
+                references
+                    .iter()
+                    .map(|reference| words(&text_of(reference))),
+            )
+            .collect()
     }
 
     #[test]
@@ -3208,8 +3318,27 @@ mod tests {
             bead.blocked_by.push("smt-4kd3p.8".to_string());
         });
         assert_eq!(
-            readiness_line(snapshot),
-            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ read the wedge log smt-4kd3p.8"
+            waiting_on(snapshot),
+            [
+                "Waiting on 2 beads",
+                "○ wire the niri theme include smt-4kd3p.1",
+                "○ read the wedge log smt-4kd3p.8"
+            ]
+        );
+    }
+
+    /// A blocker a tracker names twice is one bead, waited on once.
+    #[test]
+    fn a_blocker_named_twice_is_waited_on_once() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.blocked_by.push("smt-4kd3p.1".to_string());
+        });
+        assert_eq!(
+            waiting_on(snapshot),
+            [
+                "Waiting on 1 bead",
+                "○ wire the niri theme include smt-4kd3p.1"
+            ]
         );
     }
 
@@ -3228,8 +3357,12 @@ mod tests {
             });
         });
         assert_eq!(
-            readiness_line(snapshot),
-            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ read the wedge log smt-4kd3p.8"
+            waiting_on(snapshot),
+            [
+                "Waiting on 2 beads",
+                "○ wire the niri theme include smt-4kd3p.1",
+                "○ read the wedge log smt-4kd3p.8"
+            ]
         );
     }
 
@@ -3251,14 +3384,15 @@ mod tests {
         }
         let html = page_of(ground.clone(), &address(&key("smt-4kd3p.6")));
         assert_eq!(
-            readiness_line(ground),
-            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ read the wedge log smt-4kd3p.8"
+            waiting_on(ground),
+            [
+                "Waiting on 2 beads",
+                "○ wire the niri theme include smt-4kd3p.1",
+                "○ read the wedge log smt-4kd3p.8"
+            ]
         );
-        let blocked_by = &html[html.find(phrase::blocked_by_ahead()).expect("the blockers")..];
-        assert!(
-            blocked_by.contains("href=\"/faraway/smt-4kd3p.8"),
-            "{blocked_by}"
-        );
+        let band = inside(&html, "waits");
+        assert!(band.contains("href=\"/faraway/smt-4kd3p.8"), "{band}");
     }
 
     /// Where the bead's own project holds a namesake it is tied to by no
@@ -3278,8 +3412,12 @@ mod tests {
             beads[6].depends_on.extend([namesake, elsewhere]);
         }
         assert_eq!(
-            readiness_line(ground),
-            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ a bead of another tracker smt-4kd3p.8"
+            waiting_on(ground),
+            [
+                "Waiting on 2 beads",
+                "○ wire the niri theme include smt-4kd3p.1",
+                "○ a bead of another tracker smt-4kd3p.8"
+            ]
         );
     }
 
@@ -3304,8 +3442,13 @@ mod tests {
             beads[6].depends_on.extend(both);
         }
         assert_eq!(
-            readiness_line(ground),
-            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ a bead of one tracker smt-4kd3p.8, ○ a bead of another smt-4kd3p.8"
+            waiting_on(ground),
+            [
+                "Waiting on 3 beads",
+                "○ wire the niri theme include smt-4kd3p.1",
+                "○ a bead of one tracker smt-4kd3p.8",
+                "○ a bead of another smt-4kd3p.8"
+            ]
         );
     }
 
@@ -3357,15 +3500,19 @@ mod tests {
     }
 
     /// Readiness and blockers are read apart, so a tracker can say both, and
-    /// the terminal says ready.
+    /// the terminal says ready, with no band of what it waits on.
     #[test]
     fn a_bead_said_to_be_ready_and_blocked_is_said_to_be_ready_as_the_terminal_says() {
         let snapshot = with_the_bead_changed(|bead| bead.ready = true);
-        assert_eq!(readiness_line(snapshot), "ready");
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let aside = &html[html.find("<aside>").expect("the bead view")..];
+        assert!(!aside.contains("class=\"waits\""), "{aside}");
+        assert!(text_of(aside).lines().any(|line| line.trim() == "ready"));
     }
 
     /// Every bead on every page is named by the one component: no bead's id
     /// appears outside a reference, and every reference holds a bead's title.
+    /// A bead's page heads with the bead itself, which is no reference.
     #[test]
     fn no_page_names_a_bead_by_a_bare_id() {
         let ground = ground();
@@ -3378,6 +3525,10 @@ mod tests {
         pages.extend(beads.iter().map(|bead| address(&key(&bead.id))));
         for target in &pages {
             let html = page_at(target).html;
+            let html = match html.find("<p class=\"state\">") {
+                Some(state) => format!("{}{}", &html[..state], &html[element_end(&html, state)..]),
+                None => html,
+            };
             let (references, rest) = references_and_the_rest(&html);
             let rest = words(&text_of(&rest));
             for bead in &beads {
@@ -5049,19 +5200,30 @@ mod tests {
     /// every tree drawn, and one inside it keeps the root.
     #[test]
     fn a_bead_named_from_inside_the_only_root_opens_a_page_that_shows_it() {
-        let rooted = page_at(&link_saying(
-            &page_at(&address(&key("smt-4kd3p.6"))).html,
-            phrase::only_this_tree(),
-        ))
-        .html;
+        let ground = with_the_bead_changed(|bead| {
+            bead.depends_on.push(Related {
+                id: "smt-4kd3p.7".to_string(),
+                project: None,
+                edge: Edge::Other("related".to_string()),
+                status: Some(Status::Open),
+                title: Some("confirm the wedges are gone".to_string()),
+            });
+        });
+        let rooted = page_of(
+            ground.clone(),
+            &link_saying(
+                &page_of(ground, &address(&key("smt-4kd3p.6"))),
+                phrase::only_this_tree(),
+            ),
+        );
         let named = named_by_the_bead_view(&rooted);
         assert!(
             named["smt-4kd3p"].root.is_none(),
             "the parent is outside the tree"
         );
         assert!(
-            named["smt-4kd3p.6"].root.is_some(),
-            "the root itself is inside it"
+            named["smt-4kd3p.7"].root.is_some(),
+            "a bead under the root is inside it"
         );
     }
 
@@ -5076,8 +5238,8 @@ mod tests {
             "the view leaves the parent out"
         );
         assert!(
-            named["smt-4kd3p.6"].list.is_some(),
-            "the view lists the bead"
+            named["smt-4kd3p.1"].list.is_some(),
+            "the view lists its blocker"
         );
     }
 

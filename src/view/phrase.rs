@@ -1004,6 +1004,29 @@ pub fn status_word(status: &Status) -> String {
     }
 }
 
+/// A status as a web page's status pill says it, in words that start a
+/// sentence rather than `bd`'s.
+pub fn status_said(status: &Status) -> String {
+    match status {
+        Status::Open => "Open",
+        Status::InProgress => "In progress",
+        Status::Blocked => "Blocked",
+        Status::Closed => "Closed",
+        Status::Deferred => "Deferred",
+        Status::Pinned => "Pinned",
+        Status::Hooked => "Hooked",
+        Status::Other(status) => return quoted(status),
+    }
+    .to_string()
+}
+
+/// What the band at the head of a blocked bead's web page says above the
+/// `count` beads it waits on.
+pub fn waiting_on(count: usize) -> String {
+    let bead = if count == 1 { "bead" } else { "beads" };
+    format!("Waiting on {count} {bead}")
+}
+
 /// Whether a bead is ready, or what it is blocked by, in the words `bd ready`
 /// and `bd list` use. A bead that is neither, such as a deferred one or a
 /// closed one, has nothing said of it.
@@ -1028,7 +1051,7 @@ pub fn blocked_by_ahead() -> &'static str {
 
 /// What [`readiness`] says between one bead a bead is blocked by and the
 /// next.
-pub const BETWEEN_BLOCKERS: &str = ", ";
+const BETWEEN_BLOCKERS: &str = ", ";
 
 /// The bead window's border title: which bead the reader is on, and — where
 /// the window is too short for the whole of it — how far down it they have
