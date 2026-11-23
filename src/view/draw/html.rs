@@ -857,6 +857,7 @@ const STYLE: &str = "\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
 body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
+body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
 .line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}\
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
@@ -937,7 +938,6 @@ border:0 solid var(--rail)}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
-body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
 nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
 padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13px}\
