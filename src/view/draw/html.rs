@@ -899,7 +899,7 @@ font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
 .bead .g.closed::after{content:\"\";position:absolute;left:2.6px;top:.6px;width:3px;height:6px;\
 border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)}\
 .bead .g.deferred{border-style:dashed}\
-@media (forced-colors:active){.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
+@media print,(forced-colors:active){.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
 width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
 .bead .g.closed::after{content:none}}";
 
