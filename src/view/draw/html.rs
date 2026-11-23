@@ -19,7 +19,7 @@ use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Mark, Marked};
-use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
+use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::markdown::Flow;
 use crate::view::row::{Cell, Layout, Progress, WARNING};
@@ -165,33 +165,47 @@ struct Drawing<'a> {
 
 impl Drawing<'_> {
     /// What the terminal's keys put in force over the whole page, as links
-    /// and a form: the list menu where the config names views, each with how
-    /// many beads it lists, the ready switch and the search, as `v`, `r` and
-    /// `/`. Then, where the forest is
-    /// drawn with one bead as its only root, that bead and the link that
-    /// puts every tree back, as `F` does.
+    /// and a form: the list menu, the ready switch and the search, as `v`,
+    /// `r` and `/`. The menu offers the trees, the beads to check and each
+    /// view the config names, each list with how many beads it holds. Where
+    /// there are beads to check, a button beside the switch lists them too.
+    /// Then, where the forest is drawn with one bead as its only root, that
+    /// bead and the link that puts every tree back, as `F` does.
     fn nav(&self, html: &mut String) {
         let list = self.forest.list();
+        let ready = only_ready(list);
+        let drawn = view_of(list);
+        let checking = matches!(list, Some(List::ToCheck { .. }));
+        let counts = self.forest.list_counts(ready);
+        let to_check = counts.to_check;
+        let every_check = Some(List::ToCheck { project: None });
+        let checking_every_project = list == every_check.as_ref();
+        let checked = self.asked.listing(every_check);
+        let named = if checking {
+            phrase::to_check()
+        } else {
+            drawn.unwrap_or(phrase::every_tree())
+        };
         html.push_str(&format!(
-            "<nav><span class=\"brand\">{}</span>",
-            phrase::PRODUCT
+            "<nav><span class=\"brand\">{}</span>\
+             <details class=\"lists\"><summary><span>{}</span></summary><div>",
+            phrase::PRODUCT,
+            escaped(named)
+        ));
+        html.push_str(&format!(
+            "<a href=\"{}\"{}>{}</a>\
+             <a href=\"{}\"{}>{}<span class=\"count\">{to_check}</span></a>",
+            escaped(&self.asked.listing(listed(None, ready))),
+            on(drawn.is_none() && !checking),
+            escaped(phrase::every_tree()),
+            escaped(&checked),
+            on(checking_every_project),
+            escaped(phrase::to_check())
         ));
         let views = &self.forest.snapshot().views;
         if !views.is_empty() {
-            let ready = only_ready(list);
-            let drawn = view_of(list);
-            html.push_str(&format!(
-                "<details class=\"lists\"><summary><span>{}</span></summary><div>",
-                escaped(drawn.unwrap_or(phrase::every_tree()))
-            ));
-            html.push_str(&format!(
-                "<a href=\"{}\"{}>{}</a><p class=\"hd\">{}</p>",
-                escaped(&self.asked.listing(listed(None, ready))),
-                on(drawn.is_none()),
-                escaped(phrase::every_tree()),
-                escaped(phrase::views())
-            ));
-            for (view, count) in views.iter().zip(self.forest.view_counts(ready)) {
+            html.push_str(&format!("<p class=\"hd\">{}</p>", escaped(phrase::views())));
+            for (view, count) in views.iter().zip(counts.views) {
                 html.push_str(&format!(
                     "<a href=\"{}\"{}>{}<span class=\"count\">{count}</span></a>",
                     escaped(&self.asked.listing(listed(Some(view.clone()), ready))),
@@ -199,15 +213,25 @@ impl Drawing<'_> {
                     escaped(view)
                 ));
             }
-            html.push_str("</div></details>");
         }
-        let ready = only_ready(list);
+        html.push_str("</div></details>");
         html.push_str(&format!(
             "<a class=\"ready{}\" href=\"{}\">{}</a>",
             if ready { " on" } else { "" },
             escaped(&self.asked.toggling_ready()),
             escaped(phrase::ready_only())
         ));
+        if to_check > 0 {
+            html.push_str(&format!(
+                "<a class=\"check{}\" href=\"{}\">{}</a>",
+                if checking_every_project { " on" } else { "" },
+                escaped(&checked),
+                escaped(&format!(
+                    "{WARNING} {}",
+                    phrase::anomalies_beneath(to_check)
+                ))
+            ));
+        }
         html.push_str(&format!("<form action=\"/#{SHOWN}\" method=\"get\">"));
         // A search that found nothing put the selection back where it began,
         // which the next search counts from, though no line is marked.
@@ -295,7 +319,7 @@ impl Drawing<'_> {
                 in_project = false;
             }
             match &line.content {
-                // Said at the foot, with the link that shows those beads.
+                // Counted in the top bar and the menu, which list those beads.
                 Content::Note(Note::ToCheck(_)) => {}
                 Content::Project(project) => {
                     html.push_str("<section>");
@@ -697,20 +721,10 @@ impl Drawing<'_> {
 
     /// Every notice the terminal says at its foot, one to a bar, after what
     /// it says of where a search came to, with the links that step to the
-    /// match before and the match after, as `N` and `n` do. Under a list,
-    /// the beads to check that it leaves out are a bar too, with a link to
-    /// the trees, whose rows say what is wrong with them.
+    /// match before and the match after, as `N` and `n` do.
     fn foot(&self, html: &mut String, landed: Option<Landed>, searched: &Asked) {
         let notices = notices(self.forest.snapshot(), &[]);
-        let to_check = self
-            .forest
-            .lines()
-            .iter()
-            .find_map(|line| match line.content {
-                Content::Note(Note::ToCheck(count)) => Some(count),
-                _ => None,
-            });
-        if notices.is_empty() && landed.is_none() && to_check.is_none() {
+        if notices.is_empty() && landed.is_none() {
             return;
         }
         html.push_str("<footer>");
@@ -743,17 +757,6 @@ impl Drawing<'_> {
             html.push_str(&format!(
                 "<p class=\"notice\">{}</p>",
                 escaped(&format!("{WARNING} {}", phrase::notice(notice)))
-            ));
-        }
-        if let Some(count) = to_check {
-            html.push_str(&format!(
-                "<p class=\"notice\">{}<a href=\"{}\">{}</a></p>",
-                escaped(&format!(
-                    "{WARNING} {}",
-                    phrase::to_check_in_these_trees(count)
-                )),
-                escaped(&self.asked.listing(None)),
-                escaped(phrase::show_the_trees())
             ));
         }
         html.push_str("</footer>");
@@ -1044,8 +1047,6 @@ footer p,.missing{margin:0}\
 footer .said{padding:8px 12px;background:var(--surface)}\
 footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;\
 background:var(--warn-soft);color:var(--warn);border-top:1px solid var(--line)}\
-footer .notice a{margin-left:auto;font-weight:600}\
-footer .notice a:hover{text-decoration:underline}\
 nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
 --lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
 display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
@@ -1078,6 +1079,9 @@ nav .ready::before{content:\"\";flex:none;width:30px;height:18px;border-radius:9
 background:radial-gradient(circle at 9px 50%,var(--surface) 7px,transparent 7.5px),var(--rail)}\
 nav .ready.on{color:var(--fg)}\
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
+nav .check{display:flex;align-items:center;height:30px;padding:0 11px;border-radius:999px;\
+background:var(--warn-soft);color:var(--warn);font-weight:600;font-size:13px;white-space:nowrap}\
+nav .check.on{box-shadow:inset 0 0 0 1.5px currentColor}\
 nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--muted)}\
 nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;\
@@ -1085,7 +1089,7 @@ background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
 @media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
 .line a.fold::before{forced-color-adjust:none;background:CanvasText}\
-nav .ready.on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
+nav :is(.ready,.check).on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
@@ -1127,7 +1131,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13.5px}\
-nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>.brand{display:none}\
+nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>:is(.brand,.check){display:none}\
 .lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:38px;padding:0 4px;border:0;border-radius:10px;\
 background:none;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden}\
 .lists[open] summary{box-shadow:none}\
@@ -1928,37 +1932,129 @@ mod tests {
         );
     }
 
-    /// The beads to check that the ready list leaves out are said once, in
-    /// a bar at the foot rather than a line of the list, and its link draws
-    /// the trees, whose rows say what is wrong with them.
-    #[test]
-    fn the_beads_to_check_under_a_list_are_a_bar_at_the_foot_that_links_to_their_trees() {
-        let checked = || {
-            with_the_bead_changed(|node| {
-                node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+    fn checked() -> Snapshot {
+        with_the_bead_changed(|node| {
+            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+        })
+    }
+
+    fn checked_at(target: &str) -> String {
+        let asked = Asked::of(target).expect("a page is at the address");
+        page(checked(), &Layout::default(), &asked, drawing()).html
+    }
+
+    /// The terminal's lines, set apart as `as_both_draw` sets them, with the
+    /// checked ground drawing the beads to check in `project`, or in every
+    /// project.
+    fn checking(project: Option<&str>) -> Vec<String> {
+        let mut forest = flatten(checked());
+        forest.draw_list(Some(List::ToCheck {
+            project: project.map(str::to_string),
+        }));
+        as_both_draw(terminal_lines(&forest))
+    }
+
+    fn under_the_heading(html: &str) -> Vec<String> {
+        as_both_draw(page_lines(html))
+    }
+
+    /// `lines` without the two things the page draws apart from the
+    /// terminal: the project's heading, which it words apart, and each row's
+    /// progress, which it draws last, after the flags.
+    fn as_both_draw(lines: Vec<String>) -> Vec<String> {
+        let progress = |word: &str| {
+            word.split_once('/').is_some_and(|(done, of)| {
+                [done, of]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
             })
         };
-        let asked = Asked::of(&link_saying(&page_at("/").html, phrase::ready_only()))
-            .expect("the ready list");
-        let ready = page(checked(), &Layout::default(), &asked, drawing()).html;
-        let said = phrase::to_check_in_these_trees(1);
-        assert!(
-            !page_lines(&ready)
-                .iter()
-                .any(|line| line.contains(&phrase::to_check_in_the_forest(1))),
-            "{:#?}",
-            page_lines(&ready)
-        );
-        let footer = &ready[ready.find("<footer>").expect("a foot")..];
-        assert!(
-            footer.contains(&format!("<p class=\"notice\">{WARNING} {said}<a href=")),
-            "{footer}"
-        );
+        lines
+            .into_iter()
+            .filter(|line| !line.starts_with(PROJECT))
+            .map(|line| {
+                line.split(' ')
+                    .filter(|word| !progress(word))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect()
+    }
 
-        let trees = Asked::of(&link_saying(footer, phrase::show_the_trees())).expect("the trees");
-        let trees = page(checked(), &Layout::default(), &trees, drawing()).html;
-        assert!(!trees.contains("<a class=\"ready on\""), "{trees}");
-        assert!(!trees.contains("<footer>"), "{trees}");
+    /// The beads to check are a list of their own. The menu counts them and
+    /// a button in the top bar says how many, and each lists them in one
+    /// step. No list says them again at the foot of the page.
+    #[test]
+    fn the_menu_and_the_top_bar_each_list_the_beads_to_check_with_their_count() {
+        let said = format!("{WARNING} {}", phrase::anomalies_beneath(1));
+        let ready = checked_at(&link_saying(&page_at("/").html, phrase::ready_only()));
+        assert_eq!(count_beside(&ready, phrase::to_check()), "1");
+        assert!(ready.contains("<a class=\"check\" href="), "{ready}");
+        assert!(!ready.contains("<footer>"), "{ready}");
+
+        let from_menu = checked_at(&link_saying(&ready, phrase::to_check()));
+        let from_button = checked_at(&link_saying(&ready, &said));
+        assert_eq!(from_button, from_menu);
+        assert_eq!(under_the_heading(&from_menu), checking(None));
+        assert!(
+            page_lines(&from_menu)
+                .iter()
+                .any(|line| line.contains("apply the two niri settings")),
+            "{:#?}",
+            page_lines(&from_menu)
+        );
+        assert!(from_menu.contains("<a class=\"check on\""), "{from_menu}");
+        assert!(!from_menu.contains("<a class=\"ready on\""), "{from_menu}");
+        assert!(!from_menu.contains("<footer>"), "{from_menu}");
+    }
+
+    /// With nothing to check the menu still offers the list, counting none,
+    /// and the top bar has no button for it.
+    #[test]
+    fn with_nothing_to_check_the_top_bar_has_no_button_for_it() {
+        let html = page_at("/").html;
+        assert_eq!(count_beside(&html, phrase::to_check()), "0");
+        assert!(!html.contains("class=\"check"), "{html}");
+    }
+
+    /// The menu names the list it is open on, and marks only that entry.
+    #[test]
+    fn the_menu_names_the_beads_to_check_when_they_are_listed() {
+        let html = checked_at(&link_saying(&page_at("/").html, phrase::to_check()));
+        assert!(
+            html.contains(&format!("<summary><span>{}</span>", phrase::to_check())),
+            "{html}"
+        );
+        let menu = inside(&html, "lists");
+        assert_eq!(menu.matches(" class=\"on\"").count(), 1, "{menu}");
+        assert!(
+            menu.contains(&format!(" class=\"on\">{}<span", phrase::to_check())),
+            "{menu}"
+        );
+    }
+
+    /// An address can keep the list to one project, whatever its name holds,
+    /// and the page then lists what the terminal's list kept to it holds.
+    #[test]
+    fn the_beads_to_check_in_one_project_have_an_address_that_reads_back() {
+        for project in [PROJECT, "dock & yard/east #2"] {
+            let list = Some(List::ToCheck {
+                project: Some(project.to_string()),
+            });
+            let address = Asked::default().listing(list.clone());
+            let asked = Asked::of(&address).expect("a page is at the address");
+            assert_eq!(asked.list, list, "{address}");
+            let html = checked_at(&address);
+            assert_eq!(
+                under_the_heading(&html),
+                checking(Some(project)),
+                "{address}"
+            );
+            // The menu and the button list every project's beads to check,
+            // which is not this page.
+            assert!(!inside(&html, "lists").contains(" class=\"on\""), "{html}");
+            assert!(!html.contains("<a class=\"check on\""), "{html}");
+        }
     }
 
     /// A read out for longer than it may be is drawn as the terminal draws
@@ -3509,12 +3605,14 @@ mod tests {
     }
 
     #[test]
-    fn a_page_offers_no_list_menu_where_the_config_names_no_view() {
+    fn where_the_config_names_no_view_the_menu_offers_the_trees_and_the_beads_to_check() {
         let mut bare = ground();
         bare.views.clear();
         let asked = Asked::of("/").expect("the forest");
         let html = page(bare, &Layout::default(), &asked, drawing()).html;
-        assert!(!html.contains("class=\"lists\""), "{html}");
+        let menu = inside(&html, "lists");
+        assert_eq!(menu.matches("<a ").count(), 2, "{menu}");
+        assert!(!menu.contains(phrase::views()), "{menu}");
         assert!(html.contains("class=\"ready\""), "{html}");
     }
 

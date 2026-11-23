@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::numeric_id_order;
 use crate::model::types::{Edge, Status};
 use crate::view::lines::{
@@ -36,6 +36,21 @@ pub enum List {
         name: String,
         ready: bool,
     },
+    /// The beads with an anomaly, finished or not, in `project`'s trees only
+    /// where one is named.
+    ToCheck {
+        project: Option<String>,
+    },
+}
+
+impl List {
+    /// The project the list keeps to, where it keeps to one.
+    fn project(&self) -> Option<&str> {
+        match self {
+            List::ToCheck { project } => project.as_deref(),
+            List::Ready | List::View { .. } => None,
+        }
+    }
 }
 
 /// What is drawn for `view`, or for the trees where it is none, listing only
@@ -60,7 +75,7 @@ pub fn only_ready(list: Option<&List>) -> bool {
     match list {
         Some(List::Ready) => true,
         Some(List::View { ready, .. }) => *ready,
-        None => false,
+        Some(List::ToCheck { .. }) | None => false,
     }
 }
 
@@ -75,7 +90,7 @@ pub(super) fn lay_out(
     unblocking: &BTreeSet<BeadKey>,
     layout: &row::Layout,
 ) -> Drawn {
-    let (covered, unread) = covered(snapshot, rooted);
+    let (covered, unread) = covered(snapshot, rooted, list.project());
     let reached = each_once(&covered);
     let sections = match list {
         List::Ready => {
@@ -89,11 +104,18 @@ pub(super) fn lay_out(
             },
             in_view(&reached, name, *ready),
         )],
+        List::ToCheck { project } => vec![(
+            Section::ToCheck {
+                project: project.clone(),
+            },
+            to_check(&reached),
+        )],
     };
 
     let mut lines: Vec<Node> = snapshot
         .projects
         .iter()
+        .filter(|project| list.project().is_none_or(|kept| kept == project.as_str()))
         .filter(|project| project_drawn(snapshot, project, rooted))
         .map(|project| {
             drawn(Line {
@@ -134,7 +156,11 @@ pub(super) fn lay_out(
             drawn(line)
         }));
     }
-    let to_check = Counts::over(reached.values().map(|(bead, _, _)| *bead)).anomalies;
+    // The list of the beads to check counts them in its section.
+    let to_check = match list {
+        List::ToCheck { .. } => 0,
+        List::Ready | List::View { .. } => anomalies(&reached),
+    };
     let orphaned = reached
         .values()
         .filter(|(bead, tree, _)| tree.orphaned_dependencies.contains(&bead.id))
@@ -162,26 +188,45 @@ pub(super) fn lay_out(
 /// progress or with a live agent on them, then those ready to start, each
 /// section in the order the list draws it.
 pub fn ready_list(snapshot: &Snapshot) -> [Vec<&Bead>; 2] {
-    let (covered, _) = covered(snapshot, &[]);
+    let (covered, _) = covered(snapshot, &[], None);
     sections(&each_once(&covered)).map(|beads| beads.into_iter().map(|(bead, ..)| bead).collect())
 }
 
-/// How many beads each of `views` lists over what the forest would draw,
+fn anomalies(reached: &BTreeMap<BeadKey, Reached<'_>>) -> usize {
+    reached
+        .values()
+        .filter(|(bead, _, _)| !bead.anomalies.is_empty())
+        .count()
+}
+
+/// How many beads each list the menu offers would hold over what the forest
+/// would draw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListCounts {
+    /// The beads to check.
+    pub to_check: usize,
+    /// Each view the config names, in its order, counting only ready beads
+    /// where only those are listed.
+    pub views: Vec<usize>,
+}
+
+/// The counts beside each list the menu offers, with each of `views`
 /// counting only ready beads where `ready` is set.
-pub(super) fn view_counts(
+pub(super) fn list_counts(
     snapshot: &Snapshot,
     rooted: &[Rooted],
     views: &[String],
     ready: bool,
-) -> Vec<usize> {
-    let (covered, _) = covered(snapshot, rooted);
+) -> ListCounts {
+    let (covered, _) = covered(snapshot, rooted, None);
+    let reached = each_once(&covered);
     let place: BTreeMap<&str, usize> = views
         .iter()
         .enumerate()
         .map(|(at, name)| (name.as_str(), at))
         .collect();
     let mut counts = vec![0; views.len()];
-    for (bead, tree, way) in each_once(&covered).values() {
+    for (bead, tree, way) in reached.values() {
         if bead.views.is_empty() || !counted(bead, tree, way, ready) {
             continue;
         }
@@ -193,19 +238,28 @@ pub(super) fn view_counts(
             counts[*at] += 1;
         }
     }
-    counts
+    ListCounts {
+        to_check: anomalies(&reached),
+        views: counts,
+    }
 }
 
 /// A bead with the tree and the way down it was reached by.
 type Reached<'a> = (&'a Bead, &'a Tree, Vec<usize>);
 
 /// The trees the list covers, each with the way down it starts from, and how
-/// many it could not cover because their tracker did not read them.
-fn covered<'a>(snapshot: &'a Snapshot, rooted: &[Rooted]) -> (Vec<(&'a Tree, Vec<usize>)>, usize) {
+/// many it could not cover because their tracker did not read them. Where
+/// `project` is named, only that project's trees are covered.
+fn covered<'a>(
+    snapshot: &'a Snapshot,
+    rooted: &[Rooted],
+    project: Option<&str>,
+) -> (Vec<(&'a Tree, Vec<usize>)>, usize) {
     let mut unread = 0;
     let mut covered: Vec<(&Tree, Vec<usize>)> = Vec::new();
+    let kept = |of: &str| project.is_none_or(|kept| kept == of);
     if rooted.is_empty() {
-        for tree in &snapshot.collected {
+        for tree in snapshot.collected.iter().filter(|tree| kept(&tree.project)) {
             if tree.tracker != TrackerState::Ok {
                 unread += 1;
             }
@@ -214,7 +268,7 @@ fn covered<'a>(snapshot: &'a Snapshot, rooted: &[Rooted]) -> (Vec<(&'a Tree, Vec
             }
         }
     } else {
-        for root in rooted {
+        for root in rooted.iter().filter(|root| kept(&root.place.tree.project)) {
             match (&root.way, snapshot.tree(&root.place.tree)) {
                 (Ok(way), Some(tree)) => covered.push((tree, way.clone())),
                 _ => unread += 1,
@@ -267,6 +321,19 @@ fn in_view<'r, 'a>(
     let mut listed: Vec<_> = reached
         .values()
         .filter(|(bead, tree, way)| lists(bead, tree, way, name, ready))
+        .map(|(bead, tree, way)| (*bead, *tree, way))
+        .collect();
+    listed.sort_by(|a, b| next_first(a.0, b.0));
+    listed
+}
+
+/// The beads with an anomaly, the most urgent first.
+fn to_check<'r, 'a>(
+    reached: &'r BTreeMap<BeadKey, Reached<'a>>,
+) -> Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)> {
+    let mut listed: Vec<_> = reached
+        .values()
+        .filter(|(bead, ..)| !bead.anomalies.is_empty())
         .map(|(bead, tree, way)| (*bead, *tree, way))
         .collect();
     listed.sort_by(|a, b| next_first(a.0, b.0));
