@@ -146,8 +146,9 @@ fn head(title: &str, change: Option<u64>) -> String {
     format!(
         "<!doctype html><html lang=\"en\"{named}><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{}</title><style>{STYLE}</style>{script}</head>",
-        escaped(title)
+         <title>{}</title><style>{}{STYLE}</style>{script}</head>",
+        escaped(title),
+        palette::page_colours()
     )
 }
 
@@ -750,43 +751,50 @@ fn escaped(text: &str) -> String {
     said
 }
 
-/// The page's look: the terminal's monospace grid, and its palette as
-/// variables the reader's light or dark preference chooses between.
+/// The page's look: its type, and how the terminal's grid is laid out on it.
+/// Its colours are `palette::page_colours`. The type is three faces:
+/// `--body` for the page, `--display` for a heading, and `--code` for code
+/// and for the tree's box-drawing, whose columns line up only in a fixed
+/// pitch. Each names its face first and falls back to the reader's own.
 const STYLE: &str = "\
-:root{--bg:#ffffff;--fg:#1d1f21;--shown:#e4e8ec;\
---c0:#1d1f21;--c1:#c82829;--c2:#4d7a00;--c3:#9a6700;--c4:#3465a4;--c5:#8959a8;--c6:#3e8f95;--c7:#5c5f5d;\
---c8:#8e908c;--c9:#d54e53;--c10:#5f8f00;--c11:#b07800;--c12:#4271ae;--c13:#9e6bbd;--c14:#3e999f;--c15:#1d1f21}\
-@media (prefers-color-scheme:dark){:root{--bg:#1d1f21;--fg:#d5d8d6;--shown:#33383d;\
---c0:#1d1f21;--c1:#cc6666;--c2:#b5bd68;--c3:#f0c674;--c4:#81a2be;--c5:#b294bb;--c6:#8abeb7;--c7:#c5c8c6;\
---c8:#707880;--c9:#d54e53;--c10:#b9ca4a;--c11:#e7c547;--c12:#7aa6da;--c13:#c397d8;--c14:#70c0b1;--c15:#eaeaea}}\
+:root{--body:Inter,system-ui,-apple-system,\"Segoe UI\",sans-serif;\
+--display:\"Space Grotesk\",Inter,system-ui,sans-serif;\
+--code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
-body{margin:0;background:var(--bg);color:var(--fg);\
-font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
+body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
+.line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}\
+.code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
 .line{display:flex;white-space:pre;padding:0 12px;box-sizing:border-box;width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
-.line.shown{background:var(--shown)}\
+.line.shown{background:var(--sel)}\
 .line i,.line b,.line u{font:inherit;text-decoration:none}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{opacity:.75}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;\
-padding:8px 12px;border-left:1px solid var(--c8)}\
+padding:8px 12px;border-left:1px solid var(--line)}\
 .page{white-space:pre-wrap}\
+.page .w{display:none}\
+.page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
+vertical-align:top;width:100%;white-space:normal}\
+.page .lead{white-space:pre}\
+.page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
+.page .head .title{font-family:var(--display);font-weight:600}\
 .close{display:inline-block;margin-bottom:8px}\
-footer{padding:8px 12px;color:var(--c3)}\
+footer{padding:8px 12px;color:var(--warn)}\
 footer p,.missing{margin:0}\
 footer .said{color:var(--fg)}\
-nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--c8)}\
+nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:8px 12px;border-bottom:1px solid var(--line)}\
 nav form{display:flex;gap:4px;margin-left:auto}\
-nav input,nav button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--c8);padding:1px 6px}\
+nav input,nav button{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);padding:1px 6px}\
 nav input::placeholder{color:transparent}\
 .lists{position:relative}.lists summary{cursor:pointer}\
 .lists[open] a{display:block;padding:2px 0}\
 .lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
-.rooted{margin:0;padding:4px 12px;background:var(--shown)}\
+.rooted{margin:0;padding:4px 12px;background:var(--accent-soft)}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
@@ -794,18 +802,18 @@ main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 .line{width:auto;white-space:pre-wrap;position:relative}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
-align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--shown)}\
+align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
 .line>.left:has(>.rails){display:inline-flex;max-width:100%}\
 .line>.left>.rails+span{min-width:0}\
 .line i,.line b,.line u{flex:none;width:14px;position:relative}\
 .line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:10px;\
-border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
+border:0 solid var(--rail)}\
 .line i::before,.line u::before{top:0;bottom:0;border-left-width:1.5px}\
 .line u.last::before{bottom:auto;height:var(--arm,9px)}\
 .line u::after{top:var(--arm,9px);width:10px;border-top-width:1.5px}\
-.line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--c8)}\
+.line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
 .line>:has(+.bead)::after,.line>.left>.rails::after{content:\"\";flex:none;width:22px;font-size:13px;text-align:center}\
 .line>:has(+.bead)::after{padding-top:6px}\
 .line>a.fold:has(+.bead)::after,.line>.left>a.fold.rails::after{content:\"▾\"}\
@@ -816,53 +824,48 @@ border:0 solid color-mix(in srgb,var(--c8) 55%,transparent)}\
 #shown{position:absolute;top:0}\
 .line a:not(.bead){position:relative;z-index:1}\
 .line .g{grid-area:1/1;font-size:14px;text-align:center}\
-.line .title{grid-area:1/2/2/-1;min-width:10em;font:15px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}\
+.line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
-.line>.bead>.id{grid-column:2}\
+.line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
 nav{order:1;position:sticky;bottom:0;z-index:2;flex-wrap:nowrap;gap:4px;\
-padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--c8);\
-font:13px system-ui,sans-serif}\
-nav,.lists>div{background:var(--bg)}\
+padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
+font-size:13px}\
+nav{background:var(--surface)}.lists>div{background:var(--raised)}\
 nav>*{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>.brand{display:none}\
 nav summary,nav>.ready,nav input{display:block;box-sizing:border-box;width:100%;padding:7px 4px;\
 border:0;border-radius:8px;background:none;font:inherit;text-align:center;\
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\
 nav summary{list-style:none}nav summary::-webkit-details-marker{display:none}nav summary::after{content:\" \\25BE\"}\
-nav .ready.on,.lists[open] summary{background:var(--shown);font-weight:bold;text-decoration:none}\
+nav .ready.on,.lists[open] summary{background:var(--accent-soft);color:var(--accent);font-weight:bold;text-decoration:none}\
 nav input::placeholder{color:var(--fg);opacity:1}\
 nav button{display:none}\
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;padding:8px 12px;\
-background:var(--bg);border-bottom:1px solid var(--c8)}\
+background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--shown);font-size:16px;font-weight:normal}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--c4);font-size:16px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
 max-height:calc(100dvh - 64px);overflow-y:auto;\
-border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.28)}\
-.lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--shown)}\
-.lists a.on{color:var(--c4);text-decoration:none}\
-.lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.35);cursor:default}\
+border-radius:16px 16px 0 0;box-shadow:var(--shadow)}\
+.lists[open] a{padding:12px 18px;font-size:16px}.lists a+a{border-top:1px solid var(--line)}\
+.lists a.on{color:var(--accent);text-decoration:none}\
+.lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
-.page .w,.page .arrow{display:none}\
-.page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
-vertical-align:top;width:100%;white-space:normal}\
-.page .lead{white-space:pre}\
-.page .p .t{font:15px system-ui,sans-serif;line-height:1.5;overflow-wrap:anywhere}\
-.page .p .t .code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}\
+.page .arrow{display:none}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
 .page .bead .g{grid-area:1/1;font-size:14px;text-align:center}\
-.page .bead .title{grid-area:1/2;font:15px/1.35 system-ui,sans-serif;overflow-wrap:anywhere}\
-.page .bead .id{grid-area:2/2;font-size:12px}\
+.page .bead .title{grid-area:1/2;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
+.page .bead .id{grid-area:2/2;font-size:12px;font-family:var(--body)}\
 .page .head .bead{width:100%;margin-bottom:4px}\
-.page .head .title{font-size:18px;font-weight:600}}";
+.page .head .title{font-size:18px}}";
 
 /// The page's one script, which keeps it current. It asks the page's own
 /// address for its changes since the one the page was drawn from, and the
@@ -2316,7 +2319,28 @@ mod tests {
             })
             .collect();
         assert_eq!(code, ["wick"], "{view}");
-        assert!(STYLE.contains(".page .p .t .code{font-family:"), "{STYLE}");
+        assert!(STYLE.contains(".code{font-family:var(--code)"), "{STYLE}");
+    }
+
+    /// The page reads as a web page, in a proportional face and the page's
+    /// own colours, while the tree's box-drawing keeps the code face its
+    /// columns line up in.
+    #[test]
+    fn the_page_is_set_in_a_proportional_face_in_its_own_colours() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(html.contains(&palette::page_colours()), "{html}");
+        assert!(
+            STYLE.contains("body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".line .bead .code{font-size:inherit}"),
+            "{STYLE}"
+        );
     }
 
     /// The arrow a related bead is drawn after is apart from the reference,

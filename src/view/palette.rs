@@ -243,20 +243,76 @@ pub(crate) fn colour_named(written: &str) -> Option<Color> {
 
 // ---- on a web page ------------------------------------------------------
 
+/// The web page's colours on a light page, as CSS custom properties. Every
+/// colour the page's stylesheet names is one of these, so a light and a dark
+/// value are all a new colour needs.
+///
+/// - `--surface` is the page and `--fg` its text. `--sunk` is a ground set
+///   into the page and `--raised` one lifted off it, such as a menu.
+/// - `--muted` is secondary text and `--faint` the quietest, such as an id.
+/// - `--line` is a rule or a border, and `--rail` a tree's depth line.
+/// - `--accent` is somewhere to go or what is chosen, `--accent-soft` a
+///   ground in it and `--on-accent` text over it. `--sel` is the row the
+///   reader came to.
+/// - `--warn` wants looking at, over `--warn-soft`. `--ok` is live or done.
+/// - `--status-*` is a bead's status, in `bd`'s hues made legible on each
+///   ground.
+const PAGE_LIGHT: &str = "\
+--surface:#ffffff;--sunk:#f3f5f8;--raised:#ffffff;--fg:#17202a;--muted:#5d6874;--faint:#8b96a2;\
+--line:#e2e6eb;--rail:#cfd6dd;--accent:#0b6e82;--accent-soft:#e1f1f4;--on-accent:#ffffff;--sel:#e9f3f6;\
+--warn:#a85700;--warn-soft:#fdf1e3;--ok:#2b8a57;--shadow:0 10px 30px rgba(23,32,42,.14);\
+--status-open:#46525e;--status-in-progress:#b86e00;--status-blocked:#c92a3a;--status-closed:#93a0ac;\
+--status-deferred:#6e62a8;--ink:#17202a";
+
+/// The same colours on a dark page.
+const PAGE_DARK: &str = "\
+--surface:#141b21;--sunk:#1a2229;--raised:#1d262e;--fg:#e3e8ec;--muted:#9aa6b1;--faint:#6c7884;\
+--line:#263039;--rail:#34404a;--accent:#5cc6d4;--accent-soft:#143840;--on-accent:#0c1115;--sel:#17323a;\
+--warn:#f0b35a;--warn-soft:#33281a;--ok:#5cc28a;--shadow:0 10px 30px rgba(0,0,0,.5);\
+--status-open:#c3ccd4;--status-in-progress:#f2a93b;--status-blocked:#f0707a;--status-closed:#66737f;\
+--status-deferred:#a99ee0;--ink:#0c1115";
+
+/// The terminal's sixteen colours as the page's, which is what a pane's own
+/// escapes and a slot naming one of the sixteen resolve to. `--ink` is the
+/// darkest colour of each theme, for the terminal's black.
+const PAGE_SIXTEEN: &str = "\
+--c0:var(--ink);--c1:var(--status-blocked);--c2:var(--ok);--c3:var(--warn);--c4:var(--accent);\
+--c5:var(--status-deferred);--c6:var(--accent);--c7:var(--muted);--c8:var(--muted);\
+--c9:var(--status-blocked);--c10:var(--ok);--c11:var(--warn);--c12:var(--accent);\
+--c13:var(--status-deferred);--c14:var(--accent);--c15:var(--fg)";
+
+/// The page's colours as a stylesheet, light unless the reader prefers dark.
+pub(crate) fn page_colours() -> String {
+    format!(
+        ":root{{{PAGE_LIGHT};{PAGE_SIXTEEN}}}\
+         @media (prefers-color-scheme:dark){{:root{{{PAGE_DARK}}}}}"
+    )
+}
+
+/// The page's own colour for each of `bd`'s values it draws. `bd`'s are
+/// pitched for a dark terminal, and the page's keep each hue legible on a
+/// light ground as well as a dark one.
+const PAGE_TOKENS: [(Style, &str); 5] = [
+    (STATUS_IN_PROGRESS, "--status-in-progress"),
+    (STATUS_BLOCKED, "--status-blocked"),
+    (STATUS_CLOSED, "--status-closed"),
+    (STATUS_DEFERRED, "--status-deferred"),
+    (IDENTITY, "--accent"),
+];
+
 /// A style as CSS declarations for an element drawn over its parent's, as a
 /// span is drawn over its row's: what the style leaves alone is left out.
 ///
 /// The terminal's own foreground and its sixteen colours are the page's
-/// `--fg` and `--c0` to `--c15`, so the page's own theme resolves them as a
-/// terminal's resolves its palette. `bd`'s 24-bit values stay literal, as
-/// they are in the terminal.
+/// `--fg` and `--c0` to `--c15`, and `bd`'s statuses are the page's
+/// `--status-*`, so the page's own theme resolves them.
 pub(crate) fn css(style: Style) -> String {
     let mut said = Vec::new();
     if let Some(colour) = style.fg {
         said.push(format!("color:{}", css_colour(colour, "--fg")));
     }
     if let Some(colour) = style.bg {
-        said.push(format!("background:{}", css_colour(colour, "--bg")));
+        said.push(format!("background:{}", css_colour(colour, "--surface")));
     }
     let added = style.add_modifier;
     let removed = style.sub_modifier;
@@ -283,7 +339,7 @@ pub(crate) fn css(style: Style) -> String {
         said.push(format!("text-decoration:{}", lines.join(" ")));
     }
     if added.contains(Modifier::REVERSED) {
-        said.push("background:var(--fg);color:var(--bg)".to_string());
+        said.push("background:var(--fg);color:var(--surface)".to_string());
     }
     said.join(";")
 }
@@ -291,6 +347,12 @@ pub(crate) fn css(style: Style) -> String {
 /// One colour as CSS, with the terminal's default standing for `default`.
 fn css_colour(colour: Color, default: &str) -> String {
     let slot = |n: u8| format!("var(--c{n})");
+    if let Some((_, token)) = PAGE_TOKENS
+        .iter()
+        .find(|(style, _)| style.fg == Some(colour))
+    {
+        return format!("var({token})");
+    }
     match colour {
         Color::Reset => format!("var({default})"),
         Color::Black => slot(0),
@@ -336,15 +398,36 @@ mod tests {
 
     use crate::config::Background;
 
-    /// A status keeps `bd`'s own value on the page, and the terminal's own
-    /// colours become the page's, so its theme resolves them.
+    /// A status takes the page's own colour for it, and the terminal's own
+    /// colours become the page's, so the page's theme resolves both.
     #[test]
-    fn a_style_on_the_page_keeps_bds_values_and_takes_the_pages_palette() {
-        assert_eq!(css(STATUS_IN_PROGRESS), "color:#ffb454");
+    fn a_style_on_the_page_takes_the_pages_palette() {
+        assert_eq!(css(STATUS_IN_PROGRESS), "color:var(--status-in-progress)");
+        assert_eq!(css(STATUS_BLOCKED), "color:var(--status-blocked)");
+        assert_eq!(css(STATUS_CLOSED), "color:var(--status-closed)");
+        assert_eq!(css(STATUS_DEFERRED), "color:var(--status-deferred)");
         assert_eq!(css(TIER_FINISHED), "color:var(--c8)");
         assert_eq!(css(STRUCTURE), "color:var(--fg);font-weight:normal");
         assert_eq!(css(TIER_STAFFED), "color:var(--fg);font-weight:bold");
         assert_eq!(css(STATUS_OPEN), "");
+    }
+
+    /// A colour the light theme sets and the dark one leaves out would draw
+    /// a light value on a dark page.
+    #[test]
+    fn every_colour_on_the_page_is_set_for_light_and_for_dark() {
+        let names = |theme: &str| -> Vec<String> {
+            let mut names: Vec<String> = theme
+                .split(';')
+                .filter_map(|declaration| declaration.split_once(':'))
+                .map(|(name, _)| name.to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        assert!(names(PAGE_LIGHT).contains(&"--surface".to_string()));
+        assert_eq!(names(PAGE_LIGHT), names(PAGE_DARK));
+        assert!(page_colours().contains("prefers-color-scheme:dark"));
     }
 
     /// Past the sixteen, an index is the colour xterm puts there.
