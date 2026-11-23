@@ -340,6 +340,13 @@ pub struct Page {
     pub head: usize,
     /// The row that names the beads this one is blocked by, where it is.
     pub blocked_by: Option<usize>,
+    /// The rows that say the bead's own fields, each as the bead holds it:
+    /// its labels, its status, priority and type, who created it and who it is
+    /// assigned to, its dates, and its progress.
+    pub fields: Vec<usize>,
+    /// The row the first section under the head starts on, which is the
+    /// last row where the bead has no section.
+    pub sections: usize,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
     /// How each row of the description and the notes stands to the line
@@ -538,7 +545,9 @@ pub fn said(
         rows.push(row);
     }
     let head = rows.len();
+    let mut fields = Vec::new();
     if !node.labels.is_empty() {
+        fields.push(rows.len());
         rows.push(indented(vec![Span::styled(
             node.labels.join(BETWEEN_LABELS),
             palette::QUIET,
@@ -551,6 +560,7 @@ pub fn said(
             .as_ref()
             .map(|assignee| format!("{ASSIGNEE} {assignee}")),
     );
+    fields.push(rows.len());
     rows.push(indented(vec![
         Span::styled(
             phrase::status_word(&cells.status),
@@ -564,6 +574,7 @@ pub fn said(
         rows.push(indented(vec![Span::raw(readiness)]));
     }
     for dates in dates(node) {
+        fields.push(rows.len());
         rows.push(indented(vec![Span::raw(dates)]));
     }
     if let Some(agent) = &cells.agent {
@@ -608,11 +619,13 @@ pub fn said(
         rows.push(badges);
     }
     if let Some(progress) = cells.progress {
+        fields.push(rows.len());
         rows.push(indented(vec![Span::raw(done(
             progress.finished,
             progress.total,
         ))]));
     }
+    let sections = rows.len();
 
     let room = width.saturating_sub(indent().len());
     let prose = |text: &str| {
@@ -666,6 +679,8 @@ pub fn said(
         rows,
         head,
         blocked_by,
+        fields,
+        sections,
         related,
         prose: flows,
         marks,

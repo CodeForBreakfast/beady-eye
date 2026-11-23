@@ -79,6 +79,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         |node| phrase::bead_page_title(&node.title),
     );
     let mut html = String::from("<body>");
+    let offset = drawn.offset;
     if shown.bead.is_none() {
         drawing.title(&mut html, drawn.at, drawn.offset);
     }
@@ -101,7 +102,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         match node {
             Some(node) => {
                 drawing.actions(&mut html, node);
-                drawing.bead_view(&mut html, node);
+                drawing.bead_view(&mut html, node, offset);
             }
             None => html.push_str(&format!(
                 "<p class=\"missing\">{}</p>",
@@ -743,10 +744,10 @@ impl Drawing<'_> {
         html.push_str(if linked { "</a>" } else { "</span>" });
     }
 
-    /// The bead the selection is on, as the terminal's bead view draws it:
-    /// its head drawn as a reference to itself, and every bead it names drawn
-    /// as a reference to that bead.
-    fn bead_view(&self, html: &mut String, node: &Node) {
+    /// The bead the selection is on, as the terminal's bead view draws it,
+    /// but for its own fields, which a grid says where the head's rows end.
+    /// Every bead it names is drawn as a reference to that bead.
+    fn bead_view(&self, html: &mut String, node: &Node, offset: FixedOffset) {
         let forest = self.forest;
         let mentioned = show::mentioned(forest, node);
         let followable = |related: &Related| show::followable(forest, related);
@@ -769,8 +770,14 @@ impl Drawing<'_> {
         self.head(html, node, page.blocked_by.is_some());
         html.push_str("</div>");
         let mut in_prose = false;
+        // The grid is a block, so the row after it already starts a line.
+        let mut on_a_fresh_line = false;
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
-            if page.blocked_by == Some(at) {
+            if at == page.sections {
+                self.fields(html, node, offset);
+                on_a_fresh_line = true;
+            }
+            if page.blocked_by == Some(at) || page.fields.contains(&at) {
                 continue;
             }
             let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
@@ -792,7 +799,9 @@ impl Drawing<'_> {
             if std::mem::take(&mut in_prose) {
                 html.push_str("</span></span>");
             }
-            html.push('\n');
+            if !std::mem::take(&mut on_a_fresh_line) {
+                html.push('\n');
+            }
             // A line of prose is an element of its own, with what it starts
             // with apart from its text, so a phone can set the text in a face
             // of its own and hang every row of it under the text's start.
@@ -817,7 +826,69 @@ impl Drawing<'_> {
         if in_prose {
             html.push_str("</span></span>");
         }
+        if page.sections == page.rows.len() {
+            self.fields(html, node, offset);
+        }
         html.push_str("\n</div>");
+    }
+
+    /// The bead's own fields as a grid of named cells, each a place an edit
+    /// control can take over, with its labels as pills under it. A field the
+    /// bead has no value for has no cell, but for its priority and type,
+    /// which every bead has. A date is the day it falls on at `offset`, with
+    /// the instant in full on hover.
+    fn fields(&self, html: &mut String, node: &Node, offset: FixedOffset) {
+        use phrase::field;
+        let cell = |html: &mut String, name: &str, value: &str| {
+            html.push_str(&format!(
+                "<div><dt>{}</dt><dd>{}</dd></div>",
+                escaped(name),
+                escaped(value)
+            ));
+        };
+        let date = |html: &mut String, name: &str, at: Option<DateTime<Utc>>| {
+            if let Some(at) = at {
+                html.push_str(&format!(
+                    "<div><dt>{}</dt><dd title=\"{}\">{}</dd></div>",
+                    escaped(name),
+                    escaped(&phrase::instant_in_full(at, offset)),
+                    escaped(&phrase::day(at, offset))
+                ));
+            }
+        };
+        html.push_str("\n<dl class=\"fields\">");
+        cell(html, field::PRIORITY, &phrase::priority(node.priority));
+        cell(html, field::TYPE, &node.issue_type);
+        if let Some(assignee) = &node.assignee {
+            cell(html, field::ASSIGNEE, assignee);
+        }
+        if let Some(Progress { finished, total }) = show::fraction(self.forest) {
+            html.push_str(&format!("<div><dt>{}</dt><dd>", escaped(field::PROGRESS)));
+            progress(
+                html,
+                finished,
+                total,
+                &phrase::done_of(finished, total),
+                None,
+            );
+            html.push_str("</dd></div>");
+        }
+        date(html, field::CREATED, node.created_at);
+        date(html, field::UPDATED, node.updated_at);
+        if let Some(created_by) = &node.created_by {
+            cell(html, field::CREATED_BY, created_by);
+        }
+        date(html, field::STARTED, node.started_at);
+        date(html, field::CLOSED, node.closed_at);
+        date(html, field::DEFERRED_UNTIL, node.defer_until);
+        html.push_str("</dl>");
+        if !node.labels.is_empty() {
+            html.push_str("<p class=\"labels\">");
+            for label in &node.labels {
+                html.push_str(&format!("<span class=\"pill\">{}</span>", escaped(label)));
+            }
+            html.push_str("</p>");
+        }
     }
 
     /// The head of the bead's page: its status in words beside its id, its
@@ -1315,6 +1386,12 @@ border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
 .waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
+.fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;margin:14px 0 0;padding:14px 0;\
+border-block:1px solid var(--line);white-space:normal;font-family:var(--body)}\
+.fields>div{min-width:0}\
+.fields dt{font:600 11px var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}\
+.fields dd{margin:2px 0 0;font-size:13.5px;overflow-wrap:anywhere}\
+.labels{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;white-space:normal;color:var(--muted)}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
@@ -1489,7 +1566,8 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead .g{grid-area:1/1;font-size:14px;text-align:center}\
 .page .bead .title{grid-area:1/2;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .page .bead .id{grid-area:2/2;font-size:12px;font-family:var(--body)}\
-.waits>.bead{width:100%}}\
+.waits>.bead{width:100%}\
+.fields{grid-template-columns:repeat(2,minmax(0,1fr))}}\
 :is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
 font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
@@ -3329,15 +3407,21 @@ mod tests {
 
     /// Under its head, the bead view on the page is the terminal's, row for
     /// row, with every bead it names drawn as a reference to that bead. The
-    /// row saying what the bead is blocked by is the one the page leaves
-    /// out, because the head's band says it.
+    /// page leaves out the row saying what the bead is blocked by, because
+    /// the head's band says it, and the rows saying the bead's own fields,
+    /// because its grid says them.
     #[test]
     fn the_bead_view_draws_the_terminals_rows_with_every_bead_named_by_a_reference() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
         let head = view.find("<div class=\"head\">").expect("the head");
-        let under_head = &view[element_end(view, head)..view.find("</aside>").unwrap()];
-        let page_rows: Vec<String> = text_of(&in_the_terminals_order(under_head))
+        let grid = view.find("<dl class=\"fields\">").expect("the grid");
+        let under_head = format!(
+            "{}{}",
+            &view[element_end(view, head)..grid],
+            &view[element_end(view, grid)..view.find("</aside>").unwrap()]
+        );
+        let page_rows: Vec<String> = text_of(&in_the_terminals_order(&under_head))
             .lines()
             .skip(1)
             .map(words)
@@ -3361,7 +3445,7 @@ mod tests {
             .iter()
             .enumerate()
             .skip(said.head)
-            .filter(|(at, _)| *at != blocked_by)
+            .filter(|(at, _)| *at != blocked_by && !said.fields.contains(at))
             .map(|(_, row)| {
                 words(
                     &row.iter()
@@ -3605,6 +3689,124 @@ mod tests {
             change(&mut std::sync::Arc::make_mut(tree).beads[6]);
         }
         ground
+    }
+
+    /// `smt-4kd3p.6` with a value in every field the grid can name. It was
+    /// created half an hour before midnight in UTC, which is half an hour
+    /// after it an hour east.
+    fn with_every_field() -> Snapshot {
+        let at = |instant: &str| Some(instant.parse().expect("an instant"));
+        with_the_bead_changed(|bead| {
+            bead.assignee = Some("pickman".to_string());
+            bead.created_by = Some("carter".to_string());
+            bead.created_at = at("2026-08-29T23:30:00Z");
+            bead.updated_at = at("2026-09-26T10:00:00Z");
+            bead.started_at = at("2026-09-01T09:00:00Z");
+            bead.closed_at = at("2026-09-30T16:00:00Z");
+            bead.defer_until = at("2026-12-01T00:00:00Z");
+            bead.labels = vec!["signals".to_string(), "winter".to_string()];
+        })
+    }
+
+    /// Each cell of a bead page's grid, as its name and what it says.
+    fn fields_of(html: &str) -> Vec<(String, String)> {
+        let grid = inside(html, "fields");
+        let (cells, between) = parts(grid);
+        assert!(cells.iter().all(|cell| cell == "div"), "{grid}");
+        assert_eq!(between, "", "{grid}");
+        grid.split("<div>")
+            .skip(1)
+            .map(|cell| {
+                let (name, value) = cell.split_once("</dt>").expect("a cell names itself");
+                (words(&text_of(name)), words(&text_of(value)))
+            })
+            .collect()
+    }
+
+    /// A bead page's fields are a grid of named cells: priority, type,
+    /// assignee, progress, created and updated, then who created it and
+    /// when it was started, closed and deferred until.
+    #[test]
+    fn a_bead_pages_fields_are_a_grid_of_named_cells() {
+        let html = page_of(with_every_field(), &address(&key("smt-4kd3p.6")));
+        let cell = |name: &str, value: &str| (name.to_string(), value.to_string());
+        assert_eq!(
+            fields_of(&html),
+            [
+                cell("Priority", "P2"),
+                cell("Type", "task"),
+                cell("Assignee", "pickman"),
+                cell("Progress", "0 of 3 done"),
+                cell("Created", "30 Aug 2026"),
+                cell("Updated", "26 Sep 2026"),
+                cell("Created by", "carter"),
+                cell("Started", "1 Sep 2026"),
+                cell("Closed", "30 Sep 2026"),
+                cell("Deferred until", "1 Dec 2026"),
+            ]
+        );
+    }
+
+    /// A field the bead has no value for has no cell, but for its priority
+    /// and its type, which every bead has.
+    #[test]
+    fn a_field_the_bead_has_no_value_for_has_no_cell() {
+        let html = page_at(&address(&key("smt-4kd3p.4"))).html;
+        let cell = |name: &str, value: &str| (name.to_string(), value.to_string());
+        assert_eq!(
+            fields_of(&html),
+            [cell("Priority", "P2"), cell("Type", "task")]
+        );
+    }
+
+    /// A date says the day it falls on in the zone the page is drawn in,
+    /// and the instant in full on hover. It is not a time the page's script
+    /// rewrites as how long ago.
+    #[test]
+    fn a_date_in_the_grid_reads_as_a_date_with_the_instant_in_full_on_hover() {
+        let html = page_of(with_every_field(), &address(&key("smt-4kd3p.6")));
+        let grid = inside(&html, "fields");
+        assert!(
+            grid.contains("<dd title=\"00:30:00 +01:00 on 30 August 2026\">30 Aug 2026</dd>"),
+            "{grid}"
+        );
+        assert!(!grid.contains("<time"), "{grid}");
+    }
+
+    /// The grid sits where the head's rows end, before the first section,
+    /// and its labels are pills under it. No row says those fields again.
+    #[test]
+    fn a_bead_pages_labels_are_pills_under_its_grid() {
+        let html = page_of(with_every_field(), &address(&key("smt-4kd3p.6")));
+        let page = inside(&html, "page");
+        let drawn = parts(page).0;
+        let grid = drawn.iter().position(|part| part == "dl.fields");
+        assert_eq!(
+            drawn[grid.expect("the grid")..][..2],
+            ["dl.fields", "p.labels"]
+        );
+        let labels = inside(&html, "labels");
+        assert_eq!(
+            labels,
+            "<span class=\"pill\">signals</span><span class=\"pill\">winter</span>"
+        );
+        let grid_at = page.find("<dl class=\"fields\">").expect("the grid");
+        assert!(grid_at < page.find("PARENT").expect("a section"));
+        let labels_end = element_end(page, page.find("<p class=\"labels\">").expect("labels"));
+        let rest = text_of(&format!("{}{}", &page[..grid_at], &page[labels_end..]));
+        for said in ["signals, winter", "pickman", "carter", "2026-", "· P2 ·"] {
+            assert!(!rest.contains(said), "{said} in {rest}");
+        }
+    }
+
+    /// The grid has three columns on a desktop and two on a phone.
+    #[test]
+    fn the_grid_has_three_columns_on_a_desktop_and_two_on_a_phone() {
+        assert!(
+            STYLE.contains(".fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));")
+        );
+        assert!(rules_under("(max-width:720px)")
+            .contains(".fields{grid-template-columns:repeat(2,minmax(0,1fr))}"));
     }
 
     /// What the band a blocked bead's head draws under its title says above
