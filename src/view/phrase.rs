@@ -233,6 +233,18 @@ pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
 }
 
+/// What a page's mark for a project being read says to a reader who hears
+/// the page rather than sees it.
+pub fn being_read() -> &'static str {
+    "being read"
+}
+
+/// What a page's mark for a project whose read has gone unanswered says to
+/// a reader who hears the page rather than sees it.
+pub fn not_answering() -> &'static str {
+    "not answering"
+}
+
 /// What a page says before when a project's rows were read.
 pub fn read() -> &'static str {
     "read"
