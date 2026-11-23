@@ -4203,6 +4203,10 @@ and a second line"
         # from the binary cache. Linux only, where CI runs.
         browser = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.chromium ];
 
+        # The sandbox has no fonts, and Chromium stops when it can lay out
+        # no text.
+        browserFonts = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+
         rustTools = [
           pkgs.git
           pkgs.cargo
@@ -4433,6 +4437,7 @@ and a second line"
             ([ bd pkgs.git pkgs.jq pkgs.cargo-nextest ] ++ browser)
             (pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export BDI_TEST_SOCKET_DIR="$TMPDIR/sockets"
+              export FONTCONFIG_FILE=${browserFonts}
             '' + ''
               export TMPDIR="$TMPDIR/a-temporary-directory-named-at-such-length-that-no-unix-socket-path-fits-under-it-on-linux-or-on-macos"
               mkdir -p "$TMPDIR"
