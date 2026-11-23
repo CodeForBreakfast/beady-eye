@@ -7,7 +7,7 @@
 //! to a bead, a row of the forest or a bead the bead view names, is one
 //! component that opens the bead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, FixedOffset, Utc};
 use ratatui::text::Span;
@@ -746,14 +746,16 @@ impl Drawing<'_> {
 
     /// The band naming each bead `node` waits on, each by the reference that
     /// opens it, under what it says of how many there are. A blocker the
-    /// answer does not hold is named by its id.
+    /// answer does not hold is named by its id, and one named twice is
+    /// waited on once.
     fn waits(&self, html: &mut String, node: &Node) {
         let mut named = String::new();
         let mut count = 0;
         let by_id = |named: &mut String, blocker: &str| {
             named.push_str(&format!("<span class=\"id\">{}</span>", escaped(blocker)));
         };
-        for blocker in &node.blocked_by {
+        let mut seen = HashSet::new();
+        for blocker in node.blocked_by.iter().filter(|id| seen.insert(id.as_str())) {
             let blocking = blocking(self.forest.snapshot(), node, blocker);
             if blocking.is_empty() {
                 by_id(&mut named, blocker);
@@ -1185,7 +1187,7 @@ border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color
 .status.open{--status:var(--status-open)}.status.in-progress{--status:var(--status-in-progress)}\
 .status.blocked{--status:var(--status-blocked)}.status.closed{--status:var(--status-closed)}\
 .status.deferred{--status:var(--status-deferred)}\
-.page .head h2{margin:0;font:600 22px/1.25 var(--display);text-wrap:balance;overflow-wrap:anywhere}\
+.page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
 .waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
@@ -3161,10 +3163,13 @@ mod tests {
     }
 
     /// A bead's title is set as the page's heading in the display face at
-    /// 22 pixels, at every width.
+    /// 22 pixels, at every width, keeping the spaces its author typed as
+    /// the terminal does.
     #[test]
     fn a_bead_pages_title_is_set_large_in_the_display_face() {
-        assert!(STYLE.contains(".page .head h2{margin:0;font:600 22px/1.25 var(--display);"));
+        assert!(STYLE.contains(
+            ".page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;"
+        ));
         assert!(!STYLE.contains(".page .head .title"));
     }
 
@@ -3245,6 +3250,21 @@ mod tests {
                 "Waiting on 2 beads",
                 "○ wire the niri theme include smt-4kd3p.1",
                 "○ read the wedge log smt-4kd3p.8"
+            ]
+        );
+    }
+
+    /// A blocker a tracker names twice is one bead, waited on once.
+    #[test]
+    fn a_blocker_named_twice_is_waited_on_once() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.blocked_by.push("smt-4kd3p.1".to_string());
+        });
+        assert_eq!(
+            waiting_on(snapshot),
+            [
+                "Waiting on 1 bead",
+                "○ wire the niri theme include smt-4kd3p.1"
             ]
         );
     }
