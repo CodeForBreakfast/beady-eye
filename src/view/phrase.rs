@@ -636,8 +636,8 @@ pub fn left_of(left: usize, total: usize) -> String {
     format!("{left} left of {total}")
 }
 
-/// The projects with no read gone badly, counted on the one line a web
-/// page's list across projects folds their headings into.
+/// The projects counted on the one line a web page's list across projects
+/// folds their headings into.
 pub fn projects(count: usize) -> String {
     let project = if count == 1 { "project" } else { "projects" };
     format!("{count} {project}")

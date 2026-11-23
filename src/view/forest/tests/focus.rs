@@ -47,7 +47,7 @@ fn naming_several_beads_draws_each_as_a_root() {
             "  └── [Unattributed ferry] 1",
             "▾ harbour",
             "  └─▸ ○ hbr-3 dredge the channel",
-            "▸ [FailedProjects] 1",
+            "▾ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
         ]
@@ -74,7 +74,7 @@ fn naming_two_beads_in_one_tree_draws_both_and_holds_back_the_rest() {
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
             "  └── [Unattributed ferry] 1",
-            "▸ [FailedProjects] 1",
+            "▾ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
         ]
@@ -241,7 +241,7 @@ fn focusing_a_root_leaves_it_the_only_one_drawn() {
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
             "  └── [Unattributed ferry] 1",
-            "▸ [FailedProjects] 1",
+            "▾ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
         ]
@@ -267,7 +267,7 @@ fn the_roots_the_mode_stops_drawing_are_drawn_nowhere() {
             "  └── [Unattributed dunwich] 2",
             "▾ ferry",
             "  └── [Unattributed ferry] 1",
-            "▸ [FailedProjects] 1",
+            "▾ [FailedProjects] 1",
             "▾ [Unconfigured] 1",
             "▾ [Conflicts] 1",
         ]
