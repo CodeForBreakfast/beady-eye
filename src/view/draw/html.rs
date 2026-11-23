@@ -22,9 +22,8 @@ use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
-use crate::view::markdown::Flow;
 use crate::view::row::{Cell, Layout, Progress, WARNING};
-use crate::view::show::{Tied, Ties};
+use crate::view::show::{Prose, Tied, Ties};
 use crate::view::{palette, phrase, show, Said};
 
 use super::bead::{elided_run, referenced_line};
@@ -32,7 +31,9 @@ use super::foot::notices;
 use super::project::wants_attention;
 use super::{done, fitted, Reads, Reference};
 
-/// The columns the bead view wraps its prose at, which is what `bd show`
+mod prose;
+
+/// The columns the bead view's rows are laid out in, which is what `bd show`
 /// wraps at.
 const PROSE: usize = 80;
 
@@ -747,8 +748,9 @@ impl Drawing<'_> {
 
     /// The bead the selection is on, as the terminal's bead view draws it,
     /// but for its own fields, which a grid says where the head's rows end,
-    /// and each section that names beads, which is a list with a reference
-    /// to each bead it names.
+    /// its prose, which reads as its author wrote it rather than in the
+    /// terminal's rows, and each section that names beads, which is a list
+    /// with a reference to each bead it names.
     fn bead_view(&self, html: &mut String, node: &Node, offset: FixedOffset) {
         let forest = self.forest;
         let mentioned = show::mentioned(forest, node);
@@ -771,9 +773,9 @@ impl Drawing<'_> {
         html.push_str("<div class=\"page\"><div class=\"head\">");
         self.head(html, node, page.blocked_by.is_some());
         html.push_str("</div>");
-        let mut in_prose = false;
         let listed_from = page.tied.first().map_or(page.rows.len(), |tied| tied.from);
-        // The grid is a block, so the row after it already starts a line.
+        // The grid and the prose are blocks, so the row after either already
+        // starts a line.
         let mut on_a_fresh_line = false;
         for (at, row) in page
             .rows
@@ -789,47 +791,22 @@ impl Drawing<'_> {
             if page.blocked_by == Some(at) || page.fields.contains(&at) {
                 continue;
             }
-            let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
-            // A row of prose starts with two spans: the indent the page gives
-            // it, and the lead or the hang the text gives it.
-            let (lead, rest) = row.split_at(row.len().min(2));
-            let flow = page.prose.get(&at);
-            // A row of prose broken from the one above only to fit the
-            // terminal's width keeps that break in an element of its own, so a
-            // page narrower than the terminal can let the prose flow.
-            if let Some(Flow::Joins(joint)) = flow {
-                html.push_str(joint);
-                html.push_str("<span class=\"w\">\n");
-                spans(html, lead, Block::Identity, marks, 0);
-                html.push_str("</span>");
-                spans(html, rest, Block::Identity, marks, lead.len());
+            if let Some((rows, prose)) = page.prose.iter().find(|(rows, _)| rows.contains(&at)) {
+                if rows.start == at {
+                    self.prose(html, node, *prose);
+                    on_a_fresh_line = true;
+                }
                 continue;
             }
-            if std::mem::take(&mut in_prose) {
-                html.push_str("</span></span>");
-            }
+            let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
             if !std::mem::take(&mut on_a_fresh_line) {
                 html.push('\n');
             }
-            // A line of prose is an element of its own, with what it starts
-            // with apart from its text, so a phone can set the text in a face
-            // of its own and hang every row of it under the text's start.
-            if let Some(Flow::Opens) = flow {
-                html.push_str("<span class=\"p\"><span class=\"lead\">");
-                spans(html, lead, Block::Identity, marks, 0);
-                html.push_str("</span><span class=\"t\">");
-                spans(html, rest, Block::Identity, marks, lead.len());
-                in_prose = true;
-            } else {
-                spans(html, row, Block::Identity, marks, 0);
-            }
-        }
-        if in_prose {
-            html.push_str("</span></span>");
+            spans(html, row, Block::Identity, marks, 0);
         }
         if page.sections == listed_from {
             self.fields(html, node, offset);
-        } else {
+        } else if !on_a_fresh_line {
             html.push('\n');
         }
         for tied in &page.tied {
@@ -865,6 +842,24 @@ impl Drawing<'_> {
             html.push_str("</li>");
         }
         html.push_str("</ul></section>");
+    }
+
+    /// The bead's description or its notes, as written prose. A bead it names
+    /// is drawn as the reference that opens it.
+    fn prose(&self, html: &mut String, node: &Node, which: Prose) {
+        let text = match which {
+            Prose::Description => node.description(),
+            Prose::Notes => node.notes(),
+        }
+        .unwrap_or_default();
+        let named = |id: &str| {
+            let related = show::named_in(self.forest, node, id)?;
+            let mut reference = String::new();
+            self.related(&mut reference, &related).then_some(reference)
+        };
+        html.push_str("<div class=\"prose\">");
+        html.push_str(&prose::written(&text, &named));
+        html.push_str("</div>");
     }
 
     /// The bead's own fields as a grid of named cells, each a place an edit
@@ -1403,11 +1398,21 @@ main.open .line .bead>.project{display:none}}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;overflow:visible}aside>:is(.acts,.close){background:var(--surface)}}\
 .page{white-space:pre-wrap}\
-.page .w{display:none}\
-.page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
-vertical-align:top;width:100%;white-space:normal}\
-.page .lead{white-space:pre}\
-.page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
+.prose{white-space:normal;font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
+.prose>*{margin:0 0 10px}.prose>:last-child{margin-bottom:0}\
+.prose :is(ul,ol){padding-left:22px}.prose li+li{margin-top:4px}\
+.prose h3{font:600 15px var(--display);line-height:1.4}\
+.prose blockquote{margin-inline:0;padding-left:12px;border-left:3px solid var(--rail);color:var(--muted)}\
+.prose pre{white-space:pre-wrap;padding:8px 10px;border-radius:6px;background:var(--sunk);border:1px solid var(--line)}\
+.prose :not(pre)>code{padding:1px 5px;border-radius:4px;background:var(--sunk);border:1px solid var(--line)}\
+.prose table{border-collapse:collapse;font-size:13.5px}\
+.prose :is(th,td){padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left}\
+.prose hr{border:0;border-top:1px solid var(--line)}\
+.prose a.link{color:var(--accent);text-decoration:underline;text-decoration-color:var(--rail);text-underline-offset:3px}\
+.prose a.address{display:inline-block;max-width:calc(100% - 1ch);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\
+vertical-align:bottom}\
+.page .prose .bead{display:inline;width:auto}.page .prose .bead>span:not([class]){display:inline}\
+.page .prose .bead .title{font-size:inherit;line-height:inherit;color:var(--accent)}.page .prose .bead .id{font-size:12px}\
 .page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
 .page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
 .page .head .state>.id,.waits>.id,.missing>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
@@ -3462,9 +3467,11 @@ mod tests {
     /// on the page is the terminal's, row for row. The page leaves out the
     /// row saying what the bead is blocked by, because the head's band says
     /// it, and the rows saying the bead's own fields, because its grid says
-    /// them.
+    /// them. Its description and its notes are each a block of prose where
+    /// the terminal has their rows.
     #[test]
     fn the_bead_view_draws_the_terminals_rows_down_to_its_related_beads() {
+        const PROSE_BLOCK: &str = "¶";
         let described = || {
             with_the_bead_changed(|bead| {
                 bead.row = crate::model::types::Printed::saying(
@@ -3480,11 +3487,15 @@ mod tests {
         let lists = view
             .find("<section class=\"tied\">")
             .expect("the bead names beads");
-        let under_head = format!(
+        let mut under_head = format!(
             "{}{}",
             &view[element_end(view, head)..grid],
             &view[element_end(view, grid)..lists]
         );
+        while let Some(prose) = under_head.find("<div class=\"prose\">") {
+            let end = element_end(&under_head, prose);
+            under_head.replace_range(prose..end, &format!("\n{PROSE_BLOCK}\n"));
+        }
         let page_rows: Vec<String> = text_of(&in_the_terminals_order(&under_head))
             .lines()
             .skip(1)
@@ -3511,15 +3522,19 @@ mod tests {
             .take(said.tied[0].from)
             .skip(said.head)
             .filter(|(at, _)| *at != blocked_by && !said.fields.contains(at))
-            .map(|(_, row)| {
-                words(
-                    &row.iter()
-                        .map(|span| span.content.as_ref())
-                        .collect::<String>(),
-                )
-            })
+            .filter_map(
+                |(at, row)| match said.prose.iter().find(|(rows, _)| rows.contains(&at)) {
+                    Some((rows, _)) => (rows.start == at).then(|| PROSE_BLOCK.to_string()),
+                    None => Some(words(
+                        &row.iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>(),
+                    )),
+                },
+            )
             .collect();
 
+        assert_eq!(said.prose.len(), 2, "{:?}", said.prose);
         assert_eq!(page_rows, terminal_rows);
         assert!(!terminal_rows.is_empty());
     }
@@ -4891,82 +4906,137 @@ mod tests {
         );
     }
 
-    /// A phone lets the bead view's prose flow rather than keep the rows the
-    /// terminal's width broke it into. So each such break is an element of
-    /// its own, and with every one of them taken out a paragraph reads whole,
-    /// while an item the author started on a line of its own keeps its line.
-    #[test]
-    fn a_break_put_in_the_bead_views_prose_to_fit_the_terminal_can_be_taken_out() {
-        let paragraph = "The diaphone has not sounded since the spring, so run it for a full cycle once the reflector is back in and record each burn in https://example.invalid/dunwich/logbook/diaphone/the-spring-cycle-once-the-reflector-is-back-in-and-every-burn-recorded.";
+    /// The bead view's description and its notes, each as the element of
+    /// prose the page draws it in.
+    fn prose_of(description: &str, notes: &str) -> Vec<String> {
         let snapshot = with_the_bead_changed(|bead| {
-            bead.row = crate::model::types::Printed::saying(
-                &format!("{paragraph}\n\n- one item\n- another item"),
-                "",
-            );
+            bead.row = crate::model::types::Printed::saying(description, notes);
         });
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
-        let view = inside(&html, "page");
-        assert!(view.contains("<span class=\"w\">\n"), "{view}");
-
-        let mut flowed = String::new();
-        let mut rest = view;
-        while let Some(at) = rest.find("<span class=\"w\">") {
-            flowed.push_str(&rest[..at]);
-            rest = &rest[element_end(rest, at)..];
-        }
-        flowed.push_str(rest);
-        let lines: Vec<String> = text_of(&flowed).lines().map(words).collect();
-        assert!(lines.contains(&paragraph.to_string()), "{lines:#?}");
-        assert!(lines.contains(&"• one item".to_string()), "{lines:#?}");
-        assert!(lines.contains(&"• another item".to_string()), "{lines:#?}");
+        html.match_indices("<div class=\"prose\">")
+            .map(|(open, _)| html[open..element_end(&html, open)].to_string())
+            .collect()
     }
 
-    /// A phone sets the bead view's prose in a face of its own and lets it
-    /// flow, and a wrapped item still hangs under its text rather than its
-    /// marker. So each line of prose is an element holding its lead, the
-    /// indent and any marker, apart from its text, and all of a wrapped
-    /// item's rows are in the one element. A line of code is laid out by
-    /// its author and is not prose.
+    /// The bead view's prose is drawn from what its author wrote rather than
+    /// from the rows the terminal broke it into, so a page of any width lets
+    /// a paragraph flow whole, an item is an item, and code is laid out as
+    /// its author laid it out.
     #[test]
-    fn each_line_of_the_bead_views_prose_holds_its_lead_apart_from_its_text() {
+    fn the_bead_views_prose_flows_as_its_author_wrote_it() {
+        let paragraph = "The diaphone has not sounded since the spring, so run it for a full cycle once the reflector is back in and the lamp has been relit on the gallery.";
         let item = "re-silver the reflector before the lamp goes back in, and test the diaphone once it is back in its housing on the gallery";
-        let snapshot = with_the_bead_changed(|bead| {
-            bead.row = crate::model::types::Printed::saying(
-                &format!("A first paragraph.\n\n- {item}\n\n```\nlog the burn\n```"),
-                "",
-            );
-        });
-        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
-        let view = inside(&html, "page");
-        let mut lines = Vec::new();
-        let mut from = 0;
-        while let Some(found) = view[from..].find("<span class=\"p\">") {
-            let open = from + found;
-            let end = element_end(view, open);
-            let line = &view[open..end];
-            let (shape, between) = parts(inside(line, "p"));
-            assert_eq!(shape, ["span.lead", "span.t"], "{line}");
-            assert_eq!(between, "", "{line}");
-            let mut text = inside(line, "t").to_string();
-            while let Some(at) = text.find("<span class=\"w\">") {
-                text.replace_range(at..element_end(&text, at), "");
-            }
-            lines.push((text_of(inside(line, "lead")), words(&text_of(&text))));
-            from = end;
-        }
+        let prose = prose_of(
+            &format!("{paragraph}\n\n- {item}\n- another item\n\n```\nlog the burn\n```"),
+            "",
+        );
+        let [description] = prose.as_slice() else {
+            panic!("one element of prose: {prose:#?}");
+        };
+        let (shape, between) = parts(inside(description, "prose"));
+        assert_eq!(shape, ["p", "ul", "pre.code"], "{description}");
+        assert_eq!(between, "", "{description}");
         assert!(
-            lines.contains(&("  ".to_string(), "A first paragraph.".to_string())),
-            "{lines:#?}"
+            description.contains(&format!("<p>{paragraph}</p>")),
+            "{description}"
         );
         assert!(
-            lines.contains(&("  • ".to_string(), item.to_string())),
-            "{lines:#?}"
+            description.contains(&format!("<li>{item}</li><li>another item</li>")),
+            "{description}"
         );
         assert!(
-            !lines.iter().any(|(_, text)| text.contains("log the burn")),
-            "{lines:#?}"
+            description.contains("<code>log the burn\n</code>"),
+            "{description}"
         );
-        assert!(text_of(view).contains("log the burn"), "{view}");
+    }
+
+    /// A description that names a bead in its prose, holds separate lines,
+    /// and gives a long web address reads as written prose: the lines stay
+    /// apart, the bead is the reference that opens it, and the address is a
+    /// short link that opens in a new tab. The notes read the same way.
+    #[test]
+    fn a_beads_description_and_notes_read_as_written_prose() {
+        let lines = "Options: re-silver or replace\nRecommendation: re-silver";
+        let named = "Wait for smt-4kd3p.4 first.";
+        let long = "https://lamps.arkham.example/dunwich/logbook/diaphone/the-spring-cycle-once-the-reflector-is-back-in";
+        let prose = prose_of(
+            &format!("{lines}\n\n{named}\n\nThe log is at {long}."),
+            "Checked by the keeper\nat dusk",
+        );
+        let [description, notes] = prose.as_slice() else {
+            panic!("the description and the notes: {prose:#?}");
+        };
+        assert!(
+            description
+                .contains("<p>Options: re-silver or replace<br>Recommendation: re-silver</p>"),
+            "{description}"
+        );
+        let reference = {
+            let open = description.find("<a class=\"bead\"").expect("a reference");
+            &description[open..element_end(description, open)]
+        };
+        assert!(
+            reference.contains("<span class=\"title\">restore app theming</span>")
+                && reference.contains("<span class=\"id\">smt-4kd3p.4</span>"),
+            "{reference}"
+        );
+        assert!(
+            reference.contains(&format!("href=\"{}", address(&key("smt-4kd3p.4")))),
+            "{reference}"
+        );
+        assert!(
+            description.contains(&format!(
+                "<a class=\"link address\" href=\"{long}\" title=\"{long}\" \
+                 target=\"_blank\" rel=\"noopener noreferrer\">\
+                 lamps.arkham.example › the-spring-cycle-once-the-reflector-is-back-in</a>."
+            )),
+            "{description}"
+        );
+        assert_eq!(
+            notes,
+            "<div class=\"prose\"><p>Checked by the keeper<br>at dusk</p></div>"
+        );
+    }
+
+    /// The bead view's prose names a bead it waits on as well, which the
+    /// window lists under what it depends on, and never names itself.
+    #[test]
+    fn the_prose_names_every_bead_but_the_one_it_is_about() {
+        let prose = prose_of("After smt-4kd3p.1, before smt-4kd3p.6.", "");
+        let [description] = prose.as_slice() else {
+            panic!("one element of prose: {prose:#?}");
+        };
+        assert_eq!(
+            description.matches("<a class=\"bead\"").count(),
+            1,
+            "{description}"
+        );
+        assert!(
+            description.contains("smt-4kd3p.1</span></a>"),
+            "{description}"
+        );
+        assert!(
+            description.ends_with("before smt-4kd3p.6.</p></div>"),
+            "{description}"
+        );
+    }
+
+    /// HTML a description holds reaches the page as the text it is.
+    #[test]
+    fn html_in_a_description_reaches_the_page_as_text() {
+        let prose = prose_of(
+            "<script>alert(1)</script>\n\nA <img src=x onerror=alert(2)> lamp.",
+            "",
+        );
+        let [description] = prose.as_slice() else {
+            panic!("one element of prose: {prose:#?}");
+        };
+        assert!(!description.contains("<script"), "{description}");
+        assert!(!description.contains("<img"), "{description}");
+        assert_eq!(
+            text_of(description),
+            "<script>alert(1)</script>A <img src=x onerror=alert(2)> lamp."
+        );
     }
 
     /// A code span in the bead view's prose is marked as code, so a phone can
@@ -5216,16 +5286,18 @@ mod tests {
         (references, rest)
     }
 
-    /// Where the element opening at `open` ends, past its closing tag.
+    /// Where the element opening at `open` ends, past its closing tag. A
+    /// line break or a rule is an element with no closing tag.
     fn element_end(html: &str, open: usize) -> usize {
         let mut depth = 0;
         let mut at = open;
         while let Some(tag) = html[at..].find('<') {
             let start = at + tag;
             let close = start + html[start..].find('>').expect("the tag ends") + 1;
-            if html[start..close].starts_with("</") {
+            let tag = &html[start..close];
+            if tag.starts_with("</") {
                 depth -= 1;
-            } else {
+            } else if !["<br>", "<hr>"].contains(&tag) {
                 depth += 1;
             }
             at = close;
