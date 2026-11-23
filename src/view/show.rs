@@ -21,7 +21,7 @@ use crate::view::draw::{done, key_rows, Reference};
 use crate::view::fitted::{self, cover, indent, Fitted, Mark};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Waiting};
-use crate::view::markdown::{self, Flow};
+use crate::view::markdown;
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Progress};
@@ -247,10 +247,8 @@ pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related>
 /// The beads the description names that the window does not already list, in
 /// the order it first names them.
 ///
-/// A candidate is a whole token shaped like an id: a lower-case prefix, one
-/// hyphen, a base, and an optional dotted tail of digits. What decides is
-/// existence, so a candidate gets a row only where the forest draws a bead
-/// of that id in the selection's own project.
+/// A candidate is a whole token `ids_in` finds. What decides is existence,
+/// so a candidate gets a row only where `named_in` finds its bead.
 ///
 /// The ring names a bead by its id alone, so an id the window lists already,
 /// whichever project's bead that row is, is left out rather than made two
@@ -259,32 +257,55 @@ pub fn mentioned(forest: &Forest, node: &Node) -> Vec<Related> {
     let description = node.description().unwrap_or_default();
     let listed = related(node, &[]);
     let mut named: Vec<Related> = Vec::new();
-    for token in description.split(|c: char| !(c.is_ascii_alphanumeric() || "-._".contains(c))) {
-        let id = token.trim_end_matches('.');
-        if id == node.id
-            || !shaped_like_an_id(id)
-            || listed.iter().any(|related| related.id == id)
+    for (_, id) in ids_in(&description) {
+        if listed.iter().any(|related| related.id == id)
             || named.iter().any(|related| related.id == id)
         {
             continue;
         }
-        let key = BeadKey {
-            project: node.project.clone(),
-            id: id.to_string(),
-        };
-        if let Some(bead) = forest.snapshot().node(&key).filter(|_| forest.draws(&key)) {
-            named.push(Related {
-                id: bead.id.clone(),
-                project: None,
-                // A mention is no edge, and `Blocks` is the kind that
-                // `related_row` says nothing of.
-                edge: Edge::Blocks,
-                status: Some(bead.status.clone()),
-                title: Some(bead.title.clone()),
-            });
-        }
+        named.extend(named_in(forest, node, id));
     }
     named
+}
+
+/// The bead `id` stands for where `node`'s prose names it: the bead of that
+/// id in `node`'s own project, where the forest draws one. A bead's prose
+/// never names the bead itself.
+pub fn named_in(forest: &Forest, node: &Node, id: &str) -> Option<Related> {
+    if id == node.id {
+        return None;
+    }
+    let key = BeadKey {
+        project: node.project.clone(),
+        id: id.to_string(),
+    };
+    let bead = forest
+        .snapshot()
+        .node(&key)
+        .filter(|_| forest.draws(&key))?;
+    Some(Related {
+        id: bead.id.clone(),
+        project: None,
+        // A mention is no edge, and `Blocks` is the kind that
+        // `related_row` says nothing of.
+        edge: Edge::Blocks,
+        status: Some(bead.status.clone()),
+        title: Some(bead.title.clone()),
+    })
+}
+
+/// Each whole token of `text` shaped like an id, with the byte it starts
+/// at: a lower-case prefix, one hyphen, a base, and an optional dotted tail
+/// of digits. A full stop after it ends a sentence and is no part of it.
+pub fn ids_in(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || "-._".contains(c)))
+        .map(move |token| {
+            (
+                token.as_ptr() as usize - text.as_ptr() as usize,
+                token.trim_end_matches('.'),
+            )
+        })
+        .filter(|(_, id)| shaped_like_an_id(id))
 }
 
 fn shaped_like_an_id(token: &str) -> bool {
@@ -352,12 +373,25 @@ pub struct Page {
     pub related: Vec<usize>,
     /// The sections that name beads, in the order they are drawn.
     pub tied: Vec<Tied>,
-    /// How each row of the description and the notes stands to the line
-    /// of text it is a row of.
-    pub(crate) prose: HashMap<usize, Flow>,
+    /// The rows the description and the notes are drawn on, each with
+    /// which of the two it is.
+    pub prose: Vec<(Range<usize>, Prose)>,
     /// Which spans of which rows are marked, and as what, for
     /// the rows that hold a mark at all.
     pub(crate) marks: HashMap<usize, Vec<Mark>>,
+}
+
+/// Which of a bead's two pieces of prose a run of the page's rows draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prose {
+    Description,
+    Notes,
+}
+
+/// What a section of the page holds: prose, or the beads it names.
+enum Holds {
+    Prose(Prose),
+    Beads(Ties),
 }
 
 /// What ties the beads a section of the page names to the bead it shows,
@@ -652,9 +686,9 @@ pub fn said(
 
     let room = width.saturating_sub(indent().len());
     let prose = |text: &str| {
-        markdown::flowing_rows(text, room)
+        markdown::rows(text, room)
             .into_iter()
-            .map(|(row, flow)| (indented(row), Some(flow)))
+            .map(indented)
             .collect::<Vec<_>>()
     };
     let tied = |arrow: char, related: &[Related]| {
@@ -663,29 +697,41 @@ pub fn said(
             .map(|related| {
                 let mut row = vec![Span::styled(format!("{arrow} "), palette::STRUCTURE)];
                 row.extend(related_row(related, followable(related)));
-                (indented(row), None)
+                indented(row)
             })
             .collect::<Vec<_>>()
     };
 
     let mut related = Vec::new();
     let mut lists = Vec::new();
-    let mut flows = HashMap::new();
-    for (heading, body, ties) in [
+    let mut written = Vec::new();
+    for (heading, body, holds) in [
         (
             DESCRIPTION,
             prose(&node.description().unwrap_or_default()),
-            None,
+            Holds::Prose(Prose::Description),
         ),
-        (NOTES, prose(&node.notes().unwrap_or_default()), None),
-        (PARENT, tied(UP, node.parent.as_slice()), Some(Ties::Parent)),
+        (
+            NOTES,
+            prose(&node.notes().unwrap_or_default()),
+            Holds::Prose(Prose::Notes),
+        ),
+        (
+            PARENT,
+            tied(UP, node.parent.as_slice()),
+            Holds::Beads(Ties::Parent),
+        ),
         (
             DEPENDS_ON,
             tied(OUT, &node.depends_on),
-            Some(Ties::DependsOn),
+            Holds::Beads(Ties::DependsOn),
         ),
-        (BLOCKS, tied(BACK, &node.blocks), Some(Ties::Blocks)),
-        (MENTIONS, tied(NAMED, mentioned), Some(Ties::Mentions)),
+        (BLOCKS, tied(BACK, &node.blocks), Holds::Beads(Ties::Blocks)),
+        (
+            MENTIONS,
+            tied(NAMED, mentioned),
+            Holds::Beads(Ties::Mentions),
+        ),
     ] {
         if body.is_empty() {
             continue;
@@ -693,17 +739,19 @@ pub fn said(
         let from = rows.len();
         rows.push(Vec::new());
         rows.push(vec![Span::styled(heading, palette::SECTION)]);
-        if let Some(ties) = ties {
-            let beads = rows.len()..rows.len() + body.len();
-            related.extend(beads.clone());
-            lists.push(Tied { ties, from, beads });
-        }
-        for (row, flow) in body {
-            if let Some(flow) = flow {
-                flows.insert(rows.len(), flow);
+        let drawn = rows.len()..rows.len() + body.len();
+        match holds {
+            Holds::Prose(prose) => written.push((drawn, prose)),
+            Holds::Beads(ties) => {
+                related.extend(drawn.clone());
+                lists.push(Tied {
+                    ties,
+                    from,
+                    beads: drawn,
+                });
             }
-            rows.push(row);
         }
+        rows.extend(body);
     }
 
     Page {
@@ -714,7 +762,7 @@ pub fn said(
         sections,
         related,
         tied: lists,
-        prose: flows,
+        prose: written,
         marks,
     }
 }
