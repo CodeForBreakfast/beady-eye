@@ -579,14 +579,9 @@ pub fn to_check_in_the_forest(count: usize) -> String {
     format!("{} in the forest", anomalies_beneath(count))
 }
 
-/// The same beads, said at the foot of a web page's list beside a link to their trees.
-pub fn to_check_in_these_trees(count: usize) -> String {
-    format!("{} in these trees", anomalies_beneath(count))
-}
-
-/// The web page's link from that count to the trees, which draw those beads.
-pub fn show_the_trees() -> &'static str {
-    "show the trees"
+/// The list of the beads with an anomaly, as a web page's menu names it.
+pub fn to_check() -> &'static str {
+    "To check"
 }
 
 /// How far through a project's trees are, said in a web page's project
@@ -604,13 +599,18 @@ pub fn unread_trees(count: usize) -> String {
 
 /// The heading over one of a list's sections, with how many beads it holds.
 /// A view's heading is the name the config gave it, saying when only its
-/// ready beads are listed.
+/// ready beads are listed. The beads to check name the one project they are
+/// kept to.
 pub fn section(section: &Section, count: usize) -> String {
     let heading = match section {
         Section::Ready => "Ready",
         Section::InProgress => "In progress",
         Section::View { name, ready: false } => name,
         Section::View { name, ready: true } => return format!("{name} · ready · {count}"),
+        Section::ToCheck { project: None } => to_check(),
+        Section::ToCheck {
+            project: Some(project),
+        } => return format!("{} in {project} · {count}", to_check()),
     };
     format!("{heading} · {count}")
 }
@@ -2558,5 +2558,18 @@ mod tests {
 
         assert_eq!(section(&view(false), 5), "to sign · 5");
         assert_eq!(section(&view(true), 3), "to sign · ready · 3");
+    }
+
+    #[test]
+    fn the_heading_over_the_beads_to_check_names_the_project_they_keep_to() {
+        let checking = |project: Option<&str>| Section::ToCheck {
+            project: project.map(str::to_string),
+        };
+
+        assert_eq!(section(&checking(None), 4), "To check · 4");
+        assert_eq!(
+            section(&checking(Some("harbour")), 1),
+            "To check in harbour · 1"
+        );
     }
 }

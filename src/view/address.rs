@@ -39,6 +39,11 @@ const VIEW: &str = "view";
 const READY: &str = "ready";
 const ONLY: &str = "1";
 
+/// The query keys naming the list of the beads to check, which `CHECK` says
+/// with the value `ONLY`, and the one project a list keeps to.
+const CHECK: &str = "check";
+const PROJECT: &str = "project";
+
 /// The query key naming the bead the forest is drawn with as its only root.
 const ROOT: &str = "root";
 
@@ -131,11 +136,16 @@ impl Asked {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let (mut folds, mut place, mut root) = (Vec::new(), None, None);
         let (mut view, mut ready, mut find, mut step) = (None, false, None, None);
+        let (mut check, mut project) = (false, None);
         for pair in query.split('&') {
             let Some((key, value)) = pair.split_once('=') else {
                 continue;
             };
-            if ![OPEN, SHUT, AT, VIEW, READY, ROOT, FIND, STEP].contains(&key) {
+            if ![
+                OPEN, SHUT, AT, VIEW, READY, CHECK, PROJECT, ROOT, FIND, STEP,
+            ]
+            .contains(&key)
+            {
                 continue;
             }
             let value = form_decoded(value)?;
@@ -152,6 +162,14 @@ impl Asked {
                 }
                 READY => {
                     ready = value == ONLY;
+                    continue;
+                }
+                CHECK => {
+                    check = value == ONLY;
+                    continue;
+                }
+                PROJECT => {
+                    project = Some(value);
                     continue;
                 }
                 ROOT => {
@@ -186,7 +204,11 @@ impl Asked {
             bead,
             folds,
             place,
-            list: listed(view, ready),
+            list: if check {
+                Some(List::ToCheck { project })
+            } else {
+                listed(view, ready)
+            },
             root,
             find: find.map(|text| Find { text, step }),
         })
@@ -394,6 +416,7 @@ impl Asked {
         folds
             .chain(view_of(list).map(|name| (VIEW, name.to_string())))
             .chain(only_ready(list).then(|| (READY, ONLY.to_string())))
+            .chain(checked(list))
             .chain(self.root.as_ref().map(|root| (ROOT, placed(root))))
             .chain(place.map(|place| (AT, placed(place))))
             .collect()
@@ -412,6 +435,17 @@ impl Asked {
         }
         format!("?{}", pairs.join("&"))
     }
+}
+
+/// The pairs naming `list` where it is the list of the beads to check, with
+/// the project it keeps to.
+fn checked(list: Option<&List>) -> Vec<(&'static str, String)> {
+    let Some(List::ToCheck { project }) = list else {
+        return Vec::new();
+    };
+    iter::once((CHECK, ONLY.to_string()))
+        .chain(project.iter().map(|project| (PROJECT, project.clone())))
+        .collect()
 }
 
 /// `folds` with the fold `name` names pointed `open`, in place of any way it
