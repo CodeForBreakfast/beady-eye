@@ -822,7 +822,11 @@ impl Drawing<'_> {
                 self.fields(html, node, offset);
                 on_a_fresh_line = true;
             }
-            if page.blocked_by == Some(at) || page.fields.contains(&at) {
+            if page.blocked_by == Some(at)
+                || page.fields.contains(&at)
+                || page.flags.contains(&at)
+                || page.watchers_unknown == Some(at)
+            {
                 continue;
             }
             if let Some((rows, prose)) = page.prose.iter().find(|(rows, _)| rows.contains(&at)) {
@@ -960,8 +964,9 @@ impl Drawing<'_> {
     }
 
     /// The head of the bead's page: its status in words beside its id, its
-    /// title as the page's heading, and where it is `blocked`, a band naming
-    /// each bead it waits on.
+    /// title as the page's heading, where it is `blocked`, a band naming
+    /// each bead it waits on, and where a rule flags it, an amber box saying
+    /// so as its row does.
     fn head(&self, html: &mut String, node: &Node, blocked: bool) {
         html.push_str(&format!(
             "<p class=\"state\"><span class=\"status{}\">",
@@ -977,6 +982,12 @@ impl Drawing<'_> {
         ));
         if blocked {
             self.waits(html, node);
+        }
+        if let Some(flag) = phrase::flag(&node.anomalies) {
+            html.push_str(&format!(
+                "<p class=\"alert\">{}</p>",
+                escaped(&format!("{WARNING} {flag}"))
+            ));
         }
     }
 
@@ -1625,7 +1636,9 @@ nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2
 .rooted,nav+.missing{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
 border-bottom:1px solid var(--line);font-size:var(--size-row)}\
 .rooted{flex-wrap:nowrap;white-space:nowrap;background:var(--accent-soft)}\
-.missing{background:var(--warn-soft);color:var(--warn)}aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
+.missing{background:var(--warn-soft);color:var(--warn)}\
+.page .alert{margin:0;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn)}\
+aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
 .rooted .said{color:var(--muted)}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
 .rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis}\
 .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
@@ -3666,8 +3679,10 @@ mod tests {
     /// Under its head and down to its lists of related beads, the bead view
     /// on the page is the terminal's, row for row. The page leaves out the
     /// row saying what the bead is blocked by, because the head's band says
-    /// it, and the rows saying the bead's own fields, because its grid says
-    /// them. Its description and its notes are each a section of prose where
+    /// it, the rows saying the bead's own fields, because its grid says
+    /// them, the rows flagging it, because the head's amber box says them,
+    /// and the row saying no watcher answered. Its description and its notes
+    /// are each a section of prose where
     /// the terminal has their rows, its heading and the blank over it among
     /// them, and a section stands on lines of its own.
     #[test]
@@ -3722,7 +3737,12 @@ mod tests {
             .enumerate()
             .take(said.tied[0].from)
             .skip(said.head)
-            .filter(|(at, _)| *at != blocked_by && !said.fields.contains(at))
+            .filter(|(at, _)| {
+                *at != blocked_by
+                    && !said.fields.contains(at)
+                    && !said.flags.contains(at)
+                    && said.watchers_unknown != Some(*at)
+            })
             .filter_map(
                 |(at, row)| match said.prose.iter().find(|(rows, _)| rows.contains(&at)) {
                     Some((rows, _)) => (rows.start == at).then(|| PROSE_BLOCK.to_string()),
@@ -3934,6 +3954,52 @@ mod tests {
             ]
         );
         assert!(!text_of(&html).contains(phrase::blocked_by_ahead()));
+    }
+
+    /// A bead some rule flags says so in its head as its row says it, in
+    /// one amber box under its title and what it waits on. No row under the
+    /// head says the rules in the terminal's words.
+    #[test]
+    fn a_flagged_beads_head_says_the_rows_flag_in_an_amber_box() {
+        let fired = vec![
+            Anomaly::StaleClaim { days: 58 },
+            Anomaly::OrphanClaim { refused: None },
+        ];
+        let checked = with_the_bead_changed(|node| node.anomalies = fired.clone());
+        let html = page_of(checked, &address(&key("smt-4kd3p.6")));
+        let head = inside(&html, "head");
+        assert_eq!(
+            parts(head).0,
+            ["p.state", "h2", "div.waits", "p.alert"],
+            "{head}"
+        );
+        let said = phrase::flag(&fired).expect("two rules fired");
+        assert_eq!(text_of(inside(head, "alert")), format!("{WARNING} {said}"));
+        let aside = text_of(aside_of(&html));
+        for rule in &fired {
+            assert!(!aside.contains(&phrase::anomaly(rule)), "{aside}");
+        }
+        assert!(STYLE.contains(
+            ".page .alert{margin:0;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn)}"
+        ));
+    }
+
+    /// A bead no rule flags has no amber box in its head.
+    #[test]
+    fn an_unflagged_beads_head_has_no_amber_box() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(!inside(&html, "head").contains("alert"));
+    }
+
+    /// Where no watcher answers for a bead's project, its page does not say
+    /// so, because a reader can do nothing with it.
+    #[test]
+    fn a_beads_page_says_nothing_of_watchers_no_watcher_answered_for() {
+        use crate::model::watching::Watching;
+        let unknown = with_the_bead_changed(|node| node.watching = Watching::Unknown);
+        let html = page_of(unknown, &address(&key("smt-4kd3p.6")));
+        let aside = text_of(aside_of(&html));
+        assert!(!aside.contains(phrase::watches_unknown()), "{aside}");
     }
 
     /// Ids are per tracker, so a bead can depend on two beads of one id. The

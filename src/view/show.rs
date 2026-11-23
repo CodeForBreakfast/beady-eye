@@ -376,6 +376,10 @@ pub struct Page {
     /// its labels, its status, priority and type, who created it and who it is
     /// assigned to, its dates, and its progress.
     pub fields: Vec<usize>,
+    /// The rows that each say one anomaly rule that fired on the bead.
+    pub flags: Vec<usize>,
+    /// The row saying no watcher answered for the bead, where none did.
+    pub watchers_unknown: Option<usize>,
     /// The row the first section under the head starts on, which is the
     /// last row where the bead has no section.
     pub sections: usize,
@@ -648,11 +652,15 @@ pub fn said(
     if let Some(agent) = &cells.agent {
         rows.push(indented(vec![Span::styled(agent.clone(), palette::AGENT)]));
     }
+    let mut watchers_unknown = None;
     match &node.watching {
-        Watching::Unknown => rows.push(indented(vec![Span::styled(
-            phrase::watches_unknown(),
-            palette::QUIET,
-        )])),
+        Watching::Unknown => {
+            watchers_unknown = Some(rows.len());
+            rows.push(indented(vec![Span::styled(
+                phrase::watches_unknown(),
+                palette::QUIET,
+            )]));
+        }
         Watching::Known { agents, unreported } => {
             let unreported = (*unreported > 0).then(|| phrase::watched_unreported(*unreported));
             for watched in agents.iter().map(phrase::watched_by).chain(unreported) {
@@ -663,7 +671,9 @@ pub fn said(
             }
         }
     }
+    let mut flags = Vec::new();
     for anomaly in &cells.anomalies {
+        flags.push(rows.len());
         rows.push(indented(vec![Span::styled(
             row::anomaly_alone(anomaly),
             palette::ATTENTION,
@@ -775,6 +785,8 @@ pub fn said(
         head,
         blocked_by,
         fields,
+        flags,
+        watchers_unknown,
         sections,
         related,
         tied: lists,
