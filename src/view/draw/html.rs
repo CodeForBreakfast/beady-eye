@@ -377,9 +377,11 @@ impl Drawing<'_> {
     }
 
     /// The one line a list across projects folds their headings into, which
-    /// opens to them: how many projects were read well and when the oldest
-    /// of those was, then each project whose read went badly, named in the
-    /// colour of a flag beside the mark its heading draws.
+    /// opens to them: how many projects have no read gone badly and, once
+    /// every one of those has been read, when the oldest of them was, then
+    /// each project whose read went badly, named in the colour of a flag
+    /// beside the mark its heading draws. A project whose first read is still
+    /// out is counted and holds the time back, as it does in the title.
     fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) {
         let lines = self.forest.lines();
         let (troubled, fresh): (Vec<_>, Vec<_>) = lines
