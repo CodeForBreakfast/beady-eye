@@ -168,8 +168,8 @@ struct Drawing<'a> {
 
 impl Drawing<'_> {
     /// The name of the list the page draws, which heads it on a phone, and
-    /// beside it when the oldest of the page's reads was, the one claim true
-    /// of every row.
+    /// beside it when the oldest read of the projects it draws was, the one
+    /// claim true of every row.
     fn title(&self, html: &mut String, now: DateTime<Utc>, offset: FixedOffset) {
         let list = self.forest.list();
         let named = if list == Some(&List::Ready) {
@@ -181,7 +181,16 @@ impl Drawing<'_> {
             "<header class=\"title\"><h1>{}</h1>",
             escaped(named)
         ));
-        if let Some(&oldest) = self.forest.snapshot().read_at.values().min() {
+        let lines = self.forest.lines();
+        let read_at = &self.forest.snapshot().read_at;
+        let oldest = lines
+            .viewport(0, lines.len())
+            .filter_map(|(_, line)| match &line.content {
+                Content::Project(project) => read_at.get(&project.project),
+                _ => None,
+            })
+            .min();
+        if let Some(&oldest) = oldest {
             read_time(html, oldest, offset, now);
         }
         html.push_str("</header>\n");
@@ -1204,7 +1213,7 @@ html{scroll-padding-top:64px}.line.heading{gap:4px 10px;margin-bottom:0}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
-max-height:calc(100dvh - 64px);overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
+max-height:calc(100dvh - 74px - env(safe-area-inset-bottom));overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
 .lists[open]>div::before{content:\"\";display:block;width:38px;height:5px;margin:2px auto 8px;border-radius:3px;background:var(--rail)}\
 .lists[open] a{padding:13px 12px;font-size:16px}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
@@ -1835,7 +1844,7 @@ mod tests {
     fn a_phone_pages_title_says_its_oldest_read_once_that_is_old_enough_to_show() {
         let oldest = drawn_at() - chrono::TimeDelta::hours(1);
         let mut snapshot = ground();
-        snapshot.read_at.insert("tidewater".to_string(), oldest);
+        snapshot.read_at.insert(PROJECT.to_string(), oldest);
         let asked = Asked::of("/").expect("the forest");
         let html = page(snapshot, &Layout::default(), &asked, drawing()).html;
         let title = title_over(&html);
@@ -1844,6 +1853,20 @@ mod tests {
             oldest.to_rfc3339()
         );
         assert!(title.contains(&shown), "{title}");
+    }
+
+    /// A project the page does not draw has no say in its title's read
+    /// time, however long ago it was read.
+    #[test]
+    fn a_phone_pages_title_ignores_a_read_of_a_project_it_does_not_draw() {
+        let long_ago = drawn_at() - chrono::TimeDelta::hours(1);
+        let mut snapshot = ground();
+        snapshot.read_at.insert("tidewater".to_string(), long_ago);
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(snapshot, &Layout::default(), &asked, drawing()).html;
+        let title = title_over(&html);
+        assert!(title.contains("<time datetime=\""), "{title}");
+        assert!(!title.contains(&long_ago.to_rfc3339()), "{title}");
     }
 
     /// A bead's page has no list title over it.
@@ -1889,6 +1912,18 @@ mod tests {
             "{phone}"
         );
         assert!(STYLE.contains("--list:url("), "{STYLE}");
+    }
+
+    /// The list menu opens above the foot bar and stops short of the top of
+    /// the screen: the bar is its 48 pixel controls, 8 pixels of padding
+    /// either side, a 1 pixel border and the screen's inset at the bottom.
+    #[test]
+    fn a_phones_list_menu_fits_above_the_foot_bar() {
+        let phone = rules_under("(max-width:720px)");
+        assert!(
+            phone.contains("max-height:calc(100dvh - 74px - env(safe-area-inset-bottom))"),
+            "{phone}"
+        );
     }
 
     /// A page drawn on another day than the read says which day it was.
