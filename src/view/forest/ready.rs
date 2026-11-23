@@ -166,11 +166,25 @@ pub fn ready_list(snapshot: &Snapshot) -> [Vec<&Bead>; 2] {
     sections(&each_once(&covered)).map(|beads| beads.into_iter().map(|(bead, ..)| bead).collect())
 }
 
-/// How many beads the view `name` lists over what the forest would draw,
+/// How many beads each of `views` lists over what the forest would draw,
 /// counting only ready beads where `ready` is set.
-pub(super) fn view_count(snapshot: &Snapshot, rooted: &[Rooted], name: &str, ready: bool) -> usize {
+pub(super) fn view_counts(
+    snapshot: &Snapshot,
+    rooted: &[Rooted],
+    views: &[String],
+    ready: bool,
+) -> Vec<usize> {
     let (covered, _) = covered(snapshot, rooted);
-    in_view(&each_once(&covered), name, ready).len()
+    let reached = each_once(&covered);
+    views
+        .iter()
+        .map(|name| {
+            reached
+                .values()
+                .filter(|(bead, tree, way)| lists(bead, tree, way, name, ready))
+                .count()
+        })
+        .collect()
 }
 
 /// A bead with the tree and the way down it was reached by.
@@ -243,12 +257,19 @@ fn in_view<'r, 'a>(
 ) -> Vec<(&'a Bead, &'a Tree, &'r Vec<usize>)> {
     let mut listed: Vec<_> = reached
         .values()
-        .filter(|(bead, ..)| !bead.status.is_finished() && bead.views.iter().any(|v| v == name))
-        .filter(|(bead, tree, way)| !ready || ready_section(bead, tree, way).is_some())
+        .filter(|(bead, tree, way)| lists(bead, tree, way, name, ready))
         .map(|(bead, tree, way)| (*bead, *tree, way))
         .collect();
     listed.sort_by(|a, b| next_first(a.0, b.0));
     listed
+}
+
+/// Whether the view `name` lists `bead`, keeping to ready beads where
+/// `ready` is set.
+fn lists(bead: &Bead, tree: &Tree, way: &[usize], name: &str, ready: bool) -> bool {
+    !bead.status.is_finished()
+        && bead.views.iter().any(|view| view == name)
+        && (!ready || ready_section(bead, tree, way).is_some())
 }
 
 /// Each bead the covered trees reach, once, with the tree and the way down

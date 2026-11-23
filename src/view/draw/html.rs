@@ -178,7 +178,7 @@ impl Drawing<'_> {
             let ready = only_ready(list);
             let drawn = view_of(list);
             html.push_str(&format!(
-                "<details class=\"lists\"><summary>{}</summary><div>",
+                "<details class=\"lists\"><summary><span>{}</span></summary><div>",
                 escaped(drawn.unwrap_or(phrase::every_tree()))
             ));
             html.push_str(&format!(
@@ -188,13 +188,12 @@ impl Drawing<'_> {
                 escaped(phrase::every_tree()),
                 escaped(phrase::views())
             ));
-            for view in views {
+            for (view, count) in views.iter().zip(self.forest.view_counts(ready)) {
                 html.push_str(&format!(
-                    "<a href=\"{}\"{}>{}<span class=\"count\">{}</span></a>",
+                    "<a href=\"{}\"{}>{}<span class=\"count\">{count}</span></a>",
                     escaped(&self.asked.listing(listed(Some(view.clone()), ready))),
                     on(Some(view.as_str()) == drawn),
-                    escaped(view),
-                    self.forest.view_count(view, ready)
+                    escaped(view)
                 ));
             }
             html.push_str("</div></details>");
@@ -799,12 +798,13 @@ border-bottom:1px solid var(--line);background:var(--surface)}\
 nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display)}\
 nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
-.lists summary::after,.lists a::before,nav form::before{content:\"\";flex:none;background:currentColor;\
+.lists summary::after,.lists a::before,nav button{content:\"\";flex:none;background:currentColor;\
 -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
 .lists{position:relative}\
 .lists summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border:1px solid var(--line);border-radius:8px;font-weight:500}\
 .lists summary::-webkit-details-marker{display:none}\
+.lists summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis}\
 .lists summary::after{--icon:var(--chevron);width:13px;height:13px}\
 .lists[open] summary{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}\
 .lists>div{position:absolute;top:calc(100% + 8px);left:0;z-index:5;width:290px;box-sizing:border-box;padding:6px;\
@@ -824,12 +824,11 @@ nav .ready.on{color:var(--fg)}\
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
 nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--faint)}\
-nav form::before{--icon:var(--lens);width:16px;height:16px}\
+nav button{--icon:var(--lens);order:-1;width:16px;height:16px;padding:0;border:0;color:inherit;font-size:0;cursor:pointer}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
 nav input::placeholder{color:var(--faint);opacity:1}\
-nav button{display:none}\
-nav a:focus-visible,nav summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
+nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .rooted{margin:0;padding:4px 12px;background:var(--accent-soft)}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover{text-decoration:underline}\
@@ -879,6 +878,9 @@ nav .ready.on::before{background:radial-gradient(circle at calc(100% - 8px) 50%,
 nav .ready.on,nav:not(:has(.ready.on))>.lists>summary,.lists[open] summary\
 {background:var(--accent-soft);color:var(--accent);font-weight:600}\
 nav form:focus-within{box-shadow:none}\
+nav button{display:none}\
+nav form::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
+-webkit-mask:var(--lens) center/contain no-repeat;mask:var(--lens) center/contain no-repeat}\
 nav input{flex:0 1 auto;width:3.2em;text-overflow:ellipsis}\
 nav input::placeholder{color:inherit}\
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
@@ -887,7 +889,7 @@ background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;-webkit-mask:none;mask:none;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
 max-height:calc(100dvh - 64px);overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
