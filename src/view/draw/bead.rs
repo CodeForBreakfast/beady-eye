@@ -120,7 +120,7 @@ pub(super) fn referenced_line(
         walked.spans
     };
     let reference = Reference {
-        glyph: Span::styled(row.glyph.to_string(), status_style(&row.status)),
+        status: row.status.clone(),
         id: drawn(Cell::Id),
         title: vec![Span::raw(row.title.clone())],
         between: Style::new(),

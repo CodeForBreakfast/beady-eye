@@ -23,7 +23,7 @@ use crate::view::lines::{Content, Waiting};
 use crate::view::markdown::{self, Flow};
 use crate::view::palette;
 use crate::view::phrase;
-use crate::view::row::{self, status_glyph, Progress};
+use crate::view::row::{self, Progress};
 use crate::view::{Motion, Notch};
 
 /// The section names `bd show` prints, verbatim, in the order it prints
@@ -682,7 +682,7 @@ pub fn said(
 /// its whole id, and `title`.
 pub(crate) fn named(node: &Node, title: Vec<Span<'static>>) -> Reference {
     Reference {
-        glyph: glyph(&node.status),
+        status: node.status.clone(),
         id: vec![Span::styled(node.id.clone(), palette::IDENTITY)],
         title,
         between: Style::new(),
@@ -768,10 +768,6 @@ fn indented(row: Vec<Span<'static>>) -> Vec<Span<'static>> {
 
 /// A status glyph in the colour the forest paints it, so the same thing is
 /// the same colour on both sides of the border.
-fn glyph(status: &Status) -> Span<'static> {
-    Span::styled(status_glyph(status).to_string(), status_style(status))
-}
-
 /// A related bead as `bd show` lists one: its glyph, id and title, and the
 /// kind of edge where the arrow alone would not say. A closed one is dimmed
 /// the way `bd show` dims it, the glyph aside. A bead the answer does not
@@ -788,7 +784,7 @@ fn related_row(related: &Related, followable: bool) -> Vec<Span<'static>> {
         // Nothing on the row is broken out to be gone to, so it stays one
         // span after the glyph.
         Some(reference) => {
-            let (glyph, between) = (reference.glyph.clone(), reference.between);
+            let (glyph, between) = (reference.glyph(), reference.between);
             let words: String = reference.spans()[1..]
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -816,7 +812,7 @@ pub(crate) fn related_reference(related: &Related, followable: bool) -> Option<R
     let tone = dimmed_if_closed(status);
     let id = if followable { palette::IDENTITY } else { tone };
     Some(Reference {
-        glyph: glyph(status),
+        status: status.clone(),
         id: vec![Span::styled(related.id.clone(), id)],
         title: vec![Span::styled(title, tone)],
         between: tone,
@@ -925,6 +921,7 @@ mod tests {
     use crate::model::types::{Edge, PaneStatus, Status};
     use crate::model::watching::WatchingAgent;
     use crate::view::fitted::hyperlink;
+    use crate::view::row::status_glyph;
     use chrono::{DateTime, Utc};
     use ratatui::backend::TestBackend;
     use ratatui::style::Modifier;
