@@ -213,7 +213,8 @@ pub struct ProjectLine {
     /// bead standing in several of them is still one bead, which is the rule
     /// a tree's own counts already keep. The filter decides where a tree is
     /// drawn under the project and not whether the project holds it, so `a`
-    /// moves nothing on this line.
+    /// moves nothing on this line. Rooted at beads, the line counts only the
+    /// trees drawn from them under it.
     pub counts: Counts,
     /// Whether every root of the project answered the last time it was read.
     ///
