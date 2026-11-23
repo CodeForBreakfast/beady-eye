@@ -129,7 +129,7 @@ fn columns(spans: &[Span<'static>]) -> usize {
 }
 
 /// What a piece of text takes up on screen, in columns.
-fn columns_of(text: &str) -> usize {
+pub fn columns_of(text: &str) -> usize {
     Span::raw(text).width()
 }
 
