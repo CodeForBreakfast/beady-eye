@@ -1534,14 +1534,16 @@ border-block:1px solid var(--line);white-space:normal;font-family:var(--body)}\
 .labels{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;white-space:normal;color:var(--muted)}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
-.line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
-padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
+.line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:nowrap;gap:4px 12px;width:auto;min-height:40px;\
+padding-block:0;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
 .forest>section:not(:first-child){margin-top:18px}\
-.heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
+.heading .left{display:flex;align-items:center;flex:none;max-width:50%}\
+.heading h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
 .heading h2{display:inline;margin:0;font:600 var(--size-heading) var(--display);color:var(--fg)}\
-.heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
+.heading .read{min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.heading .state{display:flex;flex:none;flex-wrap:nowrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>*{white-space:nowrap}\
-.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
+.heading .state:has(>.unread){flex:0 1 auto}.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
 .heading .state a:hover{text-decoration:underline}\
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
@@ -1652,7 +1654,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line i::before,.line u::before,.line u::after{left:10px}\
 .line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after\
 {align-self:flex-start;width:32px;height:20px;line-height:20px}\
-.line a.fold{align-self:flex-start;width:32px;height:44px}\
+.line a.fold{align-self:flex-start;width:32px;height:44px}.line.heading a.fold{align-self:center;height:38px}\
 .line>:has(+.bead)>a.fold{place-items:start center;padding-top:9px}\
 .line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
@@ -6016,6 +6018,37 @@ mod tests {
             !forest.contains("auto") && !forest.contains("scroll"),
             "{forest}"
         );
+    }
+
+    /// A project's band is one line however narrow the window, so it keeps
+    /// its height while its mark and its read time change width. Only the
+    /// read time gives way, cut short with an ellipsis. The name keeps its
+    /// width up to half the band and is cut short past that, and the count
+    /// never gives way. A name that shrank alongside the read time would take
+    /// a sliver of a pixel and lose its last letters to an ellipsis.
+    #[test]
+    fn a_projects_band_is_one_line_that_cuts_its_name_and_read_time_short() {
+        let rule = |selector: &str| {
+            let at = STYLE.find(&format!("{selector}{{")).expect(selector);
+            &STYLE[at..at + STYLE[at..].find('}').expect("a rule ends")]
+        };
+        assert!(rule(".heading .state").contains("flex-wrap:nowrap"));
+        for keeps_its_width in [".heading .left", ".heading .state"] {
+            assert!(rule(keeps_its_width).contains("flex:none"));
+        }
+        assert!(rule(".heading .left").contains("max-width:50%"));
+        let band = rule(".line.heading");
+        for said in ["flex-wrap:nowrap", "min-height:40px", "padding-block:0"] {
+            assert!(band.contains(said), "{band}");
+        }
+        assert!(STYLE.contains(".line.heading a.fold{align-self:center;height:38px}"));
+        for gives_way in [".heading h2", ".heading .read"] {
+            let cut = rule(gives_way);
+            for said in ["min-width:0", "overflow:hidden", "text-overflow:ellipsis"] {
+                assert!(cut.contains(said), "{cut}");
+            }
+        }
+        assert!(!STYLE.contains(".heading h2{white-space:normal"));
     }
 
     /// A project's heading and the lines under it are one section, which is
