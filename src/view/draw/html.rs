@@ -920,7 +920,7 @@ main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 .line.shown{background:var(--sel)}\
-.line>.rails,.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
+.line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
 .line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
 .line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:14px;border:0 solid var(--rail)}\
@@ -928,7 +928,7 @@ width:max-content;min-width:100%}\
 .line u.last::before{bottom:auto;height:var(--arm,16px)}\
 .line u::after{top:var(--arm,16px);width:10px;border-top-width:1.5px}\
 .line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
-.line .rails::after,.line a.fold::after{content:\"\";flex:none;align-self:center;width:28px;height:28px;\
+.line>:has(+.bead)::after,.line .rails::after,.line a.fold::after{content:\"\";flex:none;align-self:center;width:28px;height:28px;\
 font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
 .line a.fold::after{background:var(--faint);\
 -webkit-mask:var(--chevron) center/14px no-repeat;mask:var(--chevron) center/14px no-repeat}\
@@ -1032,7 +1032,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.left>.rails+span{min-width:0}\
 .line i,.line b,.line u{width:14px}.line .deep{display:none}\
 .line i::before,.line u::before,.line u::after{left:10px}\
-.line .rails::after,.line a.fold::after{align-self:flex-start;width:22px;height:20px;line-height:20px}\
+.line>:has(+.bead)::after,.line .rails::after,.line a.fold::after{align-self:flex-start;width:22px;height:20px;line-height:20px}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
@@ -2740,20 +2740,30 @@ mod tests {
         }
     }
 
-    /// A phone sizes a fold's chevron as it sizes the box after any rails,
-    /// with a selector as specific as the one that sizes it on a desktop,
-    /// so a row that folds starts its title where a row that does not does.
+    /// Whatever a line hangs under ends in one box for a chevron, folding or
+    /// not, sized by one rule at each width, with a selector as specific as
+    /// the other width's. So a row that folds starts its title where a row
+    /// beside it that does not fold starts its own.
     #[test]
-    fn a_phone_sizes_a_folds_chevron_as_it_sizes_a_rails_box() {
-        let phone = &STYLE[STYLE
+    fn every_prefix_ends_in_one_box_for_a_chevron_at_each_width() {
+        let phone = STYLE
             .find("@media (max-width:720px){")
-            .expect("a phone's rules")..];
-        let sized = phone
-            .split('}')
-            .find(|rule| rule.contains("width:22px"))
-            .expect("a phone sizes the box after the rails");
-        for selector in [".line .rails::after", ".line a.fold::after"] {
-            assert!(sized.contains(selector), "{sized}");
+            .expect("a phone's rules");
+        for (rules, width) in [
+            (&STYLE[..phone], "width:28px"),
+            (&STYLE[phone..], "width:22px"),
+        ] {
+            let sized = rules
+                .split('}')
+                .find(|rule| rule.contains(width))
+                .expect("the width sizes the box a prefix ends in");
+            for selector in [
+                ".line>:has(+.bead)::after",
+                ".line .rails::after",
+                ".line a.fold::after",
+            ] {
+                assert!(sized.contains(selector), "{width}: {sized}");
+            }
         }
     }
 
