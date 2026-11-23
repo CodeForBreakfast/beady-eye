@@ -202,6 +202,8 @@ pub enum Section {
     View { name: String, ready: bool },
     /// The beads with an anomaly, in `project` only where one is named.
     ToCheck { project: Option<String> },
+    /// The beads in `project` not yet finished.
+    LeftToDo { project: String },
 }
 
 /// A project's own line: what it is and how much of it there is.
