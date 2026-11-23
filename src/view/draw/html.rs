@@ -1376,7 +1376,8 @@ header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display);overflo
 header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
 .rooted{padding:9px 14px}.rooted .all::before{content:none}\
 body:has(main>aside)>nav{display:none}\
-aside{grid-template-columns:minmax(0,1fr)}\
+main:has(>aside>.acts){align-content:stretch}\
+aside{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
 aside>.close{grid-area:1/1;position:static;justify-self:start;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
 border:0;background:none;font-size:16px;color:var(--accent)}\
 aside>.close::before{--icon:var(--chevron);width:20px;height:20px;transform:rotate(90deg)}\
@@ -1588,6 +1589,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const scrolled = boxes().map((box) => box && [box.scrollLeft, box.scrollTop]);
     const opened = [...document.querySelectorAll("details[open]")].map((menu) => menu.className);
     const summary = document.activeElement?.matches("summary") && document.activeElement.parentElement.className;
+    const copying = document.activeElement?.matches("button[data-copy]") && document.activeElement.dataset.copy;
     const field = document.querySelector("input[type=search]");
     const typed = field && field.value !== field.defaultValue ? field.value : null;
     const caret = field && field === document.activeElement
@@ -1599,6 +1601,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     menus.forEach((menu) => menu.open ||= opened.includes(menu.className));
     const menu = summary ? menus.find((menu) => menu.className === summary) : null;
     menu?.querySelector("summary")?.focus({ preventScroll: true });
+    if (copying) [...document.querySelectorAll("button[data-copy]")].find((button) => button.dataset.copy === copying)?.focus({ preventScroll: true });
     const typing = document.querySelector("input[type=search]");
     if (typing && typed !== null) typing.value = typed;
     if (typing && caret) {
@@ -3375,6 +3378,12 @@ mod tests {
         );
         assert!(COPIES.contains("navigator.clipboard"), "{COPIES}");
         assert!(COPIES.contains("execCommand(\"copy\")"), "{COPIES}");
+        for kept in [
+            "const copying = document.activeElement?.matches(\"button[data-copy]\") && document.activeElement.dataset.copy;",
+            "[...document.querySelectorAll(\"button[data-copy]\")].find((button) => button.dataset.copy === copying)?.focus({ preventScroll: true });",
+        ] {
+            assert!(KEPT_CURRENT.contains(kept), "{kept}");
+        }
     }
 
     /// The link back from a bead's page names the list it goes back to,
@@ -3427,6 +3436,8 @@ mod tests {
         for rule in [
             "body:has(main>aside)>nav{display:none}",
             "aside>.close{grid-area:1/1;",
+            "main:has(>aside>.acts){align-content:stretch}",
+            "aside{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}",
             "aside>.acts{grid-row:3;top:auto;bottom:0;",
             "aside>.acts>*{justify-content:center;height:48px;",
         ] {
