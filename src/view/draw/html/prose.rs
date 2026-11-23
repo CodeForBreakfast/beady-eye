@@ -131,7 +131,8 @@ impl Writing<'_> {
                 self.in_html = true;
                 "<p>".to_string()
             }
-            Tag::Heading { .. } => "<h3>".to_string(),
+            // Every level sits under the h3 that heads its section of the page.
+            Tag::Heading { .. } => "<h4>".to_string(),
             Tag::BlockQuote(_) => "<blockquote>".to_string(),
             Tag::CodeBlock(_) => {
                 self.in_code = true;
@@ -167,7 +168,7 @@ impl Writing<'_> {
                 self.in_html = false;
                 "</p>"
             }
-            TagEnd::Heading(_) => "</h3>",
+            TagEnd::Heading(_) => "</h4>",
             TagEnd::BlockQuote(_) => "</blockquote>",
             TagEnd::CodeBlock => {
                 self.in_code = false;
@@ -670,7 +671,7 @@ mod tests {
     fn markdown_is_drawn_as_the_elements_it_stands_for() {
         assert_eq!(
             html("### Steps\n\n1. *grease* it\n2. **light** it\n\n- one\n\n> quoted\n\n---"),
-            "<h3>Steps</h3><ol><li><em>grease</em> it</li><li><strong>light</strong> it</li></ol>\
+            "<h4>Steps</h4><ol><li><em>grease</em> it</li><li><strong>light</strong> it</li></ol>\
              <ul><li>one</li></ul><blockquote><p>quoted</p></blockquote><hr>"
         );
         assert_eq!(

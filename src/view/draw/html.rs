@@ -1414,7 +1414,7 @@ aside{position:static;max-height:none;overflow:visible}aside>:is(.acts,.close){b
 .prose{white-space:normal;font-size:var(--size-row);line-height:1.5;overflow-wrap:anywhere}\
 .prose>*{margin:0 0 10px}.prose>:last-child{margin-bottom:0}\
 .prose :is(ul,ol){padding-left:22px}.prose li+li{margin-top:4px}\
-.prose h3{font:600 var(--size-heading) var(--display);line-height:1.4}\
+.prose h4{font:600 var(--size-heading) var(--display);line-height:1.4}\
 .prose blockquote{margin-inline:0;padding-left:12px;border-left:3px solid var(--rail);color:var(--muted)}\
 .prose pre{white-space:pre-wrap;padding:8px 10px;border-radius:6px;background:var(--sunk);border:1px solid var(--line)}\
 .prose :not(pre)>code{padding:1px 5px;border-radius:4px;background:var(--sunk);border:1px solid var(--line)}\
