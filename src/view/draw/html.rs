@@ -1377,7 +1377,7 @@ header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
 .rooted{padding:9px 14px}.rooted .all::before{content:none}\
 body:has(main>aside)>nav{display:none}\
 main:has(>aside>.acts){align-content:stretch}\
-aside{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
+aside{align-self:stretch;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
 aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
 border:0;background:none;font-size:16px;color:var(--accent)}\
 aside>.close::before{--icon:var(--chevron);width:20px;height:20px;transform:rotate(90deg)}\
@@ -3447,7 +3447,7 @@ mod tests {
             "body:has(main>aside)>nav{display:none}",
             "aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;",
             "main:has(>aside>.acts){align-content:stretch}",
-            "aside{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}",
+            "aside{align-self:stretch;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}",
             "aside>.acts{grid-row:3;top:auto;bottom:0;",
             "aside>.acts>*{justify-content:center;height:48px;",
         ] {
