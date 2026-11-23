@@ -177,7 +177,9 @@ impl Drawing<'_> {
         let drawn = view_of(list);
         let checking = matches!(list, Some(List::ToCheck { .. }));
         let to_check = self.forest.to_check();
-        let checked = self.asked.listing(Some(List::ToCheck { project: None }));
+        let every_check = Some(List::ToCheck { project: None });
+        let checking_every_project = list == every_check.as_ref();
+        let checked = self.asked.listing(every_check);
         let named = if checking {
             phrase::to_check()
         } else {
@@ -196,7 +198,7 @@ impl Drawing<'_> {
             on(drawn.is_none() && !checking),
             escaped(phrase::every_tree()),
             escaped(&checked),
-            on(checking),
+            on(checking_every_project),
             escaped(phrase::to_check())
         ));
         let views = &self.forest.snapshot().views;
@@ -221,7 +223,7 @@ impl Drawing<'_> {
         if to_check > 0 {
             html.push_str(&format!(
                 "<a class=\"check{}\" href=\"{}\">{}</a>",
-                if checking { " on" } else { "" },
+                if checking_every_project { " on" } else { "" },
                 escaped(&checked),
                 escaped(&format!(
                     "{WARNING} {}",
@@ -1940,25 +1942,41 @@ mod tests {
         page(checked(), &Layout::default(), &asked, drawing()).html
     }
 
-    /// The terminal's lines but the project's heading, which the page words
-    /// apart, with the checked ground drawing the beads to check in
-    /// `project`, or in every project.
+    /// The terminal's lines, set apart as `as_both_draw` sets them, with the
+    /// checked ground drawing the beads to check in `project`, or in every
+    /// project.
     fn checking(project: Option<&str>) -> Vec<String> {
         let mut forest = flatten(checked());
         forest.draw_list(Some(List::ToCheck {
             project: project.map(str::to_string),
         }));
-        but_the_heading(terminal_lines(&forest))
+        as_both_draw(terminal_lines(&forest))
     }
 
     fn under_the_heading(html: &str) -> Vec<String> {
-        but_the_heading(page_lines(html))
+        as_both_draw(page_lines(html))
     }
 
-    fn but_the_heading(lines: Vec<String>) -> Vec<String> {
+    /// `lines` without the two things the page draws apart from the
+    /// terminal: the project's heading, which it words apart, and each row's
+    /// progress, which it draws last, after the flags.
+    fn as_both_draw(lines: Vec<String>) -> Vec<String> {
+        let progress = |word: &str| {
+            word.split_once('/').is_some_and(|(done, of)| {
+                [done, of]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+            })
+        };
         lines
             .into_iter()
             .filter(|line| !line.starts_with(PROJECT))
+            .map(|line| {
+                line.split(' ')
+                    .filter(|word| !progress(word))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
             .collect()
     }
 
@@ -2025,11 +2043,16 @@ mod tests {
             let address = Asked::default().listing(list.clone());
             let asked = Asked::of(&address).expect("a page is at the address");
             assert_eq!(asked.list, list, "{address}");
+            let html = checked_at(&address);
             assert_eq!(
-                under_the_heading(&checked_at(&address)),
+                under_the_heading(&html),
                 checking(Some(project)),
                 "{address}"
             );
+            // The menu and the button list every project's beads to check,
+            // which is not this page.
+            assert!(!inside(&html, "lists").contains(" class=\"on\""), "{html}");
+            assert!(!html.contains("<a class=\"check on\""), "{html}");
         }
     }
 
