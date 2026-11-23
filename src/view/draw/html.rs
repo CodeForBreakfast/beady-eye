@@ -1090,16 +1090,16 @@ border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)
 width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
 .bead .g.closed::after{content:none}}";
 
-/// The part of the page's script that says each time on the page in the
-/// reader's own words and zone: how long ago, and the instant in full on
-/// hover. A request never says which zone its reader is in, so the server
+/// The part of the page's script that says each time on the page as the
+/// reader would: how long ago, in the page's language, and the instant in
+/// full on hover, in the reader's own locale and zone. A request never says which zone its reader is in, so the server
 /// cannot. It says them as the page opens, on each page that keeps it
 /// current, and again as they age, from the browser's clock alone. A
 /// browser that cannot say an age keeps the time the server drew.
 const IN_READERS_ZONE: &str = r##"const LARGER = [["minute", 60], ["hour", 60], ["day", 24]];
 const inReadersZone = (on) => {
   if (!window.Intl?.RelativeTimeFormat) return;
-  const ago = new Intl.RelativeTimeFormat(undefined, { numeric: "always" });
+  const ago = new Intl.RelativeTimeFormat(document.documentElement.lang, { numeric: "always" });
   const inFull = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
   for (const time of on.querySelectorAll("time[datetime]")) {
     const at = new Date(time.getAttribute("datetime"));
