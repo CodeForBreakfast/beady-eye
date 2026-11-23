@@ -33,6 +33,7 @@ const DESCRIPTION: &str = "DESCRIPTION";
 const NOTES: &str = "NOTES";
 const PARENT: &str = "PARENT";
 const DEPENDS_ON: &str = "DEPENDS ON";
+const CHILDREN: &str = "CHILDREN";
 const BLOCKS: &str = "BLOCKS";
 
 /// The section for the beads the description names. Neither `bd show` nor
@@ -56,9 +57,10 @@ const DATE: &str = "%Y-%m-%d";
 const BETWEEN_LABELS: &str = ", ";
 
 /// `bd show`'s own arrows: up to the parent, out to what a bead waits on,
-/// back from what waits on it.
+/// down to its children, back from what waits on it.
 const UP: char = '↑';
 const OUT: char = '→';
+const DOWN: char = '↳';
 const BACK: char = '←';
 
 /// What stands in the place of an arrow for a bead only the prose names:
@@ -232,13 +234,14 @@ pub fn at(node: &Node, mentioned: &[Related], id: &str) -> Option<usize> {
 }
 
 /// Every bead this one names, in the order the window draws them: its
-/// parent, then what it waits on, then what waits on it, which is `bd
-/// show`'s own order and the order `said` builds its sections in, and last
-/// the beads its description names.
+/// parent, then what it waits on, then its children, then what waits on
+/// it, which is `bd show`'s own order and the order `said` builds its
+/// sections in, and last the beads its description names.
 pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related> {
     node.parent
         .iter()
         .chain(&node.depends_on)
+        .chain(&node.children)
         .chain(&node.blocks)
         .chain(mentioned)
         .collect()
@@ -366,6 +369,7 @@ pub struct Page {
 pub enum Ties {
     Parent,
     DependsOn,
+    Children,
     Blocks,
     Mentions,
 }
@@ -684,6 +688,7 @@ pub fn said(
             tied(OUT, &node.depends_on),
             Some(Ties::DependsOn),
         ),
+        (CHILDREN, tied(DOWN, &node.children), Some(Ties::Children)),
         (BLOCKS, tied(BACK, &node.blocks), Some(Ties::Blocks)),
         (MENTIONS, tied(NAMED, mentioned), Some(Ties::Mentions)),
     ] {
@@ -1044,6 +1049,12 @@ mod tests {
                 Status::Closed,
                 "lay the feeder cable",
             )],
+            children: vec![related(
+                "dun-7.1.1",
+                Edge::ParentChild,
+                Status::Open,
+                "align the feed horn",
+            )],
             blocks: vec![related(
                 "dun-7.4",
                 Edge::Blocks,
@@ -1140,6 +1151,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -1426,6 +1438,7 @@ mod tests {
             agent: None,
             row: Printed::saying("", ""),
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -1922,6 +1935,7 @@ mod tests {
             row: Printed::saying(SAID, ""),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -2453,7 +2467,7 @@ mod tests {
     }
 
     /// The order the window draws them in, which is `bd show`'s: the parent,
-    /// then what it waits on, then what waits on it.
+    /// then what it waits on, then its children, then what waits on it.
     #[test]
     fn the_beads_a_bead_names_are_listed_in_the_order_the_window_draws_them() {
         assert_eq!(
@@ -2461,7 +2475,7 @@ mod tests {
                 .iter()
                 .map(|it| it.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["dun-7", "dun-7.3", "dun-7.4"]
+            vec!["dun-7", "dun-7.3", "dun-7.1.1", "dun-7.4"]
         );
     }
 
@@ -2600,7 +2614,10 @@ mod tests {
         let page = said(&bead, &[], None, 58, 60, &nothing_followable);
 
         let ties: Vec<Ties> = page.tied.iter().map(|tied| tied.ties).collect();
-        assert_eq!(ties, [Ties::Parent, Ties::DependsOn, Ties::Blocks]);
+        assert_eq!(
+            ties,
+            [Ties::Parent, Ties::DependsOn, Ties::Children, Ties::Blocks]
+        );
         for tied in &page.tied {
             assert!(page.rows[tied.from].is_empty(), "{tied:?}");
             assert_eq!(tied.from + 2, tied.beads.start, "{tied:?}");
@@ -2611,6 +2628,51 @@ mod tests {
             .flat_map(|tied| tied.beads.clone())
             .collect();
         assert_eq!(rows, page.related);
+    }
+
+    /// Each child is a row under `bd show`'s heading and behind its arrow.
+    #[test]
+    fn a_beads_children_are_listed_under_bd_shows_heading() {
+        let bead = a_bead();
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+        let said: Vec<String> = page
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+
+        let heading = said
+            .iter()
+            .position(|row| row.trim() == CHILDREN)
+            .expect("a heading over the children");
+        assert!(
+            said[heading + 1].contains("↳ ○ dun-7.1.1  align the feed horn"),
+            "{said:?}"
+        );
+    }
+
+    /// A bead nothing hangs under has no section for its children, rather
+    /// than a heading over nothing.
+    #[test]
+    fn a_bead_with_no_children_has_no_section_for_them() {
+        let bead = Node {
+            children: Vec::new(),
+            ..a_bead()
+        };
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+
+        assert!(
+            !page.tied.iter().any(|tied| tied.ties == Ties::Children),
+            "{:?}",
+            page.tied
+        );
+        assert!(
+            !page
+                .rows
+                .iter()
+                .any(|row| row.iter().any(|span| span.content.trim() == CHILDREN)),
+            "a heading over nothing"
+        );
     }
 
     /// A ring nobody can see is a ring the reader has lost: stepping on to a

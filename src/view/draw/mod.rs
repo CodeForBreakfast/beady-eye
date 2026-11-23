@@ -432,6 +432,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
         }
     }

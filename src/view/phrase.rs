@@ -1035,6 +1035,7 @@ pub fn tied(ties: Ties) -> &'static str {
     match ties {
         Ties::Parent => "Parent",
         Ties::DependsOn => "Depends on",
+        Ties::Children => "Children",
         Ties::Blocks => "Blocks",
         Ties::Mentions => "Mentions",
     }
