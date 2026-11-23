@@ -2,6 +2,7 @@
 //! window over the forest.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -342,12 +343,34 @@ pub struct Page {
     pub blocked_by: Option<usize>,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
+    /// The sections that name beads, in the order they are drawn.
+    pub tied: Vec<Tied>,
     /// How each row of the description and the notes stands to the line
     /// of text it is a row of.
     pub(crate) prose: HashMap<usize, Flow>,
     /// Which spans of which rows are marked, and as what, for
     /// the rows that hold a mark at all.
     pub(crate) marks: HashMap<usize, Vec<Mark>>,
+}
+
+/// What ties the beads a section of the page names to the bead it shows,
+/// which is what heads the section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ties {
+    Parent,
+    DependsOn,
+    Blocks,
+    Mentions,
+}
+
+/// A section of the page that names beads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tied {
+    pub ties: Ties,
+    /// The first row the section takes, which is the blank over its heading.
+    pub from: usize,
+    /// The rows its beads are drawn on.
+    pub beads: Range<usize>,
 }
 
 /// How much of what the selected line stands for is done, where the forest
@@ -633,26 +656,34 @@ pub fn said(
     };
 
     let mut related = Vec::new();
+    let mut sections = Vec::new();
     let mut flows = HashMap::new();
-    for (heading, body, names_beads) in [
+    for (heading, body, ties) in [
         (
             DESCRIPTION,
             prose(&node.description().unwrap_or_default()),
-            false,
+            None,
         ),
-        (NOTES, prose(&node.notes().unwrap_or_default()), false),
-        (PARENT, tied(UP, node.parent.as_slice()), true),
-        (DEPENDS_ON, tied(OUT, &node.depends_on), true),
-        (BLOCKS, tied(BACK, &node.blocks), true),
-        (MENTIONS, tied(NAMED, mentioned), true),
+        (NOTES, prose(&node.notes().unwrap_or_default()), None),
+        (PARENT, tied(UP, node.parent.as_slice()), Some(Ties::Parent)),
+        (
+            DEPENDS_ON,
+            tied(OUT, &node.depends_on),
+            Some(Ties::DependsOn),
+        ),
+        (BLOCKS, tied(BACK, &node.blocks), Some(Ties::Blocks)),
+        (MENTIONS, tied(NAMED, mentioned), Some(Ties::Mentions)),
     ] {
         if body.is_empty() {
             continue;
         }
+        let from = rows.len();
         rows.push(Vec::new());
         rows.push(vec![Span::styled(heading, palette::SECTION)]);
-        if names_beads {
-            related.extend(rows.len()..rows.len() + body.len());
+        if let Some(ties) = ties {
+            let beads = rows.len()..rows.len() + body.len();
+            related.extend(beads.clone());
+            sections.push(Tied { ties, from, beads });
         }
         for (row, flow) in body {
             if let Some(flow) = flow {
@@ -667,6 +698,7 @@ pub fn said(
         head,
         blocked_by,
         related,
+        tied: sections,
         prose: flows,
         marks,
     }
@@ -2542,6 +2574,28 @@ mod tests {
             !reversed("file the licence", &mut view),
             "a bead the window is not on is drawn as selected"
         );
+    }
+
+    /// Each section that names beads says what ties them to the bead, where
+    /// the section starts, and the rows its beads are drawn on, which
+    /// together are every row a bead named is drawn on.
+    #[test]
+    fn a_section_naming_beads_says_what_ties_them_and_where_they_are_drawn() {
+        let bead = a_bead();
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+
+        let ties: Vec<Ties> = page.tied.iter().map(|tied| tied.ties).collect();
+        assert_eq!(ties, [Ties::Parent, Ties::DependsOn, Ties::Blocks]);
+        for tied in &page.tied {
+            assert!(page.rows[tied.from].is_empty(), "{tied:?}");
+            assert_eq!(tied.from + 2, tied.beads.start, "{tied:?}");
+        }
+        let rows: Vec<usize> = page
+            .tied
+            .iter()
+            .flat_map(|tied| tied.beads.clone())
+            .collect();
+        assert_eq!(rows, page.related);
     }
 
     /// A ring nobody can see is a ring the reader has lost: stepping on to a

@@ -24,6 +24,7 @@ use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::markdown::Flow;
 use crate::view::row::{Cell, Layout, Progress, WARNING};
+use crate::view::show::{Tied, Ties};
 use crate::view::{palette, phrase, show, Said};
 
 use super::bead::{elided_run, referenced_line};
@@ -743,9 +744,9 @@ impl Drawing<'_> {
         html.push_str(if linked { "</a>" } else { "</span>" });
     }
 
-    /// The bead the selection is on, as the terminal's bead view draws it:
-    /// its head drawn as a reference to itself, and every bead it names drawn
-    /// as a reference to that bead.
+    /// The bead the selection is on, as the terminal's bead view draws it,
+    /// under a head of its own: each section that names beads is a list
+    /// with a reference to each bead it names.
     fn bead_view(&self, html: &mut String, node: &Node) {
         let forest = self.forest;
         let mentioned = show::mentioned(forest, node);
@@ -769,7 +770,14 @@ impl Drawing<'_> {
         self.head(html, node, page.blocked_by.is_some());
         html.push_str("</div>");
         let mut in_prose = false;
-        for (at, row) in page.rows.iter().enumerate().skip(page.head) {
+        let listed_from = page.tied.first().map_or(page.rows.len(), |tied| tied.from);
+        for (at, row) in page
+            .rows
+            .iter()
+            .enumerate()
+            .take(listed_from)
+            .skip(page.head)
+        {
             if page.blocked_by == Some(at) {
                 continue;
             }
@@ -802,14 +810,6 @@ impl Drawing<'_> {
                 html.push_str("</span><span class=\"t\">");
                 spans(html, rest, Block::Identity, marks, lead.len());
                 in_prose = true;
-            } else if let Some(related) = named.get(&at) {
-                let (arrow, rest) = row.split_at(row.len().min(2));
-                html.push_str("<span class=\"arrow\">");
-                spans(html, arrow, Block::Identity, &[], 0);
-                html.push_str("</span>");
-                if !self.related(html, related) {
-                    spans(html, rest, Block::Identity, &[], 0);
-                }
             } else {
                 spans(html, row, Block::Identity, marks, 0);
             }
@@ -817,7 +817,40 @@ impl Drawing<'_> {
         if in_prose {
             html.push_str("</span></span>");
         }
-        html.push_str("\n</div>");
+        html.push('\n');
+        for tied in &page.tied {
+            self.tied(html, tied, &named);
+        }
+        html.push_str("</div>");
+    }
+
+    /// A section of the bead's page that names beads, as a list under its
+    /// name with a reference on each line. Its count is left out where the
+    /// beads are the parent, which a bead has one of.
+    fn tied(&self, html: &mut String, tied: &Tied, named: &HashMap<usize, &Related>) {
+        html.push_str(&format!(
+            "<section class=\"tied\"><h3>{}",
+            escaped(phrase::tied(tied.ties))
+        ));
+        if tied.ties != Ties::Parent {
+            html.push_str(&format!(
+                " <span class=\"count\">{}</span>",
+                tied.beads.len()
+            ));
+        }
+        html.push_str("</h3><ul>");
+        for related in tied.beads.clone().filter_map(|at| named.get(&at)) {
+            html.push_str("<li>");
+            if !self.related(html, related) {
+                html.push_str(&format!(
+                    "<span class=\"id\">{}</span> {}",
+                    escaped(&related.id),
+                    escaped(phrase::not_in_the_answer())
+                ));
+            }
+            html.push_str("</li>");
+        }
+        html.push_str("</ul></section>");
     }
 
     /// The head of the bead's page: its status in words beside its id, its
@@ -1315,6 +1348,18 @@ border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
 .waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
+.page .tied{margin-top:18px;white-space:normal}\
+.page .tied h3{display:flex;gap:8px;margin:0 0 6px;font:600 11px var(--body);letter-spacing:.07em;\
+text-transform:uppercase;color:var(--faint)}\
+.page .tied .count{font-weight:500;letter-spacing:0}\
+.page .tied ul{margin:0;padding:0;list-style:none;border:1px solid var(--line);border-radius:10px;overflow:hidden;\
+background:var(--surface)}\
+.page .tied li{padding:9px 12px}.page .tied li+li{border-top:1px solid var(--line)}\
+.page .tied .bead{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;align-items:baseline}\
+.page .tied .bead>span:not([class]){display:none}\
+.page .tied .bead .g{grid-area:1/1;align-self:start;margin-top:4px}\
+.page .tied .bead .title{grid-area:1/2;line-height:20px;overflow-wrap:anywhere}\
+.page .tied .bead .id{grid-area:1/3}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
@@ -1482,7 +1527,7 @@ max-height:calc(100dvh - 74px - env(safe-area-inset-bottom));overflow-y:auto;bor
 .lists[open] a{padding:13px 12px;font-size:16px}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
-.page .arrow{display:none}\
+.page .tied .bead{width:auto;grid-template-columns:12px minmax(0,1fr)}.page .tied .bead .id{grid-area:2/2}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
@@ -3327,16 +3372,19 @@ mod tests {
         }
     }
 
-    /// Under its head, the bead view on the page is the terminal's, row for
-    /// row, with every bead it names drawn as a reference to that bead. The
-    /// row saying what the bead is blocked by is the one the page leaves
-    /// out, because the head's band says it.
+    /// Under its head and down to its lists of related beads, the bead view
+    /// on the page is the terminal's, row for row. The row saying what the
+    /// bead is blocked by is the one the page leaves out, because the head's
+    /// band says it.
     #[test]
-    fn the_bead_view_draws_the_terminals_rows_with_every_bead_named_by_a_reference() {
+    fn the_bead_view_draws_the_terminals_rows_down_to_its_related_beads() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
         let head = view.find("<div class=\"head\">").expect("the head");
-        let under_head = &view[element_end(view, head)..view.find("</aside>").unwrap()];
+        let lists = view
+            .find("<section class=\"tied\">")
+            .expect("the bead names beads");
+        let under_head = &view[element_end(view, head)..lists];
         let page_rows: Vec<String> = text_of(&in_the_terminals_order(under_head))
             .lines()
             .skip(1)
@@ -3360,6 +3408,7 @@ mod tests {
             .rows
             .iter()
             .enumerate()
+            .take(said.tied[0].from)
             .skip(said.head)
             .filter(|(at, _)| *at != blocked_by)
             .map(|(_, row)| {
@@ -3372,9 +3421,7 @@ mod tests {
             .collect();
 
         assert_eq!(page_rows, terminal_rows);
-        assert!(terminal_rows
-            .iter()
-            .any(|row| row == "→ ○ smt-4kd3p.1 wire the niri theme include"));
+        assert!(!terminal_rows.is_empty());
     }
 
     /// The head of a bead's page says its status in words and its id, then
@@ -4752,18 +4799,126 @@ mod tests {
         );
     }
 
-    /// The arrow a related bead is drawn after is apart from the reference,
-    /// so a phone can draw the reference alone under its section's name.
+    /// The elements one line of a list holds, and the words it says.
+    type ListedLine = (Vec<String>, String);
+
+    /// Each list of related beads on a bead's page: the words that head it,
+    /// then each of its lines.
+    fn tied_lists(html: &str) -> Vec<(String, Vec<ListedLine>)> {
+        html.match_indices("<section class=\"tied\">")
+            .map(|(open, _)| {
+                let section = &html[open..element_end(html, open)];
+                assert_eq!(parts(inside(section, "tied")).0, ["h3", "ul"], "{section}");
+                let heading = &section[..section.find("</h3>").expect("a heading")];
+                let lines = section
+                    .match_indices("<li>")
+                    .map(|(at, _)| {
+                        let line = &section[at..element_end(section, at)];
+                        let held = &line["<li>".len()..line.len() - "</li>".len()];
+                        (parts(held).0, words(&text_of(held)))
+                    })
+                    .collect();
+                (words(&text_of(heading)), lines)
+            })
+            .collect()
+    }
+
+    /// Each section of a bead's page that names beads is a list under its
+    /// name, with one reference to a bead on each line and nothing else. A
+    /// list says how many it names, except the parent, which a bead has one
+    /// of.
     #[test]
-    fn a_related_beads_arrow_is_apart_from_its_reference() {
-        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
-        let view = inside(&html, "page");
-        let parent = view
-            .find("<span class=\"arrow\">")
-            .expect("the parent is drawn after its arrow");
-        let (shape, _) = parts(&view[parent..element_end(view, parent)]);
-        assert_eq!(shape, ["span.arrow"]);
-        assert_eq!(words(&text_of(inside(&view[parent..], "arrow"))), "↑");
+    fn a_beads_related_beads_are_lists_under_their_names_with_a_count() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row =
+                crate::model::types::Printed::saying("Read smt-4kd3p.8 and smt-4kd3p.7 first.", "");
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let lists = tied_lists(inside(&html, "page"));
+
+        let headings: Vec<&str> = lists.iter().map(|(heading, _)| heading.as_str()).collect();
+        assert_eq!(headings, ["Parent", "Depends on 1", "Mentions 2"]);
+        let named: Vec<Vec<&str>> = lists
+            .iter()
+            .map(|(_, lines)| {
+                lines
+                    .iter()
+                    .map(|(shape, said)| {
+                        assert_eq!(shape, &["a.bead"], "{said}");
+                        said.as_str()
+                    })
+                    .collect()
+            })
+            .collect();
+        let ends = |said: &str, ending: &str| said.ends_with(ending);
+        assert!(
+            ends(named[0][0], "lift the ground station smt-4kd3p"),
+            "{named:?}"
+        );
+        assert!(
+            ends(named[1][0], "wire the niri theme include smt-4kd3p.1"),
+            "{named:?}"
+        );
+        assert!(
+            ends(named[2][0], "read the wedge log smt-4kd3p.8"),
+            "{named:?}"
+        );
+        assert!(
+            ends(named[2][1], "confirm the wedges are gone smt-4kd3p.7"),
+            "{named:?}"
+        );
+    }
+
+    /// What waits on a bead is a list headed in sentence case, as `bd show`
+    /// names it.
+    #[test]
+    fn what_waits_on_a_bead_is_listed_as_what_it_blocks() {
+        let html = page_at(&address(&key("smt-4kd3p.1"))).html;
+        let headings: Vec<String> = tied_lists(inside(&html, "page"))
+            .into_iter()
+            .map(|(heading, _)| heading)
+            .collect();
+        assert_eq!(headings, ["Parent", "Blocks 1"]);
+    }
+
+    /// A bead the tracker's answer does not hold is still a line of its
+    /// list, naming it by its id and saying it was not found.
+    #[test]
+    fn a_related_bead_the_answer_does_not_hold_is_named_by_its_id() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.depends_on.push(Related {
+                id: "smt-9zz".to_string(),
+                project: None,
+                edge: Edge::Blocks,
+                status: None,
+                title: None,
+            });
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let lists = tied_lists(inside(&html, "page"));
+        assert_eq!(lists[1].0, "Depends on 2");
+        assert_eq!(
+            lists[1].1[1],
+            (
+                vec!["span.id".to_string()],
+                format!("smt-9zz {}", phrase::not_in_the_answer())
+            )
+        );
+    }
+
+    /// A related bead's status mark sits beside the first line of its title
+    /// however many lines the title wraps to: the mark keeps to the top of
+    /// its line, as far down as centres it on a title line's height.
+    #[test]
+    fn a_related_beads_mark_lines_up_with_the_first_line_of_its_title() {
+        assert!(
+            STYLE.contains(".page .tied .bead .g{grid-area:1/1;align-self:start;margin-top:4px}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".page .tied .bead .title{grid-area:1/2;line-height:20px;"),
+            "{STYLE}"
+        );
     }
 
     /// The references on a page, each whole, and the page with them taken
