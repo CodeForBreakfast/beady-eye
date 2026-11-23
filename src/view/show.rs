@@ -233,6 +233,13 @@ pub fn at(node: &Node, mentioned: &[Related], id: &str) -> Option<usize> {
         .position(|named| named.id == id)
 }
 
+/// Whether `at` is the first place `related` names its bead. A bead can be
+/// named in two sections, such as an epic that depends on its own child, and
+/// the ring stands on a bead by its id, so it stops only at the first.
+pub fn first_naming(related: &[&Related], at: usize) -> bool {
+    related.iter().position(|named| named.id == related[at].id) == Some(at)
+}
+
 /// Every bead this one names, in the order the window draws them: its
 /// parent, then what it waits on, then its children, then what waits on
 /// it, which is `bd show`'s own order and the order `said` builds its
