@@ -307,12 +307,27 @@ const PAGE_TOKENS: [(Style, &str); 5] = [
 /// `--fg` and `--c0` to `--c15`, and `bd`'s statuses are the page's
 /// `--status-*`, so the page's own theme resolves them.
 pub(crate) fn css(style: Style) -> String {
+    declarations(style, true)
+}
+
+/// A style as [`css`] gives it, for a style whose colour a config wrote: a
+/// 24-bit colour is drawn as written even where it is one of `bd`'s, because
+/// the page cannot otherwise tell it from that status.
+pub(crate) fn css_as_written(style: Style) -> String {
+    declarations(style, false)
+}
+
+/// A style as CSS, with `bd`'s colours as the page's own where `themed`.
+fn declarations(style: Style, themed: bool) -> String {
     let mut said = Vec::new();
     if let Some(colour) = style.fg {
-        said.push(format!("color:{}", css_colour(colour, "--fg")));
+        said.push(format!("color:{}", css_colour(colour, "--fg", themed)));
     }
     if let Some(colour) = style.bg {
-        said.push(format!("background:{}", css_colour(colour, "--surface")));
+        said.push(format!(
+            "background:{}",
+            css_colour(colour, "--surface", themed)
+        ));
     }
     let added = style.add_modifier;
     let removed = style.sub_modifier;
@@ -344,11 +359,13 @@ pub(crate) fn css(style: Style) -> String {
     said.join(";")
 }
 
-/// One colour as CSS, with the terminal's default standing for `default`.
-fn css_colour(colour: Color, default: &str) -> String {
+/// One colour as CSS, with the terminal's default standing for `default`, and
+/// `bd`'s colours as the page's own where `themed`.
+fn css_colour(colour: Color, default: &str, themed: bool) -> String {
     let slot = |n: u8| format!("var(--c{n})");
     if let Some((_, token)) = PAGE_TOKENS
         .iter()
+        .filter(|_| themed)
         .find(|(style, _)| style.fg == Some(colour))
     {
         return format!("var({token})");
@@ -410,6 +427,16 @@ mod tests {
         assert_eq!(css(STRUCTURE), "color:var(--fg);font-weight:normal");
         assert_eq!(css(TIER_STAFFED), "color:var(--fg);font-weight:bold");
         assert_eq!(css(STATUS_OPEN), "");
+    }
+
+    /// A colour a config wrote is drawn as written, even where it is one of
+    /// `bd`'s, while a colour the terminal's theme names still takes the
+    /// page's theme.
+    #[test]
+    fn a_style_as_written_keeps_its_24_bit_colour() {
+        assert_eq!(css_as_written(STATUS_BLOCKED), "color:#f26d78");
+        assert_eq!(css_as_written(IDENTITY), "color:#59c2ff");
+        assert_eq!(css_as_written(absolute(Color::Red)), "color:var(--c1)");
     }
 
     /// A colour the light theme sets and the dark one leaves out would draw
