@@ -3175,7 +3175,10 @@ mod tests {
             assert!(heading.contains(said), "{heading}");
         }
         let forest = rule(".forest");
-        assert!(!forest.contains("auto") && !forest.contains("scroll"), "{forest}");
+        assert!(
+            !forest.contains("auto") && !forest.contains("scroll"),
+            "{forest}"
+        );
     }
 
     /// The ready list keeps to the tree the forest is rooted at, as it does
