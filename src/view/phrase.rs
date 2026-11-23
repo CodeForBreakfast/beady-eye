@@ -1084,10 +1084,16 @@ pub fn not_in_any_tree() -> &'static str {
     "This bead is not in any tree"
 }
 
-/// The link on a web page's bead view that goes back to the list, as `Esc`
-/// does in the terminal.
+/// The link on a web page that says only one sentence, back to the forest.
 pub fn back() -> &'static str {
     "✕ back"
+}
+
+/// What the link on a web page's bead view that goes back to `list` says to
+/// a reader who hears the page, as `Esc` goes back in the terminal. A phone
+/// shows the list's name alone.
+pub fn back_to(list: &str) -> String {
+    format!("Back to {list}")
 }
 
 /// The entry in a web page's list menu that draws the trees, as leaving the
@@ -1119,7 +1125,17 @@ pub fn find_prompt() -> &'static str {
 /// The link on a web page's bead view that draws the bead as the only root,
 /// as `F` does.
 pub fn only_this_tree() -> &'static str {
-    "show only this tree"
+    "Show only this tree"
+}
+
+/// The button on a web page's bead view that copies the bead's id.
+pub fn copy_id() -> &'static str {
+    "Copy id"
+}
+
+/// What the copy button says once it has copied the id.
+pub fn copied() -> &'static str {
+    "Copied"
 }
 
 /// What the band over a web page drawn with one bead as its only root says
