@@ -1,7 +1,7 @@
 //! A project's own line — what it is, how fresh it is and how much work it
 //! holds — and the roots beneath it that would not read.
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 use ratatui::text::Span;
 
 use crate::model::snapshot::{Counts, TrackerState};
@@ -37,7 +37,6 @@ pub(super) fn project_line(
     prefix: &str,
     how_fresh: Option<Freshness>,
     now: DateTime<Utc>,
-    dated: Dated,
 ) -> Fitted {
     let identity = vec![
         Span::raw(prefix.to_string()),
@@ -46,21 +45,10 @@ pub(super) fn project_line(
 
     Fitted::new(
         identity,
-        freshness(how_fresh, now, dated),
+        freshness(how_fresh, now),
         summary(&project.counts),
     )
     .title_or_nothing()
-}
-
-/// How a project's line says when its rows were read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Dated {
-    /// As how long before the instant the line is drawn at, which a screen
-    /// that redraws itself as the age moves can say.
-    Ago,
-    /// As the time of day, at this offset from UTC, which stays true on a
-    /// page drawn once and left open.
-    At(FixedOffset),
 }
 
 /// The mark and the age beside a project's name, in that order and both of
@@ -77,31 +65,38 @@ pub(super) enum Dated {
 /// A collection that has stopped answering wears it for the same reason: no
 /// row anywhere else on the screen says the tracker has gone quiet, because
 /// the rows are the last collection's and look exactly as they did.
-fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>, dated: Dated) -> Vec<Span<'static>> {
+fn freshness(how_fresh: Option<Freshness>, now: DateTime<Utc>) -> Vec<Span<'static>> {
     let Some(how_fresh) = how_fresh else {
         return Vec::new();
     };
-    let mark = match how_fresh.mark {
-        Mark::Refused | Mark::Unanswered | Mark::Lapsed => palette::ATTENTION,
-        Mark::Collecting | Mark::Read => palette::QUIET,
+    let mark = if wants_attention(how_fresh.mark) {
+        palette::ATTENTION
+    } else {
+        palette::QUIET
     };
 
     let mut said = vec![Span::styled(phrase::mark(how_fresh, now), mark)];
-    let when = match dated {
-        Dated::Ago => phrase::last_read(how_fresh, now),
-        Dated::At(offset) => phrase::read_at(how_fresh, offset),
-    };
     said.extend(
-        when.map(|age| {
-            // One space rather than a `GAP`: the mark and the age are two
-            // halves of one claim about this project's rows, and a gap
-            // between them would read as two cells.
-            [" ".to_string(), age].map(|said| Span::styled(said, palette::QUIET))
-        })
-        .into_iter()
-        .flatten(),
+        phrase::last_read(how_fresh, now)
+            .map(|age| {
+                // One space rather than a `GAP`: the mark and the age are two
+                // halves of one claim about this project's rows, and a gap
+                // between them would read as two cells.
+                [" ".to_string(), age].map(|said| Span::styled(said, palette::QUIET))
+            })
+            .into_iter()
+            .flatten(),
     );
     said
+}
+
+/// Whether a project's mark says its read is going badly: refused, gone
+/// unanswered or lapsed.
+pub(super) fn wants_attention(mark: Mark) -> bool {
+    match mark {
+        Mark::Refused | Mark::Unanswered | Mark::Lapsed => true,
+        Mark::Collecting | Mark::Read => false,
+    }
 }
 
 /// A root that drew no row, said where its row would have been.
@@ -154,14 +149,9 @@ fn summary(counts: &Counts) -> Vec<Span<'static>> {
         beside(&mut said, Span::raw(done(counts.finished, counts.total)));
     }
     if counts.live_agents > 0 {
-        let agent = if counts.live_agents == 1 {
-            "agent"
-        } else {
-            "agents"
-        };
         beside(
             &mut said,
-            Span::styled(format!("{} {agent}", counts.live_agents), palette::AGENT),
+            Span::styled(phrase::agents(counts.live_agents), palette::AGENT),
         );
     }
     if counts.anomalies > 0 {
@@ -199,12 +189,12 @@ mod tests {
     /// A project line with nothing to say about how fresh it is, which is
     /// every line whose subject is something else.
     fn line(project: &ProjectLine, prefix: &str) -> Fitted {
-        project_line(project, prefix, None, drawn_at(), Dated::Ago)
+        project_line(project, prefix, None, drawn_at())
     }
 
     /// The same line, said at an instant, with one project's freshness on it.
     fn line_that_is(project: &ProjectLine, how_fresh: Freshness) -> Fitted {
-        project_line(project, OPEN, Some(how_fresh), drawn_at(), Dated::Ago)
+        project_line(project, OPEN, Some(how_fresh), drawn_at())
     }
 
     /// A project read half a minute ago, in whichever state its collection is

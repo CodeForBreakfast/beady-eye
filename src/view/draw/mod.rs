@@ -18,7 +18,7 @@ pub(crate) mod tone;
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::Span;
@@ -42,7 +42,7 @@ pub use tail::{draw_tail, Band};
 use bead::{bead_line, elided_run, orphaned_line};
 use foot::{notices, status_bar};
 use groups::{group_line, item_line, scoped_line};
-use project::{absent_line, project_line, unread_line, Dated};
+use project::{absent_line, project_line, unread_line};
 
 /// What every project line's freshness is drawn from: when each project was
 /// last read, which projects have a read outstanding, which have lapsed, and
@@ -62,8 +62,6 @@ pub(super) struct Reads<'a> {
     /// The projects nothing has vouched for lately.
     lapsed: &'a [String],
     now: DateTime<Utc>,
-    /// How each project line says when it was read.
-    dated: Dated,
 }
 
 impl<'a> Reads<'a> {
@@ -78,16 +76,6 @@ impl<'a> Reads<'a> {
             collecting,
             lapsed,
             now,
-            dated: Dated::Ago,
-        }
-    }
-
-    /// The same reads, with each project line saying the time of day it was
-    /// read at rather than how long ago.
-    pub(super) fn dated_at(self, offset: FixedOffset) -> Self {
-        Self {
-            dated: Dated::At(offset),
-            ..self
         }
     }
 
@@ -212,13 +200,9 @@ pub(super) fn fitted(
     reads: &Reads,
 ) -> Fitted {
     match &line.content {
-        Content::Project(project) => project_line(
-            project,
-            &line.prefix,
-            reads.of(project),
-            reads.now,
-            reads.dated,
-        ),
+        Content::Project(project) => {
+            project_line(project, &line.prefix, reads.of(project), reads.now)
+        }
         Content::Unread(unread) => unread_line(unread, &line.prefix, widths.of(&Cell::Id)),
         Content::Absent(absent) => absent_line(absent, &line.prefix, widths.of(&Cell::Id)),
         Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
