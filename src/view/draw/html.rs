@@ -984,7 +984,7 @@ nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:
 background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
 @media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
-nav .ready.on{text-decoration:underline}}\
+nav .ready.on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\

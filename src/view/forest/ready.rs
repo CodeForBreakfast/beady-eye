@@ -175,16 +175,18 @@ pub(super) fn view_counts(
     ready: bool,
 ) -> Vec<usize> {
     let (covered, _) = covered(snapshot, rooted);
-    let reached = each_once(&covered);
-    views
-        .iter()
-        .map(|name| {
-            reached
-                .values()
-                .filter(|(bead, tree, way)| lists(bead, tree, way, name, ready))
-                .count()
-        })
-        .collect()
+    let mut counts = vec![0; views.len()];
+    for (bead, tree, way) in each_once(&covered).values() {
+        if bead.views.is_empty() || !counted(bead, tree, way, ready) {
+            continue;
+        }
+        for (count, name) in counts.iter_mut().zip(views) {
+            if bead.views.contains(name) {
+                *count += 1;
+            }
+        }
+    }
+    counts
 }
 
 /// A bead with the tree and the way down it was reached by.
@@ -267,9 +269,13 @@ fn in_view<'r, 'a>(
 /// Whether the view `name` lists `bead`, keeping to ready beads where
 /// `ready` is set.
 fn lists(bead: &Bead, tree: &Tree, way: &[usize], name: &str, ready: bool) -> bool {
-    !bead.status.is_finished()
-        && bead.views.iter().any(|view| view == name)
-        && (!ready || ready_section(bead, tree, way).is_some())
+    bead.views.iter().any(|view| view == name) && counted(bead, tree, way, ready)
+}
+
+/// Whether a bead in some view is listed in it: unfinished, and ready where
+/// only ready beads are listed.
+fn counted(bead: &Bead, tree: &Tree, way: &[usize], ready: bool) -> bool {
+    !bead.status.is_finished() && (!ready || ready_section(bead, tree, way).is_some())
 }
 
 /// Each bead the covered trees reach, once, with the tree and the way down
