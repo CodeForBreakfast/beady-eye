@@ -392,6 +392,8 @@ impl Drawing<'_> {
             match &line.content {
                 // Counted in the top bar and the menu, which list those beads.
                 Content::Note(Note::ToCheck(_)) => {}
+                // Listed with what its tracker said once the headings end.
+                Content::Project(project) if folding && self.unread(&project.project) => {}
                 Content::Project(project) => {
                     html.push_str("<section>");
                     in_project = true;
@@ -415,15 +417,17 @@ impl Drawing<'_> {
     /// each project whose read went badly, named in the colour of a flag
     /// beside the mark its heading draws. A project whose first read is still
     /// out holds the time back, as it does in the title. A project whose
-    /// tracker could not be read has no heading, and is named as one whose
-    /// read went badly. Nothing is drawn, and the answer is false, where
-    /// there is no project to say anything of.
+    /// tracker could not be read is named as one whose read went badly, from
+    /// its failure rather than any heading it keeps. Nothing is drawn, and
+    /// the answer is false, where there is no project to say anything of.
     fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) -> bool {
         let lines = self.forest.lines();
         let (troubled, fresh): (Vec<_>, Vec<_>) = lines
             .viewport(0, lines.len())
             .filter_map(|(_, line)| match &line.content {
-                Content::Project(project) => Some((project, reads.of(project))),
+                Content::Project(project) if !self.unread(&project.project) => {
+                    Some((project, reads.of(project)))
+                }
                 _ => None,
             })
             .partition(|(_, how_fresh)| how_fresh.is_some_and(|fresh| wants_attention(fresh.mark)));
@@ -670,6 +674,15 @@ impl Drawing<'_> {
             (Content::Bead(_), Some(place)) if self.across_projects() => Some(&place.key().project),
             _ => None,
         }
+    }
+
+    /// Whether `project`'s tracker could not be read.
+    fn unread(&self, project: &str) -> bool {
+        self.forest
+            .snapshot()
+            .failed_projects
+            .iter()
+            .any(|failed| failed.project == project)
     }
 
     /// Whether the lines are a list that draws beads of more than one
@@ -4606,6 +4619,38 @@ mod tests {
             "{unread}"
         );
         assert!(text_of(unread).contains(&dunwich_said()), "{unread}");
+    }
+
+    /// A pane working in a project whose tracker could not be read keeps the
+    /// project's heading, and the folded line still counts and names the
+    /// project once, opening to it once with what its tracker said.
+    #[test]
+    fn the_folded_line_names_an_unread_project_with_a_pane_in_it_once() {
+        let mut unread = beside_unread_dunwich();
+        unread.unattributed.push(crate::model::snapshot::LoosePane {
+            pane: crate::model::types::PaneKey {
+                session: "default".to_string(),
+                id: "w:nobody".to_string(),
+            },
+            project: "dunwich".to_string(),
+            cwd: "/srv/work/dunwich".to_string(),
+            pane_status: crate::model::types::PaneStatus::Working,
+            display_agent: None,
+            title: None,
+            claim_refused: false,
+        });
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(unread, &ready);
+
+        let line = folded(&html);
+        assert!(
+            line.contains(&format!("<span class=\"fresh\">{}", phrase::projects(2))),
+            "{line}"
+        );
+        assert_eq!(text_of(line).matches("dunwich").count(), 1, "{line}");
+        let opened = inside(&html, "projects");
+        assert_eq!(opened.matches("<h2>dunwich</h2>").count(), 1, "{opened}");
+        assert!(text_of(opened).contains(&dunwich_said()), "{opened}");
     }
 
     /// Every project the list covers could fail to be read, and the folded
