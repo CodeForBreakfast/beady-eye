@@ -4,8 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    # Beads ships its own flake. Do not add inputs.nixpkgs.follows here — beads
-    # needs Go 1.26 and this flake's nixpkgs carries an older toolchain.
+    # bd is built from beads' overlay on this flake's nixpkgs, so beads' own
+    # nixpkgs pin is never read.
     #
     # Every check builds bd, so this pin reaches every shell. A bd on a schema
     # other than the tracker's cannot read it: an older one refuses a newer
@@ -13,6 +13,7 @@
     # `leases` table. So the pin and the tracker's schema move together — treat
     # it as a schema decision, not a version bump.
     beads.url = "github:gastownhall/beads/v1.3.4";
+    beads.inputs.nixpkgs.follows = "nixpkgs";
     # The dependency build is its own derivation here, and crane is what makes
     # one. It declares no inputs of its own, so it costs a lock entry and
     # nothing else.
@@ -149,6 +150,36 @@
     flake-utils.lib.eachSystem systems (system:
       let
         pkgs = import nixpkgs { inherit system; };
+
+        # The beads release's go.mod pins modules with known CVEs that a later
+        # version fixes, so bd's build moves each past its fix. Drop a module
+        # from the list once the beads pin carries the fix itself.
+        bdModulesPastTheirFixes = [
+          "github.com/apache/thrift@v0.25.0"
+          "github.com/klauspost/compress@v1.20.2"
+          "go.opentelemetry.io/otel@v1.47.0"
+          "go.opentelemetry.io/otel/metric@v1.47.0"
+          "go.opentelemetry.io/otel/sdk@v1.47.0"
+          "go.opentelemetry.io/otel/sdk/metric@v1.47.0"
+          "go.opentelemetry.io/otel/trace@v1.47.0"
+          "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.47.0"
+          "go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.47.0"
+          "go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.47.0"
+        ];
+
+        # The same preBuild runs in the module download, where it fetches,
+        # and in the build, where it reads that download back.
+        bd = (pkgs.extend (pkgs.lib.composeExtensions beads.overlays.default
+          (final: prev: {
+            beads-unwrapped = prev.beads-unwrapped.override (prevArgs: {
+              buildGoModule = args: prevArgs.buildGoModule (args // {
+                preBuild = ''
+                  go get ${pkgs.lib.escapeShellArgs bdModulesPastTheirFixes}
+                '';
+                vendorHash = "sha256-S32eUkVU0HDBc4ibmXj9Y/xTRhx2Y56g7opgVBjuOZQ=";
+              });
+            });
+          }))).beads;
 
         beady-eye = beadyEyeFor pkgs;
         artifacts = artifactsFor pkgs;
@@ -3432,15 +3463,14 @@ and a second line"
 
         # bdi as homelab runs it, with what it shells out to: gh and bd, git for
         # finding a project's worktrees, and a shell with coreutils for a
-        # `credential_command`. The bd is the flake's own pin, so the image
-        # moves with that pin and with nothing else. It is built for Linux
-        # hosts only, because the cluster that runs it is amd64.
+        # `credential_command`. The bd is the one every shell here gets. It is
+        # built for Linux hosts only, because the cluster that runs it is amd64.
         imageRoot = pkgs.buildEnv {
           name = "beady-eye-image-root";
           paths = [
             beady-eye
             pkgs.gh
-            beads.packages.${system}.bd
+            bd
             pkgs.gitMinimal
             pkgs.bash
             pkgs.coreutils
@@ -4240,7 +4270,7 @@ and a second line"
         # tracker. Entering this shell is opt-in: select it locally with an
         # untracked `.envrc.local` containing `devshell=maintainer`.
         devShells.maintainer = pkgs.mkShell {
-          buildInputs = rustTools ++ pluginTools ++ [ beads.packages.${system}.bd ];
+          buildInputs = rustTools ++ pluginTools ++ [ bd ];
 
           shellHook = ''
             # Neither the tracker's coordinates nor its password are checked
@@ -4394,7 +4424,7 @@ and a second line"
           # /tmp to a user the build cannot see, so `bdi` will not trust it with
           # a socket, and there the sockets go in the build's own directory.
           test = checkOf "test" artifacts.dev
-            [ beads.packages.${system}.bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
+            [ bd pkgs.git pkgs.jq pkgs.cargo-nextest ]
             (pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export BDI_TEST_SOCKET_DIR="$TMPDIR/sockets"
             '' + ''
