@@ -964,6 +964,7 @@ padding:0 12px;border:1px solid var(--line);border-radius:8px;font-weight:500}\
 .lists summary::after{--icon:var(--chevron);width:13px;height:13px}\
 .lists[open] summary{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}\
 .lists>div{position:absolute;top:calc(100% + 8px);left:0;z-index:5;width:290px;box-sizing:border-box;padding:6px;\
+max-height:calc(100dvh - 72px);overflow-y:auto;\
 background:var(--raised);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}\
 .lists a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;overflow-wrap:anywhere}\
 .lists a::before{--icon:var(--tick);width:16px;height:14px;background:none}\
@@ -1044,7 +1045,7 @@ background:radial-gradient(circle at 8px 50%,var(--surface) 6px,transparent 6.5p
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 8px) 50%,var(--surface) 6px,transparent 6.5px),var(--accent)}\
 nav .ready.on,nav:not(:has(.ready.on))>.lists>summary,.lists[open] summary\
 {background:var(--accent-soft);color:var(--accent);font-weight:600}\
-nav form:focus-within{box-shadow:none}\
+nav form:focus-within{box-shadow:none}nav input:focus-visible{box-shadow:0 0 0 2px var(--accent)}\
 nav button{display:none}nav button::before{display:none}\
 nav label{justify-content:center;gap:6px;height:100%;cursor:text}\
 nav label::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
