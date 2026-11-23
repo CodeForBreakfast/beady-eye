@@ -19,12 +19,12 @@ use std::sync::Arc;
 
 use crate::config;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Node as Bead, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::{Link, OrphanedDependency};
 use crate::model::types::Edge;
 use crate::view::draw::identity_widths;
 use crate::view::lines::{
-    links_below, marker, notes_of, prefix, root_key, way_below, BeadFacts, Content, Group,
+    beneath, links_below, marker, notes_of, prefix, root_key, way_below, BeadFacts, Content, Group,
     GroupKind, Item, Line, Note, Place, ProjectLine, Unread, INDENT,
 };
 use crate::view::row::{self, Shut, Widths};
@@ -537,7 +537,11 @@ impl<'a> Layout<'a> {
             place: None,
             content: Content::Project(ProjectLine {
                 every_root_read: self.snapshot.every_root_read(&project),
-                counts: self.facts.project(&project),
+                counts: if self.rooted.is_empty() {
+                    self.facts.project(&project)
+                } else {
+                    self.rooted_counts(&project)
+                },
                 project: project.clone(),
             }),
         };
@@ -591,6 +595,39 @@ impl<'a> Layout<'a> {
             children.push(self.draw_group(group, over, &mut trunk, entries == 0));
         }
         Node::drawn(line, children)
+    }
+
+    /// The trees drawn from the beads `project`'s line heads while the forest
+    /// is rooted: each focused bead and everything beneath it, which is what
+    /// each focused bead's own progress counts. One focused bead's count is
+    /// read from what was answered of its tree, so a keystroke walks nothing.
+    /// Several are walked, so a bead beneath more than one is counted once.
+    fn rooted_counts(&self, project: &str) -> Counts {
+        let focused: Vec<(&BeadKey, &Tree, usize, &[usize])> = self
+            .rooted
+            .iter()
+            .filter(|rooted| rooted.place.tree.project == project)
+            .filter_map(|rooted| {
+                let tree = self.snapshot.tree(&rooted.place.tree)?;
+                let (&at, above) = rooted.way.as_ref().ok()?.split_last()?;
+                Some((&rooted.place.tree, tree, at, above))
+            })
+            .collect();
+        if let [(root, tree, at, above)] = focused[..] {
+            let own = Counts::over([&tree.beads[at]]);
+            let beneath = self.facts.tree(root).bead(tree, at, above).beneath;
+            return Counts {
+                total: own.total + beneath.total,
+                finished: own.finished + beneath.finished,
+                live_agents: own.live_agents + beneath.live_agents,
+                anomalies: own.anomalies + beneath.anomalies,
+            };
+        }
+        Counts::over(focused.into_iter().flat_map(|(_, tree, at, above)| {
+            std::iter::once(at)
+                .chain(beneath(tree, at, above))
+                .map(move |node| &tree.beads[node])
+        }))
     }
 
     /// One group, on a line under whatever `trunk` says is above it, and what

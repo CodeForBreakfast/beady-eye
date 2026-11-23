@@ -306,6 +306,73 @@ fn no_line_counts_the_seats_and_anomalies_in_the_held_back_roots() {
     );
 }
 
+/// The progress a project's line gives.
+fn project_progress(forest: &Forest, project: &str) -> Progress {
+    forest
+        .lines()
+        .iter()
+        .find_map(|line| match &line.content {
+            Content::Project(line) if line.project == project => Some(Progress {
+                finished: line.counts.finished,
+                total: line.counts.total,
+            }),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{project} has no line"))
+}
+
+/// Rooted at a bead, a project's line counts the tree it heads rather than
+/// the whole project, so it gives the same progress as that bead's own row.
+#[test]
+fn a_project_line_rooted_at_a_bead_counts_the_tree_it_heads() {
+    let mut forest = flatten(snapshot());
+    let whole = project_progress(&forest, "dunwich");
+    focus_on(&mut forest, "dun-7.1");
+
+    let heads = project_progress(&forest, "dunwich");
+
+    assert_eq!(Some(heads), row_of(&forest, "dun-7.1").progress);
+    assert_ne!(heads, whole);
+}
+
+/// Rooted at two beads of one project, its line counts both trees.
+#[test]
+fn a_project_line_rooted_at_two_beads_counts_both_trees() {
+    let forest = named_on_the_command_line(&[("dunwich", "dun-7.1"), ("dunwich", "dun-7.7")]);
+    let first = row_of(&forest, "dun-7.1")
+        .progress
+        .expect("dun-7.1 has children");
+    assert!(
+        row_of(&forest, "dun-7.7").progress.is_none(),
+        "dun-7.7 is a leaf"
+    );
+
+    assert_eq!(
+        project_progress(&forest, "dunwich"),
+        Progress {
+            finished: first.finished,
+            total: first.total + 1,
+        }
+    );
+}
+
+/// The count a rooted project's line gives is read from what the forest
+/// already answered of the tree, so folding and moving in it walk nothing.
+#[test]
+fn a_keystroke_in_a_rooted_forest_walks_no_subtree() {
+    let mut forest = flatten(snapshot());
+    focus_on(&mut forest, "dun-7");
+    let before = walks_on_this_thread();
+
+    let shut = forest.lines().len();
+    assert!(forest.apply(Action::CollapseOrParent));
+    assert_ne!(forest.lines().len(), shut);
+    assert!(forest.apply(Action::ExpandOrChild));
+    forest.apply(Action::Move(Motion::NextRow));
+
+    assert_eq!(walks_on_this_thread() - before, 0);
+}
+
 /// The reader asked to finish the bead they pressed the key on, so that is
 /// the bead the forest they come back to is standing on, wherever they had
 /// walked to underneath it.

@@ -286,16 +286,28 @@ impl Drawing<'_> {
             &[],
             drawn.at,
         );
+        // A project's heading and the lines under it are one section, so the
+        // heading sticks only while its own lines scroll.
+        let mut in_project = false;
         for (at, line) in lines.viewport(0, lines.len()) {
+            if in_project && line.depth == 0 {
+                html.push_str("</section>");
+                in_project = false;
+            }
             match &line.content {
                 // Said at the foot, with the link that shows those beads.
                 Content::Note(Note::ToCheck(_)) => {}
                 Content::Project(project) => {
+                    html.push_str("<section>");
+                    in_project = true;
                     self.open_line(html, at, line, " heading", String::new());
                     self.heading(html, line, project, &reads, drawn.offset);
                 }
                 _ => self.forest_line(html, at, line, &reads),
             }
+        }
+        if in_project {
+            html.push_str("</section>");
         }
     }
 
@@ -955,7 +967,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}\
 main.open::before{content:\"\";position:absolute;inset:0 0 0 auto;width:500px;box-sizing:border-box;\
 border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24px -18px rgba(23,32,42,.35)}\
-.forest{padding:8px 0;min-width:0;overflow-x:auto}\
+.forest{padding:8px 0;min-width:0;overflow-x:clip}\
 .line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 @media (width>720px){.line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}\
@@ -966,6 +978,7 @@ border-left:1px solid var(--line);background:var(--raised);box-shadow:-12px 0 24
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
+.line.shown{position:relative}#shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
 .line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
@@ -998,9 +1011,10 @@ vertical-align:top;width:100%;white-space:normal}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
 .page .head .title{font-family:var(--display);font-weight:600}\
 .close{display:inline-block;margin-bottom:8px}\
-.line.heading{align-items:baseline;flex-wrap:wrap;gap:4px 12px;width:auto;padding-block:14px 8px;margin-bottom:4px;\
-border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
-.line.heading:not(:first-child){margin-top:18px}\
+html{scroll-padding-top:44px}\
+.line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
+padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
+.forest>section:not(:first-child){margin-top:18px}\
 .heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
 .heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
@@ -1084,7 +1098,6 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
-#shown{position:absolute;top:0}\
 .line a:not(.bead){position:relative;z-index:1}\
 .line .g{grid-area:1/1;font-size:14px;text-align:center}\
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
@@ -1114,11 +1127,12 @@ nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([v
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;height:auto;padding:8px 12px;border-radius:0;\
 background:var(--surface);border-bottom:1px solid var(--line)}\
-html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
+html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:116px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
+body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))) .line.heading{top:52px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
 footer .notice{padding:9px 16px}\
-.line.heading{gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
+html{scroll-padding-top:64px}.line.heading{gap:4px 10px;margin-bottom:0}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
@@ -1245,7 +1259,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const drawn = new DOMParser().parseFromString(text, "text/html");
     const coming = new Set(marks(drawn).map(mark));
     const before = marks();
-    const top = before.findIndex((at) => at.getBoundingClientRect().bottom > 0);
+    const top = before.findIndex((at) => !at.matches(".heading") && at.getBoundingClientRect().bottom > 0);
     const held = top < 0 ? null : before.slice(top).find((at) => coming.has(mark(at)));
     const kept = held && [mark(held), held.getBoundingClientRect().top];
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
@@ -3460,6 +3474,58 @@ mod tests {
         terminal.apply(Action::FocusForest);
         assert_eq!(page_lines(&whole), terminal_lines(&terminal));
         assert!(whole.contains(phrase::only_this_tree()), "{whole}");
+    }
+
+    /// Under the band saying one tree is shown, the project's heading counts
+    /// that tree rather than the whole project.
+    #[test]
+    fn a_heading_over_one_tree_counts_that_tree() {
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&key("smt-4kd3p.6"))).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+
+        assert_eq!(
+            page_lines(&rooted)[0],
+            format!("▾ summit-works {READ} 0 of 3 done")
+        );
+    }
+
+    /// A project's heading is a tinted band that stays at the top of the
+    /// window while its trees scroll. A box between it and the window that
+    /// scrolls on its own would hold it there instead, and it would never
+    /// stick.
+    #[test]
+    fn a_projects_heading_is_a_tinted_band_that_sticks_to_the_top_of_the_window() {
+        let rule = |selector: &str| {
+            let at = STYLE.find(&format!("{selector}{{")).expect(selector);
+            &STYLE[at..at + STYLE[at..].find('}').expect("a rule ends")]
+        };
+        let heading = rule(".line.heading");
+        for said in ["position:sticky", "top:0", "background:var(--sunk)"] {
+            assert!(heading.contains(said), "{heading}");
+        }
+        let forest = rule(".forest");
+        assert!(
+            !forest.contains("auto") && !forest.contains("scroll"),
+            "{forest}"
+        );
+    }
+
+    /// A project's heading and the lines under it are one section, which is
+    /// what holds a stuck heading to its own project's lines.
+    #[test]
+    fn a_projects_heading_and_the_lines_under_it_are_one_section() {
+        let html = page_at("/").html;
+        let opened = html.find("<section>").expect("a section");
+        let section = &html[opened..html.find("</section>").expect("the section ends")];
+
+        assert!(
+            section.starts_with("<section><div class=\"line heading\""),
+            "{section}"
+        );
+        assert_eq!(lines_html(section).len(), lines_html(&html).len());
     }
 
     /// The ready list keeps to the tree the forest is rooted at, as it does
