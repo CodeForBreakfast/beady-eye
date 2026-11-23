@@ -1006,7 +1006,7 @@ fn tables_of(fingerprint: &str) -> BTreeMap<&str, &str> {
 /// nothing a row prints. A table outside this, such as `config` or
 /// `custom_statuses`, can change how every row reads, so its move is a read
 /// in full.
-const ACCOUNTED_FOR: [&str; 17] = [
+const ACCOUNTED_FOR: [&str; 18] = [
     "issues",
     "labels",
     "comments",
@@ -1024,6 +1024,7 @@ const ACCOUNTED_FOR: [&str; 17] = [
     "provenance_events",
     "issue_counter",
     "child_counters",
+    "local_metadata",
 ];
 
 /// The SQL naming every bead whose row may differ between `commit` and the
@@ -2526,6 +2527,26 @@ mod tests {
 
         assert_eq!(
             tracker.uncommitted(),
+            Some(BTreeSet::from(["p-1".to_string()]))
+        );
+    }
+
+    /// bd writes `local_metadata` beside a bead it creates or closes, to keep
+    /// two writers apart, and nothing in it is drawn on a row. Measured with
+    /// bd 1.3.4: a create, a close and a wisp each moved it.
+    #[test]
+    fn a_create_or_close_is_still_read_as_what_changed() {
+        let runner = FakeRunner::default()
+            .with(
+                &spelled(PROBE_CALL),
+                &probed(&[("issues", "b"), ("local_metadata", "b")]),
+            )
+            .with(&spelled(DIFF_CALL), r#"[{"id":"p-1"}]"#);
+        let tracker = opened(&runner);
+        tracker.fingerprint();
+
+        assert_eq!(
+            tracker.changed_since("c1", "issues=a,local_metadata=a"),
             Some(BTreeSet::from(["p-1".to_string()]))
         );
     }
