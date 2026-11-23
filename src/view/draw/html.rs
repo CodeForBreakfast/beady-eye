@@ -755,8 +755,8 @@ const STYLE: &str = "\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
 body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
-.line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>.id,.code{font-family:var(--code)}\
-.code{font-size:.9em}\
+.line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}\
+.code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
@@ -819,7 +819,7 @@ border:0 solid var(--rail)}\
 .line .g{grid-area:1/1;font-size:14px;text-align:center}\
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
-.line>.bead>.id{grid-column:2;font-family:var(--body)}\
+.line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
@@ -2301,7 +2301,11 @@ mod tests {
             "{STYLE}"
         );
         assert!(
-            STYLE.contains(".line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>.id,.code{font-family:var(--code)}"),
+            STYLE.contains(".line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".line .bead .code{font-size:inherit}"),
             "{STYLE}"
         );
     }
