@@ -1442,7 +1442,7 @@ background:var(--sunk);border:1px solid var(--line)}\
 text-transform:uppercase}\
 .waits>p{margin:0;color:var(--muted)}\
 .page section{margin-top:18px;white-space:normal}\
-.page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--faint)}\
+.page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}\
 .page .tied .count{font-weight:500;letter-spacing:0}\
 .page .tied ul{margin:0;padding:0;list-style:none;border:1px solid var(--line);border-radius:10px;overflow:hidden;\
 background:var(--surface)}\
@@ -5246,7 +5246,12 @@ mod tests {
             !page.contains("DESCRIPTION") && !page.contains("NOTES"),
             "{page}"
         );
-        assert!(STYLE.contains(".page section>h3{"), "{STYLE}");
+        assert!(
+            STYLE.contains(
+                ".page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}"
+            ),
+            "{STYLE}"
+        );
     }
 
     /// The declarations of `property` the stylesheet makes, each as its value.
