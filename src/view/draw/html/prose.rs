@@ -152,11 +152,15 @@ impl Writing<'_> {
 
     /// The link just written, as a link where it goes to a web address and
     /// as its words and where it goes otherwise, as the terminal says it. A
-    /// link whose words are its address is that address's short link.
+    /// link whose words are its address is that address's short link. An
+    /// image inside a link is only the link's words.
     fn close_link(&mut self) {
         let Some((start, to)) = self.links.pop() else {
             return;
         };
+        if !self.links.is_empty() {
+            return;
+        }
         let words = self.html.split_off(start);
         let says_where_it_goes = words == escaped(&to);
         if is_web_address(&to) {
@@ -262,11 +266,11 @@ fn is_web_address(to: &str) -> bool {
 /// What ends a sentence after it, a full stop or a closing bracket it never
 /// opened, is no part of it.
 fn address_in(text: &str) -> Option<Range<usize>> {
-    let lower = text.to_ascii_lowercase();
-    let mut from = 0;
-    while let Some(found) = lower[from..].find("http") {
-        let at = from + found;
-        from = at + 1;
+    let starts = text
+        .match_indices(['h', 'H'])
+        .map(|(at, _)| at)
+        .filter(|&at| text[at..].get(..4).is_some_and(|s| s.eq_ignore_ascii_case("http")));
+    for at in starts {
         let starts_a_word = !text[..at]
             .chars()
             .next_back()
@@ -432,6 +436,12 @@ mod tests {
     fn a_links_words_hold_neither_a_link_nor_a_bead() {
         let drawn = html("[lgt-4.2 at https://arkham.example/a](https://arkham.example/b)");
         assert_eq!(drawn.matches("<a ").count(), 1, "{drawn}");
+        let drawn = html("[![the map](https://arkham.example/map.png)](https://arkham.example/maps)");
+        assert_eq!(
+            drawn,
+            "<p><a class=\"link\" href=\"https://arkham.example/maps\" \
+             target=\"_blank\" rel=\"noopener noreferrer\">the map</a></p>"
+        );
     }
 
     /// A link to anything but a web address is no link: a script given as
