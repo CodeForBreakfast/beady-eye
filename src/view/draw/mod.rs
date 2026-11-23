@@ -209,7 +209,7 @@ pub(super) fn fitted(
         Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => {
             bead_line(row, &line.prefix, widths, layout)
         }
-        Content::Elided { count, .. } => elided_run(&line.prefix, *count),
+        Content::Elided { count, .. } => elided_run(&line.prefix, &phrase::elided(*count)),
         Content::Orphaned(orphaned) => orphaned_line(orphaned, &line.prefix, widths.of(&Cell::Id)),
         Content::Note(note) => {
             let (said, style) = finding(*note);

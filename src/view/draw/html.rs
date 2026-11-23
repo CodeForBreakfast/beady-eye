@@ -25,7 +25,7 @@ use crate::view::markdown::Flow;
 use crate::view::row::{Cell, Layout, Progress, WARNING};
 use crate::view::{palette, phrase, show, Said};
 
-use super::bead::referenced_line;
+use super::bead::{elided_run, referenced_line};
 use super::foot::notices;
 use super::project::wants_attention;
 use super::{done, fitted, Reads, Reference};
@@ -454,10 +454,11 @@ impl Drawing<'_> {
     }
 
     /// One line of the forest. A bead's row is the terminal's row with its
-    /// glyph, id and title drawn as a reference to the bead, and its progress
-    /// drawn last, as a bar in a column of its own. Where the layout draws
-    /// progress, every bead's row has that column, empty where the bead has
-    /// none, so the bars and what is drawn before them line up down the page.
+    /// glyph, id and title drawn as a reference to the bead, its agent and
+    /// anomalies said in the page's own words, and its progress drawn last,
+    /// as a bar in a column of its own. Where the layout draws progress,
+    /// every bead's row has that column, empty where the bead has none, so
+    /// the bars and what is drawn before them line up down the page.
     fn forest_line(&self, html: &mut String, at: usize, line: &Line, reads: &Reads) {
         let widths = self.forest.lines().widths();
         let (reference, progressed, drawn) = match &line.content {
@@ -466,6 +467,11 @@ impl Drawing<'_> {
                     referenced_line(row, &line.prefix, widths, self.layout);
                 (Some(reference), progressed, drawn)
             }
+            Content::Elided { count, .. } => (
+                None,
+                None,
+                elided_run(&line.prefix, &phrase::finished_run(*count)),
+            ),
             _ => (None, None, fitted(line, widths, self.layout, reads)),
         };
         let column = reference.is_some() && self.layout.cells().any(|cell| *cell == Cell::Progress);
@@ -1205,6 +1211,7 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
 .line>.more{grid-column:4;padding-left:2ch;overflow-wrap:anywhere}\
 .line>.bead~.state{grid-column:5;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
+.line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
 nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
 font-size:13.5px}\
@@ -1645,13 +1652,27 @@ mod tests {
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
     /// the project's line said as the page's heading says it: the time of
-    /// day it was read, and the fraction done as what is left in words.
+    /// day it was read, and the fraction done as what is left in words. A run
+    /// of finished beads and a row's flag are said as the page says them too.
     fn terminal_lines(forest: &Forest) -> Vec<String> {
         let rows = frame_of(forest, 160, 60).rows();
         rows[..forest.lines().len()]
             .iter()
-            .map(|row| {
+            .zip(forest.lines().viewport(0, forest.lines().len()))
+            .map(|(row, (_, line))| {
                 let row = words(row);
+                match &line.content {
+                    Content::Elided { count, .. } => {
+                        return row.replace(&phrase::elided(*count), &phrase::finished_run(*count));
+                    }
+                    Content::Bead(bead) | Content::Waiting(Waiting { row: bead, .. }) => {
+                        if let Some(flag) = crate::view::row::anomaly_marker(&bead.anomalies) {
+                            let said = phrase::flag(&bead.anomalies).expect("a rule fired");
+                            return row.replace(&flag, &format!("{WARNING} {said}"));
+                        }
+                    }
+                    _ => {}
+                }
                 if !row.contains(AGO) {
                     return row;
                 }
@@ -2138,6 +2159,142 @@ mod tests {
         );
     }
 
+    /// The row of `id` on the page drawn at the bead's address.
+    fn row_of(snapshot: Snapshot, id: &str) -> String {
+        let html = page_of(snapshot, &address(&key(id)));
+        lines_html(&html)
+            .into_iter()
+            .find(|line| text_of(line).contains(id))
+            .expect("the bead has a row")
+            .to_string()
+    }
+
+    /// Every rule that fired is said once, as one sentence, where the
+    /// terminal joins a phrase for each.
+    #[test]
+    fn a_rows_flag_says_every_rule_that_fired_as_one_sentence() {
+        let fired = vec![
+            Anomaly::StaleClaim { days: 58 },
+            Anomaly::OrphanClaim { refused: None },
+        ];
+        let checked = with_the_bead_changed(|node| node.anomalies = fired.clone());
+        let row = row_of(checked, "smt-4kd3p.6");
+        let said = phrase::flag(&fired).expect("two rules fired");
+
+        assert_eq!(row.matches("class=\"flag\"").count(), 1, "{row}");
+        assert!(
+            row.contains(&format!("<span class=\"flag\" title=\"{said}\"")),
+            "{row}"
+        );
+        assert!(
+            row.contains(&format!(">{WARNING}<span> {said}</span></span>")),
+            "{row}"
+        );
+        assert!(!text_of(&row).contains(" · "), "{row}");
+    }
+
+    /// An agent on a bead is a chip naming it, and an agent watching it is
+    /// one too where none is on it. A bead with both has the one chip.
+    #[test]
+    fn a_row_names_an_agent_on_its_bead_in_a_chip() {
+        use crate::model::watching::Watching;
+        use crate::view::draw::tests::a_pane;
+
+        let chips = |row: &str| -> Vec<String> {
+            row.match_indices("<span class=\"pill\"")
+                .map(|(at, _)| text_of(&row[at..element_end(row, at)]))
+                .filter(|said| {
+                    [phrase::agent_chip(), phrase::watched_chip()].contains(&said.as_str())
+                })
+                .collect()
+        };
+        let watching = Watching::Known {
+            agents: Vec::new(),
+            unreported: 1,
+        };
+
+        let staffed = row_of(
+            with_the_bead_changed(|node| node.agent = Some(a_pane())),
+            "smt-4kd3p.6",
+        );
+        assert_eq!(chips(&staffed), [phrase::agent_chip()], "{staffed}");
+        assert!(
+            !text_of(&staffed).contains(crate::view::row::AGENT),
+            "{staffed}"
+        );
+
+        let watched = row_of(
+            with_the_bead_changed(|node| node.watching = watching.clone()),
+            "smt-4kd3p.6",
+        );
+        assert_eq!(chips(&watched), [phrase::watched_chip()], "{watched}");
+        assert!(
+            !text_of(&watched).contains(crate::view::row::WATCHED),
+            "{watched}"
+        );
+
+        let both = row_of(
+            with_the_bead_changed(|node| {
+                node.agent = Some(a_pane());
+                node.watching = watching.clone();
+            }),
+            "smt-4kd3p.6",
+        );
+        assert_eq!(chips(&both), [phrase::agent_chip()], "{both}");
+
+        let nobody = row_of(ground(), "smt-4kd3p.6");
+        assert!(chips(&nobody).is_empty(), "{nobody}");
+    }
+
+    /// The chip and the flag are drawn in the blocks the layout puts the
+    /// agent and the anomalies in.
+    #[test]
+    fn a_rows_chip_and_flag_keep_the_places_the_layout_gives_them() {
+        use crate::view::draw::tests::a_pane;
+
+        let layout = Layout {
+            title: vec![Cell::Title, Cell::Agent],
+            state: vec![Cell::Progress, Cell::Anomalies],
+            ..Layout::default()
+        };
+        let checked = with_the_bead_changed(|node| {
+            node.agent = Some(a_pane());
+            node.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+        });
+        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("a page");
+        let html = page(checked, &layout, &asked, drawing()).html;
+        let row = lines_html(&html)
+            .into_iter()
+            .find(|line| text_of(line).contains("smt-4kd3p.6"))
+            .expect("the bead has a row");
+
+        let more = row.find("<span class=\"more\">").expect("a title block");
+        let state = row.find("<span class=\"state\">").expect("a state");
+        let chip = row
+            .find(&format!(">{}</span>", phrase::agent_chip()))
+            .expect("a chip");
+        let flag = row.find("<span class=\"flag\"").expect("a flag");
+        assert!(more < chip && chip < state, "{row}");
+        assert!(state < flag, "{row}");
+    }
+
+    /// A shut run of finished beads says how many, and nothing about agents.
+    #[test]
+    fn a_run_of_finished_beads_says_how_many_finished() {
+        let html = page_at("/").html;
+        let runs: Vec<String> = lines_html(&html)
+            .into_iter()
+            .map(text_of)
+            .filter(|text| text.contains("finished"))
+            .collect();
+
+        assert_eq!(runs.len(), 1, "{html}");
+        assert!(
+            runs[0].trim_end().ends_with(&phrase::finished_run(3)),
+            "{runs:?}"
+        );
+    }
+
     /// A badge whose own words open with the warning sign is not a flag, so
     /// its words stay drawn beside an open bead.
     #[test]
@@ -2598,7 +2755,7 @@ mod tests {
         let lines = terminal_lines(&terminal_forest(&[]));
         let run = lines
             .iter()
-            .position(|line| line.contains("✓ 3 more"))
+            .position(|line| line.contains(&format!("✓ {}", phrase::finished_run(3))))
             .expect("the finished siblings are one run");
 
         let opened = page_at(&fold_link(&page_at("/").html, run)).html;
