@@ -327,11 +327,11 @@ fn project_progress(forest: &Forest, project: &str) -> Progress {
 fn a_project_line_rooted_at_a_bead_counts_the_tree_it_heads() {
     let mut forest = flatten(snapshot());
     let whole = project_progress(&forest, "dunwich");
-    focus_on(&mut forest, "dun-7");
+    focus_on(&mut forest, "dun-7.1");
 
     let heads = project_progress(&forest, "dunwich");
 
-    assert_eq!(Some(heads), row_of(&forest, "dun-7").progress);
+    assert_eq!(Some(heads), row_of(&forest, "dun-7.1").progress);
     assert_ne!(heads, whole);
 }
 
