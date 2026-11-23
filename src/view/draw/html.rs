@@ -464,11 +464,9 @@ impl Drawing<'_> {
             .filter_map(|(project, how_fresh)| Some((project.project.as_str(), how_fresh?)))
             .chain(unread);
         for (project, how_fresh) in troubled {
-            html.push_str(&format!(
-                "<span class=\"flag\">{} {}</span>",
-                escaped(phrase::mark(how_fresh, reads.now)),
-                escaped(project)
-            ));
+            html.push_str("<span class=\"flag\">");
+            freshness_mark(html, how_fresh, reads.now);
+            html.push_str(&format!(" {}</span>", escaped(project)));
         }
         html.push_str("</summary>");
         true
@@ -1148,24 +1146,45 @@ fn menu_name(list: Option<&List>) -> String {
     }
 }
 
-/// The mark beside a project's name, toned for how its read went, then when
-/// it was read.
+/// The mark beside a project's name, then when it was read.
 fn read_mark(html: &mut String, how_fresh: Freshness, now: DateTime<Utc>, offset: FixedOffset) {
-    let tone = if wants_attention(how_fresh.mark) {
-        " warn"
-    } else if how_fresh.mark == crate::view::Mark::Read {
-        " ok"
-    } else {
-        ""
-    };
-    html.push_str(&format!(
-        "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
-        escaped(phrase::mark(how_fresh, now))
-    ));
+    html.push_str("<span class=\"read\">");
+    freshness_mark(html, how_fresh, now);
     if let Some(at) = how_fresh.read_at {
         read_time(html, at, offset, now);
     }
     html.push_str("</span>");
+}
+
+/// How a project's read went, toned for it. A read outstanding is a ring the
+/// stylesheet turns, and held still once the read goes unanswered. The
+/// terminal turns its mark by drawing a frame from the clock, which a page
+/// drawn once cannot follow. Every read that has come back keeps the
+/// terminal's mark, which holds still.
+fn freshness_mark(html: &mut String, how_fresh: Freshness, now: DateTime<Utc>) {
+    use crate::view::Mark;
+    let tone = if wants_attention(how_fresh.mark) {
+        " warn"
+    } else if how_fresh.mark == Mark::Read {
+        " ok"
+    } else {
+        ""
+    };
+    let (ring, named) = match how_fresh.mark {
+        Mark::Collecting => (" reading", phrase::being_read()),
+        Mark::Unanswered => (" reading held", phrase::not_answering()),
+        Mark::Read | Mark::Refused | Mark::Lapsed => {
+            html.push_str(&format!(
+                "<span class=\"mark{tone}\">{}</span>",
+                escaped(phrase::mark(how_fresh, now))
+            ));
+            return;
+        }
+    };
+    html.push_str(&format!(
+        "<span class=\"mark{ring}{tone}\" role=\"img\" aria-label=\"{}\"></span>",
+        escaped(named)
+    ));
 }
 
 /// When something was read `at`, as the time of day in `offset`, which the
@@ -1526,6 +1545,11 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .heading .state a:hover{text-decoration:underline}\
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
+.mark.reading{display:inline-block;box-sizing:border-box;width:10px;height:10px;border:1.75px solid currentColor;\
+border-top-color:transparent;border-radius:50%;vertical-align:-1px;animation:reading 1s linear 5}\
+.mark.reading.held{animation:none;border-style:dotted;border-top-color:currentColor}\
+@keyframes reading{to{transform:rotate(360deg)}}\
+@media (prefers-reduced-motion:reduce){.mark.reading{animation:none}}\
 .projects{border-bottom:1px solid var(--line)}\
 .projects>summary{list-style:none;cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;\
 min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:var(--size-detail);color:var(--muted)}\
@@ -2939,9 +2963,104 @@ mod tests {
         let asked = Asked::of("/").expect("the forest");
         let html = page(ground(), &Layout::default(), &asked, drawn).html;
         assert!(
-            line_html(&html, 0).contains("<span class=\"mark warn\">"),
+            line_html(&html, 0).contains("<span class=\"mark reading held warn\""),
             "{}",
             line_html(&html, 0)
+        );
+    }
+
+    /// A page drawn with every project's read out for `outstanding`, which
+    /// the read may be for `patience` before it goes unanswered, at `at`.
+    fn drawn_mid_read(asked: &str, outstanding: i64, patience: i64, at: DateTime<Utc>) -> String {
+        let drawn = Drawn {
+            at,
+            collecting: vec![Awaited {
+                wanted: crate::app::Wanted::Everything,
+                asked_at: drawn_at() - chrono::TimeDelta::seconds(outstanding),
+                patience: chrono::TimeDelta::seconds(patience),
+            }],
+            ..drawing()
+        };
+        let asked = Asked::of(asked).expect("a page is at the address");
+        page(beside_dunwich(), &Layout::default(), &asked, drawn).html
+    }
+
+    /// Whether `html` holds a character of the braille block the terminal
+    /// turns its mark through.
+    fn has_braille(html: &str) -> bool {
+        html.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c))
+    }
+
+    /// A project being read wears a ring the stylesheet turns, named for a
+    /// reader who hears the page, and no frame of the terminal's mark. The
+    /// page needs no clock to draw it, so a page drawn a moment later in the
+    /// same read is the same page.
+    #[test]
+    fn a_project_being_read_wears_a_turning_ring_and_no_terminal_frame() {
+        let reading = format!(
+            "<span class=\"mark reading\" role=\"img\" aria-label=\"{}\"></span>",
+            phrase::being_read()
+        );
+        let html = drawn_mid_read("/", 1, 30, drawn_at());
+        assert!(line_html(&html, 0).contains(&reading), "{html}");
+        assert!(!has_braille(&html), "{html}");
+        let later = drawn_mid_read("/", 1, 30, drawn_at() + chrono::TimeDelta::milliseconds(80));
+        assert_eq!(later, html);
+    }
+
+    /// A read gone unanswered wears the same ring held still, in the
+    /// warning's colour, on its heading and on the line the projects fold
+    /// into, and no frame of the terminal's mark on either.
+    #[test]
+    fn a_project_whose_read_is_held_wears_the_ring_stopped() {
+        let held = format!(
+            "<span class=\"mark reading held warn\" role=\"img\" aria-label=\"{}\"></span>",
+            phrase::not_answering()
+        );
+        let forest = drawn_mid_read("/", 60, 30, drawn_at());
+        assert!(line_html(&forest, 0).contains(&held), "{forest}");
+        assert!(!has_braille(&forest), "{forest}");
+
+        let ready = Asked::default().listing(listed(None, true));
+        let listed = drawn_mid_read(&ready, 60, 30, drawn_at());
+        assert!(
+            folded(&listed).contains(&format!("<span class=\"flag\">{held} dunwich</span>")),
+            "{}",
+            folded(&listed)
+        );
+        assert!(!has_braille(&listed), "{listed}");
+    }
+
+    /// The ring turns for five seconds at most, and then rests where it
+    /// started, so motion the reader cannot stop ends of itself.
+    #[test]
+    fn the_ring_stops_turning_after_five_seconds() {
+        assert!(STYLE.contains("animation:reading 1s linear 5}"), "{STYLE}");
+    }
+
+    /// The ring stops turning for a reader who has asked for less motion,
+    /// and still reads as a read under way.
+    #[test]
+    fn the_ring_holds_still_for_a_reader_who_asks_for_less_motion() {
+        assert!(
+            STYLE.contains("@media (prefers-reduced-motion:reduce){.mark.reading{animation:none}}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".mark.reading.held{animation:none"),
+            "{STYLE}"
+        );
+    }
+
+    /// Once the ring holds still, a read gone unanswered still differs from
+    /// one under way by its shape: a closed dotted ring against an open arc.
+    #[test]
+    fn a_held_ring_is_told_from_a_turning_one_by_its_shape_as_well_as_its_colour() {
+        assert!(
+            STYLE.contains(
+                ".mark.reading.held{animation:none;border-style:dotted;border-top-color:currentColor}"
+            ),
+            "{STYLE}"
         );
     }
 
@@ -3083,8 +3202,13 @@ mod tests {
             ..drawing()
         };
         let asked = Asked::of("/").expect("the forest");
-        let lines = page_lines(&page(ground(), &Layout::default(), &asked, drawn).html);
-        assert!(lines[0].starts_with("▾ summit-works ⠿"), "{}", lines[0]);
+        let html = page(ground(), &Layout::default(), &asked, drawn).html;
+        assert!(
+            line_html(&html, 0).contains("<span class=\"mark reading held warn\""),
+            "{}",
+            line_html(&html, 0)
+        );
+        let lines = page_lines(&html);
         assert!(lines
             .iter()
             .any(|line| line.contains("apply the two niri settings")));
@@ -4559,15 +4683,12 @@ mod tests {
             "{line}"
         );
         assert!(line.contains(&fresh.to_rfc3339()), "{line}");
-        let unanswered = phrase::mark(
-            crate::view::Freshness {
-                mark: crate::view::Mark::Unanswered,
-                read_at: None,
-            },
-            drawn_at(),
-        );
         assert!(
-            line.contains(&format!("<span class=\"flag\">{unanswered} dunwich</span>")),
+            line.contains(&format!(
+                "<span class=\"flag\"><span class=\"mark reading held warn\" role=\"img\" \
+                 aria-label=\"{}\"></span> dunwich</span>",
+                phrase::not_answering()
+            )),
             "{line}"
         );
         assert!(!text_of(line).contains(PROJECT), "{line}");
@@ -4613,7 +4734,9 @@ mod tests {
             drawn_at(),
         );
         assert!(
-            line.contains(&format!("<span class=\"flag\">{refused} dunwich</span>")),
+            line.contains(&format!(
+                "<span class=\"flag\"><span class=\"mark warn\">{refused}</span> dunwich</span>"
+            )),
             "{line}"
         );
 
