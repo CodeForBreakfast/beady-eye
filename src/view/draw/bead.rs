@@ -16,21 +16,21 @@ use crate::view::row::{self, Cell, Layout, Row, Widths, AGENT, WARNING};
 use super::tone::{status_style, tone};
 use super::{beside, done, structure, Reference};
 
-/// A run of closed siblings said as a count, carrying the glyph each of them
-/// would carry on a line of its own.
+/// A run of closed siblings said as `said`, a count, carrying the glyph each
+/// of them would carry on a line of its own.
 ///
 /// `lines::split` builds a run out of closed beads and nothing else, so this
 /// is not a summary over mixed states — it is the one state every member
 /// holds. It goes through `status_glyph` and `status_style` exactly as a
 /// bead's does, so a run cannot drift away from the beads it stands for.
-pub(super) fn elided_run(prefix: &str, count: usize) -> Fitted {
+pub(super) fn elided_run(prefix: &str, said: &str) -> Fitted {
     let status = Status::Closed;
     let glyph = row::status_glyph(&status);
     Fitted::new(
         vec![
             structure(prefix),
             Span::styled(glyph.to_string(), status_style(&status)),
-            Span::raw(format!(" {}", phrase::elided(count))),
+            Span::raw(format!(" {said}")),
         ],
         Vec::new(),
         Vec::new(),
@@ -99,7 +99,8 @@ pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layou
 
 /// The cells a reference to this row's bead is drawn from, the glyph, the id
 /// and the title, each as this row draws it, then the row's progress where
-/// the layout draws it, and the row without any of them.
+/// the layout draws it, and the row without any of them. The row is without
+/// its agent and anomalies too, which a page says in words of its own.
 ///
 /// The id is drawn through the forest's width for it, as the identity draws
 /// it, so the titles of a column of references start together.
@@ -109,7 +110,14 @@ pub(super) fn referenced_line(
     widths: &Widths,
     layout: &Layout,
 ) -> (Reference, Option<row::Progress>, Fitted) {
-    const REFERENCE: [Cell; 4] = [Cell::Glyph, Cell::Id, Cell::Title, Cell::Progress];
+    const DRAWN_APART: [Cell; 6] = [
+        Cell::Glyph,
+        Cell::Id,
+        Cell::Title,
+        Cell::Progress,
+        Cell::Agent,
+        Cell::Anomalies,
+    ];
     let walk = Walk {
         row,
         layout,
@@ -130,7 +138,7 @@ pub(super) fn referenced_line(
     let without = |cells: &[Cell]| {
         cells
             .iter()
-            .filter(|cell| !REFERENCE.contains(cell))
+            .filter(|cell| !DRAWN_APART.contains(cell))
             .cloned()
             .collect()
     };

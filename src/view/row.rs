@@ -9,6 +9,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::config::Colour;
+use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
 use crate::model::join::AgentRef;
 use crate::model::snapshot::{Counts, Node};
@@ -57,9 +58,10 @@ pub struct Row {
     /// Whether some agent besides the one on the claim watches the bead,
     /// which the agent cell marks.
     pub watched: bool,
-    /// Every anomaly rule that fired, said one at a time, because the forest
-    /// draws them in one cell and the bead window on a row each.
-    pub anomalies: Vec<String>,
+    /// Every anomaly rule that fired, left for each view to say: the forest
+    /// draws them in one cell, the bead window on a row each, and a web page
+    /// as one sentence.
+    pub anomalies: Vec<Anomaly>,
     /// The work this line is shut over, where it is shut over any: the beads
     /// its fold hides, counted once each.
     ///
@@ -348,7 +350,7 @@ pub fn cells(
         agent: node.agent.as_ref().map(agent_marker),
         agent_briefly: node.agent.as_ref().map(agent_briefly),
         watched: node.watching.is_watched(),
-        anomalies: node.anomalies.iter().map(phrase::anomaly).collect(),
+        anomalies: node.anomalies.clone(),
         shut_over,
         notes,
         step: None,
@@ -439,13 +441,14 @@ fn named(agent: &AgentRef, doing: &str) -> String {
 
 /// Every rule that fired on one cell, not the first: an old claim whose agent
 /// has died is both, and the age is the part that says whether to care.
-pub fn anomaly_marker(said: &[String]) -> Option<String> {
+pub fn anomaly_marker(fired: &[Anomaly]) -> Option<String> {
+    let said: Vec<String> = fired.iter().map(phrase::anomaly).collect();
     (!said.is_empty()).then(|| format!("{WARNING} {}", said.join(" · ")))
 }
 
 /// One anomaly where there is a row to give it rather than a cell to share.
-pub fn anomaly_alone(said: &str) -> String {
-    format!("{WARNING} {said}")
+pub fn anomaly_alone(fired: &Anomaly) -> String {
+    format!("{WARNING} {}", phrase::anomaly(fired))
 }
 
 #[cfg(test)]
@@ -656,7 +659,7 @@ mod tests {
     fn a_bead_with_nothing_wrong_carries_no_marker_at_all() {
         let row = cells(&node("smt-4kd3p.20", Status::Open), Some(ROOT), None, None);
 
-        assert_eq!(row.anomalies, Vec::<String>::new());
+        assert_eq!(row.anomalies, Vec::<Anomaly>::new());
         assert_eq!(row.agent, None);
         assert_eq!(row.notes, Vec::<String>::new());
     }
