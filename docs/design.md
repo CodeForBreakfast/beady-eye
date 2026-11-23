@@ -3920,10 +3920,10 @@ reads says which.
 
 The groups rest by the same rule as the trees. A count is not a view of what it
 holds, so a group over live panes — unconfigured, conflicts, unattributed —
-rests open; a group that reports on the reading rather than on work in flight —
-failed projects, hidden trees — rests shut, and hidden trees in particular
-holds trees hidden *because* nothing live is in them, so opening it would
-contradict the rule it exists to serve. Hidden trees is a group nothing went
+rests open. Failed projects rests open too, because a tracker that could not be
+read is the one thing a reader must not miss, and a count alone does not say
+which. Hidden trees rests shut: it holds trees hidden *because* nothing live is
+in them, so opening it would contradict the rule it exists to serve. Hidden trees is a group nothing went
 wrong in — the filter put them there and a key takes them back out — so it is
 drawn without a warning. It does not name that key: a project's line says only
 what is so of that project, and a key that acts on the whole screen is offered
