@@ -951,12 +951,12 @@ nav{--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' v
 --lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
 display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
 border-bottom:1px solid var(--line);background:var(--surface)}\
-nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display)}\
+nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display);white-space:nowrap}\
 nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
 .lists summary::after,.lists a::before,nav button::before{content:\"\";flex:none;background:currentColor;\
 -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
-.lists{position:relative;min-width:0}\
+.lists{position:relative;min-width:0;max-width:280px}\
 .lists summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border:1px solid var(--line);border-radius:8px;font-weight:500}\
 .lists summary::-webkit-details-marker{display:none}\
