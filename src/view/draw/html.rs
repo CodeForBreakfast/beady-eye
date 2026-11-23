@@ -41,8 +41,9 @@ pub struct Answer {
     pub html: String,
 }
 
-/// When a page is drawn, the offset from UTC it says the time of day at, the
-/// reads out as it is drawn, and the change to what the server holds that
+/// When a page is drawn, the offset from UTC it says a time at where the
+/// browser runs no script to say it in the reader's own zone, the reads out
+/// as it is drawn, and the change to what the server holds that
 /// it is drawn from, which its script asks for the changes since.
 #[derive(Debug, Clone)]
 pub struct Drawn {
@@ -139,7 +140,7 @@ fn head(title: &str, change: Option<u64>) -> String {
     let (named, script) = match change {
         Some(change) => (
             format!(" data-change=\"{change}\""),
-            format!("<script>{KEPT_CURRENT}</script>"),
+            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}</script>"),
         ),
         None => (String::new(), String::new()),
     };
@@ -339,15 +340,13 @@ impl Drawing<'_> {
                 "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
                 escaped(phrase::mark(how_fresh, reads.now))
             ));
-            if let (Some(when), Some(at)) = (
-                phrase::read_at(how_fresh, offset, reads.now),
-                how_fresh.read_at,
-            ) {
+            if let Some(at) = how_fresh.read_at {
                 html.push_str(&format!(
-                    " <time datetime=\"{}\" title=\"{}\">{}</time>",
+                    " {} <time datetime=\"{}\" title=\"{}\">{}</time>",
+                    escaped(phrase::read_at()),
                     at.to_rfc3339(),
-                    escaped(&phrase::read_in_full(at, offset)),
-                    escaped(&when)
+                    escaped(&phrase::instant_in_full(at, offset)),
+                    escaped(&phrase::time_of_day(at, offset, reads.now))
                 ));
             }
             html.push_str("</span>");
@@ -1090,6 +1089,32 @@ border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)
 width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
 .bead .g.closed::after{content:none}}";
 
+/// The part of the page's script that says each time on the page again in
+/// the reader's own zone, since what a browser asks the server for never
+/// says which zone the reader is in. It says it in the shapes
+/// `phrase::time_of_day` and `phrase::instant_in_full` draw, as the page
+/// opens and on each page that keeps it current.
+const IN_READERS_ZONE: &str = r##"const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+  "August", "September", "October", "November", "December"];
+const inReadersZone = (on) => {
+  const two = (number) => String(number).padStart(2, "0");
+  const today = new Date().toDateString();
+  for (const time of on.querySelectorAll("time[datetime]")) {
+    const at = new Date(time.getAttribute("datetime"));
+    if (isNaN(at)) continue;
+    const clock = two(at.getHours()) + ":" + two(at.getMinutes());
+    const month = MONTHS[at.getMonth()];
+    time.textContent = at.toDateString() === today
+      ? clock
+      : `${clock} on ${at.getDate()} ${month.slice(0, 3)}`;
+    const east = -at.getTimezoneOffset();
+    const zone = (east < 0 ? "-" : "+") + two(Math.floor(Math.abs(east) / 60)) + ":" + two(Math.abs(east) % 60);
+    time.title = `${clock}:${two(at.getSeconds())} ${zone} on ${at.getDate()} ${month} ${at.getFullYear()}`;
+  }
+};
+addEventListener("DOMContentLoaded", () => inReadersZone(document));
+"##;
+
 /// The page's one script, which keeps it current. It asks the page's own
 /// address for its changes since the one the page was drawn from, and the
 /// server sends them down that one connection: the whole page first, and
@@ -1168,6 +1193,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const typed = field && field.value !== field.defaultValue ? field.value : null;
     const caret = field && field === document.activeElement
       && [field.selectionStart, field.selectionEnd, field.selectionDirection];
+    inReadersZone(drawn);
     document.title = drawn.title;
     document.body.replaceWith(drawn.body);
     const menus = [...document.querySelectorAll("details")];
@@ -1583,7 +1609,7 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split('"').next())
             .expect("a title");
-        assert!(full.starts_with("read at 11:21:"), "{full}");
+        assert!(full.starts_with("11:21:"), "{full}");
         assert!(full.contains(" on "), "{full}");
         assert!(time.starts_with("<time datetime=\""), "{time}");
     }
