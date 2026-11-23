@@ -302,7 +302,9 @@ const NARROWEST_WRAP: usize = 60;
 
 /// The column `text` was wrapped at, where it was wrapped: its widest line
 /// of several words, since a wrap sets a second word on a line only where
-/// it fits. Code and tables are laid out by their author, and their lines
+/// it fits. A text is wrapped only where at least two such lines reach a
+/// terminal's wrap, since one long line is as likely a line nobody
+/// wrapped. Code and tables are laid out by their author, and their lines
 /// say nothing of it.
 fn wrap_width(text: &str) -> Option<usize> {
     let laid_out: Vec<Range<usize>> = Parser::new_ext(text, Options::ENABLE_TABLES)
@@ -311,7 +313,7 @@ fn wrap_width(text: &str) -> Option<usize> {
         .map(|(_, at)| at)
         .collect();
     let mut from = 0;
-    let mut widest = 0;
+    let mut wide = Vec::new();
     for line in text.split_inclusive('\n') {
         let at = from..from + line.len();
         from = at.end;
@@ -319,11 +321,17 @@ fn wrap_width(text: &str) -> Option<usize> {
         let in_layout = laid_out
             .iter()
             .any(|block| block.start < at.end && at.start < block.end);
-        if !in_layout && line.split_whitespace().nth(1).is_some() {
-            widest = widest.max(columns_of(line));
+        if !in_layout
+            && line.split_whitespace().nth(1).is_some()
+            && columns_of(line) >= NARROWEST_WRAP
+        {
+            wide.push(columns_of(line));
         }
     }
-    (widest >= NARROWEST_WRAP).then_some(widest)
+    if wide.len() < 2 {
+        return None;
+    }
+    wide.into_iter().max()
 }
 
 /// How far into `line` its text starts, past any quote's marks, and its
@@ -531,6 +539,15 @@ mod tests {
         assert_eq!(
             html(wrapped),
             format!("<p>{}</p>", wrapped.replace('\n', " "))
+        );
+    }
+
+    /// One long line is no sign of a wrap, so the line after it stays apart.
+    #[test]
+    fn one_long_line_says_nothing_of_a_wrap() {
+        assert_eq!(
+            html("The fog signal failed twice tonight, and the engineer is called out.\n— The night crew"),
+            "<p>The fog signal failed twice tonight, and the engineer is called out.<br>— The night crew</p>"
         );
     }
 
