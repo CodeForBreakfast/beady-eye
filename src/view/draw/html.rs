@@ -928,6 +928,7 @@ vertical-align:top;width:100%;white-space:normal}\
 .line.heading{align-items:baseline;flex-wrap:wrap;gap:4px 12px;width:auto;padding-block:14px 8px;margin-bottom:4px;\
 border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
 .line.heading:not(:first-child){margin-top:18px}\
+.heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
 .heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>span{white-space:nowrap}\
