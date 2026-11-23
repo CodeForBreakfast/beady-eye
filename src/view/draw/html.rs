@@ -230,11 +230,14 @@ impl Drawing<'_> {
         // An address can name a root the forest no longer draws, and the
         // page then draws every tree, so it says so rather than drop it.
         let said = if self.forest.is_focused() {
-            phrase::focused().to_string()
+            phrase::showing_only().to_string()
         } else {
             format!("{WARNING} {}", phrase::not_drawn(root.key()))
         };
-        html.push_str(&format!("<p class=\"rooted\">{} ", escaped(&said)));
+        html.push_str(&format!(
+            "<p class=\"rooted\"><span class=\"said\">{}</span> ",
+            escaped(&said)
+        ));
         if let Some(node) = self
             .forest
             .snapshot()
@@ -248,7 +251,7 @@ impl Drawing<'_> {
             );
         }
         html.push_str(&format!(
-            " <a class=\"close\" href=\"{}\">{}</a></p>\n",
+            " <a class=\"all\" href=\"{}\">{}</a></p>\n",
             escaped(&self.asked.rooting(None)),
             escaped(phrase::show_all())
         ));
@@ -828,10 +831,16 @@ nav input::placeholder{color:transparent}\
 .lists{position:relative}.lists summary{cursor:pointer}\
 .lists[open] a{display:block;padding:2px 0}\
 .lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
-.rooted{margin:0;padding:4px 12px;background:var(--accent-soft)}\
+.rooted{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
+background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5px}\
+.rooted .said{color:var(--muted);min-width:0;overflow-wrap:anywhere}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
+.rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+.rooted .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
+.rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
+.rooted{padding:9px 14px}.rooted .all::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 .line{width:auto;white-space:pre-wrap;position:relative}\
@@ -2658,7 +2667,10 @@ mod tests {
         );
         assert_eq!(page_lines(&rooted), lines);
         assert_eq!(shown_line(&rooted), terminal.selected_line());
-        assert!(text_of(&rooted).contains(phrase::focused()), "{rooted}");
+        assert!(
+            text_of(&rooted).contains(phrase::showing_only()),
+            "{rooted}"
+        );
         assert!(!rooted.contains(phrase::only_this_tree()), "{rooted}");
 
         let whole = page_at(&link_saying(&rooted, phrase::show_all())).html;
@@ -2819,6 +2831,29 @@ mod tests {
         let references = references_on(&expanded);
         assert!(references["smt-4kd3p.1"].list.is_none(), "{expanded}");
         assert!(references["smt-4kd3p.4"].list.is_some(), "{expanded}");
+    }
+
+    /// The band over a page drawn with one bead as its only root says the
+    /// page shows only that bead, names it by its title, then offers every
+    /// tree back.
+    #[test]
+    fn the_band_over_one_tree_says_showing_only_the_bead_then_show_all_trees() {
+        let bead = key("smt-4kd3p.6");
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&bead)).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+        let band = &rooted[rooted.find("<p class=\"rooted\">").expect("the band")..];
+        let band = text_of(&band[..band.find("</p>").expect("the band ends")]);
+        let ground = ground();
+        let title = &ground.node(&bead).expect("the bead is held").title;
+        let said = [phrase::showing_only(), title, phrase::show_all()].map(|said| {
+            band.find(said)
+                .unwrap_or_else(|| panic!("{said:?} in {band:?}"))
+        });
+        assert!(said.is_sorted(), "{band:?}");
+        assert_eq!(phrase::show_all(), "Show all trees");
     }
 
     /// The bead the forest is drawn with as its only root opens from the
