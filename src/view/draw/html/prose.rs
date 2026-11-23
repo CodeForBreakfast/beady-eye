@@ -12,6 +12,7 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+use crate::view::markdown::columns_of;
 use crate::view::show;
 
 use super::escaped;
@@ -249,7 +250,7 @@ impl Writing<'_> {
         list_marker(words).is_none()
             && !is_a_label(word)
             && indent <= text_column(before)
-            && before.trim_end().chars().count() + 1 + word.chars().count() > width
+            && columns_of(before.trim_end()) + 1 + columns_of(word) > width
     }
 
     /// The text that has arrived, each line of it a line of its own. Inside
@@ -319,7 +320,7 @@ fn wrap_width(text: &str) -> Option<usize> {
             .iter()
             .any(|block| block.start < at.end && at.start < block.end);
         if !in_layout && line.split_whitespace().nth(1).is_some() {
-            widest = widest.max(line.chars().count());
+            widest = widest.max(columns_of(line));
         }
     }
     (widest >= NARROWEST_WRAP).then_some(widest)
@@ -518,6 +519,19 @@ mod tests {
              and the keeper follows it to the letter."
         ));
         assert!(!drawn.contains("<br>"), "{drawn}");
+    }
+
+    /// A wrap is measured in a terminal's columns, where a wide glyph takes
+    /// two, so text in a wide script fills the page as well.
+    #[test]
+    fn a_wrap_of_wide_glyphs_is_measured_in_columns() {
+        let wrapped = "灯台点検 霧笛試験 毎週実施 冬季記録 信号日誌 燃焼時間 計測完了 報告提出\n\
+                       灯台点検 霧笛試験 毎週実施 冬季記録 信号日誌 燃焼時間 計測完了 報告提出\n\
+                       灯台点検 霧笛試験";
+        assert_eq!(
+            html(wrapped),
+            format!("<p>{}</p>", wrapped.replace('\n', " "))
+        );
     }
 
     /// In a text wrapped for a terminal, a line the next word would have
