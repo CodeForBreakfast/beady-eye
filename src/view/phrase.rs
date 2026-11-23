@@ -575,12 +575,8 @@ pub fn to_check_in_these_trees(count: usize) -> String {
 }
 
 /// The web page's link from that count to the trees, which draw those beads.
-pub fn show_them(count: usize) -> &'static str {
-    if count == 1 {
-        "show it"
-    } else {
-        "show them"
-    }
+pub fn show_the_trees() -> &'static str {
+    "show the trees"
 }
 
 /// How far through a project's trees are, said in a web page's project

@@ -690,7 +690,7 @@ impl Drawing<'_> {
                     phrase::to_check_in_these_trees(count)
                 )),
                 escaped(&self.asked.listing(None)),
-                escaped(phrase::show_them(count))
+                escaped(phrase::show_the_trees())
             ));
         }
         html.push_str("</footer>");
@@ -895,11 +895,12 @@ border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
 .line.heading:not(:first-child){margin-top:18px}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
 .heading .state{display:flex;gap:14px;align-items:baseline;padding-left:0}\
+.heading .read,.heading .state>span{white-space:nowrap}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
 .prog{display:inline-flex;align-items:center;gap:6px}\
 .prog .bar{width:44px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}\
 .prog .bar>span{display:block;height:100%;background:var(--ok)}\
-footer{position:sticky;bottom:0}\
+footer{position:sticky;bottom:0;max-height:40dvh;overflow-y:auto}\
 footer p,.missing{margin:0}\
 footer .said{padding:8px 12px;background:var(--surface)}\
 footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;\
@@ -966,7 +967,7 @@ background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-footer{position:static}footer .notice{padding:9px 16px}\
+footer{position:static;max-height:none}footer .notice{padding:9px 16px}\
 .line.heading{flex-wrap:wrap;gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
 .heading .state{flex:0 1 auto;flex-wrap:wrap;gap:4px 14px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
@@ -1532,7 +1533,7 @@ mod tests {
             "{footer}"
         );
 
-        let trees = Asked::of(&link_saying(footer, phrase::show_them(1))).expect("the trees");
+        let trees = Asked::of(&link_saying(footer, phrase::show_the_trees())).expect("the trees");
         let trees = page(checked(), &Layout::default(), &trees, drawing()).html;
         assert!(!trees.contains("<a class=\"ready on\""), "{trees}");
         assert!(!trees.contains("<footer>"), "{trees}");
