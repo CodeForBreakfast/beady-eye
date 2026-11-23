@@ -955,7 +955,7 @@ width:max-content;min-width:100%;position:relative}\
 @media (hover:hover){.line:not(.shown):has(>a.bead):hover{background:var(--sunk)}}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
-.line.shown{position:relative}#shown{position:absolute;top:0}\
+#shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
 .line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
 .line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
@@ -1075,8 +1075,11 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line>.left>.rails+span{min-width:0}\
 .line i,.line b,.line u{width:14px}.line .deep{display:none}\
 .line i::before,.line u::before,.line u::after{left:10px}\
-.line>:has(+.bead)::after,.line .rails::after{align-self:flex-start;width:32px;height:20px;line-height:20px}\
-.line a.fold{align-self:flex-start;width:32px;height:44px;place-items:start center;padding-top:9px}\
+.line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after\
+{align-self:flex-start;width:32px;height:20px;line-height:20px}\
+.line a.fold{align-self:flex-start;width:32px;height:44px}\
+.line>:has(+.bead)>a.fold{place-items:start center;padding-top:9px}\
+.line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line .g{grid-area:1/1;font-size:14px;text-align:center}\
@@ -2191,9 +2194,13 @@ mod tests {
             assert!(!folding.is_empty(), "{target} draws a fold");
             for at in folding {
                 let fold = fold_on(&html, at);
-                let named = fold.contains(" aria-label=\"Fold ") || fold.contains(" aria-label=\"Unfold ");
+                let named =
+                    fold.contains(" aria-label=\"Fold ") || fold.contains(" aria-label=\"Unfold ");
                 let says = fold.contains(" aria-expanded=\"");
-                assert!(named && says && fold.ends_with("\"></a>"), "{target}: {fold}");
+                assert!(
+                    named && says && fold.ends_with("\"></a>"),
+                    "{target}: {fold}"
+                );
             }
         }
     }
@@ -2716,16 +2723,10 @@ mod tests {
             .filter(|&at| line_html(&html, at).contains("class=\"bead\""))
             .collect();
         assert_eq!(beads, [1, 2, 3, 4]);
-        let (leaf, shut) = (3, 4);
         for at in beads {
             let line = line_html(&html, at);
             let (shape, between) = parts(line);
-            let hung = match at {
-                _ if at == leaf => "span.rails",
-                _ if at == shut => "a.fold shut rails",
-                _ => "a.fold rails",
-            };
-            assert_eq!(shape, [hung, "a.bead", "span.state"], "{line}");
+            assert_eq!(shape, ["span.rails", "a.bead", "span.state"], "{line}");
             assert_eq!(between, "", "{line}");
 
             let (reference, between) = parts(inside(line, "bead"));
@@ -2787,7 +2788,7 @@ mod tests {
         let line = line_html(&html, 2);
         assert_eq!(
             parts(line).0,
-            ["a.fold rails", "a.bead", "span.more", "span.state"],
+            ["span.rails", "a.bead", "span.more", "span.state"],
             "{line}"
         );
         let more = inside(line, "more");
@@ -2896,12 +2897,16 @@ mod tests {
     }
 
     /// The elements drawn as rails on line `at`, each as its tag and its
-    /// class: the levels inside what the line hangs under.
+    /// class: the levels inside what the line hangs under, without its fold.
     fn rails(html: &str, at: usize) -> Vec<String> {
         let line = line_html(html, at);
         let hung = &line[..element_end(line, 0)];
         let content = hung.find('>').expect("the tag ends") + 1;
-        parts(&hung[content..hung.rfind('<').expect("a closing tag")]).0
+        parts(&hung[content..hung.rfind('<').expect("a closing tag")])
+            .0
+            .into_iter()
+            .filter(|part| !part.starts_with("a.fold"))
+            .collect()
     }
 
     /// Each level a line hangs under is a rail, except the column a
@@ -2960,8 +2965,8 @@ mod tests {
         assert_eq!(rails(&open, waiting), ["u.last up"]);
     }
 
-    /// A fold's chevron is masked on a box of its own, never on the fold's
-    /// link, whose focus ring a mask would clip.
+    /// A fold's chevron is masked on a box of its own inside the fold, never
+    /// on the fold itself, whose focus ring a mask would clip.
     #[test]
     fn no_fold_link_is_masked_itself() {
         let masked: Vec<&str> = STYLE
@@ -2973,33 +2978,36 @@ mod tests {
             .collect();
         assert!(!masked.is_empty(), "{STYLE}");
         for selector in masked {
-            assert!(selector.ends_with("::after"), "{selector}");
+            assert!(selector.ends_with("::before"), "{selector}");
         }
     }
 
-    /// Whatever a line hangs under ends in one box for a chevron, folding or
-    /// not, sized by one rule at each width, with a selector as specific as
-    /// the other width's. So a row that folds starts its title where a row
-    /// beside it that does not fold starts its own.
+    /// Whatever a line hangs under ends in a box as wide as the fold, folding
+    /// or not, sized at each width by selectors as specific as the other
+    /// width's. So a row that folds starts its title where a row beside it
+    /// that does not fold starts its own.
     #[test]
-    fn every_prefix_ends_in_one_box_for_a_chevron_at_each_width() {
+    fn every_prefix_ends_in_a_box_as_wide_as_the_fold_at_each_width() {
         let phone = STYLE
             .find("@media (max-width:720px){")
             .expect("a phone's rules");
         for (rules, width) in [
             (&STYLE[..phone], "width:28px"),
-            (&STYLE[phone..], "width:22px"),
+            (&STYLE[phone..], "width:32px"),
         ] {
-            let sized = rules
+            let sized: Vec<&str> = rules
                 .split('}')
-                .find(|rule| rule.contains(width))
-                .expect("the width sizes the box a prefix ends in");
+                .filter(|rule| rule.contains(width))
+                .collect();
             for selector in [
-                ".line>:has(+.bead)::after",
-                ".line .rails::after",
-                ".line a.fold::after",
+                ".line>:has(+.bead):not(:has(>.fold))::after",
+                ".line .rails:not(:has(>.fold))::after",
+                ".line a.fold{",
             ] {
-                assert!(sized.contains(selector), "{width}: {sized}");
+                assert!(
+                    sized.iter().any(|rule| rule.contains(selector)),
+                    "{width}: {selector}: {sized:#?}"
+                );
             }
         }
     }
@@ -3011,12 +3019,12 @@ mod tests {
         let html = page_at("/").html;
         let folds: Vec<(String, bool)> = (0..lines_html(&html).len())
             .filter(|&at| line_html(&html, at).contains("class=\"bead"))
-            .filter(|&at| line_html(&html, at).starts_with("<a class=\"fold"))
+            .filter(|&at| line_html(&html, at).contains("<a class=\"fold"))
             .map(|at| {
                 let line = line_html(&html, at);
                 (
                     words(&text_of(inside(line, "title"))),
-                    line.starts_with("<a class=\"fold shut"),
+                    line.contains("<a class=\"fold shut"),
                 )
             })
             .collect();
