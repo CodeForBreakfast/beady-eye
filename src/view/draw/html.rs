@@ -450,6 +450,9 @@ impl Drawing<'_> {
         }
         html.push_str("<span class=\"state\">");
         spans(html, whole.state, Block::State, whole.marks, 0);
+        if column && !whole.state.is_empty() {
+            html.push_str(&indent());
+        }
         match progressed {
             Some(Progress { finished, total }) => {
                 progress(html, finished, total, &done(finished, total));
@@ -2794,14 +2797,18 @@ mod tests {
             title: vec![Cell::Title, Cell::Progress, Cell::Badges],
             ..Layout::default()
         };
-        let asked = Asked::of("/").expect("the forest");
+        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("the bead's page");
         let html = page(checked, &layout, &asked, drawing()).html;
         let row = bead_lines(&html)
             .into_iter()
-            .find(|row| text_of(row).contains("smt-4kd3p.6"))
+            .find(|row| text_of(row).contains("apply the two niri settings"))
             .expect("the bead has a row");
         let (state, _) = parts(inside(row, "state"));
         assert_eq!(state, ["span.flag", "span.prog"], "{row}");
+        assert!(
+            words(&text_of(inside(row, "state"))).ends_with(" 0/3"),
+            "{row}"
+        );
         assert!(!row.contains("class=\"more\""), "{row}");
     }
 
@@ -2815,7 +2822,7 @@ mod tests {
         let asked = Asked::of("/").expect("the forest");
         let html = page(ground(), &layout, &asked, drawing()).html;
         for row in bead_lines(&html) {
-            assert!(!row.contains("prog"), "{row}");
+            assert!(!row.contains("class=\"prog\""), "{row}");
         }
     }
 
