@@ -902,7 +902,7 @@ const STYLE: &str = "\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
 body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
-body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
+body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto;align-content:start}\
 .line>:has(+.bead),.line>.left>:not(:last-child),.code{font-family:var(--code)}\
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
