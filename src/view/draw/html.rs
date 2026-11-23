@@ -925,11 +925,11 @@ vertical-align:top;width:100%;white-space:normal}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
 .page .head .title{font-family:var(--display);font-weight:600}\
 .close{display:inline-block;margin-bottom:8px}\
-.line.heading{align-items:baseline;gap:12px;padding-block:14px 8px;margin-bottom:4px;\
+.line.heading{align-items:baseline;flex-wrap:wrap;gap:4px 12px;width:auto;padding-block:14px 8px;margin-bottom:4px;\
 border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
 .line.heading:not(:first-child){margin-top:18px}\
 .heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
-.heading .state{display:flex;gap:14px;align-items:baseline;padding-left:0}\
+.heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>span{white-space:nowrap}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
 .prog{display:inline-flex;align-items:center;gap:6px}\
@@ -1008,8 +1008,7 @@ html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
 footer .notice{padding:9px 16px}\
-.line.heading{flex-wrap:wrap;gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
-.heading .state{flex:0 1 auto;flex-wrap:wrap;gap:4px 14px}\
+.line.heading{gap:4px 10px;padding-block:14px 6px;margin:0;border-bottom:0}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;flex:none;border:0;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;left:0;right:0;bottom:100%;padding:8px 0;\
