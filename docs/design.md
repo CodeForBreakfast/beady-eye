@@ -4503,13 +4503,19 @@ selected. The address without it lands where `go_to` lands.
 
 **The keys that change the whole forest are links and a form at the head
 of the page.** A menu offers every tree and each view the config names, as
-`v` steps through them, and only where the config names a view. A switch
-lists only ready beads, as `r` does, in the trees or a view. A search form
-asks for part of a bead's id or title, as `/` does. The list drawn, and
-whether it lists only ready beads, ride in the address beside the folds, and
-every link carries them on. Each request draws the list through the forest's
-own switch, before it points the folds, so a page lists exactly what the
-terminal lists after the same keys.
+`v` steps through them. A switch lists only ready beads, as `r` does, in the
+trees or a view. A search form asks for part of a bead's id or title, as `/`
+does. The list drawn, and whether it lists only ready beads, ride in the
+address beside the folds, and every link carries them on. Each request draws
+the list through the forest's own switch, before it points the folds, so a
+page lists exactly what the terminal lists after the same keys.
+
+**The beads to check are a list of their own on the page.** The menu offers
+it with its count, and a button beside the ready switch on a desktop says
+how many there are and lists them. It lists every bead with an anomaly once,
+the most urgent first. Its address can name one project, and the list then
+keeps to that project's trees. The terminal has no key for it yet, and its
+lists still count those beads at their foot.
 
 **A bead's page offers its tree alone, as `F` does.** The bead the forest is
 rooted at rides in the address too. A page drawn with one root says so as

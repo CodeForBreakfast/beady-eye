@@ -886,6 +886,11 @@ impl Forest {
         ready::view_counts(&self.snapshot, &self.rooted(), &self.snapshot.views, ready)
     }
 
+    /// How many beads the list of the beads to check would hold.
+    pub fn to_check(&self) -> usize {
+        ready::to_check_count(&self.snapshot, &self.rooted())
+    }
+
     /// Draw `list` in place of the trees, or the trees where it is none, as
     /// the ready and view keys do.
     pub fn draw_list(&mut self, list: Option<List>) {

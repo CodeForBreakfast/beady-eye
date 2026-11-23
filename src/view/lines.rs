@@ -200,6 +200,8 @@ pub enum Section {
     /// The unfinished beads the view the config names so lists, only those
     /// the ready list would draw where `ready` is set.
     View { name: String, ready: bool },
+    /// The beads with an anomaly, in `project` only where one is named.
+    ToCheck { project: Option<String> },
 }
 
 /// A project's own line: what it is and how much of it there is.
