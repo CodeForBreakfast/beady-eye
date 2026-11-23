@@ -33,12 +33,8 @@ pub(super) fn written(text: &str, named: &dyn Fn(&str) -> Option<String>) -> Str
         taken: None,
     };
     for (event, at) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
-        let already_taken = writing
-            .taken
-            .as_ref()
-            .is_some_and(|taken| taken.start <= at.start && at.end <= taken.end);
-        if !already_taken {
-            writing.take(event, at);
+        if !writing.address_takes(&event, &at) {
+            writing.take(event);
         }
     }
     writing.write_said();
@@ -59,20 +55,37 @@ struct Writing<'n> {
     in_head: bool,
     /// Whether the text arriving is HTML, which is said as it was written.
     in_html: bool,
-    /// The text being written, and the markdown in it that an address ran
-    /// on through and has already taken.
+    /// The text being written, and the emphasis in it that an address ran
+    /// on through and has taken.
     source: &'n str,
     taken: Option<Range<usize>>,
 }
 
 impl Writing<'_> {
-    fn take(&mut self, event: Event<'_>, at: Range<usize>) {
+    /// Whether the event at `at` in the source is part of a web address.
+    /// Markdown reads `_draft_` in `https://arkham.example/_draft_/index` as
+    /// emphasis, so emphasis straight after the text that has arrived, when
+    /// that text ends part-way through an address, is taken into the address
+    /// as written, with everything inside it. Nothing that opened before it
+    /// or comes after it is taken.
+    fn address_takes(&mut self, event: &Event<'_>, at: &Range<usize>) -> bool {
+        let inside_taken = |taken: &Range<usize>| taken.start <= at.start && at.end <= taken.end;
+        if self.taken.as_ref().is_some_and(inside_taken) {
+            return true;
+        }
+        let word = self.said.rsplit(char::is_whitespace).next().unwrap_or("");
+        let address_runs_on = address_in(word).is_some_and(|address| address.end == word.len());
+        if !(address_runs_on && matches!(event, Event::Start(Tag::Emphasis | Tag::Strong))) {
+            return false;
+        }
+        self.said.push_str(&self.source[at.clone()]);
+        self.taken = Some(at.clone());
+        true
+    }
+
+    fn take(&mut self, event: Event<'_>) {
         match event {
             Event::Text(text) if self.in_code => self.html.push_str(&escaped(&text)),
-            Event::Start(Tag::Emphasis | Tag::Strong) if self.address_runs_on() => {
-                self.said.push_str(&self.source[at.clone()]);
-                self.taken = Some(at);
-            }
             Event::InlineHtml(text) => {
                 self.write_said();
                 self.said.push_str(&text);
@@ -228,13 +241,6 @@ impl Writing<'_> {
                 self.html.push_str(&escaped(line));
             }
         }
-    }
-
-    /// Whether the text that has arrived ends part-way through a web
-    /// address, which runs on through whatever markdown comes next.
-    fn address_runs_on(&self) -> bool {
-        let word = self.said.rsplit(char::is_whitespace).next().unwrap_or("");
-        address_in(word).is_some_and(|address| address.end == word.len())
     }
 
     /// `text` with each web address in it a short link.
@@ -553,8 +559,87 @@ mod tests {
             drawn.contains("href=\"https://arkham.example/a*b*c/**d**\""),
             "{drawn}"
         );
-        let drawn = html("> - [https://arkham.example/_a_](https://arkham.example/b)");
-        assert!(drawn.ends_with("</a></li></ul></blockquote>"), "{drawn}");
+    }
+
+    /// An address taking emphasis takes nothing that opened before it, so
+    /// every element around it closes, however deep it sits.
+    #[test]
+    fn an_address_taking_emphasis_leaves_every_element_around_it_closed() {
+        let address = "https://arkham.example/_a_/b";
+        for text in [
+            address.to_string(),
+            format!("Read {address} now."),
+            format!("### {address}"),
+            format!("**{address}**"),
+            format!("- {address}"),
+            format!("- dunwich\n  - {address}"),
+            format!("> {address}"),
+            format!("> - [{address}](https://arkham.example/c)"),
+            format!("[{address}](https://arkham.example/c)"),
+            format!("| where |\n| --- |\n| {address} |"),
+            "https://arkham.example/_a_".to_string(),
+        ] {
+            let drawn = html(&text);
+            assert_eq!(unbalanced(&drawn), None, "{text}\n{drawn}");
+            assert!(drawn.contains("_a_"), "{text}\n{drawn}");
+        }
+    }
+
+    /// Every bead description and note the fixtures hold is drawn as HTML
+    /// whose elements all close.
+    #[test]
+    fn every_fixtures_prose_is_drawn_with_every_element_closed() {
+        let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+        let mut drawn = 0;
+        for file in std::fs::read_dir(fixtures).unwrap() {
+            let path = file.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            let values: Vec<serde_json::Value> = text
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .chain(serde_json::from_str(&text).ok())
+                .collect();
+            for prose in values.iter().flat_map(prose_in) {
+                let written = html(prose);
+                assert_eq!(unbalanced(&written), None, "{}\n{written}", path.display());
+                drawn += 1;
+            }
+        }
+        assert!(drawn > 0, "no description in {fixtures}");
+    }
+
+    /// Each description and note in `value`, however deep.
+    fn prose_in(value: &serde_json::Value) -> Vec<&str> {
+        match value {
+            serde_json::Value::Object(fields) => fields
+                .iter()
+                .flat_map(|(key, field)| match (key.as_str(), field.as_str()) {
+                    ("description" | "notes", Some(prose)) => vec![prose],
+                    _ => prose_in(field),
+                })
+                .collect(),
+            serde_json::Value::Array(items) => items.iter().flat_map(prose_in).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The first tag in `html` that closes nothing open, or one left open.
+    fn unbalanced(html: &str) -> Option<String> {
+        let mut open = Vec::new();
+        for tag in html.split('<').skip(1) {
+            let Some(end) = tag.find('>') else {
+                return Some(format!("<{tag}"));
+            };
+            let name = tag[..end].split(' ').next().unwrap_or_default();
+            if let Some(closing) = name.strip_prefix('/') {
+                if open.pop() != Some(closing) {
+                    return Some(format!("</{closing}>"));
+                }
+            } else if !["br", "hr"].contains(&name) {
+                open.push(name);
+            }
+        }
+        open.pop().map(|name| format!("<{name}> left open"))
     }
 
     /// An address carrying a quote is cut at it, so nothing in an address
