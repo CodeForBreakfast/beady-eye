@@ -1166,7 +1166,9 @@ const READ_SHOWN_ONCE_OLDER_THAN: std::time::Duration = std::time::Duration::fro
 /// A time inside an element naming how old it must be to be shown hides
 /// that element until it is that old. The server draws it shown, so a
 /// browser running no script keeps saying it. A time the browser's clock
-/// puts in the future is as fresh as a time can be, so it stays hidden.
+/// puts less than that far in the future stays hidden too, because a clock
+/// a second behind the server's is common. Further out, the clock is too
+/// wrong to judge by, and the time is shown.
 const IN_READERS_ZONE: &str = r##"const LARGER = [["minute", 60], ["hour", 60], ["day", 24]];
 const inReadersZone = (on) => {
   const says = window.Intl?.RelativeTimeFormat;
@@ -1176,7 +1178,7 @@ const inReadersZone = (on) => {
     const at = new Date(time.getAttribute("datetime"));
     let since = (Date.now() - at) / 1000, unit = "second";
     const shown = time.closest("[data-shown-once-older-than]");
-    if (shown) shown.hidden = since < Number(shown.dataset.shownOnceOlderThan);
+    if (shown) shown.hidden = Math.abs(since) < Number(shown.dataset.shownOnceOlderThan);
     if (!says || !(since >= 0)) continue;
     for (const [next, per] of LARGER) {
       if (since < per) break;
