@@ -1078,12 +1078,10 @@ pub fn not_in_the_answer() -> &'static str {
     "not found in the tracker"
 }
 
-/// A bead a web page's address names that no tree the forest draws holds.
-pub fn not_drawn(key: &BeadKey) -> String {
-    format!(
-        "{} is in no tree {PRODUCT} draws from project {}",
-        key.id, key.project
-    )
+/// The warning for a bead a web page's address names that no tree the
+/// forest draws holds, which the bead's id follows.
+pub fn not_in_any_tree() -> &'static str {
+    "This bead is not in any tree"
 }
 
 /// The link on a web page's bead view that goes back to the list, as `Esc`
@@ -1125,15 +1123,21 @@ pub fn only_this_tree() -> &'static str {
 }
 
 /// What the band over a web page drawn with one bead as its only root says
-/// before it names the bead.
+/// before the link to that bead.
 pub fn showing_only() -> &'static str {
     "Showing only"
+}
+
+/// The words of the band's link to the bead a web page is drawn with as
+/// its only root.
+pub fn this_tree() -> &'static str {
+    "this tree"
 }
 
 /// The link on a web page drawn with one bead as its only root that puts
 /// every tree back, as `F` does again.
 pub fn show_all() -> &'static str {
-    "Show all trees"
+    "Show all"
 }
 
 /// The web page's links to the match before and the match after, as `N`

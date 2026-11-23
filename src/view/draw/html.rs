@@ -100,10 +100,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
                 drawing.rooting(&mut html);
                 drawing.bead_view(&mut html, node);
             }
-            None => html.push_str(&format!(
-                "<p class=\"missing\">{}</p>",
-                escaped(&format!("{WARNING} {}", phrase::not_drawn(key)))
-            )),
+            None => html.push_str(&format!("<p class=\"missing\">{}</p>", not_in_any_tree(key))),
         }
         html.push_str("</aside>");
     }
@@ -114,6 +111,16 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         found: asked.bead.is_none() || node.is_some(),
         html,
     }
+}
+
+/// The warning for a bead an address names that no tree the forest draws
+/// holds, with the bead's id set quietly after it.
+fn not_in_any_tree(key: &BeadKey) -> String {
+    format!(
+        "{} <span class=\"id\">{}</span>",
+        escaped(&format!("{WARNING} {}", phrase::not_in_any_tree())),
+        escaped(&key.id)
+    )
 }
 
 /// A page with nothing on it but one sentence and a link to the forest, for
@@ -287,27 +294,29 @@ impl Drawing<'_> {
         };
         // An address can name a root the forest no longer draws, and the
         // page then draws every tree, so it says so rather than drop it.
-        let said = if self.forest.is_focused() {
-            phrase::showing_only().to_string()
-        } else {
-            format!("{WARNING} {}", phrase::not_drawn(root.key()))
-        };
-        html.push_str(&format!(
-            "<p class=\"rooted\"><span class=\"said\">{}</span> ",
-            escaped(&said)
-        ));
-        if let Some(node) = self
+        match self
             .forest
             .snapshot()
             .node(root.key())
             .filter(|_| self.forest.is_focused())
         {
-            self.reference(
-                html,
-                show::named(node, vec![Span::raw(node.title.clone())]),
-                Some(self.opening(root.key())),
-                None,
-            );
+            // The list drawn can leave the root out, so the band links it.
+            Some(node) => {
+                html.push_str(&format!(
+                    "<p class=\"rooted\"><span class=\"said\">{}</span> ",
+                    escaped(phrase::showing_only())
+                ));
+                self.reference(
+                    html,
+                    show::named(node, vec![Span::raw(phrase::this_tree())]),
+                    Some(self.opening(root.key())),
+                    None,
+                );
+            }
+            None => html.push_str(&format!(
+                "<p class=\"missing\">{}",
+                not_in_any_tree(root.key())
+            )),
         }
         html.push_str(&format!(
             " <a class=\"all\" href=\"{}\">{}</a></p>\n",
@@ -1243,7 +1252,7 @@ vertical-align:top;width:100%;white-space:normal}\
 .page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
 .page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
 .page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
-.page .head .state>.id,.waits>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
+.page .head .state>.id,.waits>.id,.missing>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
 .status{--status:var(--muted);display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 8px;\
 border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color-mix(in srgb,var(--status) 12%,transparent)}\
 .status>.g{color:var(--status)}\
@@ -1334,18 +1343,20 @@ nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border
 nav input::placeholder{color:var(--muted);opacity:1}\
 nav label span{display:none}\
 nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
-.rooted{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
-background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5px}\
-.rooted .said{color:var(--muted);min-width:0;overflow-wrap:anywhere}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
-.rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
-.rooted .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
-.rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
+.rooted,nav+.missing{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
+border-bottom:1px solid var(--line);font-size:13.5px}\
+.rooted{flex-wrap:nowrap;white-space:nowrap;background:var(--accent-soft)}\
+.missing{background:var(--warn-soft);color:var(--warn)}aside .missing{padding:10px 12px;border-radius:10px}\
+.rooted .said{color:var(--muted)}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
+.rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
+.all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover{text-decoration:underline}\
 @media (max-width:720px){header.title{display:flex;align-items:baseline;gap:10px;padding:14px 16px 6px}\
 header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display);overflow-wrap:anywhere}\
 header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
-.rooted{padding:9px 14px}.rooted .all::before{content:none}\
+.rooted,nav+.missing{padding:9px 14px}.all::before{content:none}\
 aside{padding:8px 16px 24px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr);\
@@ -3111,7 +3122,12 @@ mod tests {
     fn an_address_naming_a_bead_the_forest_does_not_draw_says_so_and_is_not_found() {
         let answer = page_at(&address(&key("smt-zzz")));
         assert!(!answer.found);
-        assert!(text_of(&answer.html).contains("smt-zzz is in no tree beady-eye draws"));
+        assert!(text_of(&answer.html).contains("This bead is not in any tree smt-zzz"));
+        assert!(
+            answer.html.contains(&not_in_any_tree(&key("smt-zzz"))),
+            "{}",
+            answer.html
+        );
     }
 
     /// The text of the page's `<title>`.
@@ -3468,9 +3484,7 @@ mod tests {
         let target = "/summit-works/smt-4kd3p?at=summit-works%3Asmt-4kd3p";
         let asked = Asked::of(target).expect("a page is at the address");
         let answer = page(unread, &Layout::default(), &asked, drawing());
-        assert!(answer
-            .html
-            .contains(phrase::not_drawn(&key("smt-4kd3p")).as_str()));
+        assert!(answer.html.contains(&not_in_any_tree(&key("smt-4kd3p"))));
         assert!(!answer.found);
     }
 
@@ -4878,10 +4892,10 @@ mod tests {
     }
 
     /// The band over a page drawn with one bead as its only root says the
-    /// page shows only that bead, names it by its title, then offers every
-    /// tree back.
+    /// page shows only this tree, then offers every tree back. The root's
+    /// row under it gives its title, so the band does not repeat it.
     #[test]
-    fn the_band_over_one_tree_says_showing_only_the_bead_then_show_all_trees() {
+    fn the_band_over_one_tree_says_showing_only_this_tree_then_show_all() {
         let bead = key("smt-4kd3p.6");
         let rooted = page_at(&link_saying(
             &page_at(&address(&bead)).html,
@@ -4890,14 +4904,18 @@ mod tests {
         .html;
         let band = &rooted[rooted.find("<p class=\"rooted\">").expect("the band")..];
         let band = text_of(&band[..band.find("</p>").expect("the band ends")]);
-        let ground = ground();
-        let title = &ground.node(&bead).expect("the bead is held").title;
-        let said = [phrase::showing_only(), title, phrase::show_all()].map(|said| {
+        let said = [phrase::showing_only(), phrase::this_tree(), phrase::show_all()].map(|said| {
             band.find(said)
                 .unwrap_or_else(|| panic!("{said:?} in {band:?}"))
         });
         assert!(said.is_sorted(), "{band:?}");
-        assert_eq!(phrase::show_all(), "Show all trees");
+        let ground = ground();
+        let title = &ground.node(&bead).expect("the bead is held").title;
+        assert!(!band.contains(title.as_str()), "{band:?}");
+        assert_eq!(
+            [phrase::showing_only(), phrase::this_tree(), phrase::show_all()],
+            ["Showing only", "this tree", "Show all"]
+        );
     }
 
     /// The bead the forest is drawn with as its only root opens from the
@@ -5111,13 +5129,29 @@ mod tests {
         assert!(Asked::of("/?utm=%FF").is_some());
     }
 
-    /// An address rooted at a bead the forest no longer draws says so over
-    /// every tree, and offers them without the root.
+    /// The band is one line at any width, and a bead in no tree is warned
+    /// of on amber, the ground every warning uses, never the band's teal.
     #[test]
-    fn a_root_the_forest_no_longer_draws_is_said_to_be_gone() {
+    fn the_band_keeps_to_one_line_and_the_warning_is_amber() {
+        assert!(
+            STYLE.contains(".rooted{flex-wrap:nowrap;white-space:nowrap;"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".missing{background:var(--warn-soft);color:var(--warn)}"),
+            "{STYLE}"
+        );
+    }
+
+    /// An address rooted at a bead the forest no longer draws warns over
+    /// every tree, rather than on the band that says one tree is shown, and
+    /// offers them without the root.
+    #[test]
+    fn a_root_the_forest_no_longer_draws_is_warned_of() {
         let gone = key("smt-4kd3p.99");
         let html = page_at("/?root=summit-works%3Asmt-4kd3p%2Fsummit-works%3Asmt-4kd3p.99").html;
-        assert!(text_of(&html).contains(&phrase::not_drawn(&gone)), "{html}");
+        assert!(!html.contains("<p class=\"rooted\">"), "{html}");
+        assert!(html.contains(&not_in_any_tree(&gone)), "{html}");
         let all = link_saying(&html, phrase::show_all());
         assert_eq!(Asked::of(&all).and_then(|asked| asked.root), None, "{all}");
     }
