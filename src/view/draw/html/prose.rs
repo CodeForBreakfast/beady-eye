@@ -30,10 +30,14 @@ pub(super) fn written(text: &str, named: &dyn Fn(&str) -> Option<String>) -> Str
         in_head: false,
         in_html: false,
         source: text,
-        taken_to: 0,
+        taken: None,
     };
     for (event, at) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
-        if at.start >= writing.taken_to {
+        let already_taken = writing
+            .taken
+            .as_ref()
+            .is_some_and(|taken| taken.start <= at.start && at.end <= taken.end);
+        if !already_taken {
             writing.take(event, at);
         }
     }
@@ -55,10 +59,10 @@ struct Writing<'n> {
     in_head: bool,
     /// Whether the text arriving is HTML, which is said as it was written.
     in_html: bool,
-    /// The text being written, and how far into it an address that ran on
-    /// through markdown has already taken it.
+    /// The text being written, and the markdown in it that an address ran
+    /// on through and has already taken.
     source: &'n str,
-    taken_to: usize,
+    taken: Option<Range<usize>>,
 }
 
 impl Writing<'_> {
@@ -67,7 +71,7 @@ impl Writing<'_> {
             Event::Text(text) if self.in_code => self.html.push_str(&escaped(&text)),
             Event::Start(Tag::Emphasis | Tag::Strong) if self.address_runs_on() => {
                 self.said.push_str(&self.source[at.clone()]);
-                self.taken_to = at.end;
+                self.taken = Some(at);
             }
             Event::InlineHtml(text) => {
                 self.write_said();
@@ -306,7 +310,11 @@ fn address_in(text: &str) -> Option<Range<usize>> {
     let starts = text
         .match_indices(['h', 'H'])
         .map(|(at, _)| at)
-        .filter(|&at| text[at..].get(..4).is_some_and(|s| s.eq_ignore_ascii_case("http")));
+        .filter(|&at| {
+            text[at..]
+                .get(..4)
+                .is_some_and(|s| s.eq_ignore_ascii_case("http"))
+        });
     for at in starts {
         let starts_a_word = !text[..at]
             .chars()
@@ -473,7 +481,8 @@ mod tests {
     fn a_links_words_hold_neither_a_link_nor_a_bead() {
         let drawn = html("[lgt-4.2 at https://arkham.example/a](https://arkham.example/b)");
         assert_eq!(drawn.matches("<a ").count(), 1, "{drawn}");
-        let drawn = html("[![the map](https://arkham.example/map.png)](https://arkham.example/maps)");
+        let drawn =
+            html("[![the map](https://arkham.example/map.png)](https://arkham.example/maps)");
         assert_eq!(
             drawn,
             "<p><a class=\"link\" href=\"https://arkham.example/maps\" \
@@ -522,7 +531,10 @@ mod tests {
         ] {
             let drawn = html(text);
             assert!(!drawn.contains("<a "), "{drawn}");
-            assert!(drawn.contains("https://arkham.example/docs&quot;"), "{drawn}");
+            assert!(
+                drawn.contains("https://arkham.example/docs&quot;"),
+                "{drawn}"
+            );
         }
     }
 
@@ -541,6 +553,8 @@ mod tests {
             drawn.contains("href=\"https://arkham.example/a*b*c/**d**\""),
             "{drawn}"
         );
+        let drawn = html("> - [https://arkham.example/_a_](https://arkham.example/b)");
+        assert!(drawn.ends_with("</a></li></ul></blockquote>"), "{drawn}");
     }
 
     /// An address carrying a quote is cut at it, so nothing in an address
