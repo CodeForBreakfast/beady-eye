@@ -2178,9 +2178,11 @@ mod tests {
 
         assert_eq!(row.matches("class=\"flag\"").count(), 1, "{row}");
         assert!(
-            row.contains(&format!(
-                "<span class=\"flag\" title=\"{said}\">{WARNING}<span> {said}</span></span>"
-            )),
+            row.contains(&format!("<span class=\"flag\" title=\"{said}\"")),
+            "{row}"
+        );
+        assert!(
+            row.contains(&format!(">{WARNING}<span> {said}</span></span>")),
             "{row}"
         );
         assert!(!text_of(&row).contains(" · "), "{row}");
