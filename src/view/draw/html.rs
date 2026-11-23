@@ -344,15 +344,25 @@ impl Drawing<'_> {
         // A project's heading and the lines under it are one section, so the
         // heading sticks only while its own lines scroll.
         let mut in_project = false;
+        let mut folding = false;
         for (at, line) in lines.viewport(0, lines.len()) {
             if in_project && line.depth == 0 {
                 html.push_str("</section>");
                 in_project = false;
             }
+            let heading = matches!(line.content, Content::Project(_));
+            if folding && line.depth == 0 && !heading {
+                html.push_str("</details>");
+                folding = false;
+            }
             match &line.content {
                 // Counted in the top bar and the menu, which list those beads.
                 Content::Note(Note::ToCheck(_)) => {}
                 Content::Project(project) => {
+                    if !folding && self.across_projects() {
+                        self.folded_line(html, &reads, drawn.offset);
+                        folding = true;
+                    }
                     html.push_str("<section>");
                     in_project = true;
                     self.open_line(html, at, line, " heading", String::new());
@@ -364,6 +374,52 @@ impl Drawing<'_> {
         if in_project {
             html.push_str("</section>");
         }
+        if folding {
+            html.push_str("</details>");
+        }
+    }
+
+    /// The one line a list across projects folds their headings into, which
+    /// opens to them: how many projects have no read gone badly and, once
+    /// every one of those has been read, when the oldest of them was, then
+    /// each project whose read went badly, named in the colour of a flag
+    /// beside the mark its heading draws. A project whose first read is still
+    /// out is counted and holds the time back, as it does in the title.
+    fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) {
+        let lines = self.forest.lines();
+        let (troubled, fresh): (Vec<_>, Vec<_>) = lines
+            .viewport(0, lines.len())
+            .filter_map(|(_, line)| match &line.content {
+                Content::Project(project) => Some((project, reads.of(project))),
+                _ => None,
+            })
+            .partition(|(_, how_fresh)| how_fresh.is_some_and(|fresh| wants_attention(fresh.mark)));
+        html.push_str("<details class=\"projects\"><summary>");
+        if !fresh.is_empty() {
+            html.push_str(&format!(
+                "<span class=\"fresh\">{}",
+                escaped(&phrase::projects(fresh.len()))
+            ));
+            let read: Option<Vec<_>> = fresh
+                .iter()
+                .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
+                .collect();
+            if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
+                read_time(html, oldest, offset, reads.now);
+            }
+            html.push_str("</span>");
+        }
+        let troubled = troubled
+            .into_iter()
+            .filter_map(|(project, how_fresh)| Some((project, how_fresh?)));
+        for (project, how_fresh) in troubled {
+            html.push_str(&format!(
+                "<span class=\"flag\">{} {}</span>",
+                escaped(phrase::mark(how_fresh, reads.now)),
+                escaped(&project.project)
+            ));
+        }
+        html.push_str("</summary>");
     }
 
     /// A line's opening tag, classed `kind` and styled `css`, and the anchor
@@ -562,12 +618,19 @@ impl Drawing<'_> {
     /// more than one project and no heading sits over each project's rows.
     /// A row waiting under a list's row is not the list's own.
     fn named_project<'l>(&self, line: &'l Line) -> Option<&'l str> {
-        let list = self.forest.list()?;
-        let several = list.project().is_none() && self.forest.snapshot().projects.len() > 1;
         match (&line.content, &line.place) {
-            (Content::Bead(_), Some(place)) if several => Some(&place.key().project),
+            (Content::Bead(_), Some(place)) if self.across_projects() => Some(&place.key().project),
             _ => None,
         }
+    }
+
+    /// Whether the lines are a list that draws beads of more than one
+    /// project, with no heading over each project's rows.
+    fn across_projects(&self) -> bool {
+        self.forest
+            .list()
+            .is_some_and(|list| list.project().is_none())
+            && self.forest.snapshot().projects.len() > 1
     }
 
     /// What a line hangs under, drawn as rails, then the control that
@@ -1233,6 +1296,16 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .heading .state a:hover{text-decoration:underline}\
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
+.projects{border-bottom:1px solid var(--line)}\
+.projects>summary{list-style:none;cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;\
+min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:13px;color:var(--muted)}\
+.projects>summary::-webkit-details-marker{display:none}\
+.projects .fresh{color:var(--fg);font-weight:600}.projects .fresh>span{color:var(--muted);font-weight:400}\
+.projects>summary::after{content:\"\";flex:none;width:13px;height:13px;margin-left:auto;background:var(--accent);\
+-webkit-mask:var(--chevron) center/contain no-repeat;mask:var(--chevron) center/contain no-repeat}\
+.projects[open]>summary::after{transform:rotate(180deg)}\
+.projects>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
+.projects>section>.line.heading{position:static;margin-bottom:0}\
 .prog{display:inline-flex;align-items:center;gap:6px}\
 .prog .bar{width:44px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}\
 .prog .bar>span{display:block;height:100%;background:var(--ok)}\
@@ -3926,6 +3999,130 @@ mod tests {
             ".line>.bead~.state{grid-column:6;",
         ] {
             assert!(phone.contains(rule), "{rule}");
+        }
+    }
+
+    /// The ground beside dunwich, with dunwich read an hour before the page
+    /// is drawn, so it is the older of the two reads.
+    fn dunwich_read_an_hour_ago() -> (Snapshot, DateTime<Utc>) {
+        let an_hour_ago = drawn_at() - chrono::TimeDelta::hours(1);
+        let mut both = beside_dunwich();
+        both.read_at.insert("dunwich".to_string(), an_hour_ago);
+        (both, an_hour_ago)
+    }
+
+    /// What the one line that the projects fold into says.
+    fn folded(html: &str) -> &str {
+        let from = html
+            .find("<details class=\"projects\"><summary>")
+            .expect("the projects are folded");
+        &html[from..from + html[from..].find("</summary>").expect("the line ends")]
+    }
+
+    /// A list across projects has no rows under each project's heading, so
+    /// the headings fold into one line above the list, which opens to them.
+    /// The line counts the projects and says when the oldest of them was
+    /// read, once that is old enough to show, as a heading does.
+    #[test]
+    fn a_list_across_projects_folds_their_headings_into_one_line_that_opens_to_them() {
+        let (both, an_hour_ago) = dunwich_read_an_hour_ago();
+        let ready = Asked::default().listing(listed(None, true));
+        let view = Asked::default().listing(listed(Some(VIEWS[1].0.to_string()), false));
+        for target in [ready, view] {
+            let html = page_of(both.clone(), &target);
+            let headings = inside(&html, "projects");
+            assert_eq!(headings.matches("<div class=\"line heading\"").count(), 2);
+            assert_eq!(html.matches("<div class=\"line heading\"").count(), 2);
+            assert!(headings.contains("<h2>dunwich</h2>"), "{headings}");
+            assert!(
+                headings.contains(&format!("<h2>{PROJECT}</h2>")),
+                "{headings}"
+            );
+
+            let line = folded(&html);
+            assert!(
+                words(&text_of(line)).starts_with("2 projects read "),
+                "{line}"
+            );
+            let read = format!(
+                "<span data-shown-once-older-than=\"120\"> read <time datetime=\"{}\"",
+                an_hour_ago.to_rfc3339()
+            );
+            assert!(line.contains(&read), "{line}");
+            assert!(!line.contains("class=\"flag\""), "{line}");
+        }
+    }
+
+    /// Only a project whose read went badly is named on the folded line, in
+    /// the colour of a flag with the mark its heading draws. The rest are
+    /// counted, and the read time is the oldest of theirs.
+    #[test]
+    fn the_folded_line_names_only_a_project_whose_read_went_badly() {
+        let (both, _) = dunwich_read_an_hour_ago();
+        let fresh = both.read_at[PROJECT];
+        let stuck = Drawn {
+            collecting: vec![Awaited {
+                wanted: crate::app::Wanted::Project("dunwich".to_string()),
+                asked_at: drawn_at() - chrono::TimeDelta::seconds(60),
+                patience: chrono::TimeDelta::seconds(30),
+            }],
+            ..drawing()
+        };
+        let ready = Asked::default().listing(listed(None, true));
+        let asked = Asked::of(&ready).expect("the ready list");
+        let html = page(both, &Layout::default(), &asked, stuck).html;
+
+        let line = folded(&html);
+        assert!(
+            words(&text_of(line)).starts_with("1 project read "),
+            "{line}"
+        );
+        assert!(line.contains(&fresh.to_rfc3339()), "{line}");
+        let unanswered = phrase::mark(
+            crate::view::Freshness {
+                mark: crate::view::Mark::Unanswered,
+                read_at: None,
+            },
+            drawn_at(),
+        );
+        assert!(
+            line.contains(&format!("<span class=\"flag\">{unanswered} dunwich</span>")),
+            "{line}"
+        );
+        assert!(!text_of(line).contains(PROJECT), "{line}");
+    }
+
+    /// The trees keep a heading over each project's own trees, a list kept
+    /// to one project is headed by it, and with one project there is no
+    /// other to fold away.
+    #[test]
+    fn the_trees_and_a_list_of_one_project_keep_their_headings_unfolded() {
+        let ready = Asked::default().listing(listed(None, true));
+        let left = Asked::default().listing(Some(List::LeftToDo {
+            project: PROJECT.to_string(),
+        }));
+        for (snapshot, target) in [
+            (beside_dunwich(), "/".to_string()),
+            (beside_dunwich(), left),
+            (ground(), ready),
+        ] {
+            let html = page_of(snapshot, &target);
+            assert!(html.contains("<div class=\"line heading\""), "{target}");
+            assert!(!html.contains("class=\"projects\""), "{target}: {html}");
+        }
+    }
+
+    /// The folded line is drawn as a control, with a chevron at its end
+    /// that turns over once the line is open.
+    #[test]
+    fn the_folded_line_ends_in_a_chevron_that_turns_when_it_opens() {
+        for rule in [
+            ".projects>summary{list-style:none;cursor:pointer;",
+            ".projects>summary::-webkit-details-marker{display:none}",
+            ".projects>summary::after{content:\"\";",
+            ".projects[open]>summary::after{transform:rotate(180deg)}",
+        ] {
+            assert!(STYLE.contains(rule), "{rule}");
         }
     }
 
