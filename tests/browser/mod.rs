@@ -29,6 +29,7 @@ pub struct Browser {
     from: BufReader<File>,
     asked: u64,
     page: String,
+    said: std::path::PathBuf,
 }
 
 impl Browser {
@@ -39,6 +40,7 @@ impl Browser {
         let (from, theirs_to_write) = pipe();
         let (read, write) = (theirs_to_read.as_raw_fd(), theirs_to_write.as_raw_fd());
         let spawned_by = std::process::id();
+        let said = home.join("chromium.log");
         let mut command = Command::new("chromium");
         command
             .args([
@@ -56,7 +58,7 @@ impl Browser {
             .env("HOME", home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(File::create(&said).expect("the browser's log is ours to write"));
         unsafe {
             command.pre_exec(move || {
                 die_with(spawned_by)?;
@@ -78,6 +80,7 @@ impl Browser {
             from: BufReader::new(File::from(from)),
             asked: 0,
             page: String::new(),
+            said,
         };
         let target = browser.send("Target.createTarget", json!({ "url": "about:blank" }));
         let attached = browser.send(
@@ -141,21 +144,20 @@ impl Browser {
     fn sent(&mut self, mut message: Value) -> Value {
         self.asked += 1;
         message["id"] = json!(self.asked);
-        let mut said = serde_json::to_vec(&message).expect("a message serialises");
-        said.push(0);
+        let mut sending = serde_json::to_vec(&message).expect("a message serialises");
+        sending.push(0);
         self.to
-            .write_all(&said)
+            .write_all(&sending)
             .expect("the browser takes a message");
         loop {
             let mut heard = Vec::new();
             self.from
                 .read_until(0, &mut heard)
                 .expect("the browser answers");
-            assert_eq!(
-                heard.pop(),
-                Some(0),
-                "the browser went before answering {message}"
-            );
+            if heard.pop() != Some(0) {
+                let said = std::fs::read_to_string(&self.said).unwrap_or_default();
+                panic!("the browser went before answering {message}, saying:\n{said}");
+            }
             let heard: Value = serde_json::from_slice(&heard).expect("the browser says JSON");
             if heard["id"] == message["id"] {
                 assert!(
