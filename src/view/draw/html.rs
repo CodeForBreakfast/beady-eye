@@ -1547,7 +1547,7 @@ padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px soli
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
 .mark.reading{display:inline-block;box-sizing:border-box;width:10px;height:10px;border:1.75px solid currentColor;\
 border-top-color:transparent;border-radius:50%;vertical-align:-1px;animation:reading 1s linear 5}\
-.mark.reading.held{animation:none}\
+.mark.reading.held{animation:none;border-style:dotted;border-top-color:currentColor}\
 @keyframes reading{to{transform:rotate(360deg)}}\
 @media (prefers-reduced-motion:reduce){.mark.reading{animation:none}}\
 .projects{border-bottom:1px solid var(--line)}\
@@ -3047,7 +3047,19 @@ mod tests {
             "{STYLE}"
         );
         assert!(
-            STYLE.contains(".mark.reading.held{animation:none}"),
+            STYLE.contains(".mark.reading.held{animation:none"),
+            "{STYLE}"
+        );
+    }
+
+    /// Once the ring holds still, a read gone unanswered still differs from
+    /// one under way by its shape: a closed dotted ring against an open arc.
+    #[test]
+    fn a_held_ring_is_told_from_a_turning_one_by_its_shape_as_well_as_its_colour() {
+        assert!(
+            STYLE.contains(
+                ".mark.reading.held{animation:none;border-style:dotted;border-top-color:currentColor}"
+            ),
             "{STYLE}"
         );
     }

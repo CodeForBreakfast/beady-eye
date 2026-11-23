@@ -4622,7 +4622,7 @@ A page drawn while a read is out marks the project as being read, and marks it
 as no longer answering once the read has been out for
 `unanswered_after_seconds`, over the rows the last read left. The page
 draws its own mark for both: a ring its stylesheet turns for five seconds,
-and the same ring held still in the warning colour. The terminal's mark is a frame cut from the clock, which a page
+and the ring closed, dotted and held still in the warning colour, so its shape tells the two apart once the turning stops. The terminal's mark is a frame cut from the clock, which a page
 drawn once cannot turn. Until the
 first read answers, the forest is each project's line with that mark, as the
 terminal opens, and a bead's page says the trackers are still being read.
