@@ -4514,8 +4514,10 @@ page lists exactly what the terminal lists after the same keys.
 it with its count, and a button beside the ready switch on a desktop says
 how many there are and lists them. It lists every bead with an anomaly once,
 the most urgent first. Its address can name one project, and the list then
-keeps to that project's trees. The terminal has no key for it yet, and its
-lists still count those beads at their foot.
+lists only the beads in that project's trees. A bead's fold still opens on
+everything waiting on it, in any project, as it does in the ready list. The
+terminal has no key for it yet, and its lists still count those beads at
+their foot.
 
 **A bead's page offers its tree alone, as `F` does.** The bead the forest is
 rooted at rides in the address too. A page drawn with one root says so as
