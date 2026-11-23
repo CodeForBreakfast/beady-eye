@@ -119,12 +119,13 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
 }
 
 /// The warning for a bead an address names that no tree the forest draws
-/// holds, with the bead's id set quietly after it.
+/// holds, with the bead's id and project set quietly after it.
 fn not_in_any_tree(key: &BeadKey) -> String {
     format!(
-        "{} <span class=\"id\">{}</span>",
+        "{} <span class=\"id\">{}</span> <span class=\"project\">{}</span>",
         escaped(&format!("{WARNING} {}", phrase::not_in_any_tree())),
-        escaped(&key.id)
+        escaped(&key.id),
+        escaped(&key.project)
     )
 }
 
@@ -1252,7 +1253,7 @@ box-sizing:border-box;border-radius:6px;color:var(--faint)}\
 a{color:inherit;text-decoration:none}\
 a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
-.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
+.missing>.project,.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
 aside{--tree:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3h4M5 3v9h4M5 7.5h4'/><circle cx='11.5' cy='7.5' r='1.5'/><circle cx='11.5' cy='12' r='1.5'/></svg>\");\
 --copy:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='8' height='8' rx='1.5'/><path d='M3 10V4a1 1 0 011-1h6'/></svg>\");\
 --cross:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><path d='M4 4l8 8M12 4l-8 8'/></svg>\");\
@@ -3229,7 +3230,12 @@ mod tests {
     fn an_address_naming_a_bead_the_forest_does_not_draw_says_so_and_is_not_found() {
         let answer = page_at(&address(&key("smt-zzz")));
         assert!(!answer.found);
-        assert!(text_of(&answer.html).contains("This bead is not in any tree smt-zzz"));
+        assert!(
+            text_of(&answer.html)
+                .contains(&format!("This bead is not in any tree smt-zzz {PROJECT}")),
+            "{}",
+            answer.html
+        );
         assert!(
             answer.html.contains(&not_in_any_tree(&key("smt-zzz"))),
             "{}",
