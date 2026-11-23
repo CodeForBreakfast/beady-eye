@@ -980,7 +980,7 @@ background:radial-gradient(circle at 9px 50%,var(--surface) 7px,transparent 7.5p
 nav .ready.on{color:var(--fg)}\
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
 nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
-padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--faint)}\
+padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--muted)}\
 nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;\
 background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
