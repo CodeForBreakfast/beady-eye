@@ -410,14 +410,14 @@ impl Drawing<'_> {
     }
 
     /// The one line a list across projects folds their headings into, which
-    /// opens to them: how many projects have no read gone badly and, once
-    /// every one of those has been read, when the oldest of them was, then
+    /// opens to them: how many projects there are and, once every one with
+    /// no read gone badly has been read, when the oldest of those was, then
     /// each project whose read went badly, named in the colour of a flag
     /// beside the mark its heading draws. A project whose first read is still
-    /// out is counted and holds the time back, as it does in the title. A
-    /// project whose tracker could not be read has no heading, and is named
-    /// as one whose read went badly. Nothing is drawn, and the answer is
-    /// false, where there is no project to say anything of.
+    /// out holds the time back, as it does in the title. A project whose
+    /// tracker could not be read has no heading, and is named as one whose
+    /// read went badly. Nothing is drawn, and the answer is false, where
+    /// there is no project to say anything of.
     fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) -> bool {
         let lines = self.forest.lines();
         let (troubled, fresh): (Vec<_>, Vec<_>) = lines
@@ -431,21 +431,20 @@ impl Drawing<'_> {
         if troubled.is_empty() && fresh.is_empty() && failed.is_empty() {
             return false;
         }
-        html.push_str("<details class=\"projects\"><summary>");
-        if !fresh.is_empty() {
-            html.push_str(&format!(
-                "<span class=\"fresh\">{}",
-                escaped(&phrase::projects(fresh.len()))
-            ));
-            let read: Option<Vec<_>> = fresh
-                .iter()
-                .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
-                .collect();
-            if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
-                read_time(html, oldest, offset, reads.now);
-            }
-            html.push_str("</span>");
+        html.push_str(&format!(
+            "<details class=\"projects\"><summary><span class=\"fresh\">{}",
+            escaped(&phrase::projects(
+                fresh.len() + troubled.len() + failed.len()
+            ))
+        ));
+        let read: Option<Vec<_>> = fresh
+            .iter()
+            .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
+            .collect();
+        if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
+            read_time(html, oldest, offset, reads.now);
         }
+        html.push_str("</span>");
         let unread = failed
             .iter()
             .filter_map(|failed| Some((failed.project.as_str(), reads.of_failed(failed)?)));
@@ -4515,8 +4514,8 @@ mod tests {
     }
 
     /// Only a project whose read went badly is named on the folded line, in
-    /// the colour of a flag with the mark its heading draws. The rest are
-    /// counted, and the read time is the oldest of theirs.
+    /// the colour of a flag with the mark its heading draws. Every project is
+    /// counted, and the read time is the oldest of the rest.
     #[test]
     fn the_folded_line_names_only_a_project_whose_read_went_badly() {
         let (both, _) = dunwich_read_an_hour_ago();
@@ -4535,7 +4534,7 @@ mod tests {
 
         let line = folded(&html);
         assert!(
-            words(&text_of(line)).starts_with("1 project read "),
+            words(&text_of(line)).starts_with("2 projects read "),
             "{line}"
         );
         assert!(line.contains(&fresh.to_rfc3339()), "{line}");
@@ -4582,7 +4581,7 @@ mod tests {
 
         let line = folded(&html);
         assert!(
-            words(&text_of(line)).starts_with("1 project read "),
+            words(&text_of(line)).starts_with("2 projects read "),
             "{line}"
         );
         let refused = phrase::mark(
@@ -4625,7 +4624,14 @@ mod tests {
         let ready = Asked::default().listing(listed(None, true));
         let html = page_of(unread, &ready);
 
-        let line = text_of(folded(&html));
+        let line = folded(&html);
+        assert!(
+            line.contains(&format!(
+                "<span class=\"fresh\">{}</span>",
+                phrase::projects(2)
+            )),
+            "{line}"
+        );
         assert!(line.contains("dunwich"), "{line}");
         assert!(line.contains(PROJECT), "{line}");
     }
