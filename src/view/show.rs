@@ -1105,7 +1105,7 @@ mod tests {
     #[test]
     fn the_bead_is_shown_as_bd_show_shows_it() {
         assert_eq!(
-            drawn(&a_bead(), &mut Show::default(), 44, 24),
+            drawn(&a_bead(), &mut Show::default(), 44, 27),
             vec![
                 "┌dun-7.1───────────────────────────────────┐",
                 "│                                          │",
@@ -1126,6 +1126,9 @@ mod tests {
                 "│                                          │",
                 "│ DEPENDS ON                               │",
                 "│   → ✓ dun-7.3  lay the feeder cable      │",
+                "│                                          │",
+                "│ CHILDREN                                 │",
+                "│   ↳ ○ dun-7.1.1  align the feed horn     │",
                 "│                                          │",
                 "│ BLOCKS                                   │",
                 "│   ← ○ dun-7.4  file the licence          │",
@@ -1394,7 +1397,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 7),
             vec![
-                "┌dun-7.1 · 1–3 of 20───────────────────────┐",
+                "┌dun-7.1 · 1–3 of 23───────────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  Thirty-three of thirty-four … │",
                 "│   in_progress · P2 · task · kim          │",
@@ -1466,7 +1469,7 @@ mod tests {
     fn a_window_too_short_for_the_bead_scrolls_by_motion() {
         let mut view = Show::default();
         let top = drawn(&a_bead(), &mut view, 44, 6);
-        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 20───────────────────────┐");
+        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 23───────────────────────┐");
         assert_eq!(top[2], "│ ◐ dun-7.1  re-point the dish             │");
 
         assert!(!view.scroll(Motion::PreviousRow), "already at the top");
@@ -1504,7 +1507,7 @@ mod tests {
     #[test]
     fn a_bead_that_fits_the_window_neither_scrolls_nor_says_it_does() {
         let mut view = Show::default();
-        drawn(&a_bead(), &mut view, 44, 24);
+        drawn(&a_bead(), &mut view, 44, 27);
 
         assert!(!view.scroll(Motion::NextRow));
         assert!(!view.scroll(Motion::LastRow));
@@ -1704,7 +1707,7 @@ mod tests {
                 under_the_blank_row,
                 &nothing_followable,
             ),
-            Drawn::Related("dun-7.3"),
+            Drawn::Related("dun-7.1.1"),
             "no reference is drawn there, so this says nothing: {rows:#?}"
         );
         assert_eq!(
@@ -1725,7 +1728,7 @@ mod tests {
     /// Wide enough for the bead's own rows to be drawn whole, and tall enough
     /// for every section of it.
     const WIDE: u16 = 44;
-    const TALL: u16 = 24;
+    const TALL: u16 = 27;
 
     /// The whole of a screen of that size.
     fn over(width: u16, height: u16) -> Rect {
@@ -2145,7 +2148,7 @@ mod tests {
     /// the colour the forest gives it.
     #[test]
     fn the_agent_marker_is_painted_live_as_the_forest_paints_it() {
-        let marker = painted(&a_bead(), 44, 24).row(4);
+        let marker = painted(&a_bead(), 44, 27).row(4);
 
         assert_eq!(
             run_saying(&marker, "◍ lifting the mast · working").style.fg,
@@ -2158,7 +2161,7 @@ mod tests {
     /// is always this blue, whatever the status.
     #[test]
     fn the_id_is_painted_the_blue_bd_show_paints_it() {
-        let top = painted(&a_bead(), 44, 24).row(2);
+        let top = painted(&a_bead(), 44, 27).row(2);
 
         assert_eq!(
             run_saying(&top, "dun-7.1").style.fg,
@@ -2202,9 +2205,9 @@ mod tests {
     /// the brightness of the row it sits on, which on the page is the page's.
     #[test]
     fn a_related_beads_glyph_is_painted_the_colour_of_its_status() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
         let depends_on = painted.row(18);
-        let blocks = painted.row(21);
+        let blocks = painted.row(24);
 
         assert_eq!(
             run_saying(&depends_on, "✓").style.fg,
@@ -2223,9 +2226,9 @@ mod tests {
     /// the page's, as a row nobody is on is the forest's middle rung.
     #[test]
     fn a_closed_related_bead_is_dimmed_as_bd_show_dims_one() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
         let depends_on = painted.row(18);
-        let blocks = painted.row(21);
+        let blocks = painted.row(24);
 
         assert_eq!(
             run_saying(&depends_on, "dun-7.3  lay the feeder cable")
@@ -2250,7 +2253,7 @@ mod tests {
     /// window draws it as `bd show` does.
     #[test]
     fn a_heading_is_bold_and_no_colour_as_bd_show_prints_one() {
-        let heading = run_saying(&painted(&a_bead(), 44, 24).row(6), DESCRIPTION);
+        let heading = run_saying(&painted(&a_bead(), 44, 27).row(6), DESCRIPTION);
 
         assert!(
             heading.style.add_modifier.contains(Modifier::BOLD),
@@ -2301,7 +2304,7 @@ mod tests {
     #[test]
     fn what_the_window_draws_at_a_weight_is_its_title_and_its_section_names() {
         let bead = a_bead();
-        let painted = painted(&bead, 44, 24);
+        let painted = painted(&bead, 44, 27);
 
         let own: Vec<String> = said_where(&painted, |run| {
             run.style.add_modifier.contains(Modifier::BOLD)
@@ -2315,6 +2318,7 @@ mod tests {
                 NOTES.to_string(),
                 PARENT.to_string(),
                 DEPENDS_ON.to_string(),
+                CHILDREN.to_string(),
                 BLOCKS.to_string(),
             ],
             "{painted:?}"
@@ -2329,7 +2333,7 @@ mod tests {
     /// takes a tone of its own again this list is where it turns up.
     #[test]
     fn the_only_tones_the_window_draws_are_the_ones_it_quotes() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
 
         let toned: Vec<String> = said_where(&painted, |run| run.style.fg != Some(Color::Reset));
 
@@ -2355,7 +2359,7 @@ mod tests {
     /// dim.
     #[test]
     fn the_page_is_drawn_at_the_terminals_own_foreground_as_the_head_is() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
 
         for (y, said) in [
             (7, "Point it at the new bird."),
@@ -2372,7 +2376,7 @@ mod tests {
     /// reader sees which rows `Tab` will stop on before they press it.
     #[test]
     fn a_related_beads_id_is_blue_only_where_the_forest_can_be_gone_to_it() {
-        let painted = painted_where(&a_bead(), 44, 24, &only("dun-7"));
+        let painted = painted_where(&a_bead(), 44, 27, &only("dun-7"));
 
         let drawn = painted.row(15);
         assert_eq!(
@@ -2386,7 +2390,7 @@ mod tests {
             "the title beside it: {drawn:?}"
         );
 
-        let undrawn = painted.row(21);
+        let undrawn = painted.row(24);
         assert_eq!(
             run_saying(&undrawn, "dun-7.4").style.fg,
             palette::PAGE.fg,
@@ -2399,7 +2403,7 @@ mod tests {
     /// forest has, and the blue on its id.
     #[test]
     fn a_closed_bead_the_forest_draws_is_finished_toned_with_a_blue_id() {
-        let drawn = painted_where(&a_bead(), 44, 24, &only("dun-7.3")).row(18);
+        let drawn = painted_where(&a_bead(), 44, 27, &only("dun-7.3")).row(18);
 
         assert_eq!(
             run_saying(&drawn, "dun-7.3").style.fg,
@@ -2560,7 +2564,7 @@ mod tests {
         // Found by what the row says rather than by its number: the window is
         // centred, so a page row and a screen row are not the same count.
         let reversed = |said: &str, view: &mut Show| {
-            Painted::drawn_by(60, 24, |frame| {
+            Painted::drawn_by(60, 27, |frame| {
                 show(
                     frame,
                     frame.area(),
@@ -2577,7 +2581,7 @@ mod tests {
             .find(|(_, row)| row.contains(said))
             .map(|(at, _)| at)
             .map(|at| {
-                Painted::drawn_by(60, 24, |frame| {
+                Painted::drawn_by(60, 27, |frame| {
                     show(
                         frame,
                         frame.area(),
