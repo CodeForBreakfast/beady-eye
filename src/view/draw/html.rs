@@ -384,7 +384,9 @@ impl Drawing<'_> {
             ));
             if let Some(at) = how_fresh.read_at {
                 html.push_str(&format!(
-                    " {} <time datetime=\"{}\" title=\"{}\">{}</time>",
+                    "<span data-shown-once-older-than=\"{}\"> {} <time datetime=\"{}\" \
+                     title=\"{}\">{}</time></span>",
+                    READ_SHOWN_ONCE_OLDER_THAN.as_secs(),
                     escaped(phrase::read()),
                     at.to_rfc3339(),
                     escaped(&phrase::instant_in_full(at, offset)),
@@ -1186,6 +1188,12 @@ border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)
 width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
 .bead .g.closed::after{content:none}}";
 
+/// How old a project's read is before its heading says when it was. A
+/// project kept current is read or vouched for well inside this, by its
+/// poll or its producer's heartbeat, so its age only distracts. Past this,
+/// the age is news.
+const READ_SHOWN_ONCE_OLDER_THAN: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The part of the page's script that says each time on the page as the
 /// reader would: how long ago, in the page's language, and the instant in
 /// full on hover, in the reader's own locale and zone. A request never says which zone its reader is in, so the server
@@ -1194,15 +1202,24 @@ width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inheri
 /// browser that cannot say an age keeps the time the server drew, and so
 /// does one whose clock is behind the server's, which would say a stale
 /// read was fresh.
+///
+/// A time inside an element naming how old it must be to be shown hides
+/// that element until it is that old. The server draws it shown, so a
+/// browser running no script keeps saying it. A time the browser's clock
+/// puts less than that far in the future stays hidden too, because a clock
+/// a second behind the server's is common. Further out, the clock is too
+/// wrong to judge by, and the time is shown.
 const IN_READERS_ZONE: &str = r##"const LARGER = [["minute", 60], ["hour", 60], ["day", 24]];
 const inReadersZone = (on) => {
-  if (!window.Intl?.RelativeTimeFormat) return;
-  const ago = new Intl.RelativeTimeFormat(document.documentElement.lang, { numeric: "always" });
-  const inFull = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
+  const says = window.Intl?.RelativeTimeFormat;
+  const ago = says && new Intl.RelativeTimeFormat(document.documentElement.lang, { numeric: "always" });
+  const inFull = says && new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
   for (const time of on.querySelectorAll("time[datetime]")) {
     const at = new Date(time.getAttribute("datetime"));
     let since = (Date.now() - at) / 1000, unit = "second";
-    if (!(since >= 0)) continue;
+    const shown = time.closest("[data-shown-once-older-than]");
+    if (shown) shown.hidden = Math.abs(since) < Number(shown.dataset.shownOnceOlderThan);
+    if (!says || !(since >= 0)) continue;
     for (const [next, per] of LARGER) {
       if (since < per) break;
       since /= per;
@@ -1729,6 +1746,16 @@ mod tests {
         assert!(full.starts_with("11:21:"), "{full}");
         assert!(full.contains(" on "), "{full}");
         assert!(time.starts_with("<time datetime=\""), "{time}");
+    }
+
+    /// A heading's read time stands apart from its mark, telling the page's
+    /// script how old it has to be before the reader is shown it.
+    #[test]
+    fn a_headings_read_time_says_how_old_it_must_be_to_be_shown() {
+        let html = page_at("/").html;
+        let heading = line_html(&html, 0);
+        let shown = "<span data-shown-once-older-than=\"120\"> read <time datetime=\"";
+        assert!(heading.contains(shown), "{heading}");
     }
 
     /// A page drawn on another day than the read says which day it was.
