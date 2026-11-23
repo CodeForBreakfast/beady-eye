@@ -402,6 +402,13 @@ impl Drawing<'_> {
                     self.open_line(html, at, line, " heading", String::new());
                     self.heading(html, line, project, &reads, drawn.offset);
                 }
+                Content::Section { section, count } => {
+                    self.open_line(html, at, line, " section", String::new());
+                    html.push_str(&format!(
+                        "<h2>{}</h2></div>\n",
+                        escaped(&phrase::section(section, *count))
+                    ));
+                }
                 _ => self.forest_line(html, at, line, &reads),
             }
         }
@@ -1438,8 +1445,9 @@ border-radius:999px;font:600 var(--size-detail) var(--body);color:var(--fg);back
 .page .head h2{margin:0;font:600 var(--size-title)/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
-.waits>p,.page section>h3,.fields dt,.lists .hd{font:600 var(--size-label) var(--body);letter-spacing:.07em;\
+.waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2{font:600 var(--size-label) var(--body);letter-spacing:.07em;\
 text-transform:uppercase}\
+.line.section{min-height:0;padding-block:16px 6px}.line.section>h2{margin:0;color:var(--muted);white-space:normal}\
 .waits>p{margin:0;color:var(--muted)}\
 .page section{margin-top:18px;white-space:normal}\
 .page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}\
@@ -5318,7 +5326,8 @@ mod tests {
 
     /// Every small capitals label on the page is set by one rule at the
     /// label size: a section's heading on a bead's page, a field's name in
-    /// its grid, what a bead waits on, and a heading in the menu of lists.
+    /// its grid, what a bead waits on, a heading in the menu of lists, and
+    /// the heading over each of a list's sections.
     #[test]
     fn every_small_capitals_label_is_set_alike() {
         assert_eq!(
@@ -5328,11 +5337,35 @@ mod tests {
         );
         assert!(
             STYLE.contains(
-                ".waits>p,.page section>h3,.fields dt,.lists .hd{font:600 var(--size-label) var(--body);\
-                 letter-spacing:.07em;text-transform:uppercase}"
+                ".waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2\
+                 {font:600 var(--size-label) var(--body);letter-spacing:.07em;text-transform:uppercase}"
             ),
             "{STYLE}"
         );
+    }
+
+    /// The ready list heads its in progress and ready sections with the
+    /// small capitals label, saying what the terminal says there, and draws
+    /// them in none of the terminal's heading style.
+    #[test]
+    fn the_ready_lists_sections_are_headed_by_a_label() {
+        let ready = page_at("/?ready=1").html;
+        let headings: Vec<_> = lines_html(&ready)
+            .into_iter()
+            .filter(|line| line.starts_with(" section"))
+            .collect();
+
+        let said: Vec<_> = headings
+            .iter()
+            .map(|line| text_of(&line[line.find('>').expect("the tag ends") + 1..]))
+            .collect();
+        assert_eq!(said.len(), 2, "{ready}");
+        assert!(said[0].starts_with("In progress · "), "{said:?}");
+        assert!(said[1].starts_with("Ready · "), "{said:?}");
+        for heading in headings {
+            assert!(heading.starts_with(" section\"><h2>"), "{heading}");
+            assert!(!heading.contains("style="), "{heading}");
+        }
     }
 
     /// A parent's page lists its children, as `bd show` does, with a count
