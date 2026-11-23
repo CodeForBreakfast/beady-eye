@@ -1484,8 +1484,10 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// into the body, so only what differs is touched: a line, the bead view or
 /// a menu that is drawn the same is the same element afterwards, keeping its
 /// scroll, its focus, whether the reader opened it, and what is typed in it.
-/// Elements with an id are matched by it, and the rest by the next element
-/// of their kind, so one that is no longer drawn does not shift the rest. It
+/// An element is matched by its id, or by its first child's where it has
+/// none, so a project's section is matched by its heading. The rest are
+/// matched to the next element of their kind, so one that is no longer
+/// drawn does not shift the rest. It
 /// keeps the line or bead view at the top of the window where it was, or the
 /// next line below it that is still drawn. The link that had focus keeps
 /// it while it goes where it went. Otherwise a link going there takes it,
@@ -1555,9 +1557,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     gone.remove();
     return next;
   };
-  const same = (now, next) => now.nodeType === next.nodeType && now.nodeName === next.nodeName && !now.id && !next.id;
+  const key = (at) => at.id || (at.firstElementChild?.id && " " + at.firstElementChild.id) || "";
+  const same = (now, next) => now.nodeType === next.nodeType && now.nodeName === next.nodeName && !key(now) && !key(next);
   const nextLike = (at, want, wanted) => {
-    while (at && !same(at, want) && !wanted.has(at.id)) at = at.nextSibling;
+    while (at && !same(at, want) && !wanted.has(key(at))) at = at.nextSibling;
     return at && same(at, want) ? at : null;
   };
   const reconcile = (now, next) => {
@@ -1567,18 +1570,18 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
       if (!next.hasAttribute(name) && !(name === "open" && now.matches("details"))) now.removeAttribute(name);
     }
     for (const { name, value } of next.attributes) if (now.getAttribute(name) !== value) now.setAttribute(name, value);
-    const wanted = new Set([...next.children].map((child) => child.id).filter(Boolean));
-    const kept = new Map([...now.children].filter((child) => wanted.has(child.id)).map((child) => [child.id, child]));
+    const wanted = new Set([...next.children].map(key).filter(Boolean));
+    const kept = new Map([...now.children].filter((child) => wanted.has(key(child))).map((child) => [key(child), child]));
     let at = now.firstChild;
     for (const want of [...next.childNodes]) {
-      const match = want.id ? kept.get(want.id) : nextLike(at, want, wanted);
+      const match = key(want) ? kept.get(key(want)) : nextLike(at, want, wanted);
       if (!match) {
         now.insertBefore(want, at);
         continue;
       }
       if (match !== at) {
         let between = at;
-        while (between && between !== match && !wanted.has(between.id)) between = between.nextSibling;
+        while (between && between !== match && !wanted.has(key(between))) between = between.nextSibling;
         if (between !== match) now.insertBefore(match, at);
         else while (at !== match) at = drop(at);
       }
