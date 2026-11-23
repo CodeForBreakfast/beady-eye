@@ -1536,15 +1536,15 @@ border-block:1px solid var(--line);white-space:normal;font-family:var(--body)}\
 .labels{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;white-space:normal;color:var(--muted)}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
-.line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:nowrap;gap:4px 12px;width:auto;min-height:40px;\
+.line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
 padding-block:0;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
 .forest>section:not(:first-child){margin-top:18px}\
-.heading .left{display:flex;align-items:center;min-width:0}\
+.heading .left{display:flex;align-items:center;flex:1000 1 5em;min-width:0;max-width:max-content}\
 .heading h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
 .heading h2{display:inline;margin:0;font:600 var(--size-heading) var(--display);color:var(--fg)}\
 .heading .read{display:flex;align-items:center;flex:1 1 0}\
 .heading .read>[data-shown-once-older-than]{width:0;flex-grow:1;overflow:hidden;text-overflow:ellipsis;white-space:pre}\
-.heading .state{display:flex;flex:none;flex-wrap:nowrap;gap:4px 14px;align-items:baseline;padding-left:0}\
+.heading .state{display:flex;flex:none;max-width:100%;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>*{white-space:nowrap}\
 .heading .state:has(>.unread){flex:0 1 auto}.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
 .heading .state a:hover{text-decoration:underline}\
@@ -4957,7 +4957,9 @@ mod tests {
     /// heading is not a bead's row, and its bar keeps its own width.
     #[test]
     fn a_desktop_row_ellipsises_its_title_before_the_columns_at_its_right() {
-        assert!(!STYLE.contains("max-content"), "{STYLE}");
+        for as_wide_as_its_content in ["{width:max-content", ";width:max-content"] {
+            assert!(!STYLE.contains(as_wide_as_its_content), "{STYLE}");
+        }
         let desktop = rules_under("(width>720px)");
         for rule in [
             ".line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}",
@@ -6026,13 +6028,16 @@ mod tests {
         );
     }
 
-    /// A project's band is one line however narrow the window, so it keeps
-    /// its height while its mark and its read time change width. The read
-    /// time takes only the room left over, so it gives way first, cut short
-    /// with an ellipsis, while its mark keeps its width. The name gives way
-    /// next and the counts never do. A name that shrank while the band had
-    /// room would take a sliver of a pixel and lose its last letters to an
-    /// ellipsis, which the read time's zero basis prevents.
+    /// A project's band is one line on any phone, so it keeps its height
+    /// while its mark and its read time change width. The read time takes
+    /// only the room left over, so it gives way first, cut short with an
+    /// ellipsis, while its mark keeps its width. The name gives way next, down
+    /// to a few letters, and the counts never do. Only counts that cannot fit
+    /// beside those few letters wrap to a line of their own, as a failed
+    /// tracker's error does, so nothing is clipped at any zoom and the name
+    /// stays. A name that shrank while the band had room would take a sliver
+    /// of a pixel and lose its last letters to an ellipsis, which the read
+    /// time's zero basis prevents.
     #[test]
     fn a_projects_band_is_one_line_that_cuts_its_read_time_and_then_its_name_short() {
         let rule = |selector: &str| {
@@ -6040,17 +6045,20 @@ mod tests {
             &STYLE[at..at + STYLE[at..].find('}').expect("a rule ends")]
         };
         let state = rule(".heading .state");
-        for said in ["flex-wrap:nowrap", "flex:none"] {
+        for said in ["flex:none", "max-width:100%", "flex-wrap:wrap"] {
             assert!(state.contains(said), "{state}");
         }
         let band = rule(".line.heading");
-        for said in ["flex-wrap:nowrap", "min-height:40px", "padding-block:0"] {
+        for said in ["flex-wrap:wrap", "min-height:40px", "padding-block:0"] {
             assert!(band.contains(said), "{band}");
         }
         assert!(STYLE.contains(".line.heading a.fold{align-self:center;height:38px}"));
         assert!(rule(".heading .read").contains("flex:1 1 0"));
         assert!(!rule(".heading .read").contains("overflow"));
-        assert!(rule(".heading .left").contains("min-width:0"));
+        let left = rule(".heading .left");
+        for said in ["flex:1000 1 5em", "min-width:0", "max-width:max-content"] {
+            assert!(left.contains(said), "{left}");
+        }
         for gives_way in [".heading h2", ".heading .read>[data-shown-once-older-than]"] {
             let cut = rule(gives_way);
             for said in ["overflow:hidden", "text-overflow:ellipsis"] {
