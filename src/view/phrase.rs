@@ -232,9 +232,23 @@ pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
 }
 
-/// What a page says before how long ago a project's rows were read.
+/// What a page says before when a project's rows were read.
 pub fn read() -> &'static str {
     "read"
+}
+
+/// When an instant was, as a time of day at `offset`, for a page whose
+/// browser runs no script to say how long ago. It names the day too where
+/// that is not the day of `now`. It holds for as long as the page is open,
+/// and a page redrawn later the same day says it the same way.
+pub fn at_time_of_day(at: DateTime<Utc>, offset: FixedOffset, now: DateTime<Utc>) -> String {
+    let at = at.with_timezone(&offset);
+    let format = if at.date_naive() == now.with_timezone(&offset).date_naive() {
+        "at %H:%M"
+    } else {
+        "at %H:%M on %-d %b"
+    };
+    at.format(format).to_string()
 }
 
 /// The whole of an instant at `offset`, to the second and with its zone.

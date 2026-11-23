@@ -55,8 +55,10 @@ pub struct Drawn {
 
 /// The page `asked` names, drawn from `snapshot` under `layout`.
 ///
-/// Each project's line says how long ago it was read, as the terminal does,
-/// and the page's script keeps that true on a page left open.
+/// Each project's line says the time of day it was read at, which stays
+/// the same however often the page is drawn again, so a page kept current
+/// is sent no change for it. The page's script says how long ago instead,
+/// as the terminal does, and keeps that true on a page left open.
 pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) -> Answer {
     let shown = asked.forest(snapshot, layout);
     let forest = &shown.forest;
@@ -339,15 +341,13 @@ impl Drawing<'_> {
                 "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
                 escaped(phrase::mark(how_fresh, reads.now))
             ));
-            if let (Some(ago), Some(at)) =
-                (phrase::last_read(how_fresh, reads.now), how_fresh.read_at)
-            {
+            if let Some(at) = how_fresh.read_at {
                 html.push_str(&format!(
                     " {} <time datetime=\"{}\" title=\"{}\">{}</time>",
                     escaped(phrase::read()),
                     at.to_rfc3339(),
                     escaped(&phrase::instant_in_full(at, offset)),
-                    escaped(&ago)
+                    escaped(&phrase::at_time_of_day(at, offset, reads.now))
                 ));
             }
             html.push_str("</span>");
@@ -1335,7 +1335,7 @@ mod tests {
     /// What the terminal says of the project's read, half a minute old, and
     /// what the page says in its place.
     const AGO: &str = "✓ 30s ago";
-    const READ: &str = "✓ read 30s ago";
+    const READ: &str = "✓ read at 11:21";
 
     fn page_at(target: &str) -> Answer {
         let asked = Asked::of(target).expect("a page is at the address");
@@ -1434,8 +1434,8 @@ mod tests {
     }
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
-    /// the project's line said as the page's heading says it: "read" before
-    /// the read's age, and the fraction done in words.
+    /// the project's line said as the page's heading says it: the time of
+    /// day it was read, and the fraction done in words.
     fn terminal_lines(forest: &Forest) -> Vec<String> {
         let rows = frame_of(forest, 160, 60).rows();
         rows[..forest.lines().len()]
@@ -1574,10 +1574,11 @@ mod tests {
         assert_eq!(page_lines(&html), terminal_lines(&terminal_forest(&[])));
     }
 
-    /// A project's heading says how long ago it was read behind the same mark
-    /// as the terminal, and says how far through it is in words beside a bar.
+    /// A project's heading says the time of day it was read behind the same
+    /// mark as the terminal, and says how far through it is in words beside
+    /// a bar.
     #[test]
-    fn a_projects_heading_says_how_long_ago_it_was_read_as_the_terminal_does() {
+    fn a_projects_heading_says_the_time_of_day_it_was_read_where_the_terminal_says_how_long_ago() {
         let terminal = frame_of(&terminal_forest(&[]), 160, 60).rows();
         assert_eq!(words(&terminal[0]), format!("▾ summit-works {AGO} 3/9"));
         let html = page_at("/").html;
@@ -1598,8 +1599,8 @@ mod tests {
         );
     }
 
-    /// How long ago keeps the whole of the read, day and zone included, for a
-    /// reader who wants to know when it was.
+    /// The short time keeps the whole of the read, day and zone included,
+    /// for a reader whose page has been open since another day.
     #[test]
     fn a_headings_read_time_holds_the_whole_date_and_zone() {
         let html = page_at("/").html;
@@ -1615,9 +1616,9 @@ mod tests {
         assert!(time.starts_with("<time datetime=\""), "{time}");
     }
 
-    /// A page drawn a day after the read says its age in days.
+    /// A page drawn on another day than the read says which day it was.
     #[test]
-    fn a_heading_drawn_a_day_after_the_read_says_its_age_in_days() {
+    fn a_heading_read_on_another_day_than_the_page_is_drawn_says_the_day() {
         let drawn = Drawn {
             at: drawn_at() + chrono::TimeDelta::days(1),
             ..drawing()
@@ -1625,9 +1626,24 @@ mod tests {
         let asked = Asked::of("/").expect("the forest");
         let html = page(ground(), &Layout::default(), &asked, drawn).html;
         assert!(
-            page_lines(&html)[0].contains("read 1d ago"),
+            page_lines(&html)[0].contains("read at 11:21 on 30 Aug"),
             "{}",
             page_lines(&html)[0]
+        );
+    }
+
+    /// A page drawn again a minute later, from the same reads, is the same
+    /// page, so a page kept current is sent nothing for the time passing.
+    #[test]
+    fn a_page_drawn_again_later_the_same_day_is_the_same_page() {
+        let later = Drawn {
+            at: drawn_at() + chrono::TimeDelta::minutes(1),
+            ..drawing()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        assert_eq!(
+            page(ground(), &Layout::default(), &asked, later).html,
+            page_at("/").html
         );
     }
 
