@@ -14,10 +14,10 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::Node;
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
-use crate::view::draw::bead::{badge_style, opens_at};
+use crate::view::draw::bead::{badge_marks, badge_style};
 use crate::view::draw::tone::status_style;
 use crate::view::draw::{done, key_rows, Reference};
-use crate::view::fitted::{self, cover, indent, Fitted, Link};
+use crate::view::fitted::{self, cover, indent, Fitted, Mark};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Waiting};
 use crate::view::markdown::{self, Flow};
@@ -345,9 +345,9 @@ pub struct Page {
     /// How each row of the description and the notes stands to the line
     /// of text it is a row of.
     pub(crate) prose: HashMap<usize, Flow>,
-    /// Which spans of which rows the terminal is told point somewhere, for
-    /// the rows that hold a link at all.
-    pub(crate) links: HashMap<usize, Vec<Link>>,
+    /// Which spans of which rows are marked, and as what, for
+    /// the rows that hold a mark at all.
+    pub(crate) marks: HashMap<usize, Vec<Mark>>,
 }
 
 /// How much of what the selected line stands for is done, where the forest
@@ -590,27 +590,21 @@ pub fn said(
             palette::ATTENTION,
         )]));
     }
-    let mut links = HashMap::new();
+    let mut marks = HashMap::new();
     let mut badges = vec![Span::raw(indent())];
-    let mut opened = Vec::new();
+    let mut marked = Vec::new();
     for badge in &cells.badges {
         if badges.len() > 1 {
             badges.push(Span::raw(indent()));
         }
-        if let Some(to) = opens_at(badge) {
-            opened.push(Link {
-                block: fitted::Block::Identity,
-                at: badges.len(),
-                to: to.to_string(),
-            });
-        }
+        marked.extend(badge_marks(badge, fitted::Block::Identity, badges.len()));
         badges.push(Span::styled(
             badge.text.clone(),
             badge_style(badge, &cells.status),
         ));
     }
     if badges.len() > 1 {
-        links.insert(rows.len(), opened);
+        marks.insert(rows.len(), marked);
         rows.push(badges);
     }
     if let Some(progress) = cells.progress {
@@ -674,7 +668,7 @@ pub fn said(
         blocked_by,
         related,
         prose: flows,
-        links,
+        marks,
     }
 }
 
@@ -864,7 +858,7 @@ pub fn show(
     if window.is_empty() {
         return;
     }
-    let mut links = page.links;
+    let mut marks = page.marks;
 
     let block = window_block();
     view.fit(page.rows.len(), inner.height as usize);
@@ -891,7 +885,7 @@ pub fn show(
     {
         let at = view.from + n;
         let drawn = Fitted::new(row, Vec::new(), Vec::new())
-            .linking(links.remove(&at).unwrap_or_default())
+            .marking(marks.remove(&at).unwrap_or_default())
             .toned(palette::PAGE);
         let drawn = if on == Some(at) {
             drawn.selected()

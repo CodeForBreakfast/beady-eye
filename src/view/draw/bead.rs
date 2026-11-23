@@ -8,7 +8,7 @@ use crate::config::Colour;
 use crate::model::badges::Badged;
 use crate::model::tree::OrphanedDependency;
 use crate::model::types::Status;
-use crate::view::fitted::{columns, openable, Block, Fitted, Link, Shorter, GAP};
+use crate::view::fitted::{columns, openable, Block, Fitted, Mark, Marked, Shorter, GAP};
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Cell, Layout, Row, Widths, AGENT, WARNING};
@@ -78,20 +78,20 @@ pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layou
     let title = walk.block(Block::Title, Vec::new(), row.agent.as_deref());
     let state = walk.block(Block::State, Vec::new(), row.agent.as_deref());
 
-    let mut links = identity.links;
-    links.extend(title.links);
-    links.extend(state.links);
+    let mut marks = identity.marks;
+    marks.extend(title.marks);
+    marks.extend(state.marks);
     let mut shorter = identity.shorter;
     shorter.extend(title.shorter);
     shorter.extend(state.shorter);
 
     let mut fitted = Fitted::new(identity.spans, title.spans, state.spans)
-        .linking(links)
+        .marking(marks)
         .shortening(shorter);
     if layout.state.contains(&Cell::Agent) {
         if let Some(briefly) = &row.agent_briefly {
             let short = walk.block(Block::State, Vec::new(), Some(briefly));
-            fitted = fitted.briefly(short.spans, short.links, short.shorter);
+            fitted = fitted.briefly(short.spans, short.marks, short.shorter);
         }
     }
     fitted.toned(tone(row))
@@ -165,7 +165,7 @@ struct Walk<'a> {
 }
 
 /// One block of a row as the walk filled it: its spans, and which of them
-/// are links or have short forms.
+/// are marked or have short forms.
 struct Walked {
     block: Block,
     /// The columns between one cell and the next: one in the identity, `GAP`
@@ -176,7 +176,7 @@ struct Walked {
     /// separators are spans, and the identity opens on a head that is not a
     /// cell.
     cells: usize,
-    links: Vec<Link>,
+    marks: Vec<Mark>,
     shorter: Vec<Shorter>,
 }
 
@@ -351,7 +351,7 @@ impl Walked {
             apart: if block == Block::Identity { 1 } else { GAP },
             spans: head,
             cells: 0,
-            links: Vec::new(),
+            marks: Vec::new(),
             shorter: Vec::new(),
         }
     }
@@ -367,17 +367,11 @@ impl Walked {
         self.spans.len() - 1
     }
 
-    /// A badge is a cell that is a link where its config gave it somewhere
-    /// and has a short form where its config named one.
+    /// A badge is a cell marked as its config says, and has a short form
+    /// where its config named one.
     fn badge(&mut self, badge: &Badged, status: &Status) {
         let at = self.cell(Span::styled(badge.text.clone(), badge_style(badge, status)));
-        if let Some(to) = opens_at(badge) {
-            self.links.push(Link {
-                block: self.block,
-                at,
-                to: to.to_string(),
-            });
-        }
+        self.marks.extend(badge_marks(badge, self.block, at));
         if let Some(said) = badge
             .short
             .as_deref()
@@ -415,6 +409,18 @@ fn colour_style(colour: Colour, status: &Status) -> Style {
 /// link or it is not.
 pub(in crate::view) fn opens_at(badge: &Badged) -> Option<&str> {
     badge.link.as_deref().filter(|to| openable(&badge.text, to))
+}
+
+/// What a badge drawn as span `at` of `block` is marked as: a link where its
+/// config gave it somewhere that opens, and a literal where its config wrote
+/// the colour itself.
+pub(in crate::view) fn badge_marks(badge: &Badged, block: Block, at: usize) -> Vec<Mark> {
+    let link = opens_at(badge).map(|to| Marked::Link(to.to_string()));
+    let literal = matches!(badge.colour, Some(Colour::Absolute(_))).then_some(Marked::Literal);
+    link.into_iter()
+        .chain(literal)
+        .map(|is| Mark { block, at, is })
+        .collect()
 }
 
 /// A badge's colour and its underline compose, because `palette::LINK` is an

@@ -19,7 +19,7 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::view::address::{line_name, Asked, FIND, SHOWN};
-use crate::view::fitted::{indent, Block, Link};
+use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed};
 use crate::view::lines::{self, Content, Level, Line, Waiting};
 use crate::view::markdown::Flow;
@@ -342,10 +342,10 @@ impl Drawing<'_> {
         if bead && !identity.is_empty() {
             html.push_str(&indent());
         }
-        spans(html, identity, Block::Identity, whole.links, from);
+        spans(html, identity, Block::Identity, whole.marks, from);
         if !whole.title.is_empty() {
             html.push_str(&indent());
-            spans(html, whole.title, Block::Title, whole.links, 0);
+            spans(html, whole.title, Block::Title, whole.marks, 0);
         }
         if !bead {
             html.push_str("</span></span>");
@@ -354,7 +354,7 @@ impl Drawing<'_> {
             html.push_str("</span>");
         }
         html.push_str("<span class=\"state\">");
-        spans(html, whole.state, Block::State, whole.links, 0);
+        spans(html, whole.state, Block::State, whole.marks, 0);
         html.push_str("</span></div>\n");
     }
 
@@ -471,7 +471,7 @@ impl Drawing<'_> {
         html.push_str("</div>");
         let mut in_prose = false;
         for (at, row) in page.rows.iter().enumerate().skip(page.head) {
-            let links = page.links.get(&at).map_or(&[][..], Vec::as_slice);
+            let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
             // A row of prose starts with two spans: the indent the page gives
             // it, and the lead or the hang the text gives it.
             let (lead, rest) = row.split_at(row.len().min(2));
@@ -482,9 +482,9 @@ impl Drawing<'_> {
             if let Some(Flow::Joins(joint)) = flow {
                 html.push_str(joint);
                 html.push_str("<span class=\"w\">\n");
-                spans(html, lead, Block::Identity, links, 0);
+                spans(html, lead, Block::Identity, marks, 0);
                 html.push_str("</span>");
-                spans(html, rest, Block::Identity, links, lead.len());
+                spans(html, rest, Block::Identity, marks, lead.len());
                 continue;
             }
             if std::mem::take(&mut in_prose) {
@@ -496,9 +496,9 @@ impl Drawing<'_> {
             // of its own and hang every row of it under the text's start.
             if let Some(Flow::Opens) = flow {
                 html.push_str("<span class=\"p\"><span class=\"lead\">");
-                spans(html, lead, Block::Identity, links, 0);
+                spans(html, lead, Block::Identity, marks, 0);
                 html.push_str("</span><span class=\"t\">");
-                spans(html, rest, Block::Identity, links, lead.len());
+                spans(html, rest, Block::Identity, marks, lead.len());
                 in_prose = true;
             } else if let Some(related) = named.get(&at) {
                 let (arrow, rest) = row.split_at(row.len().min(2));
@@ -529,7 +529,7 @@ impl Drawing<'_> {
                     }
                 }
             } else {
-                spans(html, row, Block::Identity, links, 0);
+                spans(html, row, Block::Identity, marks, 0);
             }
         }
         if in_prose {
@@ -657,21 +657,31 @@ fn blocking(snapshot: &Snapshot, node: &Node, blocker: &str) -> Vec<Related> {
 }
 
 /// Spans of one block as HTML, each in its own style, the first of them the
-/// block's span `from`. One that `links` names is a link, where it points
-/// somewhere a page may link to. One in the code tone is marked as code.
-fn spans(html: &mut String, spans: &[Span<'static>], block: Block, links: &[Link], from: usize) {
+/// block's span `from`. One that `marks` names as a link is a link, where it
+/// points somewhere a page may link to, and one it names as a literal is in
+/// its colour as written. One in the code tone is marked as code.
+fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
     for (at, span) in spans.iter().enumerate() {
         let code = if span.style.fg == palette::CODE.fg {
             " class=\"code\""
         } else {
             ""
         };
-        let style = format!("{code}{}", styled(palette::css(span.style)));
-        let text = escaped(&span.content);
-        let to = links
+        let mut marked = marks
             .iter()
-            .find(|link| link.block == block && link.at == from + at)
-            .map(|link| link.to.as_str())
+            .filter(|mark| mark.block == block && mark.at == from + at);
+        let css = if marked
+            .clone()
+            .any(|mark| matches!(mark.is, Marked::Literal))
+        {
+            palette::css_as_written(span.style)
+        } else {
+            palette::css(span.style)
+        };
+        let style = format!("{code}{}", styled(css));
+        let text = escaped(&span.content);
+        let to = marked
+            .find_map(Mark::link)
             .filter(|to| to.starts_with("https://") || to.starts_with("http://"));
         match to {
             Some(to) => html.push_str(&format!("<a href=\"{}\"{style}>{text}</a>", escaped(to))),
@@ -2174,6 +2184,52 @@ mod tests {
             "{more}"
         );
         assert_eq!(words(&text_of(more)), "⇢ #12");
+    }
+
+    /// A badge a config gave a literal colour is drawn in that colour on the
+    /// forest and on the bead's page, even where the colour is one of `bd`'s
+    /// statuses, while a badge that named the status's slot follows the
+    /// page's theme.
+    #[test]
+    fn a_literal_colour_is_drawn_as_written_and_a_status_slot_as_the_theme() {
+        use crate::config::{Colour, DrawnOn, Slot};
+        use crate::model::badges::Badged;
+        use ratatui::style::Color;
+
+        let badged = |key: &str, colour| Badged {
+            key: key.to_string(),
+            text: key.to_string(),
+            short: None,
+            link: None,
+            colour: Some(colour),
+            drawn_on: DrawnOn::Own,
+        };
+        let blocked = palette::STATUS_BLOCKED
+            .fg
+            .expect("bd draws a blocked bead in a colour");
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        tree.beads[1].badges = vec![
+            badged("literal", Colour::Absolute(blocked)),
+            badged("slot", Colour::Slot(Slot::StatusBlocked)),
+        ];
+        let opened = key(&tree.beads[1].id);
+        snapshot.collected = snapshot.trees.clone();
+        let Color::Rgb(r, g, b) = blocked else {
+            panic!("bd's status colours are literal");
+        };
+        let written = format!("color:#{r:02x}{g:02x}{b:02x}\">literal<");
+        let themed = "color:var(--status-blocked)\">slot<";
+
+        let forest = page_of(snapshot.clone(), "/");
+        let line = line_html(&forest, 2);
+        assert!(line.contains(&written), "{line}");
+        assert!(line.contains(themed), "{line}");
+
+        let page = page_of(snapshot, &address(&opened));
+        let view = &page[page.find("<div class=\"page\">").expect("the bead view")..];
+        assert!(view.contains(&written), "{view}");
+        assert!(view.contains(themed), "{view}");
     }
 
     /// One invented tree deeper than a phone indents: a chain seven levels
