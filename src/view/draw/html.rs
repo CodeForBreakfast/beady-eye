@@ -231,11 +231,14 @@ impl Drawing<'_> {
         // An address can name a root the forest no longer draws, and the
         // page then draws every tree, so it says so rather than drop it.
         let said = if self.forest.is_focused() {
-            phrase::focused().to_string()
+            phrase::showing_only().to_string()
         } else {
             format!("{WARNING} {}", phrase::not_drawn(root.key()))
         };
-        html.push_str(&format!("<p class=\"rooted\">{} ", escaped(&said)));
+        html.push_str(&format!(
+            "<p class=\"rooted\"><span class=\"said\">{}</span> ",
+            escaped(&said)
+        ));
         if let Some(node) = self
             .forest
             .snapshot()
@@ -249,7 +252,7 @@ impl Drawing<'_> {
             );
         }
         html.push_str(&format!(
-            " <a class=\"close\" href=\"{}\">{}</a></p>\n",
+            " <a class=\"all\" href=\"{}\">{}</a></p>\n",
             escaped(&self.asked.rooting(None)),
             escaped(phrase::show_all())
         ));
@@ -469,9 +472,11 @@ impl Drawing<'_> {
         ));
     }
 
-    /// The one component every reference to a bead is drawn by: its glyph,
-    /// its id second to its title, and a link to `href` where the page can
-    /// open the bead.
+    /// The one component every reference to a bead is drawn by: its status
+    /// mark, its title, then its id set quietly, and a link to `href` where
+    /// the page can open the bead. The mark is labelled with `bd`'s word for
+    /// the status. The id takes no colour from the place drawing it, because
+    /// a status colour or a finished row's tone would make it fainter still.
     fn reference(&self, html: &mut String, reference: Reference, href: Option<String>) {
         let linked = href.is_some();
         match href {
@@ -487,19 +492,28 @@ impl Drawing<'_> {
                 0,
             )
         };
+        let glyph = reference.glyph();
         html.push_str(&format!(
-            "<span class=\"g\"{}>{}</span>",
-            styled(palette::css(reference.glyph.style)),
-            escaped(&reference.glyph.content)
+            "<span class=\"g{}\" role=\"img\" aria-label=\"{}\"{}>{}</span>",
+            drawn_mark(&reference.status).map_or_else(String::new, |mark| format!(" {mark}")),
+            escaped(&phrase::status_word(&reference.status)),
+            styled(palette::css(glyph.style)),
+            escaped(&glyph.content)
         ));
         between(html, " ");
-        html.push_str("<span class=\"id\">");
-        spans(html, &reference.id, Block::Identity, &[], 0);
-        html.push_str("</span>");
-        between(html, &indent());
         html.push_str("<span class=\"title\">");
         spans(html, &reference.title, Block::Identity, &[], 0);
         html.push_str("</span>");
+        between(html, &indent());
+        let id: String = reference
+            .id
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        html.push_str(&format!(
+            "<span class=\"id\">{}</span>",
+            escaped(id.trim_end())
+        ));
         html.push_str(if linked { "</a>" } else { "</span>" });
     }
 
@@ -822,6 +836,19 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
     Some(html)
 }
 
+/// The class of the mark the page draws for `status` in place of its glyph,
+/// where it draws one. Any other status keeps its glyph.
+fn drawn_mark(status: &Status) -> Option<&'static str> {
+    match status {
+        Status::Open => Some("open"),
+        Status::InProgress => Some("in-progress"),
+        Status::Blocked => Some("blocked"),
+        Status::Closed => Some("closed"),
+        Status::Deferred => Some("deferred"),
+        Status::Pinned | Status::Hooked | Status::Other(_) => None,
+    }
+}
+
 /// The attribute marking the entry or switch that is in force, where `on`.
 fn on(on: bool) -> &'static str {
     if on {
@@ -868,7 +895,7 @@ const STYLE: &str = "\
 html{color-scheme:light dark}\
 body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto}\
-.line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}\
+.line>:has(+.bead),.line>.left>:not(:last-child),.code{font-family:var(--code)}\
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
@@ -879,7 +906,7 @@ main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 .line i,.line b,.line u{font:inherit;text-decoration:none}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
-.bead .id{opacity:.75}\
+.bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
 aside{position:sticky;top:0;align-self:start;max-height:100vh;overflow:auto;box-sizing:border-box;\
 padding:8px 12px;border-left:1px solid var(--line)}\
 .page{white-space:pre-wrap}\
@@ -914,10 +941,16 @@ nav input::placeholder{color:transparent}\
 .lists{position:relative}.lists summary{cursor:pointer}\
 .lists[open] a{display:block;padding:2px 0}\
 .lists a.on,nav .ready.on{font-weight:bold;text-decoration:underline}\
-.rooted{margin:0;padding:4px 12px;background:var(--accent-soft)}\
+.rooted{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
+background:var(--accent-soft);border-bottom:1px solid var(--line);font-size:13.5px}\
+.rooted .said{color:var(--muted);min-width:0;overflow-wrap:anywhere}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
+.rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+.rooted .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
+.rooted .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 .root{display:block;margin-bottom:8px}\
 a.root:hover,a.step:hover,nav a:hover{text-decoration:underline}\
 @media (max-width:720px){main.open{grid-template-columns:minmax(0,1fr)}\
+.rooted{padding:9px 14px}.rooted .all::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
 .line{width:auto;white-space:pre-wrap;position:relative}\
@@ -987,7 +1020,19 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead .title{grid-area:1/2;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
 .page .bead .id{grid-area:2/2;font-size:12px;font-family:var(--body)}\
 .page .head .bead{width:100%;margin-bottom:4px}\
-.page .head .title{font-size:18px}}";
+.page .head .title{font-size:18px}}\
+.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
+box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
+font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
+.bead .g.open{color:var(--status-open)}\
+.bead .g.in-progress{background:linear-gradient(90deg,currentColor 50%,transparent 50%)}\
+.bead .g.blocked,.bead .g.closed{background:currentColor}\
+.bead .g.closed::after{content:\"\";position:absolute;left:2.6px;top:.6px;width:3px;height:6px;\
+border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)}\
+.bead .g.deferred{border-style:dashed}\
+@media print,(forced-colors:active){.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
+width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
+.bead .g.closed::after{content:none}}";
 
 /// The page's one script, which keeps it current. It asks the page's own
 /// address for its changes since the one the page was drawn from, and the
@@ -1277,9 +1322,30 @@ mod tests {
                     .replace("<span class=\"state\">", " ")
                     .replace("<span class=\"read\">", " ")
                     .replace("<span class=\"flag\">", " ");
-                words(&text_of(&line))
+                words(&text_of(&in_the_terminals_order(&line)))
             })
             .collect()
+    }
+
+    /// `html` with each reference's id moved from after its title to before
+    /// it, which is where the terminal draws an id.
+    fn in_the_terminals_order(html: &str) -> String {
+        let mut html = html.to_string();
+        let mut from = 0;
+        while let Some(found) = html[from..].find("<span class=\"g") {
+            let mark = from + found;
+            let after_mark = element_end(&html, mark);
+            let id = after_mark
+                + html[after_mark..]
+                    .find("<span class=\"id\">")
+                    .expect("an id");
+            let after_id = element_end(&html, id);
+            let moved = html[id..after_id].to_string();
+            html.replace_range(id..after_id, "");
+            html.insert_str(after_mark, &format!(" {moved}"));
+            from = after_id;
+        }
+        html
     }
 
     /// Each line of the forest the terminal draws, as a reader sees it, with
@@ -1865,7 +1931,7 @@ mod tests {
             "{shown}"
         );
         let aside = &answer.html[answer.html.find("<aside>").expect("the bead view")..];
-        assert!(text_of(aside).contains("○ smt-4kd3p.6  apply the two niri settings"));
+        assert!(words(&text_of(aside)).contains("○ apply the two niri settings smt-4kd3p.6"));
     }
 
     #[test]
@@ -1940,10 +2006,12 @@ mod tests {
     fn the_bead_view_draws_the_terminals_rows_with_every_bead_named_by_a_reference() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
-        let page_rows: Vec<String> = text_of(&view[..view.find("</aside>").unwrap()])
-            .lines()
-            .map(words)
-            .collect();
+        let page_rows: Vec<String> = text_of(&in_the_terminals_order(
+            &view[..view.find("</aside>").unwrap()],
+        ))
+        .lines()
+        .map(words)
+        .collect();
 
         let mut forest = flatten(ground());
         assert!(forest.go_to(&key("smt-4kd3p.6")));
@@ -2012,7 +2080,7 @@ mod tests {
             .expect("the bead says what blocks it");
         assert_eq!(
             line,
-            "blocked by: ○ smt-4kd3p.1 wire the niri theme include"
+            "blocked by: ○ wire the niri theme include smt-4kd3p.1"
         );
     }
 
@@ -2044,7 +2112,7 @@ mod tests {
         });
         assert_eq!(
             readiness_line(snapshot),
-            "blocked by: ○ smt-4kd3p.1 wire the niri theme include, ○ smt-4kd3p.8 read the wedge log"
+            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ read the wedge log smt-4kd3p.8"
         );
     }
 
@@ -2064,7 +2132,7 @@ mod tests {
         });
         assert_eq!(
             readiness_line(snapshot),
-            "blocked by: ○ smt-4kd3p.1 wire the niri theme include, ○ smt-4kd3p.8 read the wedge log"
+            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ read the wedge log smt-4kd3p.8"
         );
     }
 
@@ -2087,7 +2155,7 @@ mod tests {
         let html = page_of(ground.clone(), &address(&key("smt-4kd3p.6")));
         assert_eq!(
             readiness_line(ground),
-            "blocked by: ○ smt-4kd3p.1 wire the niri theme include, ○ smt-4kd3p.8 read the wedge log"
+            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ read the wedge log smt-4kd3p.8"
         );
         let blocked_by = &html[html.find(phrase::blocked_by_ahead()).expect("the blockers")..];
         assert!(
@@ -2114,7 +2182,7 @@ mod tests {
         }
         assert_eq!(
             readiness_line(ground),
-            "blocked by: ○ smt-4kd3p.1 wire the niri theme include, ○ smt-4kd3p.8 a bead of another tracker"
+            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ a bead of another tracker smt-4kd3p.8"
         );
     }
 
@@ -2140,7 +2208,7 @@ mod tests {
         }
         assert_eq!(
             readiness_line(ground),
-            "blocked by: ○ smt-4kd3p.1 wire the niri theme include, ○ smt-4kd3p.8 a bead of one tracker, ○ smt-4kd3p.8 a bead of another"
+            "blocked by: ○ wire the niri theme include smt-4kd3p.1, ○ a bead of one tracker smt-4kd3p.8, ○ a bead of another smt-4kd3p.8"
         );
     }
 
@@ -2292,9 +2360,44 @@ mod tests {
             assert_eq!(between, "", "{line}");
 
             let (reference, between) = parts(inside(line, "bead"));
-            assert_eq!(reference, ["span.g", "span.id", "span.title"], "{line}");
+            assert!(reference[0].starts_with("span.g"), "{line}");
+            assert_eq!(reference[1..], ["span.title", "span.id"], "{line}");
             assert_eq!(between.trim(), "", "{line}");
         }
+    }
+
+    /// Every reference on a page reads as its mark, its title, then its id.
+    /// The mark is labelled with `bd`'s word for the status. The id has no
+    /// colour of its own, so a closed bead's id is as quiet as an open one's
+    /// and no fainter.
+    #[test]
+    fn a_reference_draws_its_mark_then_its_title_then_a_quiet_id() {
+        let html = page_at(&address(&key("smt-4kd3p.2"))).html;
+        let (references, _) = references_and_the_rest(&html);
+        let mut statuses = Vec::new();
+        for reference in &references {
+            let inner = &reference[reference.find('>').expect("the tag ends") + 1
+                ..reference.rfind('<').expect("a closing tag")];
+            let (shape, _) = parts(inner);
+            assert!(shape[0].starts_with("span.g"), "{reference}");
+            assert_eq!(shape[1..], ["span.title", "span.id"], "{reference}");
+            let mark = &inner[..inner.find('>').expect("the mark's tag ends")];
+            let label = mark
+                .split("aria-label=\"")
+                .nth(1)
+                .expect("the mark is labelled");
+            statuses.push(label[..label.find('"').expect("the label ends")].to_string());
+            let id = &inner[inner.find("class=\"id\"").expect("the id is drawn")..];
+            assert!(
+                !id[..id.find('>').expect("the id's tag ends")].contains("style="),
+                "{reference}"
+            );
+            assert!(!inside(inner, "id").contains("style="), "{reference}");
+        }
+        for status in ["in_progress", "open", "closed"] {
+            assert!(statuses.iter().any(|said| said == status), "{statuses:?}");
+        }
+        assert!(html.contains("class=\"g closed\""), "{html}");
     }
 
     /// The row's cells other than the reference are drawn together, after
@@ -2624,11 +2727,17 @@ mod tests {
             "{STYLE}"
         );
         assert!(
-            STYLE.contains(".line>:has(+.bead),.line>.left>:not(:last-child),.line .bead>:not(.title),.code{font-family:var(--code)}"),
+            STYLE.contains(
+                ".line>:has(+.bead),.line>.left>:not(:last-child),.code{font-family:var(--code)}"
+            ),
             "{STYLE}"
         );
         assert!(
             STYLE.contains(".line .bead .code{font-size:inherit}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".bead .id{font:500 12px var(--body);color:var(--muted);"),
             "{STYLE}"
         );
     }
@@ -2792,7 +2901,10 @@ mod tests {
         );
         assert_eq!(page_lines(&rooted), lines);
         assert_eq!(shown_line(&rooted), terminal.selected_line());
-        assert!(text_of(&rooted).contains(phrase::focused()), "{rooted}");
+        assert!(
+            text_of(&rooted).contains(phrase::showing_only()),
+            "{rooted}"
+        );
         assert!(!rooted.contains(phrase::only_this_tree()), "{rooted}");
 
         let whole = page_at(&link_saying(&rooted, phrase::show_all())).html;
@@ -2953,6 +3065,29 @@ mod tests {
         let references = references_on(&expanded);
         assert!(references["smt-4kd3p.1"].list.is_none(), "{expanded}");
         assert!(references["smt-4kd3p.4"].list.is_some(), "{expanded}");
+    }
+
+    /// The band over a page drawn with one bead as its only root says the
+    /// page shows only that bead, names it by its title, then offers every
+    /// tree back.
+    #[test]
+    fn the_band_over_one_tree_says_showing_only_the_bead_then_show_all_trees() {
+        let bead = key("smt-4kd3p.6");
+        let rooted = page_at(&link_saying(
+            &page_at(&address(&bead)).html,
+            phrase::only_this_tree(),
+        ))
+        .html;
+        let band = &rooted[rooted.find("<p class=\"rooted\">").expect("the band")..];
+        let band = text_of(&band[..band.find("</p>").expect("the band ends")]);
+        let ground = ground();
+        let title = &ground.node(&bead).expect("the bead is held").title;
+        let said = [phrase::showing_only(), title, phrase::show_all()].map(|said| {
+            band.find(said)
+                .unwrap_or_else(|| panic!("{said:?} in {band:?}"))
+        });
+        assert!(said.is_sorted(), "{band:?}");
+        assert_eq!(phrase::show_all(), "Show all trees");
     }
 
     /// The bead the forest is drawn with as its only root opens from the

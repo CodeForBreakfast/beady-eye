@@ -1023,10 +1023,16 @@ pub fn only_this_tree() -> &'static str {
     "show only this tree"
 }
 
+/// What the band over a web page drawn with one bead as its only root says
+/// before it names the bead.
+pub fn showing_only() -> &'static str {
+    "Showing only"
+}
+
 /// The link on a web page drawn with one bead as its only root that puts
 /// every tree back, as `F` does again.
 pub fn show_all() -> &'static str {
-    "show all"
+    "Show all trees"
 }
 
 /// The web page's links to the match before and the match after, as `N`
