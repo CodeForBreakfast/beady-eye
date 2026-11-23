@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Node as Bead, Snapshot, TrackerState, Tree};
+use crate::model::snapshot::{Counts, Node as Bead, Snapshot, TrackerState, Tree};
 use crate::model::tree::numeric_id_order;
 use crate::model::types::{Edge, Status};
 use crate::view::lines::{
@@ -139,7 +139,7 @@ pub(super) fn lay_out(
                 place: None,
                 content: Content::Project(ProjectLine {
                     every_root_read: snapshot.every_root_read(project),
-                    counts: facts.project(project),
+                    counts: project_counts(snapshot, rooted, facts, project),
                     project: project.clone(),
                 }),
             })
@@ -204,6 +204,17 @@ pub(super) fn lay_out(
 pub fn ready_list(snapshot: &Snapshot) -> [Vec<&Bead>; 2] {
     let (covered, _) = covered(snapshot, &[], None);
     sections(&each_once(&covered)).map(|beads| beads.into_iter().map(|(bead, ..)| bead).collect())
+}
+
+/// What `project`'s heading counts over a list: every bead in its trees, or
+/// where the forest is rooted, each bead at or beneath its roots, as the
+/// forest's own heading counts it.
+fn project_counts(snapshot: &Snapshot, rooted: &[Rooted], facts: &Facts, project: &str) -> Counts {
+    if rooted.is_empty() {
+        return facts.project(project);
+    }
+    let (covered, _) = covered(snapshot, rooted, Some(project));
+    Counts::over(each_once(&covered).values().map(|(bead, ..)| *bead))
 }
 
 fn anomalies(reached: &BTreeMap<BeadKey, Reached<'_>>) -> usize {

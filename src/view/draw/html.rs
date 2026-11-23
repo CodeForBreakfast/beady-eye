@@ -1860,7 +1860,7 @@ mod tests {
     }
 
     /// Rooted at one bead, the heading counts that tree, and its link lists
-    /// what is left of that tree.
+    /// what is left of that tree under a heading counting the same.
     #[test]
     fn a_heading_over_one_tree_links_to_what_is_left_of_that_tree() {
         let rooted = page_at(&link_saying(
@@ -1869,6 +1869,8 @@ mod tests {
         ))
         .html;
         let left = page_at(&link_saying(line_html(&rooted, 0), &phrase::left_of(3, 3))).html;
+        let heading = &page_lines(&left)[0];
+        assert!(heading.ends_with(&phrase::left_of(3, 3)), "{heading}");
         let section = phrase::section(
             &lines::Section::LeftToDo {
                 project: PROJECT.to_string(),
