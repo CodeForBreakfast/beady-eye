@@ -98,7 +98,8 @@ pub(super) fn bead_line(row: &Row, prefix: &str, widths: &Widths, layout: &Layou
 }
 
 /// The cells a reference to this row's bead is drawn from, the glyph, the id
-/// and the title, each as this row draws it, and the row without them.
+/// and the title, each as this row draws it, then the row's progress where
+/// the layout draws it, and the row without any of them.
 ///
 /// The id is drawn through the forest's width for it, as the identity draws
 /// it, so the titles of a column of references start together.
@@ -107,8 +108,8 @@ pub(super) fn referenced_line(
     prefix: &str,
     widths: &Widths,
     layout: &Layout,
-) -> (Reference, Fitted) {
-    const REFERENCE: [Cell; 3] = [Cell::Glyph, Cell::Id, Cell::Title];
+) -> (Reference, Option<row::Progress>, Fitted) {
+    const REFERENCE: [Cell; 4] = [Cell::Glyph, Cell::Id, Cell::Title, Cell::Progress];
     let walk = Walk {
         row,
         layout,
@@ -139,7 +140,10 @@ pub(super) fn referenced_line(
         state: without(&layout.state),
         open_id: layout.open_id,
     };
-    (reference, bead_line(row, prefix, widths, &rest))
+    let progress = row
+        .progress
+        .filter(|_| layout.cells().any(|cell| *cell == Cell::Progress));
+    (reference, progress, bead_line(row, prefix, widths, &rest))
 }
 
 /// How wide each identity cell of `layout` draws on this row, in columns as
@@ -411,14 +415,15 @@ pub(in crate::view) fn opens_at(badge: &Badged) -> Option<&str> {
     badge.link.as_deref().filter(|to| openable(&badge.text, to))
 }
 
-/// What a badge drawn as span `at` of `block` is marked as: a link where its
-/// config gave it somewhere that opens, and a literal where its config wrote
-/// the colour itself.
+/// What a badge drawn as span `at` of `block` is marked as: a badge, a link
+/// where its config gave it somewhere that opens, and a literal where its
+/// config wrote the colour itself.
 pub(in crate::view) fn badge_marks(badge: &Badged, block: Block, at: usize) -> Vec<Mark> {
     let link = opens_at(badge).map(|to| Marked::Link(to.to_string()));
     let literal = matches!(badge.colour, Some(Colour::Absolute(_))).then_some(Marked::Literal);
     link.into_iter()
         .chain(literal)
+        .chain([Marked::Badge])
         .map(|is| Mark { block, at, is })
         .collect()
 }
