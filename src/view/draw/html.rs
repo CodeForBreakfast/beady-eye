@@ -183,14 +183,14 @@ impl Drawing<'_> {
         ));
         let lines = self.forest.lines();
         let read_at = &self.forest.snapshot().read_at;
-        let oldest = lines
+        let reads: Option<Vec<_>> = lines
             .viewport(0, lines.len())
             .filter_map(|(_, line)| match &line.content {
-                Content::Project(project) => read_at.get(&project.project),
+                Content::Project(project) => Some(read_at.get(&project.project)),
                 _ => None,
             })
-            .min();
-        if let Some(&oldest) = oldest {
+            .collect();
+        if let Some(&oldest) = reads.and_then(|reads| reads.into_iter().min()) {
             read_time(html, oldest, offset, now);
         }
         html.push_str("</header>\n");
@@ -1867,6 +1867,19 @@ mod tests {
         let title = title_over(&html);
         assert!(title.contains("<time datetime=\""), "{title}");
         assert!(!title.contains(&long_ago.to_rfc3339()), "{title}");
+    }
+
+    /// While a project the page draws has yet to be read, no read time is
+    /// true of every row, so the title gives none.
+    #[test]
+    fn a_phone_pages_title_gives_no_read_time_while_a_project_it_draws_is_unread() {
+        let mut snapshot = ground();
+        snapshot.projects.push("tidewater".to_string());
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(snapshot, &Layout::default(), &asked, drawing()).html;
+        assert!(html.contains("<h2>tidewater</h2>"), "{html}");
+        let title = title_over(&html);
+        assert!(!title.contains("<time"), "{title}");
     }
 
     /// A bead's page has no list title over it.
