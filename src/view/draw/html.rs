@@ -808,7 +808,7 @@ border-bottom:1px solid var(--line);background:var(--surface)}\
 nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display)}\
 nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
-.lists summary::after,.lists a::before,nav button{content:\"\";flex:none;background:currentColor;\
+.lists summary::after,.lists a::before,nav button::before{content:\"\";flex:none;background:currentColor;\
 -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
 .lists{position:relative}\
 .lists summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
@@ -834,7 +834,11 @@ nav .ready.on{color:var(--fg)}\
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
 nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--faint)}\
-nav button{--icon:var(--lens);order:-1;width:16px;height:16px;padding:0;border:0;color:inherit;font-size:0;cursor:pointer}\
+nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;\
+background:none;color:inherit;font-size:0;cursor:pointer}\
+nav button::before{--icon:var(--lens);width:16px;height:16px}\
+@media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
+nav .ready.on{text-decoration:underline}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
@@ -889,7 +893,7 @@ nav .ready.on::before{background:radial-gradient(circle at calc(100% - 8px) 50%,
 nav .ready.on,nav:not(:has(.ready.on))>.lists>summary,.lists[open] summary\
 {background:var(--accent-soft);color:var(--accent);font-weight:600}\
 nav form:focus-within{box-shadow:none}\
-nav button{display:none}\
+nav button{display:none}nav button::before{display:none}\
 nav label{justify-content:center;gap:6px;height:100%;cursor:text}\
 nav label::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
 -webkit-mask:var(--lens) center/contain no-repeat;mask:var(--lens) center/contain no-repeat}\
@@ -901,7 +905,7 @@ background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:52px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
 footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;-webkit-mask:none;mask:none;background:none;color:var(--accent);font-size:16px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
 max-height:calc(100dvh - 64px);overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
