@@ -452,8 +452,8 @@ impl Drawing<'_> {
         self.forest.list().is_some()
     }
 
-    /// The box-drawing a line hangs under, which is the link that toggles the
-    /// line's fold where it has one.
+    /// What a line hangs under, drawn as rails, which is the link that
+    /// toggles the line's fold where it has one.
     fn prefix(&self, html: &mut String, line: &Line, prefix: &Span<'static>) {
         let (drawn, rails) = match railed(&prefix.content, self.listed()) {
             Some(drawn) => (drawn, " rails"),
@@ -806,13 +806,13 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
 /// is the way further down.
 const PHONE_LEVELS: usize = 5;
 
-/// The connectors a line hangs under, with each level a phone draws as a
-/// rail in an element of its own: a trunk as `i`, a gap as `b`, and the
-/// line's elbow as `u`, classed by whether it is the last line hung there
-/// and whether it hangs on a blocking edge. Under the trees the outermost
-/// level is the column a project's roots hang in, which a phone draws no
-/// rail for, and a level past what a phone indents is left as text. A
-/// prefix that is no line's connectors, such as a header's marker, is `None`.
+/// The connectors a line hangs under, with each level drawn as a rail in an
+/// element of its own: a trunk as `i`, a gap as `b`, and the line's elbow as
+/// `u`, classed by whether it is the last line hung there and whether it
+/// hangs on a blocking edge. Under the trees the outermost level is the
+/// column a project's roots hang in, which has no rail and is left as text.
+/// A level past what a phone indents is classed `deep`. A prefix that is no
+/// line's connectors, such as a header's marker, is `None`.
 fn railed(prefix: &str, listed: bool) -> Option<String> {
     let (indent, levels) = lines::levels(prefix)?;
     let unrailed = usize::from(!listed);
@@ -820,14 +820,18 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
     let mut html = escaped(indent);
     for (at, level) in levels.iter().enumerate() {
         let drawn = escaped(level.drawn());
-        let railed = at >= unrailed && (at == elbow || at - unrailed < PHONE_LEVELS - 1);
+        if at < unrailed {
+            html.push_str(&drawn);
+            continue;
+        }
+        let deep = if at == elbow || at - unrailed < PHONE_LEVELS - 1 {
+            ""
+        } else {
+            " class=\"deep\""
+        };
         let (tag, class) = match level {
-            _ if !railed => {
-                html.push_str(&drawn);
-                continue;
-            }
-            Level::Trunk => ("i", String::new()),
-            Level::Gap => ("b", String::new()),
+            Level::Trunk => ("i", deep.to_string()),
+            Level::Gap => ("b", deep.to_string()),
             Level::Elbow {
                 last, blocks, up, ..
             } => {
@@ -897,25 +901,40 @@ fn escaped(text: &str) -> String {
 
 /// The page's look: its type, and how the terminal's grid is laid out on it.
 /// Its colours are `palette::page_colours`. The type is three faces:
-/// `--body` for the page, `--display` for a heading, and `--code` for code
-/// and for the tree's box-drawing, whose columns line up only in a fixed
-/// pitch. Each names its face first and falls back to the reader's own.
+/// `--body` for the page, `--display` for a heading, and `--code` for code.
+/// Each names its face first and falls back to the reader's own.
 const STYLE: &str = "\
-:root{--body:Inter,system-ui,-apple-system,\"Segoe UI\",sans-serif;\
+:root{--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
+--body:Inter,system-ui,-apple-system,\"Segoe UI\",sans-serif;\
 --display:\"Space Grotesk\",Inter,system-ui,sans-serif;\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
 body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto;align-content:start}\
-.line>:has(+.bead),.line>.left>:not(:last-child),.code{font-family:var(--code)}\
+.code{font-family:var(--code)}\
 .code{font-size:.9em}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}\
 .forest{padding:8px 0;min-width:0;overflow-x:auto}\
-.line{display:flex;white-space:pre;padding:0 12px;box-sizing:border-box;width:max-content;min-width:100%}\
+.line{display:flex;align-items:center;min-height:32px;white-space:pre;padding:0 12px;box-sizing:border-box;\
+width:max-content;min-width:100%}\
 .line .state{margin-left:auto;padding-left:2ch;flex:none}\
 .line.shown{background:var(--sel)}\
-.line i,.line b,.line u{font:inherit;text-decoration:none}\
+.line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
+.line>.left:has(>.rails){display:inline-flex;align-self:stretch;align-items:center}\
+.line i,.line b,.line u{flex:none;width:24px;position:relative;font:inherit;text-decoration:none}\
+.line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:14px;border:0 solid var(--rail)}\
+.line i::before,.line u::before{top:0;bottom:0;border-left-width:1.5px}\
+.line u.last::before{bottom:auto;height:var(--arm,16px)}\
+.line u::after{top:var(--arm,16px);width:10px;border-top-width:1.5px}\
+.line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
+.line>:has(+.bead)::after,.line .rails::after,.line a.fold::after{content:\"\";flex:none;align-self:center;width:28px;height:28px;\
+font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
+.line a.fold::after{background:var(--faint);\
+-webkit-mask:var(--chevron) center/14px no-repeat;mask:var(--chevron) center/14px no-repeat}\
+.line a.fold.shut::after{transform:rotate(-90deg)}\
+.line>.rails:has(>u.up)::after{content:\"\\2191\"}\
+.line a.fold:not(.rails){display:inline-flex;vertical-align:middle;font-size:0}\
 a{color:inherit;text-decoration:none}\
 a.fold:hover,a.bead:hover .title,a.close:hover{text-decoration:underline}\
 .bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
@@ -946,8 +965,7 @@ footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-si
 background:var(--warn-soft);color:var(--warn);border-top:1px solid var(--line)}\
 footer .notice a{margin-left:auto;font-weight:600}\
 footer .notice a:hover{text-decoration:underline}\
-nav{--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
---tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
+nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
 --lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
 display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
 border-bottom:1px solid var(--line);background:var(--surface)}\
@@ -985,6 +1003,7 @@ nav button{order:-1;flex:none;display:grid;place-items:center;width:20px;height:
 background:none;color:inherit;font-size:0;cursor:pointer}\
 nav button::before{--icon:var(--lens);width:16px;height:16px}\
 @media (forced-colors:active){nav button{width:auto;font-size:inherit}nav button::before{display:none}\
+.line a.fold::after{forced-color-adjust:none;background:CanvasText}\
 nav .ready.on{text-decoration:underline}nav form:focus-within{outline:2px solid CanvasText}}\
 nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
@@ -1004,25 +1023,17 @@ a.root:hover,a.step:hover{text-decoration:underline}\
 .rooted{padding:9px 14px}.rooted .all::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;border-left:0;padding:8px 16px 24px}\
-.line{width:auto;white-space:pre-wrap;position:relative}\
+.line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;position:relative;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(3,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
 .line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
-.line>.left:has(>.rails){display:inline-flex;max-width:100%}\
+.line>.left:has(>.rails){display:inline-flex;align-items:flex-start;max-width:100%}\
 .line>.left>.rails+span{min-width:0}\
-.line i,.line b,.line u{flex:none;width:14px;position:relative}\
-.line i::before,.line u::before,.line u::after{content:\"\";position:absolute;left:10px;\
-border:0 solid var(--rail)}\
-.line i::before,.line u::before{top:0;bottom:0;border-left-width:1.5px}\
-.line u.last::before{bottom:auto;height:var(--arm,9px)}\
-.line u::after{top:var(--arm,9px);width:10px;border-top-width:1.5px}\
-.line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
-.line>:has(+.bead)::after,.line>.left>.rails::after{content:\"\";flex:none;width:22px;font-size:13px;text-align:center}\
-.line>:has(+.bead)::after{padding-top:6px}\
-.line>a.fold:has(+.bead)::after,.line>.left>a.fold.rails::after{content:\"▾\"}\
-.line>a.fold.shut:has(+.bead)::after,.line>.left>a.fold.shut.rails::after{content:\"▸\"}\
-.line>.rails:has(>u.up)::after{content:\"↑\"}\
+.line i,.line b,.line u{width:14px}.line .deep{display:none}\
+.line i::before,.line u::before,.line u::after{left:10px}\
+.line>:has(+.bead)::after,.line .rails::after,.line a.fold::after{align-self:flex-start;width:22px;height:20px;line-height:20px}\
+.line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
 .line>.bead::after{content:\"\";position:absolute;inset:0}\
 #shown{position:absolute;top:0}\
@@ -2647,8 +2658,8 @@ mod tests {
         )
     }
 
-    /// The elements a phone draws as rails on line `at`, each as its tag and
-    /// its class: the levels inside what the line hangs under.
+    /// The elements drawn as rails on line `at`, each as its tag and its
+    /// class: the levels inside what the line hangs under.
     fn rails(html: &str, at: usize) -> Vec<String> {
         let line = line_html(html, at);
         let hung = &line[..element_end(line, 0)];
@@ -2656,14 +2667,14 @@ mod tests {
         parts(&hung[content..hung.rfind('<').expect("a closing tag")]).0
     }
 
-    /// A phone draws a rail for each level a line hangs under, except the
-    /// column a project's roots hang in: a trunk where a line below still
-    /// hangs at that level, a gap where none does, and the line's own elbow,
-    /// marked where it is the last there and where it hangs on a blocking
-    /// edge. A line deeper than a phone indents keeps its outermost levels
-    /// and its elbow.
+    /// Each level a line hangs under is a rail, except the column a
+    /// project's roots hang in: a trunk where a line below still hangs at
+    /// that level, a gap where none does, and the line's own elbow, marked
+    /// where it is the last there and where it hangs on a blocking edge. On
+    /// a line deeper than a phone indents, the levels between its outermost
+    /// five and its elbow are marked as past a phone's indent.
     #[test]
-    fn a_phone_draws_each_level_a_line_hangs_under_as_a_rail_up_to_five() {
+    fn each_level_a_line_hangs_under_is_a_rail_and_a_phone_indents_five() {
         let html = page_of(deep(), "/");
         let drawn: Vec<(String, Vec<String>)> = (1..lines_html(&html).len())
             .map(|at| {
@@ -2689,7 +2700,7 @@ mod tests {
                 rails("open the junction box", &["i", "i", "u.last"]),
                 rails("free the seized screw", &["i", "i", "b", "u.last"]),
                 rails("soak it in oil", &["i", "i", "b", "b", "u.last"]),
-                rails("wait a night", &["i", "i", "b", "b", "u.last"]),
+                rails("wait a night", &["i", "i", "b", "b", "b.deep", "u.last"]),
                 rails("log the burn", &["i", "u.last blocks"]),
                 rails("test the fog signal", &["u"]),
                 rails("log the burn", &["u.last"]),
@@ -2712,7 +2723,51 @@ mod tests {
         assert_eq!(rails(&open, waiting), ["u.last up"]);
     }
 
-    /// A phone draws a fold's arrow itself, so a fold says whether it is
+    /// A fold's chevron is masked on a box of its own, never on the fold's
+    /// link, whose focus ring a mask would clip.
+    #[test]
+    fn no_fold_link_is_masked_itself() {
+        let masked: Vec<&str> = STYLE
+            .split('}')
+            .filter(|rule| rule.contains("mask:"))
+            .filter_map(|rule| rule.split('{').rev().nth(1))
+            .flat_map(|selectors| selectors.split(','))
+            .filter(|selector| selector.contains("fold"))
+            .collect();
+        assert!(!masked.is_empty(), "{STYLE}");
+        for selector in masked {
+            assert!(selector.ends_with("::after"), "{selector}");
+        }
+    }
+
+    /// Whatever a line hangs under ends in one box for a chevron, folding or
+    /// not, sized by one rule at each width, with a selector as specific as
+    /// the other width's. So a row that folds starts its title where a row
+    /// beside it that does not fold starts its own.
+    #[test]
+    fn every_prefix_ends_in_one_box_for_a_chevron_at_each_width() {
+        let phone = STYLE
+            .find("@media (max-width:720px){")
+            .expect("a phone's rules");
+        for (rules, width) in [
+            (&STYLE[..phone], "width:28px"),
+            (&STYLE[phone..], "width:22px"),
+        ] {
+            let sized = rules
+                .split('}')
+                .find(|rule| rule.contains(width))
+                .expect("the width sizes the box a prefix ends in");
+            for selector in [
+                ".line>:has(+.bead)::after",
+                ".line .rails::after",
+                ".line a.fold::after",
+            ] {
+                assert!(sized.contains(selector), "{width}: {sized}");
+            }
+        }
+    }
+
+    /// The page draws a fold's chevron itself, so a fold says whether it is
     /// shut.
     #[test]
     fn a_shut_fold_says_so_and_an_open_one_does_not() {
@@ -2837,8 +2892,7 @@ mod tests {
     }
 
     /// The page reads as a web page, in a proportional face and the page's
-    /// own colours, while the tree's box-drawing keeps the code face its
-    /// columns line up in.
+    /// own colours, and only code is set in the code face.
     #[test]
     fn the_page_is_set_in_a_proportional_face_in_its_own_colours() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
@@ -2847,10 +2901,12 @@ mod tests {
             STYLE.contains("body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}"),
             "{STYLE}"
         );
-        assert!(
-            STYLE.contains(
-                ".line>:has(+.bead),.line>.left>:not(:last-child),.code{font-family:var(--code)}"
-            ),
+        assert_eq!(
+            STYLE
+                .match_indices("var(--code)")
+                .map(|(at, _)| &STYLE[STYLE[..at].rfind('}').map_or(0, |end| end + 1)..at])
+                .collect::<Vec<_>>(),
+            [".code{font-family:"],
             "{STYLE}"
         );
         assert!(
