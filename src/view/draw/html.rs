@@ -1184,7 +1184,7 @@ font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
 border:solid var(--surface);border-width:0 1.6px 1.6px 0;transform:rotate(45deg)}\
 .bead .g.deferred{border-style:dashed}\
 @media print,(forced-colors:active){.bead .g:is(.open,.in-progress,.blocked,.closed,.deferred){\
-width:auto;height:auto;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
+width:auto;height:auto;margin-top:0;border:0;border-radius:0;background:none;font-size:inherit;overflow:visible}\
 .bead .g.closed::after{content:none}}";
 
 /// The part of the page's script that says each time on the page as the
