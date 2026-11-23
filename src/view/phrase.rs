@@ -997,6 +997,11 @@ pub fn find() -> &'static str {
     "Find"
 }
 
+/// The prompt an empty search field on a web page shows.
+pub fn find_prompt() -> &'static str {
+    "Find a bead by title or id"
+}
+
 /// The link on a web page's bead view that draws the bead as the only root,
 /// as `F` does.
 pub fn only_this_tree() -> &'static str {

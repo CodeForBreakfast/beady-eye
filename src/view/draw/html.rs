@@ -220,9 +220,10 @@ impl Drawing<'_> {
         let typed = self.asked.find.as_ref().map_or("", |find| &find.text);
         html.push_str(&format!(
             "<label><input type=\"search\" name=\"{FIND}\" value=\"{}\" aria-label=\"{}\" \
-             placeholder=\"{}\"></label><button>{}</button></form>",
+             placeholder=\"{}\"><span>{}</span></label><button>{}</button></form>",
             escaped(typed),
             escaped(phrase::find()),
+            escaped(phrase::find_prompt()),
             escaped(phrase::find()),
             escaped(phrase::find())
         ));
@@ -843,6 +844,7 @@ nav form:focus-within{box-shadow:0 0 0 2px var(--accent)}\
 nav label{flex:1;min-width:0;display:flex;align-items:center}\
 nav input{flex:1;min-width:0;font:inherit;color:var(--fg);background:none;border:0;padding:0;outline:0}\
 nav input::placeholder{color:var(--faint);opacity:1}\
+nav label span{display:none}\
 nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .rooted{margin:0;padding:4px 12px;background:var(--accent-soft)}\
 .root{display:block;margin-bottom:8px}\
@@ -897,8 +899,8 @@ nav button{display:none}nav button::before{display:none}\
 nav label{justify-content:center;gap:6px;height:100%;cursor:text}\
 nav label::before{content:\"\";flex:none;width:16px;height:16px;background:currentColor;\
 -webkit-mask:var(--lens) center/contain no-repeat;mask:var(--lens) center/contain no-repeat}\
-nav input{flex:0 1 auto;width:3.2em;text-overflow:ellipsis}\
-nav input::placeholder{color:inherit}\
+nav input{flex:none;width:0}nav label span{display:inline}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) label span{display:none}\
 nav:has(form:focus-within){height:0;padding-block:0;border:0}nav:has(form:focus-within)>:not(form){visibility:hidden}\
 nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) form{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;height:auto;padding:8px 12px;border-radius:0;\
 background:var(--surface);border-bottom:1px solid var(--line)}\
@@ -2598,6 +2600,13 @@ mod tests {
     /// Beside each view the menu says how many beads picking it lists, and
     /// with only ready beads listed it counts only those, as picking it
     /// then keeps to them.
+    #[test]
+    fn the_search_field_prompts_for_a_title_or_id_under_a_short_label() {
+        let html = page_at("/").html;
+        assert!(html.contains(&format!("placeholder=\"{}\"", phrase::find_prompt())));
+        assert!(html.contains(&format!("<span>{}</span></label>", phrase::find())));
+    }
+
     #[test]
     fn the_menu_counts_the_beads_each_view_lists() {
         let trees = page_at("/").html;
