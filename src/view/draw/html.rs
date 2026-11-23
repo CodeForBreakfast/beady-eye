@@ -102,7 +102,10 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
                 drawing.actions(&mut html, node);
                 drawing.bead_view(&mut html, node);
             }
-            None => html.push_str(&format!("<p class=\"missing\">{}</p>", not_in_any_tree(key))),
+            None => html.push_str(&format!(
+                "<p class=\"missing\">{}</p>",
+                not_in_any_tree(key)
+            )),
         }
         html.push_str("</aside>");
     }
@@ -5143,7 +5146,12 @@ mod tests {
         .html;
         let band = &rooted[rooted.find("<p class=\"rooted\">").expect("the band")..];
         let band = text_of(&band[..band.find("</p>").expect("the band ends")]);
-        let said = [phrase::showing_only(), phrase::this_tree(), phrase::show_all()].map(|said| {
+        let said = [
+            phrase::showing_only(),
+            phrase::this_tree(),
+            phrase::show_all(),
+        ]
+        .map(|said| {
             band.find(said)
                 .unwrap_or_else(|| panic!("{said:?} in {band:?}"))
         });
@@ -5152,7 +5160,11 @@ mod tests {
         let title = &ground.node(&bead).expect("the bead is held").title;
         assert!(!band.contains(title.as_str()), "{band:?}");
         assert_eq!(
-            [phrase::showing_only(), phrase::this_tree(), phrase::show_all()],
+            [
+                phrase::showing_only(),
+                phrase::this_tree(),
+                phrase::show_all()
+            ],
             ["Showing only", "this tree", "Show all"]
         );
     }
