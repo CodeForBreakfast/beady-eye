@@ -3239,9 +3239,17 @@ mod tests {
         let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
         tree.beads[6].status = Status::Blocked;
         tree.beads[8].status = Status::Deferred;
+        tree.beads[1].status = Status::Hooked;
         snapshot.collected = snapshot.trees.clone();
         let targets = ["/", "/?ready=1"].map(String::from).into_iter().chain(
-            ["smt-4kd3p", "smt-4kd3p.2", "smt-4kd3p.6", "smt-4kd3p.8"].map(|id| address(&key(id))),
+            [
+                "smt-4kd3p",
+                "smt-4kd3p.1",
+                "smt-4kd3p.2",
+                "smt-4kd3p.6",
+                "smt-4kd3p.8",
+            ]
+            .map(|id| address(&key(id))),
         );
         let mut coloured = Vec::new();
         for target in targets {
@@ -3250,7 +3258,10 @@ mod tests {
             coloured.extend(
                 body.split('<')
                     .map(|tag| &tag[..tag.find('>').unwrap_or(tag.len())])
-                    .filter(|tag| tag.contains("--status-") && !tag.contains("class=\"g "))
+                    .filter(|tag| {
+                        let status = tag.contains("--status-") || tag.contains("--accent");
+                        status && !tag.contains("role=\"img\"")
+                    })
                     .map(|tag| format!("{target}: <{tag}>")),
             );
         }

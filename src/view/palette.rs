@@ -312,14 +312,15 @@ pub(crate) fn css(style: Style) -> String {
 }
 
 /// `bd`'s colours for a status, which the page draws on a status mark and
-/// nowhere else. A hooked bead's is left out because it is also
-/// `IDENTITY`'s, which the page draws as its own accent.
-const STATUSES: [Style; 5] = [
+/// nowhere else. A hooked bead's is also `IDENTITY`'s, so an id drawn in it
+/// is neutral on the page, as every id is.
+const STATUSES: [Style; 6] = [
     STATUS_IN_PROGRESS,
     STATUS_BLOCKED,
     STATUS_CLOSED,
     STATUS_DEFERRED,
     STATUS_PINNED,
+    STATUS_HOOKED,
 ];
 
 /// A style as [`css`] gives it, for anything on the page but a status mark:
