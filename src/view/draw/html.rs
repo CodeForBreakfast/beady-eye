@@ -1264,7 +1264,7 @@ overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
 main.open .line .bead>.project{display:none}}\
 @media (width<1100px){main.open{grid-template-columns:minmax(0,1fr)}main.open::before{content:none}\
 main.open:has(.page)>.forest{display:none}\
-aside{position:static;max-height:none}aside>:is(.acts,.close){background:var(--surface)}}\
+aside{position:static;max-height:none;overflow:visible}aside>:is(.acts,.close){background:var(--surface)}}\
 .page{white-space:pre-wrap}\
 .page .w{display:none}\
 .page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
@@ -3321,12 +3321,16 @@ mod tests {
     fn a_beads_action_bar_offers_its_tree_alone_and_its_id_to_copy() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         let aside = aside_of(&html);
-        assert_eq!(parts(aside).0, ["a.close", "div.acts", "div.page"], "{aside}");
+        assert_eq!(
+            parts(aside).0,
+            ["a.close", "div.acts", "div.page"],
+            "{aside}"
+        );
         let bar = inside(aside, "acts");
         assert_eq!(parts(bar).0, ["a.root", "button.copy"], "{bar}");
         assert_eq!(
-            words(&text_of(bar)),
-            format!("{} {}", phrase::only_this_tree(), phrase::copy_id())
+            text_of(bar),
+            [phrase::only_this_tree(), phrase::copy_id()].concat()
         );
         assert!(
             bar.contains(&format!(
@@ -3382,7 +3386,10 @@ mod tests {
         for (target, list) in [
             (bead.clone(), phrase::every_tree().to_string()),
             (format!("{bead}?ready=1"), phrase::ready_only().to_string()),
-            (format!("{bead}?view={}", VIEWS[1].0), VIEWS[1].0.to_string()),
+            (
+                format!("{bead}?view={}", VIEWS[1].0),
+                VIEWS[1].0.to_string(),
+            ),
         ] {
             let html = page_at(&target).html;
             let close = &aside_of(&html)[..element_end(aside_of(&html), 0)];
@@ -3411,6 +3418,11 @@ mod tests {
         ] {
             assert!(STYLE.contains(rule), "{rule}: {STYLE}");
         }
+        let whole_page = rules_under("(width<1100px)");
+        assert!(
+            whole_page.contains("aside{position:static;max-height:none;overflow:visible}"),
+            "a bar sticks to the nearest box that scrolls, so the page must be it: {whole_page}"
+        );
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "body:has(main>aside)>nav{display:none}",
