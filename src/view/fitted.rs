@@ -98,22 +98,42 @@ pub(crate) enum Block {
     State,
 }
 
-/// A span of any block that stands for somewhere the reader can go.
+/// A span of any block that is more than the words it draws.
 ///
 /// Named by its place rather than by what it draws: `Fitted` knows nothing of
-/// what it is drawing, and a link is one more thing it does not have to know.
-pub(crate) struct Link {
+/// what it is drawing, and a mark is one more thing it does not have to know.
+pub(crate) struct Mark {
     /// Which block it is in.
     pub(crate) block: Block,
     /// Which span of that block it is.
     pub(crate) at: usize,
-    /// Where it points.
-    pub(crate) to: String,
+    /// What the span is.
+    pub(crate) is: Marked,
+}
+
+/// What a mark says of its span. One span can carry a mark of each kind.
+pub(crate) enum Marked {
+    /// Somewhere the reader can go, which is where it points.
+    Link(String),
+    /// Its colour is the one a config wrote, so a page with a theme of its
+    /// own draws it as written rather than as whatever the theme makes of
+    /// the same value.
+    Literal,
+}
+
+impl Mark {
+    /// Where the span points, for a link.
+    pub(crate) fn link(&self) -> Option<&str> {
+        match &self.is {
+            Marked::Link(to) => Some(to),
+            Marked::Literal => None,
+        }
+    }
 }
 
 /// A span of any block that can also say itself more shortly.
 ///
-/// Named by its place, as `Link` is, and carrying words rather than a span:
+/// Named by its place, as `Mark` is, and carrying words rather than a span:
 /// the row dresses the short form in the long one's own style, so a form the
 /// row falls back to is not a different-looking thing.
 pub(crate) struct Shorter {
@@ -125,11 +145,11 @@ pub(crate) struct Shorter {
     pub(crate) said: String,
 }
 
-/// The state block a row falls back to, with what is a link in it and what
+/// The state block a row falls back to, with what is marked in it and what
 /// says itself more shortly.
 struct Briefly {
     spans: Vec<Span<'static>>,
-    links: Vec<Link>,
+    marks: Vec<Mark>,
     shorter: Vec<Shorter>,
 }
 
@@ -152,7 +172,7 @@ pub struct Fitted {
     state: Vec<Span<'static>>,
     briefly: Option<Briefly>,
     shorter: Vec<Shorter>,
-    links: Vec<Link>,
+    marks: Vec<Mark>,
     whole: Style,
     title_or_nothing: bool,
     state_or_nothing: bool,
@@ -170,21 +190,21 @@ impl Fitted {
             state,
             briefly: None,
             shorter: Vec::new(),
-            links: Vec::new(),
+            marks: Vec::new(),
             whole: Style::new(),
             title_or_nothing: false,
             state_or_nothing: false,
         }
     }
 
-    /// Which spans of the row are links, and where each one points.
+    /// Which spans of the row are marked, and as what.
     ///
     /// A link the row cut is told round the head it kept, because the cut
     /// takes columns off what the link says and nothing off where it goes. A
     /// link the row dropped altogether has no words left to be told round.
     #[must_use]
-    pub(crate) fn linking(mut self, links: Vec<Link>) -> Self {
-        self.links = links;
+    pub(crate) fn marking(mut self, marks: Vec<Mark>) -> Self {
+        self.marks = marks;
         self
     }
 
@@ -198,19 +218,19 @@ impl Fitted {
     /// form only where it costs the title nothing — so a caption that could
     /// be any length cannot eat the row it is drawn on.
     ///
-    /// It is a state block of its own, so its links and short forms are its
-    /// own too: `linking` and `shortening` name spans of the long form, and
+    /// It is a state block of its own, so its marks and short forms are its
+    /// own too: `marking` and `shortening` name spans of the long form, and
     /// the short form's spans are numbered from the start again.
     #[must_use]
     pub(crate) fn briefly(
         mut self,
         state: Vec<Span<'static>>,
-        links: Vec<Link>,
+        marks: Vec<Mark>,
         shorter: Vec<Shorter>,
     ) -> Self {
         self.briefly = Some(Briefly {
             spans: state,
-            links,
+            marks,
             shorter,
         });
         self
@@ -269,15 +289,15 @@ impl Fitted {
     }
 
     /// The row at its whole width, for a page that is not cut to a terminal's:
-    /// each block's spans, the style drawn under all of them, and where each
-    /// link points.
+    /// each block's spans, the style drawn under all of them, and what each
+    /// marked span is.
     pub(crate) fn whole(&self) -> Whole<'_> {
         Whole {
             identity: &self.identity,
             title: &self.title,
             state: &self.state,
             under: self.whole,
-            links: &self.links,
+            marks: &self.marks,
         }
     }
 }
@@ -288,7 +308,7 @@ pub(crate) struct Whole<'a> {
     pub(crate) title: &'a [Span<'static>],
     pub(crate) state: &'a [Span<'static>],
     pub(crate) under: Style,
-    pub(crate) links: &'a [Link],
+    pub(crate) marks: &'a [Mark],
 }
 
 impl Widget for Fitted {
@@ -298,20 +318,20 @@ impl Widget for Fitted {
         }
         let width = area.width as usize;
 
-        let links = self.links;
+        let marks = self.marks;
         let shorter = self.shorter;
         let identity = shortened(self.identity, &shorter, Block::Identity, width);
         let (spans, linked) = if columns(&identity) >= width {
             let (identity, drawn) = cut_to(identity, width);
-            let linked = surviving(&links, Block::Identity, &identity, drawn, 0);
+            let linked = surviving(&marks, Block::Identity, &identity, drawn, 0);
             (identity, linked)
         } else {
             let room = width - columns(&identity);
             // Settled inside the match rather than after it, because which
-            // list the state's links come from is settled there: the row's
+            // list the state's marks come from is settled there: the row's
             // own, or the short form's.
-            let state_links = |state: &[Span<'static>], drawn: usize, links: &[Link]| {
-                surviving(links, Block::State, state, drawn, width - columns(state))
+            let state_links = |state: &[Span<'static>], drawn: usize, marks: &[Mark]| {
+                surviving(marks, Block::State, state, drawn, width - columns(state))
             };
             let ((title, title_drawn), (state, state_linked)) = match self.briefly {
                 None => {
@@ -323,7 +343,7 @@ impl Widget for Fitted {
                     );
                     let left = room - columns(&state) - if state.is_empty() { 0 } else { GAP };
                     let limit = left.saturating_sub(GAP);
-                    let linked = state_links(&state, state_drawn, &links);
+                    let linked = state_links(&state, state_drawn, &marks);
                     (
                         fit(
                             shortened(self.title, &shorter, Block::Title, limit),
@@ -352,7 +372,7 @@ impl Widget for Fitted {
                     let limit = left.saturating_sub(GAP);
                     let state = shortened(self.state, &shorter, Block::State, limit);
                     let state = if columns(&state) <= limit {
-                        let linked = state_links(&state, state.len(), &links);
+                        let linked = state_links(&state, state.len(), &marks);
                         (state, linked)
                     } else {
                         let (state, drawn) = fit(
@@ -360,16 +380,16 @@ impl Widget for Fitted {
                             limit,
                             self.state_or_nothing,
                         );
-                        let linked = state_links(&state, drawn, &briefly.links);
+                        let linked = state_links(&state, drawn, &briefly.marks);
                         (state, linked)
                     };
                     ((title, title_drawn), state)
                 }
             };
 
-            let mut linked = surviving(&links, Block::Identity, &identity, identity.len(), 0);
+            let mut linked = surviving(&marks, Block::Identity, &identity, identity.len(), 0);
             linked.extend(surviving(
-                &links,
+                &marks,
                 Block::Title,
                 &title,
                 title_drawn,
@@ -430,26 +450,29 @@ impl Kept {
     }
 }
 
-/// The links whose span `block` drew, each at the column it starts on and
-/// saying what that span says now. A link whose span was dropped is not
-/// among them; one whose span was cut is, round the head it kept.
+/// The links among `marks` whose span `block` drew, each at the column it
+/// starts on and saying what that span says now. A link whose span was
+/// dropped is not among them; one whose span was cut is, round the head it
+/// kept.
 ///
 /// `starts` is the column the block was drawn from.
 fn surviving(
-    links: &[Link],
+    marks: &[Mark],
     block: Block,
     spans: &[Span<'static>],
     drawn: usize,
     starts: usize,
 ) -> Vec<Kept> {
-    links
+    marks
         .iter()
-        .filter(|link| link.block == block && link.at < drawn)
-        .map(|link| Kept {
-            at: starts + columns(&spans[..link.at]),
-            width: spans[link.at].width(),
-            said: spans[link.at].content.to_string(),
-            to: link.to.clone(),
+        .filter(|mark| mark.block == block && mark.at < drawn)
+        .filter_map(|mark| {
+            Some(Kept {
+                at: starts + columns(&spans[..mark.at]),
+                width: spans[mark.at].width(),
+                said: spans[mark.at].content.to_string(),
+                to: mark.link()?.to_string(),
+            })
         })
         .collect()
 }
@@ -783,10 +806,10 @@ mod tests {
     /// widths where it was shortened in order to survive.
     #[test]
     fn a_span_said_in_its_short_form_keeps_the_link_the_long_one_had() {
-        let row = a_shortenable_row().linking(vec![Link {
+        let row = a_shortenable_row().marking(vec![Mark {
             block: Block::Title,
             at: 2,
-            to: SOMEWHERE.to_string(),
+            is: Marked::Link(SOMEWHERE.to_string()),
         }]);
 
         let said = symbols(&rendered(row, 32));
@@ -964,10 +987,10 @@ mod tests {
             ],
             Vec::new(),
         )
-        .linking(vec![Link {
+        .marking(vec![Mark {
             block: Block::Title,
             at: 2,
-            to: SOMEWHERE.to_string(),
+            is: Marked::Link(SOMEWHERE.to_string()),
         }])
     }
 
@@ -976,6 +999,27 @@ mod tests {
         let mut buf = Buffer::empty(area);
         row.render(area, &mut buf);
         buf
+    }
+
+    /// A literal mark is for a page with a theme of its own, so the terminal
+    /// draws a span marked only as a literal exactly as an unmarked one.
+    #[test]
+    fn a_span_marked_as_a_literal_is_drawn_as_an_unmarked_one() {
+        let row = |marks| {
+            Fitted::new(
+                vec![Span::raw("dun-7")],
+                vec![Span::raw("a title"), Span::raw(" "), Span::raw("⇢ #12")],
+                Vec::new(),
+            )
+            .marking(marks)
+        };
+        let literal = vec![Mark {
+            block: Block::Title,
+            at: 2,
+            is: Marked::Literal,
+        }];
+
+        assert_eq!(rendered(row(literal), 40), rendered(row(Vec::new()), 40));
     }
 
     /// The escape bytes cannot go in a span, because a span is measured by
@@ -1061,10 +1105,10 @@ mod tests {
                 vec![Span::raw("a title"), Span::raw(" "), Span::raw("⇢ #12")],
                 Vec::new(),
             )
-            .linking(vec![Link {
+            .marking(vec![Mark {
                 block: Block::Title,
                 at: 2,
-                to: to.clone(),
+                is: Marked::Link(to.clone()),
             }]);
 
             let said = symbols(&rendered(row, 40));
@@ -1208,10 +1252,10 @@ mod tests {
                 vec![Span::raw("a title"), Span::raw(" "), Span::raw("→ #12")],
                 Vec::new(),
             )
-            .linking(vec![Link {
+            .marking(vec![Mark {
                 block: Block::Title,
                 at: 2,
-                to: SOMEWHERE.to_string(),
+                is: Marked::Link(SOMEWHERE.to_string()),
             }])
         };
 
@@ -1243,10 +1287,10 @@ mod tests {
             vec![Span::raw("a title")],
             Vec::new(),
         )
-        .linking(vec![Link {
+        .marking(vec![Mark {
             block: Block::Identity,
             at: 2,
-            to: SOMEWHERE.to_string(),
+            is: Marked::Link(SOMEWHERE.to_string()),
         }]);
 
         let buf = rendered(row, 40);
@@ -1264,10 +1308,10 @@ mod tests {
             vec![Span::raw("a title")],
             vec![Span::raw("open"), Span::raw(" "), Span::raw("⇢ #12")],
         )
-        .linking(vec![Link {
+        .marking(vec![Mark {
             block: Block::State,
             at: 2,
-            to: SOMEWHERE.to_string(),
+            is: Marked::Link(SOMEWHERE.to_string()),
         }]);
 
         let buf = rendered(row, 40);
