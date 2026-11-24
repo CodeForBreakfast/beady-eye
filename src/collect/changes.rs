@@ -473,6 +473,24 @@ pub fn watch(
     serve(at, move |writer| hear(writer, &reported, &changed))
 }
 
+/// The channel a view `opened`, or the refusal worth saying where it could
+/// not be opened.
+///
+/// A view refused because something holds the socket has nothing to say
+/// where a watcher answers. The watcher takes the socket from whatever holds
+/// it, so it is the holder or about to be, and the view reads through it:
+/// every change pushed there reaches the view, and nothing is polled.
+pub fn opened_unless_a_watcher_holds_it(
+    opened: Result<Socket, Refused>,
+    a_watcher_answers: impl FnOnce() -> bool,
+) -> Result<Option<Socket>, Refused> {
+    match opened {
+        Ok(socket) => Ok(Some(socket)),
+        Err(Refused::AlreadyWatching(_)) if a_watcher_answers() => Ok(None),
+        Err(refused) => Err(refused),
+    }
+}
+
 /// Open a socket and hand each connection to `each` on a thread of its own,
 /// reporting what stopped it rather than failing.
 pub fn serve(

@@ -55,6 +55,8 @@ pub struct Drawn {
     pub at: DateTime<Utc>,
     pub offset: FixedOffset,
     pub collecting: Vec<Awaited>,
+    /// The projects nothing has vouched for lately.
+    pub lapsed: Vec<String>,
 }
 
 /// The attribute of a kept-current page's root element that names its
@@ -379,7 +381,7 @@ impl Drawing<'_> {
         let reads = Reads::new(
             &self.forest.snapshot().read_at,
             &drawn.collecting,
-            &[],
+            &drawn.lapsed,
             drawn.at,
         );
         // A project's heading and the lines under it are one section, so the
@@ -2265,6 +2267,7 @@ mod tests {
             at: drawn_at(),
             offset: FixedOffset::east_opt(3600).expect("an offset"),
             collecting: Vec::new(),
+            lapsed: Vec::new(),
         }
     }
 
@@ -3181,6 +3184,23 @@ mod tests {
         let html = page(ground(), &Layout::default(), &asked, drawn).html;
         assert!(
             line_html(&html, 0).contains("<span class=\"mark reading held warn\""),
+            "{}",
+            line_html(&html, 0)
+        );
+    }
+
+    /// A project nothing has vouched for lately says so on its heading, as
+    /// the terminal's line does, in the warning's colour.
+    #[test]
+    fn a_heading_whose_project_has_lapsed_marks_it_in_the_warnings_colour() {
+        let lapsed = Drawn {
+            lapsed: vec![PROJECT.to_string()],
+            ..drawing()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &Layout::default(), &asked, lapsed).html;
+        assert!(
+            line_html(&html, 0).contains("<span class=\"mark warn\">?</span>"),
             "{}",
             line_html(&html, 0)
         );

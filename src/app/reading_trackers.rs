@@ -2,7 +2,7 @@
 //!
 //! It polls, waits out the window, reads one thing at a time and takes
 //! producers' lines exactly as a view's loop does, by driving the same three
-//! types through [`Refresh`], which `bdi web` drives too. What a read finds
+//! types through [`Refreshing`], which `bdi web` drives too. What a read finds
 //! goes to the watcher rather than to a screen.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -23,7 +23,7 @@ pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> Watched + Send>;
 /// When a run with no screen reads its trackers: which read is due next,
 /// which projects have lapsed, and how long to wait for either. Whoever
 /// drives it makes each read it names and hands back what the read found.
-pub struct Refresh {
+pub struct Refreshing {
     heard: Receiver<Heard>,
     /// What was heard while waiting, and not yet taken.
     waited_for: Option<Heard>,
@@ -35,7 +35,7 @@ pub struct Refresh {
     asking: (Sender<Asked>, Receiver<Asked>),
 }
 
-impl Refresh {
+impl Refreshing {
     /// Reads of every project `reading` names, told of changes on `heard`,
     /// and asking at once for everything.
     pub fn new(heard: Receiver<Heard>, mut outstanding: Outstanding, reading: Reading) -> Self {
@@ -141,7 +141,7 @@ impl Refresh {
 /// reports it.
 pub struct ReadingTrackers {
     reads: Reads,
-    refresh: Refresh,
+    refresh: Refreshing,
     told: VecDeque<Answer>,
     /// The projects the watcher has been told have lapsed, and not since
     /// told otherwise.
@@ -159,7 +159,7 @@ impl ReadingTrackers {
     ) -> Self {
         Self {
             reads,
-            refresh: Refresh::new(heard, outstanding, reading),
+            refresh: Refreshing::new(heard, outstanding, reading),
             told: VecDeque::new(),
             lapsed: Vec::new(),
         }
