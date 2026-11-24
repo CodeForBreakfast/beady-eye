@@ -152,37 +152,20 @@
         pkgs = import nixpkgs { inherit system; };
 
         # The beads release's go.mod pins modules with known CVEs that a later
-        # version fixes, so bd's build moves each past its fix. Drop a module
-        # from the list once the beads pin carries the fix itself.
-        bdModulesPastTheirFixes = [
-          "github.com/apache/thrift@v0.25.0"
-          "github.com/klauspost/compress@v1.20.2"
-          "go.opentelemetry.io/otel@v1.47.0"
-          "go.opentelemetry.io/otel/metric@v1.47.0"
-          "go.opentelemetry.io/otel/sdk@v1.47.0"
-          "go.opentelemetry.io/otel/sdk/metric@v1.47.0"
-          "go.opentelemetry.io/otel/trace@v1.47.0"
-          "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.47.0"
-          "go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.47.0"
-          "go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.47.0"
-        ];
-
-        # The same preBuild runs in the module download, where it fetches,
-        # and in the build, where it reads that download back. It edits the
-        # requirements and tidies rather than running `go get`, because
-        # `go get` asks the proxy for the latest genproto submodules whatever
-        # it is told, and keeps the answer in the download. Each new genproto
-        # commit upstream would then change the download's hash.
+        # version fixes, so bd's build moves each past its fix with a patch to
+        # go.mod and go.sum. The module download then reads only that lockfile:
+        # no `go get` or `go mod tidy` runs under the pinned hash, because
+        # either lets the Go proxy choose a version. The patch is made outside
+        # the build by `go mod edit -require=<module>@<version>` and
+        # `go mod tidy` on beads' source, and is dropped once the beads pin
+        # carries the fixes itself.
         bd = (pkgs.extend (pkgs.lib.composeExtensions beads.overlays.default
           (final: prev: {
             beads-unwrapped = prev.beads-unwrapped.override (prevArgs: {
               buildGoModule = args: prevArgs.buildGoModule (args // {
-                preBuild = ''
-                  go mod edit ${pkgs.lib.escapeShellArgs
-                    (map (m: "-require=${m}") bdModulesPastTheirFixes)}
-                  go mod tidy
-                '';
-                vendorHash = "sha256-4dwESj9rJK0yoeO9blhx0Z7WWQXKG67nT9+R04fiuYY=";
+                patches = (args.patches or [ ])
+                  ++ [ ./nix/bd-modules-past-their-fixes.patch ];
+                vendorHash = "sha256-x2Q/cDQRLmErqkl8kB1phZklKZzEXh0BP0LcE5uqAsI=";
               });
             });
           }))).beads;
