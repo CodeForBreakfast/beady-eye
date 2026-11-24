@@ -209,8 +209,6 @@ pub(super) fn refusals(view: &ViewOptions) -> Vec<String> {
         "it narrows what --beads prints, and bdi web serves a page rather than printing";
     [
         (!view.beads.is_empty(), "BEAD-ID", "bdi web cannot yet root its page at a bead named on its command line"),
-        (!view.projects.is_empty(), "--project", "bdi web reads every configured project, and cannot yet read only the ones named"),
-        (view.all_projects, "--all-projects", "bdi web reads every configured project already, and does not yet take the option that asks for it"),
         (view.json, "--json", "bdi web serves a page rather than printing the snapshot"),
         (view.each_bead, "--beads", "bdi web serves a page rather than printing each bead"),
         (!view.labels.is_empty(), "--label", BEADS_PRINTS),
@@ -230,19 +228,34 @@ pub(super) fn refusals(view: &ViewOptions) -> Vec<String> {
     .collect()
 }
 
+/// Which projects `bdi web` reads: the ones `view` names, as the view reads
+/// them, and every configured project where it names none, since a page has
+/// no directory it was started in.
+pub(super) fn reading(view: &ViewOptions) -> Reading {
+    match Reading::asked_for(view) {
+        Reading::WhereBdiWasStarted => Reading::EveryProject,
+        named => named,
+    }
+}
+
 /// Answer requests on `listen` until a signal ends the process, drawing each
-/// from the latest read of every project `config` names, for requests sent to
-/// a name `hosts` allows.
+/// from the latest read of the projects `config` and `view` name, for
+/// requests sent to a name `hosts` allows.
 ///
 /// The config is read once. Replacing what it reads is a restart.
-pub(super) fn web(config: &Path, listen: &str, hosts: Hosts) -> anyhow::Result<ExitCode> {
+pub(super) fn web(
+    config: &Path,
+    listen: &str,
+    hosts: Hosts,
+    view: &ViewOptions,
+) -> anyhow::Result<ExitCode> {
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,
         config,
         &Launch {
             cwd: &cwd,
-            reading: Reading::EveryProject,
+            reading: reading(view),
             roots: &[],
         },
     )?
