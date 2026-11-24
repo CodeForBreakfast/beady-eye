@@ -15,6 +15,7 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::app::Awaited;
+use crate::config::Colour;
 use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
@@ -643,12 +644,17 @@ impl Drawing<'_> {
                 _ => self.opening(place.key()),
             });
             // An open bead's id takes the colour `[row] open_id` gives it,
-            // as the terminal's row draws it.
+            // as the terminal's row draws it, and a colour written as such is
+            // drawn as written, as a badge's is.
             let id = reference
                 .id
                 .first()
                 .filter(|_| reference.status == Status::Open)
                 .map_or(Style::new(), |id| id.style);
+            let id = match self.layout.open_id {
+                Colour::Absolute(_) => palette::css_as_written(id),
+                _ => palette::css(id),
+            };
             let drawn = Shown {
                 mark: self.layout.draws(&Cell::Glyph),
                 id: self.layout.draws(&Cell::Id).then_some(id),
@@ -814,7 +820,7 @@ impl Drawing<'_> {
                 .collect();
             html.push_str(&format!(
                 "<span class=\"id\"{}>{}</span>",
-                styled(palette::css(id)),
+                styled(id),
                 escaped(said.trim_end())
             ));
         }
@@ -1346,7 +1352,8 @@ fn spans(
         let class = match flagged {
             Some(words) => format!(" class=\"flag\" title=\"{}\"", escaped(words.trim())),
             None if badge => format!(" class=\"pill{shortens}\""),
-            None if span.style.fg == palette::CODE.fg => " class=\"code\"".to_string(),
+            None if span.style.fg == palette::CODE.fg => format!(" class=\"code{shortens}\""),
+            None if short.is_some() => " class=\"shortens\"".to_string(),
             None => String::new(),
         };
         let css = if marked
@@ -1431,28 +1438,26 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
     Some(html)
 }
 
-/// The class of the mark the page draws for `status` in place of its glyph,
-/// where it draws one. Any other status keeps its glyph.
-/// A bead's status mark: the shape the stylesheet draws for a status it has
-/// one for, or else `glyph`, the status's glyph. Where nothing beside it
-/// says the status, the mark says it, as an image named for the status in
-/// its colour. Beside the status in words it is hidden from a reader who
-/// hears the page, and takes the colour of what holds it.
-/// Which of a reference's status mark and id the page draws, and the colour
-/// it draws the id in.
+/// Which of a reference's status mark and id the page draws, and the CSS it
+/// draws the id in.
 struct Shown {
     mark: bool,
-    id: Option<Style>,
+    id: Option<String>,
 }
 
 impl Shown {
     /// The mark, and the id in no colour of its own.
     const WHOLE: Shown = Shown {
         mark: true,
-        id: Some(Style::new()),
+        id: Some(String::new()),
     };
 }
 
+/// A bead's status mark: the shape the stylesheet draws for a status it has
+/// one for, or else `glyph`, the status's glyph. Where nothing beside it
+/// says the status, the mark says it, as an image named for the status in
+/// its colour. Beside the status in words it is hidden from a reader who
+/// hears the page, and takes the colour of what holds it.
 fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool) {
     let said = if says_the_status {
         format!(
@@ -1470,6 +1475,8 @@ fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool)
     ));
 }
 
+/// The class of the mark the page draws for `status` in place of its glyph,
+/// where it draws one. Any other status keeps its glyph.
 fn drawn_mark(status: &Status) -> Option<&'static str> {
     match status {
         Status::Open => Some("open"),
@@ -4862,6 +4869,26 @@ mod tests {
             "<span class=\"id\" style=\"color:var(--accent)\""
         );
         assert_eq!(id_of("lift the ground station"), "<span class=\"id\"");
+    }
+
+    /// A colour `open_id` writes as such is drawn as written, even where it
+    /// is one the page's theme has a name for.
+    #[test]
+    fn an_open_id_colour_written_as_such_is_drawn_as_written() {
+        let layout = Layout {
+            open_id: Colour::Absolute(ratatui::style::Color::Rgb(89, 194, 255)),
+            ..Layout::default()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &layout, &asked, drawing()).html;
+        let row = bead_lines(&html)
+            .into_iter()
+            .find(|row| row.contains(">wire the niri theme include</span>"))
+            .expect("the open bead has a row");
+        assert!(
+            row.contains("<span class=\"id\" style=\"color:#59c2ff\">"),
+            "{row}"
+        );
     }
 
     /// Under a layout that names no colour for an open id, a status's colour
