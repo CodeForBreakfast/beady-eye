@@ -1348,7 +1348,13 @@ fn spans(
         let flagged = (!badge && block == Block::State && span.style == palette::ATTENTION)
             .then(|| span.content.strip_prefix(WARNING))
             .flatten();
-        let shortens = if short.is_some() { " shortens" } else { "" };
+        let (shortens, saving) = match short {
+            Some(short) => (
+                " shortens",
+                format!(" data-saving=\"{}\"", short.saving(span)),
+            ),
+            None => ("", String::new()),
+        };
         let class = match flagged {
             Some(words) => format!(" class=\"flag\" title=\"{}\"", escaped(words.trim())),
             None if badge => format!(" class=\"pill{shortens}\""),
@@ -1366,7 +1372,7 @@ fn spans(
         } else {
             palette::css_without_status(span.style)
         };
-        let style = format!("{class}{}", styled(css));
+        let style = format!("{class}{saving}{}", styled(css));
         let text = match (flagged, short) {
             (Some(words), _) => format!("{WARNING}<span>{}</span>", escaped(words)),
             (None, Some(short)) => format!(
@@ -1563,7 +1569,7 @@ position:relative}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 var(--size-label)/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
-.shortens>:last-child,.shortens.short>:first-child{display:none}.shortens.short>:last-child{display:inline}\
+.shortens>:last-child,.shortens[data-short]>:first-child{display:none}.shortens[data-short]>:last-child{display:inline}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 #shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
@@ -1916,6 +1922,43 @@ setInterval(() => document.hidden || inReadersZone(document), 15000);
 document.addEventListener("visibilitychange", () => document.hidden || inReadersZone(document));
 "##;
 
+/// The part of the page's script that draws a span's short form where its
+/// whole form would be cut, as the terminal's row does. It shows every whole
+/// form, then shortens in passes. Each pass takes every line that overflows,
+/// or holds a span that overflows its own box, and shortens the one span on
+/// it that saves the most, the later of two that save the same. A badge in
+/// the state is cut by its line rather than by its own box, because the
+/// state never shrinks. A pass measures every line before it changes any, so
+/// the page is laid out once a pass rather than once a span. It runs on load, whenever
+/// the page's size changes, and after each redraw, which puts every whole
+/// form back. A shortened span is marked with `data-short` rather than a
+/// class, because the page finds a focused link again after a redraw by its
+/// class.
+const SHORTENS: &str = r##"const shorten = () => {
+  const lines = new Map();
+  for (const said of [...document.querySelectorAll(".shortens")].reverse()) {
+    delete said.dataset.short;
+    const line = said.closest(".line") ?? said;
+    lines.set(line, [...(lines.get(line) ?? []), said]);
+  }
+  while (lines.size) {
+    const cut = [];
+    for (const [line, whole] of lines) {
+      if (line.scrollWidth <= line.clientWidth && whole.every((said) => said.scrollWidth <= said.clientWidth)) {
+        lines.delete(line);
+        continue;
+      }
+      const most = whole.reduce((most, said) => (+said.dataset.saving > +most.dataset.saving ? said : most));
+      cut.push(most);
+      whole.splice(whole.indexOf(most), 1);
+      if (!whole.length) lines.delete(line);
+    }
+    for (const said of cut) said.dataset.short = "";
+  }
+};
+addEventListener("DOMContentLoaded", () => new ResizeObserver(shorten).observe(document.body));
+"##;
+
 /// The page's one script, which keeps it current. It takes the page as it
 /// came from the browser's cache, never the network, so that it holds the
 /// page's lines without asking for them again. It asks the page's own
@@ -1938,37 +1981,6 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// the server is too busy to keep current asks again after as long as a
 /// quiet connection waits for a comment. Without it the page is the same
 /// page, drawn once.
-/// The part of the page's script that draws a span's short form where its
-/// whole form would be cut, as the terminal's row does. It shows every whole
-/// form, then shortens in passes. Each pass shortens every span that
-/// overflows its own box, and the last whole span of each line that
-/// overflows, so a line gives up its spans from its end. A badge in the state
-/// is cut by its line rather than by its own box, because the state never
-/// shrinks. A pass measures every line before it changes any, so the page is
-/// laid out once a pass rather than once a span. It runs on load, whenever
-/// the page's size changes, and after each redraw, which puts every whole
-/// form back.
-const SHORTENS: &str = r##"const shorten = () => {
-  let whole = [...document.querySelectorAll(".shortens")];
-  for (const said of whole) said.classList.remove("short");
-  whole.reverse();
-  while (whole.length) {
-    const cut = new Set(whole.filter((said) => said.scrollWidth > said.clientWidth));
-    const lines = new Set();
-    for (const said of whole) {
-      const line = said.closest(".line");
-      if (!line || lines.has(line)) continue;
-      lines.add(line);
-      if (line.scrollWidth > line.clientWidth) cut.add(said);
-    }
-    if (!cut.size) return;
-    for (const said of cut) said.classList.add("short");
-    whole = whole.filter((said) => !cut.has(said));
-  }
-};
-addEventListener("DOMContentLoaded", () => new ResizeObserver(shorten).observe(document.body));
-"##;
-
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const drawn = document.documentElement.dataset.version;
@@ -4974,11 +4986,11 @@ mod tests {
         assert_eq!(parts(more).0, ["a.pill"], "{more}");
     }
 
-    /// A badge with a short form carries both, its whole form first, and
-    /// the page's script draws the short one where the whole would be cut:
-    /// it measures the badge with the whole form shown and swaps where the
-    /// badge overflows, or its line does and nothing after it on the line is
-    /// whole, on load, on every redraw and whenever the page's size changes.
+    /// A badge with a short form carries both, its whole form first, and how
+    /// many columns the short form saves. The page's script draws the short
+    /// form where the whole would be cut: where a line or a badge on it
+    /// overflows, it shortens the badge on that line that saves the most,
+    /// on load, on every redraw and whenever the page's size changes.
     #[test]
     fn a_badge_with_a_short_form_carries_both_and_the_page_shows_the_one_that_fits() {
         let mut snapshot = ground();
@@ -4996,21 +5008,22 @@ mod tests {
         assert_eq!(
             more.trim_start(),
             "<a href=\"https://example.invalid/dunwich/12\" class=\"pill shortens\" \
-             style=\"text-decoration:underline\"><span>⇢ dunwich #12</span><span>⇢ #12</span></a>"
+             data-saving=\"8\" style=\"text-decoration:underline\"><span>⇢ dunwich #12</span><span>⇢ #12</span></a>"
         );
         assert!(
             STYLE.contains(
-                ".shortens>:last-child,.shortens.short>:first-child{display:none}\
-                 .shortens.short>:last-child{display:inline}"
+                ".shortens>:last-child,.shortens[data-short]>:first-child{display:none}\
+                 .shortens[data-short]>:last-child{display:inline}"
             ),
             "{STYLE}"
         );
         for said in [
-            "for (const said of whole) said.classList.remove(\"short\");",
-            "whole.reverse();",
-            "const cut = new Set(whole.filter((said) => said.scrollWidth > said.clientWidth));",
-            "if (line.scrollWidth > line.clientWidth) cut.add(said);",
-            "for (const said of cut) said.classList.add(\"short\");",
+            "for (const said of [...document.querySelectorAll(\".shortens\")].reverse()) {",
+            "delete said.dataset.short;",
+            "if (line.scrollWidth <= line.clientWidth && \
+             whole.every((said) => said.scrollWidth <= said.clientWidth)) {",
+            "+said.dataset.saving > +most.dataset.saving ? said : most",
+            "for (const said of cut) said.dataset.short = \"\";",
             "new ResizeObserver(shorten).observe(document.body)",
         ] {
             assert!(SHORTENS.contains(said), "{SHORTENS}");
