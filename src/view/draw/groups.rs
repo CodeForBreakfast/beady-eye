@@ -15,15 +15,8 @@ use super::{pane_marker, sentence};
 /// wrong in — a key put them there and a key takes them back out — so that
 /// group is the one drawn without a warning.
 pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
-    let (said, hidden) = match group.kind {
-        GroupKind::FailedProjects => (phrase::failed_projects(group.count), false),
-        GroupKind::Conflicts => (phrase::conflicts(group.count), false),
-        GroupKind::HiddenTrees => (phrase::hidden_trees(group.count, group.with_findings), true),
-        GroupKind::Unattributed => (phrase::unattributed(group.count), false),
-        GroupKind::Unconfigured => (phrase::unconfigured(group.count), false),
-    };
-
-    let (said, style) = if hidden {
+    let said = said(group);
+    let (said, style) = if group.kind == GroupKind::HiddenTrees {
         (said, palette::PLAIN)
     } else {
         (format!("{WARNING} {said}"), palette::ATTENTION)
@@ -33,6 +26,17 @@ pub(super) fn group_line(prefix: &str, group: &Group) -> Fitted {
         Vec::new(),
         Vec::new(),
     )
+}
+
+/// What a group holds, in words alone.
+pub(super) fn said(group: &Group) -> String {
+    match group.kind {
+        GroupKind::FailedProjects => phrase::failed_projects(group.count),
+        GroupKind::Conflicts => phrase::conflicts(group.count),
+        GroupKind::HiddenTrees => phrase::hidden_trees(group.count, group.with_findings),
+        GroupKind::Unattributed => phrase::unattributed(group.count),
+        GroupKind::Unconfigured => phrase::unconfigured(group.count),
+    }
 }
 
 /// The scope, where the directory chose it. Nothing went wrong, so it is
