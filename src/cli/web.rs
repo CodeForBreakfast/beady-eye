@@ -432,9 +432,10 @@ fn keep_reading(
     arms: &Arming,
 ) {
     let mut collection = Collection::default();
+    let mut broken = false;
     loop {
         let now = Utc::now();
-        taken_up(latest, &mut refreshing, &mut reload, arms, now);
+        taken_up(latest, &mut refreshing, &mut reload, arms, &mut broken, now);
         if read_what_is_due(latest, trackers, &mut refreshing, &mut collection, now) {
             continue;
         }
@@ -449,24 +450,36 @@ fn keep_reading(
 ///
 /// A config that will not load leaves the one in force standing, as in the
 /// terminal view, and is said on stderr, which is where a server's reader
-/// looks.
+/// looks. `broken` is whether the last check that said anything found it so.
 fn taken_up(
     latest: &Latest,
     refreshing: &mut Refreshing,
     reload: &mut Reload,
     arms: &Arming,
+    broken: &mut bool,
     now: DateTime<Utc>,
 ) {
-    match reload.checks(now) {
-        Reloaded::Fresh(written) => {
-            refreshing.reads_under(written, arms, now);
-            let written = Arc::new(written.clone());
-            latest.change(|held| held.cfg = written);
+    let reloaded = reload.checks(now);
+    if newly_broken(&reloaded, broken) {
+        eprintln!("bdi web: {}", phrase::notice(&Notice::ConfigWouldNotReload));
+    }
+    if let Reloaded::Fresh(written) = reloaded {
+        refreshing.reads_under(written, arms, now);
+        let written = Arc::new(written.clone());
+        latest.change(|held| held.cfg = written);
+    }
+}
+
+/// Whether `reloaded` says the config will not load where `broken`, the
+/// last check that said anything, did not.
+fn newly_broken(reloaded: &Reloaded, broken: &mut bool) -> bool {
+    match reloaded {
+        Reloaded::Broken => !std::mem::replace(broken, true),
+        Reloaded::Fresh(_) | Reloaded::Unchanged => {
+            *broken = false;
+            false
         }
-        Reloaded::Broken => {
-            eprintln!("bdi web: {}", phrase::notice(&Notice::ConfigWouldNotReload));
-        }
-        Reloaded::Untouched | Reloaded::Unchanged => {}
+        Reloaded::Untouched => false,
     }
 }
 
@@ -1207,6 +1220,20 @@ mod tests {
         let page = drawn(&asked, &held).1;
         assert!(page.contains("lay the feeder cable"), "{page}");
         assert!(!page.contains("open the gate"), "{page}");
+    }
+
+    /// A config that stays unloadable, such as one that has gone from its
+    /// path, is said once rather than at every check, and again only once
+    /// it has loaded in between.
+    #[test]
+    fn a_config_that_will_not_load_is_said_once_until_it_loads() {
+        let mut broken = false;
+        assert!(newly_broken(&Reloaded::Broken, &mut broken));
+        assert!(!newly_broken(&Reloaded::Broken, &mut broken));
+        assert!(!newly_broken(&Reloaded::Untouched, &mut broken));
+        assert!(!newly_broken(&Reloaded::Broken, &mut broken));
+        assert!(!newly_broken(&Reloaded::Unchanged, &mut broken));
+        assert!(newly_broken(&Reloaded::Broken, &mut broken));
     }
 
     /// An edit naming a project with no address a browser keeps is refused
