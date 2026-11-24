@@ -231,10 +231,11 @@ enum Passing {
         #[arg(long)]
         config: Option<String>,
     },
-    /// Answer HTTP on an address, such as 0.0.0.0:8080, with every configured
-    /// project's forest as a read-only web page, and each bead's own page at
-    /// /<project>/<bead-id>. Trackers are read as the view reads them, through
-    /// the watcher where one answers, and no agent provider is asked.
+    /// Answer HTTP on an address, such as 0.0.0.0:8080, with the forest as a
+    /// read-only web page, and each bead's own page at /<project>/<bead-id>.
+    /// Every configured project is read unless --project names some. Trackers
+    /// are read as the view reads them, through the watcher where one answers,
+    /// and no agent provider is asked, so every tree is drawn.
     // Without these resets, a --beads filter given without --beads, or
     // --json or --beads beside an option they conflict with, would be a parse
     // error rather than a refusal.
@@ -263,7 +264,7 @@ enum Passing {
         config: Option<String>,
         #[command(
             flatten,
-            next_help_heading = "The view's options, which bdi web refuses with a reason"
+            next_help_heading = "The view's options, each honoured or refused with a reason"
         )]
         view: ViewOptions,
     },
@@ -1841,7 +1842,10 @@ detached
     /// what `--all` asks of the view.
     #[test]
     fn bdi_web_draws_the_trees_the_view_draws_under_all() {
-        assert_eq!(web::EVERY_TREE, Cli::parse_from(["bdi", "--all"]).view.filter());
+        assert_eq!(
+            web::EVERY_TREE,
+            Cli::parse_from(["bdi", "--all"]).view.filter()
+        );
     }
 
     #[test]

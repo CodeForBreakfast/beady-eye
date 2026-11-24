@@ -1,5 +1,5 @@
-//! `bdi web`: every configured project's forest as a read-only web page, and
-//! each bead at an address of its own, answered over HTTP.
+//! `bdi web`: the forest of the projects it reads as a read-only web page,
+//! and each bead at an address of its own, answered over HTTP.
 //!
 //! One thread keeps the latest snapshot, reading the trackers as a view does,
 //! through the watcher where one answers. Each request is drawn afresh from
@@ -802,7 +802,8 @@ path = "/home/user/dev/arkham"
         });
         let sent = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
-        let (status, _, body) = answered(&head, &latest, &cfg, &Hosts::default(), &Start::default());
+        let (status, _, body) =
+            answered(&head, &latest, &cfg, &Hosts::default(), &Start::default());
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];

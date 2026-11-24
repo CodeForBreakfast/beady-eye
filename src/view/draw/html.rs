@@ -6968,7 +6968,11 @@ mod tests {
         assert!(!html.contains("<p class=\"rooted\">"), "{html}");
         assert!(html.contains(&not_in_any_tree(&gone)), "{html}");
         let all = link_saying(&html, phrase::show_all());
-        assert_eq!(Asked::of(&all).map(|asked| asked.roots()), Some(Vec::new()), "{all}");
+        assert_eq!(
+            Asked::of(&all).map(|asked| asked.roots()),
+            Some(Vec::new()),
+            "{all}"
+        );
     }
 
     /// A search's form goes to the match, as its steps do.

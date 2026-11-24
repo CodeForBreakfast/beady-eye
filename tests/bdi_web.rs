@@ -158,7 +158,8 @@ fn serving(home: &Path, beads: &str, args: &[&str]) -> (Web, String, ShimmedTrac
 /// name as the host, so only a name the listener was given is answered.
 #[test]
 fn only_a_request_sent_to_a_host_it_was_given_is_answered() {
-    let (_web, address) = a_web_over_the_tracker("web-hosts", &["--allow-host", "beads.example.invalid"]);
+    let (_web, address) =
+        a_web_over_the_tracker("web-hosts", &["--allow-host", "beads.example.invalid"]);
     let (status, _) = get_from(&address, "dunwich.invalid", "/");
     assert_eq!(status, "HTTP/1.1 421 Misdirected Request");
     let (status, body) = get_from(&address, "beads.example.invalid:8080", "/");
