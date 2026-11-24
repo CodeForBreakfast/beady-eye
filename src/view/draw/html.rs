@@ -361,7 +361,7 @@ impl Drawing<'_> {
             }
             RootBand::Awaited => html.push_str(&format!(
                 "<p class=\"rooted awaited\"><span class=\"said\">{}</span>",
-                escaped(&phrase::waiting_to_show_only(&root.id))
+                escaped(&phrase::waiting_to_show_only(&root.project, &root.id))
             )),
             // An address can name a root the forest no longer draws, and the
             // page then draws every tree, so it says so rather than drop it.
@@ -6625,7 +6625,7 @@ mod tests {
             project: "kadath".to_string(),
             id: "kad-1".to_string(),
         };
-        let waiting = escaped(&phrase::waiting_to_show_only(&unread.id));
+        let waiting = escaped(&phrase::waiting_to_show_only(&unread.project, &unread.id));
         let start = Start {
             roots: vec![key("smt-4kd3p.6"), unread.clone()],
             ..Start::default()
