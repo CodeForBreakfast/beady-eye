@@ -1757,7 +1757,7 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead .g{grid-area:1/1;font-size:var(--size-row);text-align:center}\
 .page .bead .title{grid-area:1/2;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
 .page .bead .id{grid-area:2/2;font-size:var(--size-detail);font-family:var(--body)}\
-.waits>.bead{width:100%}\
+.waits>.bead{width:100%}.waits>.bead>.g{align-self:start;margin-top:4px}.waits>.bead>.title{line-height:20px}\
 .fields{grid-template-columns:repeat(2,minmax(0,1fr))}.prose{font-size:var(--size-row-phone)}}\
 :is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
@@ -6037,6 +6037,22 @@ mod tests {
         assert!(
             STYLE.contains(".page .tied .bead .title{grid-area:1/2;line-height:20px;"),
             "{STYLE}"
+        );
+    }
+
+    /// A phone stacks a blocker's id under its title, so the blocker's mark
+    /// keeps to its title's first line as a related bead's does. A mark has
+    /// no text, so lined up by baseline it would hang below the title.
+    #[test]
+    fn a_blockers_mark_lines_up_with_the_first_line_of_its_title_on_a_phone() {
+        let phone = rules_under("(max-width:720px)");
+        assert!(
+            phone.contains(".waits>.bead>.g{align-self:start;margin-top:4px}"),
+            "{phone}"
+        );
+        assert!(
+            phone.contains(".waits>.bead>.title{line-height:20px}"),
+            "{phone}"
         );
     }
 
