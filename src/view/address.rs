@@ -273,15 +273,30 @@ impl Asked {
     /// where what this took from the start leaves the bead out, the bead is
     /// shown in every tree instead.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
-        let shown = self.drawn(snapshot, layout);
-        let unstarted = self.without_the_start();
-        if shown.bead != Some(false) || unstarted == *self {
-            return shown;
+        let mut shown = self.drawn(snapshot, layout);
+        let mut tried = self.clone();
+        // ponytail: the forest is flattened again for each thing the start
+        // gives way; undo the start on the first one if these pages come to
+        // cost too much.
+        for wider in [self.without_the_starts_list(), self.without_the_start()] {
+            if shown.bead != Some(false) {
+                break;
+            }
+            if wider != tried {
+                shown = wider.drawn(shown.forest.snapshot().clone(), layout);
+                tried = wider;
+            }
         }
-        // ponytail: the forest is flattened a second time for a bead the
-        // start leaves out; undo the start on the first one if these pages
-        // come to cost too much.
-        unstarted.drawn(shown.forest.snapshot().clone(), layout)
+        shown
+    }
+
+    /// This with the list it took from the start put back to the trees.
+    fn without_the_starts_list(&self) -> Self {
+        Self {
+            list: self.list.clone().filter(|_| !self.list_from_start),
+            list_from_start: false,
+            ..self.clone()
+        }
     }
 
     /// This with the list and the roots it took from the start put back to
@@ -292,10 +307,8 @@ impl Asked {
             root => root.clone(),
         };
         Self {
-            list: self.list.clone().filter(|_| !self.list_from_start),
-            list_from_start: false,
             root,
-            ..self.clone()
+            ..self.without_the_starts_list()
         }
     }
 

@@ -6565,6 +6565,24 @@ mod tests {
         let said = format!("{}?ready=1", address(&key("smt-4kd3p.8")));
         assert!(!started_answer(&ready, &said).found);
         assert!(!page_at(&said).found);
+
+        // Where the list alone leaves the bead out, the roots stay.
+        let both = Start {
+            list: listed(None, true),
+            ..rooted.clone()
+        };
+        let in_the_root = address(&key("smt-4kd3p.8"));
+        let answer = started_answer(&both, &in_the_root);
+        assert!(answer.found);
+        assert_eq!(
+            page_lines(&answer.html),
+            page_lines(&started_page_at(&rooted, &in_the_root))
+        );
+        assert!(
+            answer.html.contains("<p class=\"rooted\">"),
+            "{}",
+            answer.html
+        );
     }
 
     /// The links on a page drawn from its start leave the start to the
