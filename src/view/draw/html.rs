@@ -335,7 +335,7 @@ impl Drawing<'_> {
                     show::named(node, vec![Span::raw(phrase::this_tree())]),
                     Some(self.opening(root.key())),
                     None,
-                    Style::new(),
+                    Shown::WHOLE,
                 );
             }
             None => html.push_str(&format!(
@@ -597,7 +597,7 @@ impl Drawing<'_> {
             ),
             _ => (None, None, fitted(line, widths, self.layout, reads)),
         };
-        let column = reference.is_some() && self.layout.cells().any(|cell| *cell == Cell::Progress);
+        let column = reference.is_some() && self.layout.draws(&Cell::Progress);
         let whole = drawn.whole();
         self.open_line(html, at, line, "", palette::css(whole.under));
         let (mut identity, mut from) = (whole.identity, 0);
@@ -647,7 +647,11 @@ impl Drawing<'_> {
                 .first()
                 .filter(|_| reference.status == Status::Open)
                 .map_or(Style::new(), |id| id.style);
-            self.reference(html, reference, href, self.named_project(line), id);
+            let drawn = Shown {
+                mark: self.layout.draws(&Cell::Glyph),
+                id: self.layout.draws(&Cell::Id).then_some(id),
+            };
+            self.reference(html, reference, href, self.named_project(line), drawn);
         }
         if more {
             html.push_str("<span class=\"more\">");
@@ -746,15 +750,15 @@ impl Drawing<'_> {
     /// the page can open the bead. The mark is labelled with `bd`'s word for
     /// the status. The id takes no colour from the place drawing it, because
     /// a status colour or a finished row's tone would make it fainter still,
-    /// and is drawn in `id` alone. Where the reference names its `project`, a
-    /// quiet tag after the id says it.
+    /// and is drawn as `drawn` says. Where the reference names its `project`,
+    /// a quiet tag after the id says it.
     fn reference(
         &self,
         html: &mut String,
         reference: Reference,
         href: Option<String>,
         project: Option<&str>,
-        id: Style,
+        drawn: Shown,
     ) {
         let linked = href.is_some();
         match href {
@@ -770,22 +774,26 @@ impl Drawing<'_> {
                 0,
             )
         };
-        mark(html, &reference.status, &reference.glyph(), true);
-        between(html, " ");
+        if drawn.mark {
+            mark(html, &reference.status, &reference.glyph(), true);
+            between(html, " ");
+        }
         html.push_str("<span class=\"title\">");
         spans(html, &reference.title, Block::Identity, &[], 0);
         html.push_str("</span>");
-        between(html, &indent());
-        let said: String = reference
-            .id
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
-        html.push_str(&format!(
-            "<span class=\"id\"{}>{}</span>",
-            styled(palette::css(id)),
-            escaped(said.trim_end())
-        ));
+        if let Some(id) = drawn.id {
+            between(html, &indent());
+            let said: String = reference
+                .id
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            html.push_str(&format!(
+                "<span class=\"id\"{}>{}</span>",
+                styled(palette::css(id)),
+                escaped(said.trim_end())
+            ));
+        }
         if let Some(project) = project {
             html.push_str(&format!(
                 "<span class=\"project\">{}</span>",
@@ -1075,7 +1083,7 @@ impl Drawing<'_> {
             reference,
             key.map(|key| self.opening(&key)),
             None,
-            Style::new(),
+            Shown::WHOLE,
         );
         true
     }
@@ -1390,6 +1398,21 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
 /// says the status, the mark says it, as an image named for the status in
 /// its colour. Beside the status in words it is hidden from a reader who
 /// hears the page, and takes the colour of what holds it.
+/// Which of a reference's status mark and id the page draws, and the colour
+/// it draws the id in.
+struct Shown {
+    mark: bool,
+    id: Option<Style>,
+}
+
+impl Shown {
+    /// The mark, and the id in no colour of its own.
+    const WHOLE: Shown = Shown {
+        mark: true,
+        id: Some(Style::new()),
+    };
+}
+
 fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool) {
     let said = if says_the_status {
         format!(
@@ -5255,6 +5278,57 @@ mod tests {
             leaf.ends_with("<span class=\"prog\"></span></span>"),
             "{leaf}"
         );
+    }
+
+    /// A row's reference draws the status mark and the id only where the
+    /// layout draws them, and keeps its title whatever the layout says,
+    /// because a bead is never named on the page by its id alone.
+    #[test]
+    fn a_rows_reference_draws_the_glyph_and_id_only_where_the_layout_does() {
+        let drawn = |layout: Layout| {
+            let asked = Asked::of("/").expect("the forest");
+            let html = page(ground(), &layout, &asked, drawing()).html;
+            bead_lines(&html)
+                .into_iter()
+                .map(|row| {
+                    parts(inside(row, "bead"))
+                        .0
+                        .into_iter()
+                        .map(|part| part.split(' ').next().expect("a part").to_string())
+                        .filter(|part| ["span.g", "span.title", "span.id"].contains(&part.as_str()))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        for (layout, said) in [
+            (
+                Layout {
+                    identity: vec![Cell::Id],
+                    ..Layout::default()
+                },
+                ["span.title", "span.id"].as_slice(),
+            ),
+            (
+                Layout {
+                    identity: vec![Cell::Glyph],
+                    ..Layout::default()
+                },
+                ["span.g", "span.title"].as_slice(),
+            ),
+            (
+                Layout {
+                    title: vec![Cell::Badges],
+                    ..Layout::default()
+                },
+                ["span.g", "span.title", "span.id"].as_slice(),
+            ),
+        ] {
+            let rows = drawn(layout);
+            assert!(!rows.is_empty());
+            for row in rows {
+                assert_eq!(row, said);
+            }
+        }
     }
 
     /// Progress is drawn last on the row whichever block or place the

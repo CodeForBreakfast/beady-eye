@@ -964,6 +964,24 @@ open then reads as rows of one tone, and `open_id = "identity"` draws those
 ids in `bd show`'s blue instead. Every other status keeps `bd`'s colour on its
 id whatever this says.
 
+`bdi web` draws a row as `[row]` says, with three exceptions:
+
+- **The glyph, the title and the id are one link, drawn first and in that
+  order.** Every bead the page names is drawn as that same link, so a bead
+  looks the same in a tree as in a list of what it blocks. On a phone the link
+  places its parts on two lines by position, so a different order would not
+  show.
+- **The title stays when `[row]` leaves it out**, because the page never names
+  a bead by its id alone. The glyph and the id go where `[row]` leaves them
+  out.
+- **Progress is drawn last, as a bar of fixed width.** The page sets its text
+  in a proportional font, so a column of bars lines up only at the row's end.
+
+The page draws every other cell after the link, in the order `[row]` gives.
+It draws an open id in the colour `open_id` names, and every other id in its
+own neutral colour, because on the page only the glyph carries a status's
+colour.
+
 ## Telling `bdi` a project changed
 
 `bdi` polls, and most polls find nothing moved. A poll first asks the tracker
