@@ -1,3 +1,3 @@
-bdi 0.42.1
+bdi 0.43.1
 
-Patch release, **0.42.0 → 0.42.1**.
+Patch release, **0.43.0 → 0.43.1**.
