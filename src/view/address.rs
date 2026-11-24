@@ -273,15 +273,15 @@ impl Asked {
     /// where what this took from the start leaves the bead out, the bead is
     /// shown in every tree instead.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
+        let shown = self.drawn(snapshot, layout);
         let unstarted = self.without_the_start();
-        if self.bead.is_none() || unstarted == *self {
-            return self.drawn(snapshot, layout);
+        if shown.bead != Some(false) || unstarted == *self {
+            return shown;
         }
-        let shown = self.drawn(snapshot.clone(), layout);
-        match shown.bead {
-            Some(false) => unstarted.drawn(snapshot, layout),
-            _ => shown,
-        }
+        // ponytail: the forest is flattened a second time for a bead the
+        // start leaves out; undo the start on the first one if these pages
+        // come to cost too much.
+        unstarted.drawn(shown.forest.snapshot().clone(), layout)
     }
 
     /// This with the list and the roots it took from the start put back to
