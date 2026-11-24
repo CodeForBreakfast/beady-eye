@@ -923,7 +923,7 @@ impl Drawing<'_> {
                 ));
             }
         };
-        html.push_str("\n<dl class=\"fields\">");
+        html.push_str("<dl class=\"fields\">");
         cell(html, field::PRIORITY, &phrase::priority(node.priority));
         cell(html, field::TYPE, &node.issue_type);
         if let Some(assignee) = &node.assignee {
@@ -3700,6 +3700,18 @@ mod tests {
         ] {
             assert_eq!(Asked::of(target), None, "{target}");
         }
+    }
+
+    /// A bead page's grid starts straight after its head. The page keeps
+    /// its text's line breaks, so even a lone one between the two would draw
+    /// as an empty line.
+    #[test]
+    fn a_beads_head_sits_directly_above_its_grid() {
+        let html = page_of(with_the_bead_changed(|_| {}), &address(&key("smt-4kd3p.6")));
+        let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
+        let head = view.find("<div class=\"head\">").expect("the head");
+        let grid = view.find("<dl class=\"fields\">").expect("the grid");
+        assert_eq!(&view[element_end(view, head)..grid], "", "{view}");
     }
 
     /// The page draws none of the terminal's rows under the bead's head,
