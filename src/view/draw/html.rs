@@ -1940,14 +1940,15 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// page, drawn once.
 /// The part of the page's script that draws a span's short form where its
 /// whole form would be cut, as the terminal's row does. It shows every whole
-/// form, then shortens each span in turn while the span or its line
-/// overflows. A badge in the state is cut by its line rather than by its own
-/// box, because the state never shrinks. It runs on load, whenever the page's
-/// size changes, and after each redraw, which puts every whole form back.
+/// form, then shortens each span in turn from the end of its line, while the
+/// span or its line overflows. A badge in the state is cut by its line rather
+/// than by its own box, because the state never shrinks. It runs on load,
+/// whenever the page's size changes, and after each redraw, which puts every
+/// whole form back.
 const SHORTENS: &str = r##"const shorten = () => {
   const shortening = [...document.querySelectorAll(".shortens")];
   for (const said of shortening) said.classList.remove("short");
-  for (const said of shortening) {
+  for (const said of shortening.reverse()) {
     const line = said.closest(".line") ?? said;
     if (said.scrollWidth > said.clientWidth || line.scrollWidth > line.clientWidth) said.classList.add("short");
   }
@@ -4993,6 +4994,7 @@ mod tests {
         );
         for said in [
             "for (const said of shortening) said.classList.remove(\"short\");",
+            "for (const said of shortening.reverse()) {",
             "if (said.scrollWidth > said.clientWidth || line.scrollWidth > line.clientWidth) \
              said.classList.add(\"short\");",
             "new ResizeObserver(shorten).observe(document.body)",
