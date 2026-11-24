@@ -1708,10 +1708,12 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:var(--size-detail)}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
-.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px}\
+.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;max-width:calc(100% - 8px)}\
 .line>.more{grid-column:5;padding-left:2ch}\
 .line>.bead~.state{grid-column:6;min-width:0;margin-left:0;overflow-wrap:anywhere}\
-.line .pill,.line>.bead>.project{white-space:nowrap}\
+.line .pill,.line>.bead>.project{white-space:nowrap;box-sizing:border-box;overflow:clip;text-overflow:ellipsis}\
+.line .pill{max-width:100%}\
+.line>.bead>.project,.line>.more{min-width:0}\
 .line:has(>.more)>.bead~.state{grid-area:3/3/4/-1}\
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}.line .prog:empty{display:none}\
 nav{order:1;position:sticky;bottom:0;z-index:3;min-height:0;gap:6px;\
@@ -4844,7 +4846,7 @@ mod tests {
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr)",
-            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px}",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;",
             ".line>.more{grid-column:5;",
             ".line>.bead~.state{grid-column:6;",
         ] {
@@ -5255,12 +5257,17 @@ mod tests {
     /// line. Pills wrap between each other in their cell and never inside
     /// one. A row carrying pills draws its state on a line of its own under
     /// them, with what it hangs under drawn down beside that line too, so a
-    /// flag's words are never squeezed into what the pills leave.
+    /// flag's words are never squeezed into what the pills leave. A label
+    /// longer than the row has room for ends in an ellipsis rather than
+    /// push the row past the screen's edge.
     #[test]
     fn a_phone_rows_pills_never_break_inside_a_word() {
         let phone = rules_under("(max-width:720px)");
         for rule in [
-            ".line .pill,.line>.bead>.project{white-space:nowrap}",
+            ".line .pill,.line>.bead>.project{white-space:nowrap;box-sizing:border-box;overflow:clip;text-overflow:ellipsis}",
+            ".line .pill{max-width:100%}",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;max-width:calc(100% - 8px)}",
+            ".line>.bead>.project,.line>.more{min-width:0}",
             ".line:has(>.more)>.bead~.state{grid-area:3/3/4/-1}",
             ".line>:has(+.bead){grid-area:1/1/4/2;",
         ] {
