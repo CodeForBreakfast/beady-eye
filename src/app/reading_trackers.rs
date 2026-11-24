@@ -109,10 +109,10 @@ impl Refreshing {
         );
     }
 
-    /// Wait until something is heard or something falls due. False once
+    /// Wait until something is heard or something falls due, counting from
+    /// `now`, the instant the caller last looked for lapses. False once
     /// nothing can be heard any longer, and nothing is going to fall due.
-    pub fn wait(&mut self) -> bool {
-        let now = Utc::now();
+    pub fn wait(&mut self, now: DateTime<Utc>) -> bool {
         let wakes_in = [
             self.outstanding.sends_in(now),
             self.reading.next_due_in(now),
@@ -198,8 +198,7 @@ impl ReadingTrackers {
     }
 
     /// Tell the watcher each project a producer has said it covers.
-    fn take_heard(&mut self) {
-        let now = Utc::now();
+    fn take_heard(&mut self, now: DateTime<Utc>) {
         for project in self.refresh.take_heard(now) {
             self.told.push_back(Answer {
                 project,
@@ -213,15 +212,16 @@ impl ReadingTrackers {
 impl ChangeSource for ReadingTrackers {
     fn next(&mut self) -> Option<Answer> {
         loop {
-            self.take_heard();
-            self.say_what_has_lapsed(Utc::now());
+            let now = Utc::now();
+            self.take_heard(now);
+            self.say_what_has_lapsed(now);
             if let Some(answer) = self.told.pop_front() {
                 return Some(answer);
             }
-            if self.read_what_is_due(Utc::now()) {
+            if self.read_what_is_due(now) {
                 continue;
             }
-            if !self.refresh.wait() {
+            if !self.refresh.wait(now) {
                 return None;
             }
         }
@@ -311,6 +311,37 @@ mod tests {
             Said::Read { beads, .. } => beads.keys().map(String::as_str).collect(),
             said => panic!("{} was read, and the answer says {said:?}", answer.project),
         }
+    }
+
+    /// A project can lapse between the look for lapses and the wait. The wait
+    /// counts from the instant of that look, so it ends at the lapse rather
+    /// than waiting on nothing.
+    #[test]
+    fn a_wait_counted_from_the_look_for_lapses_ends_at_a_lapse_since_passed() {
+        let (_tell, heard) = mpsc::channel();
+        let ferry =
+            Armed::polling("ferry".to_string(), None).lapsing_after(Duration::from_secs(30));
+        let mut refreshing = Refreshing::new(
+            heard,
+            Outstanding::waiting(TimeDelta::seconds(30), TimeDelta::zero()),
+            Reading::of(vec![ferry], Reported::default()),
+        );
+        assert_eq!(refreshing.due(Utc::now()), Some(Wanted::Everything));
+        let looked = Utc::now() - TimeDelta::minutes(1);
+        refreshing.came_back(
+            &["ferry".to_string()],
+            &BTreeMap::new(),
+            &[],
+            looked - TimeDelta::seconds(29),
+        );
+        assert!(
+            refreshing.lapsed(looked).is_empty(),
+            "ferry lapses a second after the look"
+        );
+
+        let (waited, ended) = mpsc::channel();
+        std::thread::spawn(move || waited.send(refreshing.wait(looked)));
+        assert_eq!(ended.recv_timeout(Duration::from_secs(5)), Ok(true));
     }
 
     #[test]

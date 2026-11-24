@@ -375,15 +375,11 @@ fn keep_reading(
 ) {
     let mut collection = Collection::default();
     loop {
-        while read_what_is_due(
-            cfg,
-            latest,
-            trackers,
-            &mut refreshing,
-            &mut collection,
-            Utc::now(),
-        ) {}
-        if !refreshing.wait() {
+        let now = Utc::now();
+        if read_what_is_due(cfg, latest, trackers, &mut refreshing, &mut collection, now) {
+            continue;
+        }
+        if !refreshing.wait(now) {
             return;
         }
     }
@@ -782,7 +778,7 @@ mod tests {
         refresh.came_back(&["arkham".to_string()], &BTreeMap::new(), &[], start);
         let at = cfg.changes.socket.as_deref().expect("a socket");
         for line in said {
-            assert_eq!(say(at, line), format!("ok arkham"));
+            assert_eq!(say(at, line), "ok arkham");
         }
         refresh.take_heard(start + chrono::TimeDelta::seconds(1));
         let interval = chrono::TimeDelta::from_std(cfg.tui.refresh()).expect("an interval");
