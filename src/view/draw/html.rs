@@ -1687,7 +1687,9 @@ aside>:not(.acts,.close){padding:4px 16px 24px}\
 aside>p.missing{margin:4px 16px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr);\
-align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
+align-items:baseline;white-space:normal}\
+.line:not(.heading,.section){padding-block:6px;border-bottom:1px solid var(--line)}\
+.line:not(.heading,.section)>.left>.rails{align-self:stretch;margin-block:-6px}\
 .line>:has(+.bead){grid-area:1/1/4/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
 .line>.left:has(>.rails){display:inline-flex;align-items:flex-start;max-width:100%}\
@@ -2894,6 +2896,31 @@ mod tests {
         assert!(
             runs[0].trim_end().ends_with(&phrase::finished_run(3)),
             "{runs:?}"
+        );
+    }
+
+    /// On a phone every line of a tree has the same rule under it, whether
+    /// or not it draws a bead: a shut run of finished beads, a blocker no
+    /// tracker holds and a root that would not read are ruled off as a
+    /// bead's row is, with the same room above and below its words and its
+    /// rails drawn through that room. Only the headings over the trees and
+    /// the ready list's sections draw their own edges.
+    #[test]
+    fn a_phone_tree_line_is_ruled_off_whatever_it_draws() {
+        let phone = rules_under("(max-width:720px)");
+        for rule in [
+            ".line:not(.heading,.section){padding-block:6px;border-bottom:1px solid var(--line)}",
+            ".line:not(.heading,.section)>.left>.rails{align-self:stretch;margin-block:-6px}",
+        ] {
+            assert!(phone.contains(rule), "{rule}");
+        }
+        let bead_row = &phone[phone
+            .find(".line:has(>.bead){")
+            .expect("a bead's row is laid out")..];
+        let bead_row = &bead_row[..bead_row.find('}').expect("the rule ends")];
+        assert!(
+            !bead_row.contains("padding") && !bead_row.contains("border"),
+            "{bead_row}"
         );
     }
 
