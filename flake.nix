@@ -168,15 +168,21 @@
         ];
 
         # The same preBuild runs in the module download, where it fetches,
-        # and in the build, where it reads that download back.
+        # and in the build, where it reads that download back. It edits the
+        # requirements and tidies rather than running `go get`, because
+        # `go get` asks the proxy for the latest genproto submodules whatever
+        # it is told, and keeps the answer in the download. Each new genproto
+        # commit upstream would then change the download's hash.
         bd = (pkgs.extend (pkgs.lib.composeExtensions beads.overlays.default
           (final: prev: {
             beads-unwrapped = prev.beads-unwrapped.override (prevArgs: {
               buildGoModule = args: prevArgs.buildGoModule (args // {
                 preBuild = ''
-                  go get ${pkgs.lib.escapeShellArgs bdModulesPastTheirFixes}
+                  go mod edit ${pkgs.lib.escapeShellArgs
+                    (map (m: "-require=${m}") bdModulesPastTheirFixes)}
+                  go mod tidy
                 '';
-                vendorHash = "sha256-S32eUkVU0HDBc4ibmXj9Y/xTRhx2Y56g7opgVBjuOZQ=";
+                vendorHash = "sha256-4dwESj9rJK0yoeO9blhx0Z7WWQXKG67nT9+R04fiuYY=";
               });
             });
           }))).beads;
