@@ -270,10 +270,15 @@ impl Asked {
     /// carried on.
     ///
     /// A bead's address is how anything that knows the bead links to it, so
-    /// where what this took from the start leaves the bead out, the bead is
-    /// shown in every tree instead.
+    /// where what this took from the start leaves the bead out, the start
+    /// gives way as little as shows the bead: its list, then its roots, then
+    /// both. Where none of that shows it, the page stays as the start draws
+    /// it.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
-        let mut shown = self.drawn(snapshot, layout);
+        let shown = self.drawn(snapshot, layout);
+        if shown.bead != Some(false) {
+            return shown;
+        }
         let mut tried = self.clone();
         // ponytail: the forest is flattened again for each thing the start
         // gives way; undo the start on the first one if these pages come to
@@ -284,13 +289,14 @@ impl Asked {
             self.without_the_starts_list().without_the_starts_roots(),
         ];
         for wider in wider {
-            if shown.bead != Some(false) {
-                break;
+            if wider == *self || wider == tried {
+                continue;
             }
-            if wider != *self && wider != tried {
-                shown = wider.drawn(shown.forest.snapshot().clone(), layout);
-                tried = wider;
+            let found = wider.drawn(shown.forest.snapshot().clone(), layout);
+            if found.bead == Some(true) {
+                return found;
             }
+            tried = wider;
         }
         shown
     }

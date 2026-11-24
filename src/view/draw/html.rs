@@ -6584,6 +6584,15 @@ mod tests {
             answer.html
         );
 
+        // A bead no tree holds is not found however wide the page is drawn,
+        // so the page stays as the start draws it.
+        let gone = started_answer(&both, &address(&key("smt-4kd3p.99")));
+        assert!(!gone.found);
+        assert_eq!(
+            page_lines(&gone.html),
+            page_lines(&started_page_at(&both, "/"))
+        );
+
         // Where the roots alone leave the bead out, the list stays.
         let outside_the_root = address(&key("smt-4kd3p.4"));
         let answer = started_answer(&both, &outside_the_root);
