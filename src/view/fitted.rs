@@ -147,6 +147,15 @@ pub(crate) struct Shorter {
     pub(crate) said: String,
 }
 
+impl Shorter {
+    /// How many columns saying `span` shortly saves. A row gives up the span
+    /// that saves most first.
+    pub(crate) fn saving(&self, span: &Span) -> usize {
+        span.width()
+            .saturating_sub(Span::raw(self.said.as_str()).width())
+    }
+}
+
 /// The state block a row falls back to, with what is marked in it and what
 /// says itself more shortly.
 struct Briefly {
@@ -291,8 +300,8 @@ impl Fitted {
     }
 
     /// The row at its whole width, for a page that is not cut to a terminal's:
-    /// each block's spans, the style drawn under all of them, and what each
-    /// marked span is.
+    /// each block's spans, the style drawn under all of them, what each
+    /// marked span is, and what each span with a short form says shortly.
     pub(crate) fn whole(&self) -> Whole<'_> {
         Whole {
             identity: &self.identity,
@@ -300,6 +309,7 @@ impl Fitted {
             state: &self.state,
             under: self.whole,
             marks: &self.marks,
+            shorter: &self.shorter,
         }
     }
 }
@@ -311,6 +321,7 @@ pub(crate) struct Whole<'a> {
     pub(crate) state: &'a [Span<'static>],
     pub(crate) under: Style,
     pub(crate) marks: &'a [Mark],
+    pub(crate) shorter: &'a [Shorter],
 }
 
 impl Widget for Fitted {
@@ -554,12 +565,7 @@ fn shortened(
     block: Block,
     limit: usize,
 ) -> Vec<Span<'static>> {
-    let saving = |swap: &Shorter| {
-        spans.get(swap.at).map_or(0, |span| {
-            span.width()
-                .saturating_sub(Span::raw(swap.said.as_str()).width())
-        })
-    };
+    let saving = |swap: &Shorter| spans.get(swap.at).map_or(0, |span| swap.saving(span));
     let mut order: Vec<&Shorter> = shorter.iter().filter(|swap| swap.block == block).collect();
     order.sort_by_key(|swap| (Reverse(saving(swap)), Reverse(swap.at)));
 

@@ -247,6 +247,11 @@ impl Layout {
             .any(|cell| matches!(cell, Cell::Badge(named) if named == key))
     }
 
+    /// Whether some block draws `cell`.
+    pub fn draws(&self, cell: &Cell) -> bool {
+        self.cells().any(|drawn| drawn == cell)
+    }
+
     /// Every cell of every block, in the order the row draws them.
     pub fn cells(&self) -> impl Iterator<Item = &Cell> {
         [&self.identity, &self.title, &self.state]
