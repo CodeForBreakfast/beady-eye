@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use clap::builder::Resettable;
 use clap::{Args, Parser, Subcommand};
 
 use crate::app::{
@@ -97,8 +98,7 @@ struct Cli {
     view: ViewOptions,
 }
 
-/// What the view is asked to read, draw or print. `bdi web` parses them too,
-/// so that it can refuse each it does not honour by name.
+/// What the view is asked to read, draw or print.
 #[derive(Args)]
 struct ViewOptions {
     /// Start focused on this bead, as Shift+F on it would. Write it as
@@ -224,6 +224,15 @@ enum Passing {
     /// project's forest as a read-only web page, and each bead's own page at
     /// /<project>/<bead-id>. Trackers are read as the view reads them, through
     /// the watcher where one answers, and no agent provider is asked.
+    // Without these resets, a --beads filter given without --beads would be
+    // a parse error rather than a refusal.
+    #[command(
+        mut_arg("labels", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("issue_type", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("assignee", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("parent", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("brief", |arg| arg.requires(Resettable::Reset))
+    )]
     Web {
         /// The address to take requests on.
         #[arg(long, value_name = "ADDRESS")]
@@ -238,6 +247,11 @@ enum Passing {
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
         config: Option<String>,
+        #[command(
+            flatten,
+            next_help_heading = "The view's options, which bdi web refuses with a reason"
+        )]
+        view: ViewOptions,
     },
     /// Settle every configured project's gh:pr, gh:issue, gh:release, gh:run
     /// and timer gates, looking again every [gates] poll_seconds: close a gate
@@ -293,7 +307,10 @@ struct PollSwitch {
 /// normal case here rather than an edge — a run in a worktree beside a run in
 /// the checkout — and it is the whole of why a key alone would not do.
 fn told_where_to_watch(cli: &Cli, cfg: &Config) -> Option<PathBuf> {
-    cli.view.socket.clone().or_else(|| cfg.changes.socket.clone())
+    cli.view
+        .socket
+        .clone()
+        .or_else(|| cfg.changes.socket.clone())
 }
 
 /// What this run said about polling, over what its config says about each
@@ -394,7 +411,15 @@ pub fn run() -> anyhow::Result<ExitCode> {
             listen,
             allow_hosts,
             config,
+            view,
         }) => {
+            let refused = web::refusals(view);
+            if !refused.is_empty() {
+                anyhow::bail!(
+                    "bdi web refuses what it cannot honour:\n{}",
+                    refused.join("\n")
+                );
+            }
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return web::web(&config, listen, web::Hosts(allow_hosts.clone()));
         }
@@ -1673,6 +1698,75 @@ detached
     #[test]
     fn bdi_watch_takes_no_poll_switch() {
         assert!(Cli::try_parse_from(["bdi", "watch", "--poll"]).is_err());
+    }
+
+    /// Each of the view's arguments `bdi web` refuses, alone on its command
+    /// line, and the one refusal it is given.
+    const REFUSED_BY_BDI_WEB: &[(&[&str], &str)] = &[
+        (&["dun-7"], "BEAD-ID: bdi web cannot yet root its page at a bead named on its command line"),
+        (&["--project", "ferry"], "--project: bdi web reads every configured project, and cannot yet read only the ones named"),
+        (&["--all-projects"], "--all-projects: bdi web reads every configured project already, and does not yet take the option that asks for it"),
+        (&["--json"], "--json: bdi web serves a page rather than printing the snapshot"),
+        (&["--beads"], "--beads: bdi web serves a page rather than printing each bead"),
+        (&["--label", "human"], "--label: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--type", "bug"], "--type: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--assignee", "alex"], "--assignee: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--parent", "dun-7"], "--parent: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--brief"], "--brief: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--all"], "--all: bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
+        (&["--ready"], "--ready: bdi web opens on the forest, and cannot yet open on the ready list"),
+        (&["--poll"], "--poll: bdi web polls each project as its config says, and cannot yet be told to poll every one"),
+        (&["--no-poll"], "--no-poll: bdi web polls each project as its config says, and cannot yet be told to poll none"),
+        (&["--socket", "/run/bdi.sock"], "--socket: bdi web hears of moved work only through the watcher, and cannot yet take reports on a socket of its own"),
+    ];
+
+    fn bdi_web_refuses(args: &[&str]) -> Vec<String> {
+        let cli = Cli::try_parse_from(["bdi", "web", "--listen", "127.0.0.1:0"].iter().chain(args))
+            .unwrap_or_else(|error| panic!("bdi web did not parse {args:?}: {error}"));
+        let Some(Passing::Web { view, .. }) = &cli.passing else {
+            panic!("bdi web parsed as something else");
+        };
+        web::refusals(view)
+    }
+
+    /// The view's options are parsed rather than unknown, each alone, so
+    /// that bdi web can say why it will not take one.
+    #[test]
+    fn bdi_web_refuses_each_of_the_views_arguments_with_its_reason() {
+        for (args, refusal) in REFUSED_BY_BDI_WEB {
+            assert_eq!(bdi_web_refuses(args), [*refusal], "for {args:?}");
+        }
+    }
+
+    #[test]
+    fn bdi_web_names_every_refusal_at_once() {
+        assert_eq!(
+            bdi_web_refuses(&["--json", "--project", "ferry"]),
+            [REFUSED_BY_BDI_WEB[1].1, REFUSED_BY_BDI_WEB[3].1]
+        );
+    }
+
+    #[test]
+    fn bdi_web_refuses_nothing_it_honours() {
+        assert!(bdi_web_refuses(&["--config", "/etc/beady-eye.toml"]).is_empty());
+    }
+
+    #[test]
+    fn bdi_web_help_lists_the_views_options() {
+        let help = Cli::command()
+            .find_subcommand_mut("web")
+            .expect("bdi has a web subcommand")
+            .render_long_help()
+            .to_string();
+
+        for (args, _) in REFUSED_BY_BDI_WEB {
+            let named = if args[0].starts_with("--") {
+                args[0]
+            } else {
+                "BEAD-ID"
+            };
+            assert!(help.contains(named), "bdi web --help leaves out {named}");
+        }
     }
 
     fn the_view_polls(args: &[&str]) -> Polling {
