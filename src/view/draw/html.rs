@@ -1932,13 +1932,17 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// quiet connection waits for a comment. Without it the page is the same
 /// page, drawn once.
 /// The part of the page's script that draws a span's short form where its
-/// whole form would be cut, as the terminal's row does. It measures each span
-/// with its whole form shown, on load, whenever the page's size changes, and
-/// after each redraw, which puts every whole form back.
+/// whole form would be cut, as the terminal's row does. It shows every whole
+/// form, then shortens each span in turn while the span or its line
+/// overflows. A badge in the state is cut by its line rather than by its own
+/// box, because the state never shrinks. It runs on load, whenever the page's
+/// size changes, and after each redraw, which puts every whole form back.
 const SHORTENS: &str = r##"const shorten = () => {
-  for (const said of document.querySelectorAll(".shortens")) {
-    said.classList.remove("short");
-    if (said.scrollWidth > said.clientWidth) said.classList.add("short");
+  const shortening = [...document.querySelectorAll(".shortens")];
+  for (const said of shortening) said.classList.remove("short");
+  for (const said of shortening) {
+    const line = said.closest(".line") ?? said;
+    if (said.scrollWidth > said.clientWidth || line.scrollWidth > line.clientWidth) said.classList.add("short");
   }
 };
 addEventListener("DOMContentLoaded", () => new ResizeObserver(shorten).observe(document.body));
@@ -4931,9 +4935,9 @@ mod tests {
 
     /// A badge with a short form carries both, its whole form first, and
     /// the page's script draws the short one where the whole would be cut:
-    /// it measures the badge with the whole form shown and swaps where that
-    /// overflows, on load, on every redraw and whenever the page's size
-    /// changes.
+    /// it measures the badge with the whole form shown and swaps where the
+    /// badge or its line overflows, on load, on every redraw and whenever the
+    /// page's size changes.
     #[test]
     fn a_badge_with_a_short_form_carries_both_and_the_page_shows_the_one_that_fits() {
         let mut snapshot = ground();
@@ -4961,8 +4965,9 @@ mod tests {
             "{STYLE}"
         );
         for said in [
-            "said.classList.remove(\"short\");",
-            "if (said.scrollWidth > said.clientWidth) said.classList.add(\"short\");",
+            "for (const said of shortening) said.classList.remove(\"short\");",
+            "if (said.scrollWidth > said.clientWidth || line.scrollWidth > line.clientWidth) \
+             said.classList.add(\"short\");",
             "new ResizeObserver(shorten).observe(document.body)",
         ] {
             assert!(SHORTENS.contains(said), "{SHORTENS}");
