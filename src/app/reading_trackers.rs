@@ -7,14 +7,16 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
 use crate::collect::changes::Heard;
+use crate::config::Config;
 use crate::model::snapshot::FailedProject;
 
 use super::watcher::{Answer, ChangeSource, Said};
-use super::{Asked, Outstanding, Reading, Wanted, Watched};
+use super::{reads_under, Arming, Asked, Outstanding, Reading, Wanted, Watched};
 
 /// One read of what `Wanted` names, as of the instant handed in, and what
 /// each project with something new to say says to the watcher.
@@ -109,13 +111,22 @@ impl Refreshing {
         );
     }
 
+    /// Read as `written` says from here on, each project armed by `arms`,
+    /// and read everything again under it as of `now`.
+    pub fn reads_under(&mut self, written: &Config, arms: &Arming, now: DateTime<Utc>) {
+        reads_under(written, arms, &mut self.reading, &mut self.outstanding);
+        self.outstanding.ask(Wanted::Everything, now);
+    }
+
     /// Wait until something is heard or something falls due, counting from
-    /// `now`, the instant the caller last looked for lapses. False once
+    /// `now`, the instant the caller last looked for lapses, and no longer
+    /// than `at_most` where the caller has a deadline of its own. False once
     /// nothing can be heard any longer, and nothing is going to fall due.
-    pub fn wait(&mut self, now: DateTime<Utc>) -> bool {
+    pub fn wait(&mut self, now: DateTime<Utc>, at_most: Option<Duration>) -> bool {
         let wakes_in = [
             self.outstanding.sends_in(now),
             self.reading.next_due_in(now),
+            at_most,
         ]
         .into_iter()
         .flatten()
@@ -221,7 +232,7 @@ impl ChangeSource for ReadingTrackers {
             if self.read_what_is_due(now) {
                 continue;
             }
-            if !self.refresh.wait(now) {
+            if !self.refresh.wait(now, None) {
                 return None;
             }
         }
@@ -340,7 +351,7 @@ mod tests {
         );
 
         let (waited, ended) = mpsc::channel();
-        std::thread::spawn(move || waited.send(refreshing.wait(looked)));
+        std::thread::spawn(move || waited.send(refreshing.wait(looked, None)));
         assert_eq!(ended.recv_timeout(Duration::from_secs(5)), Ok(true));
     }
 

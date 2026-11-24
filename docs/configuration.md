@@ -3,7 +3,14 @@
 `bdi` reads `~/.config/beady-eye/config.toml`, or the file `--config` names,
 and re-reads it while running: an edit takes effect a couple of seconds later.
 A file that does not parse leaves the previous config in force and says so at
-the foot until it is fixed.
+the foot until it is fixed. `bdi web` re-reads it the same way. It has no foot,
+so it says so on stderr instead.
+
+Two things in the file wait for a restart, in the view and in `bdi web`
+alike. Each is a connection the run makes when it starts. The run goes on
+listening on the `[changes] socket` it opened and reading through the
+`[watcher] socket` it found. A project added while it runs is still asked of
+that watcher, and read directly only where the watcher does not answer for it.
 
 A key `bdi` does not read is refused, and the refusal names the key and the
 table it was written in:

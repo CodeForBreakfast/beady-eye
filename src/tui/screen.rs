@@ -41,8 +41,8 @@ use super::clipboard;
 use super::drive::{Landed, Showing, View};
 use super::keys::{bead_key_rows, bindings, forest_key_rows};
 use super::leaving;
-use super::reload::Reloaded;
 use crate::app::due_after;
+use crate::app::Reloaded;
 
 /// What the config settles about the drawing, as one value read from it in
 /// one place.

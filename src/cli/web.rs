@@ -15,7 +15,10 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use chrono::{DateTime, Local, Offset, Utc};
 
-use crate::app::{armed_unread, Awaited, Collection, Outstanding, Refreshing};
+use crate::app::{
+    armed_unread, Arming, Awaited, Collection, Outstanding, Parses, Refreshing, Reload, Reloaded,
+    CHECKED_EVERY,
+};
 use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes::{self, Heard, Report, Reported, Socket};
@@ -29,11 +32,11 @@ use crate::model::snapshot::{Filter, Snapshot};
 use crate::view::address::{self, Asked, Start};
 use crate::view::draw::html;
 use crate::view::forest::listed;
-use crate::view::phrase;
+use crate::view::{phrase, Notice};
 
 use super::{
-    arming, read_config, where_producers_find_this_run, where_this_machine_watches, Launch,
-    Polling, Reading, ViewOptions,
+    arming, parses_as_launched, read_config, where_producers_find_this_run,
+    where_this_machine_watches, Launch, Polling, Reading, ViewOptions,
 };
 
 mod live;
@@ -69,6 +72,9 @@ struct Latest {
 
 #[derive(Clone)]
 struct Held {
+    /// The config the reading thread works to, which the pages are drawn
+    /// to as well.
+    cfg: Arc<Config>,
     /// The latest snapshot, where the trackers have been read at all.
     snapshot: Option<Snapshot>,
     /// The read being made, so a page drawn while it is out says so, and
@@ -85,8 +91,9 @@ struct Held {
 type DrawnFrom = (u64, bool);
 
 impl Latest {
-    fn new() -> Self {
+    fn new(cfg: Config) -> Self {
         Self::holding(Held {
+            cfg: Arc::new(cfg),
             snapshot: None,
             collecting: None,
             lapsed: Vec::new(),
@@ -104,6 +111,11 @@ impl Latest {
     /// What is held now.
     fn now(&self) -> Held {
         self.held().clone()
+    }
+
+    /// The config held now.
+    fn cfg(&self) -> Arc<Config> {
+        Arc::clone(&self.held().cfg)
     }
 
     /// Change what is held with `change`, and wake every page waiting on it.
@@ -255,7 +267,8 @@ pub(super) fn reading(view: &ViewOptions) -> Reading {
 /// requests sent to a name `hosts` allows. Each project is polled, and heard
 /// from, as `view` says.
 ///
-/// The config is read once. Replacing what it reads is a restart.
+/// The config is read again as the terminal view reads it, and an edit is
+/// taken up a couple of seconds after it is saved.
 pub(super) fn web(
     config: &Path,
     listen: &str,
@@ -263,27 +276,29 @@ pub(super) fn web(
     view: &ViewOptions,
 ) -> anyhow::Result<ExitCode> {
     let cwd = std::env::current_dir().context("finding the current directory")?;
-    let cfg = read_config(
-        &RealRunner,
-        config,
-        &Launch {
-            cwd: &cwd,
-            reading: reading(view),
-            roots: &view.beads,
-        },
-    )?
-    .config;
+    let cfg = addressable(
+        read_config(
+            &RealRunner,
+            config,
+            &Launch {
+                cwd: &cwd,
+                reading: reading(view),
+                roots: &view.beads,
+            },
+        )?
+        .config,
+    )?;
     let start = Start {
         list: listed(None, view.ready),
         roots: cfg.roots.named_beads(),
     };
-    if let Some(project) = cfg
-        .read()
-        .map(|project| project.name.as_str())
-        .find(|name| !address::addressable(name))
-    {
-        anyhow::bail!("bdi web cannot give the project {project:?} an address a browser keeps; give it another name in the config");
-    }
+    let reload = Reload::watching(
+        config.to_path_buf(),
+        CHECKED_EVERY,
+        cfg.clone(),
+        each_addressable(parses_as_launched(cwd, reading(view), view.beads.clone())),
+        Utc::now(),
+    );
     let listener = TcpListener::bind(listen).with_context(|| format!("listening on {listen}"))?;
     let taken = listener
         .local_addr()
@@ -301,21 +316,21 @@ pub(super) fn web(
         cfg.tui.refresh(),
     ));
     let passing_on = Arc::clone(&trackers);
+    let arms = arming(Polling::asked_for(&view.polling));
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
     let (refreshing, _socket) = refreshing_for(
         &cfg,
-        Polling::asked_for(&view.polling),
+        &arms,
         where_producers_find_this_run(view, &cfg),
         told.clone(),
         heard,
         move |heard| passing_on.passes_on(heard.clone()),
     );
 
-    let latest = Arc::new(Latest::new());
+    let latest = Arc::new(Latest::new(cfg));
     let answering = Arc::new(Answering {
         latest: Arc::clone(&latest),
-        cfg: cfg.clone(),
         hosts,
         start,
         live: live::Streams::default(),
@@ -326,15 +341,31 @@ pub(super) fn web(
         |stream| reply(stream, UNAVAILABLE, TEXT, b"busy\n"),
         move |stream| answer(stream, &answering),
     );
-    keep_reading(&cfg, &latest, &*trackers, refreshing);
+    keep_reading(&latest, &*trackers, refreshing, reload, &arms);
     drop(told);
     Ok(ExitCode::SUCCESS)
+}
+
+/// `cfg`, where every project it reads has an address a browser keeps.
+fn addressable(cfg: Config) -> anyhow::Result<Config> {
+    if let Some(project) = cfg
+        .read()
+        .map(|project| project.name.as_str())
+        .find(|name| !address::addressable(name))
+    {
+        anyhow::bail!("bdi web cannot give the project {project:?} an address a browser keeps; give it another name in the config");
+    }
+    Ok(cfg)
+}
+
+/// What `parses` reads, refused where a project it reads has no address.
+fn each_addressable(parses: Parses) -> Parses {
+    Box::new(move |text| addressable(parses(text)?))
 }
 
 /// What every request is answered from.
 struct Answering {
     latest: Arc<Latest>,
-    cfg: Config,
     hosts: Hosts,
     /// What a page shows where its address does not say.
     start: Start,
@@ -342,7 +373,7 @@ struct Answering {
 }
 
 /// The reads `bdi web` makes of `cfg`, as the terminal view makes them: each
-/// project polled as `polling` says, read again when the watcher says on
+/// project polled as `arms` arms it, read again when the watcher says on
 /// `heard` that it changed, and heard from producers on the socket `at`.
 /// What a producer says is handed to `passing_on`, then told on `told`.
 ///
@@ -351,13 +382,12 @@ struct Answering {
 /// on stderr where it is worth saying, as the terminal view says it.
 fn refreshing_for(
     cfg: &Config,
-    polling: Polling,
+    arms: &Arming,
     at: Option<PathBuf>,
     told: Sender<Heard>,
     heard: Receiver<Heard>,
     passing_on: impl Fn(&Heard) + Send + Sync + 'static,
 ) -> (Refreshing, Option<Socket>) {
-    let arms = arming(polling);
     let armed = arms(cfg);
     let reported = Reported::watching(armed.iter().map(|project| project.project().to_string()));
     let opened = changes::watch(at, &reported, PassingOn { passing_on, told });
@@ -371,7 +401,7 @@ fn refreshing_for(
     let refreshing = Refreshing::new(
         heard,
         Outstanding::for_a_run(cfg.tui.unanswered_after()),
-        crate::app::Reading::of(armed, reported).unread(armed_unread(&arms, cfg)),
+        crate::app::Reading::of(armed, reported).unread(armed_unread(arms, cfg)),
     );
     (refreshing, socket)
 }
@@ -390,23 +420,66 @@ impl<F: Fn(&Heard) + Send + Sync + 'static> Report for PassingOn<F> {
 }
 
 /// Read each project as `refreshing` says, through `trackers`, holding each
-/// snapshot and the projects that have lapsed as the latest. Returns only
-/// once nothing can be heard any longer.
+/// snapshot and the projects that have lapsed as the latest. A config the
+/// reader writes where `reload` looks is held and read under from then on,
+/// each project armed by `arms`. Returns only once nothing can be heard any
+/// longer.
 fn keep_reading(
-    cfg: &Config,
     latest: &Latest,
     trackers: &dyn Trackers,
     mut refreshing: Refreshing,
+    mut reload: Reload,
+    arms: &Arming,
 ) {
     let mut collection = Collection::default();
+    let mut broken = false;
     loop {
         let now = Utc::now();
-        if read_what_is_due(cfg, latest, trackers, &mut refreshing, &mut collection, now) {
+        taken_up(latest, &mut refreshing, &mut reload, arms, &mut broken, now);
+        if read_what_is_due(latest, trackers, &mut refreshing, &mut collection, now) {
             continue;
         }
-        if !refreshing.wait(now) {
+        if !refreshing.wait(now, reload.checks_in(now)) {
             return;
         }
+    }
+}
+
+/// Look at the config file where the check is due, and take up a config the
+/// reader has written: held for the pages, and read under from here on.
+///
+/// A config that will not load leaves the one in force standing, as in the
+/// terminal view, and is said on stderr, which is where a server's reader
+/// looks. `broken` is whether the last check that said anything found it so.
+fn taken_up(
+    latest: &Latest,
+    refreshing: &mut Refreshing,
+    reload: &mut Reload,
+    arms: &Arming,
+    broken: &mut bool,
+    now: DateTime<Utc>,
+) {
+    let reloaded = reload.checks(now);
+    if newly_broken(&reloaded, broken) {
+        eprintln!("bdi web: {}", phrase::notice(&Notice::ConfigWouldNotReload));
+    }
+    if let Reloaded::Fresh(written) = reloaded {
+        refreshing.reads_under(written, arms, now);
+        let written = Arc::new(written.clone());
+        latest.change(|held| held.cfg = written);
+    }
+}
+
+/// Whether `reloaded` says the config will not load where `broken`, the
+/// last check that said anything, did not.
+fn newly_broken(reloaded: &Reloaded, broken: &mut bool) -> bool {
+    match reloaded {
+        Reloaded::Broken => !std::mem::replace(broken, true),
+        Reloaded::Fresh(_) | Reloaded::Unchanged => {
+            *broken = false;
+            false
+        }
+        Reloaded::Untouched => false,
     }
 }
 
@@ -414,7 +487,6 @@ fn keep_reading(
 /// and make the read whose turn has come, holding what it finds. Whether
 /// one had.
 fn read_what_is_due(
-    cfg: &Config,
     latest: &Latest,
     trackers: &dyn Trackers,
     refreshing: &mut Refreshing,
@@ -429,6 +501,7 @@ fn read_what_is_due(
     let Some(wanted) = refreshing.due(now) else {
         return false;
     };
+    let cfg = latest.cfg();
     latest.change(|held| {
         held.collecting = Some(Awaited {
             wanted: wanted.clone(),
@@ -436,7 +509,7 @@ fn read_what_is_due(
             patience: cfg.tui.unanswered_after(),
         });
     });
-    let snapshot = collection.collect(cfg, &Unasked, trackers, &wanted, EVERY_TREE, now);
+    let snapshot = collection.collect(&cfg, &Unasked, trackers, &wanted, EVERY_TREE, now);
     refreshing.came_back(
         &snapshot.projects,
         &snapshot.speaks_until,
@@ -468,13 +541,9 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
             return;
         }
     }
-    let Some((status, kind, body)) = said(
-        read,
-        &answering.latest,
-        &answering.cfg,
-        &answering.hosts,
-        &answering.start,
-    ) else {
+    let Some((status, kind, body)) =
+        said(read, &answering.latest, &answering.hosts, &answering.start)
+    else {
         return;
     };
     answering.live.remember(&body);
@@ -495,12 +564,11 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
 fn said(
     read: Result<Head, Unread>,
     latest: &Latest,
-    cfg: &Config,
     hosts: &Hosts,
     start: &Start,
 ) -> Option<(&'static str, &'static str, String)> {
     match read {
-        Ok(head) => Some(answered(&head, latest, cfg, hosts, start)),
+        Ok(head) => Some(answered(&head, latest, hosts, start)),
         Err(Unread::TooLong) => Some((
             "414 URI Too Long",
             HTML,
@@ -514,7 +582,6 @@ fn said(
 fn answered(
     head: &Head,
     latest: &Latest,
-    cfg: &Config,
     hosts: &Hosts,
     start: &Start,
 ) -> (&'static str, &'static str, String) {
@@ -538,12 +605,22 @@ fn answered(
     let Some(asked) = Asked::started_on(&head.target, start) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here()));
     };
-    let (status, page) = drawn(&asked, &held, cfg);
+    let (status, page) = drawn(&asked, &held);
     (status, HTML, page)
 }
 
-/// The page `asked` names, drawn from `held`, and its status.
-fn drawn(asked: &Asked, held: &Held, cfg: &Config) -> (&'static str, String) {
+/// The page `asked` names, drawn from `held`, and its status. A page
+/// started on the command line's roots is drawn at them as the held config
+/// places them, since an edit can move them after the page was asked for.
+fn drawn(asked: &Asked, held: &Held) -> (&'static str, String) {
+    let cfg = &held.cfg;
+    let asked = &Asked {
+        start: Start {
+            roots: cfg.roots.named_beads(),
+            ..asked.start.clone()
+        },
+        ..asked.clone()
+    };
     let drawn = html::Drawn {
         at: Utc::now(),
         offset: Local::now().offset().fix(),
@@ -591,6 +668,7 @@ mod tests {
     use super::*;
     use crate::app::Wanted;
     use crate::collect::tracker::testing::{Fake, Fakes};
+    use crate::model::join::BeadKey;
 
     /// What a request for `target` with `method` is answered, with `latest`
     /// held.
@@ -626,7 +704,6 @@ mod tests {
         let (status, _, body) = said(
             head(&mut sent.as_bytes(), &mut Vec::new()),
             latest,
-            &Config::naming(Vec::new()),
             &allowed(),
             &Start::default(),
         )
@@ -710,7 +787,6 @@ mod tests {
         let (status, _, _) = said(
             head(&mut arriving, &mut Vec::new()),
             &read(),
-            &Config::naming(Vec::new()),
             &Hosts::default(),
             &Start::default(),
         )
@@ -769,12 +845,27 @@ mod tests {
     /// One project, arkham, whose entry and `[changes]` table say what
     /// `entry` and `changes` say, with producers reporting at `socket`.
     fn arkham(entry: &str, changes: &str, socket: &Path) -> Config {
-        Config::from_toml(&format!(
+        Config::from_toml(&arkham_written(entry, changes, socket)).expect("parses")
+    }
+
+    /// The text of the config [`arkham`] reads.
+    fn arkham_written(entry: &str, changes: &str, socket: &Path) -> String {
+        format!(
             "[changes]\nsocket = \"{}\"\n{changes}\n\n\
              [[projects]]\nname = \"arkham\"\npath = \"/home/user/dev/arkham\"\n{entry}\n",
             socket.display()
-        ))
-        .expect("parses")
+        )
+    }
+
+    /// A reload that never falls due, so a run reads under `cfg` alone.
+    fn never_reloading(cfg: &Config) -> Reload {
+        Reload::watching(
+            PathBuf::new(),
+            Duration::MAX,
+            cfg.clone(),
+            Box::new(Config::from_toml),
+            Utc::now(),
+        )
     }
 
     /// A socket path no other test takes.
@@ -789,7 +880,7 @@ mod tests {
         let (told, heard) = mpsc::channel();
         refreshing_for(
             cfg,
-            polling,
+            &arming(polling),
             cfg.changes.socket.clone(),
             told,
             heard,
@@ -888,7 +979,7 @@ mod tests {
         let (told, heard) = mpsc::channel();
         let (mut refresh, _socket) = refreshing_for(
             &cfg,
-            Polling::AsConfigured,
+            &arming(Polling::AsConfigured),
             Some(socket.clone()),
             told,
             heard,
@@ -921,12 +1012,11 @@ mod tests {
         );
         let start = Utc::now();
         let (mut refresh, _socket) = refreshing_as(&cfg, Polling::AsConfigured);
-        let latest = Latest::new();
+        let latest = Latest::new(cfg);
         let trackers = arkhams_tracker();
         let mut collection = Collection::default();
         let mut at = |seconds| {
             read_what_is_due(
-                &cfg,
                 &latest,
                 &trackers,
                 &mut refresh,
@@ -939,7 +1029,7 @@ mod tests {
         assert!(latest.now().lapsed.is_empty(), "not yet");
         at(62);
         assert_eq!(latest.now().lapsed, ["arkham"]);
-        let page = drawn(&Asked::of("/").expect("the forest"), &latest.now(), &cfg).1;
+        let page = drawn(&Asked::of("/").expect("the forest"), &latest.now()).1;
         assert!(
             page.contains("<span class=\"mark warn\">?</span>"),
             "{page}"
@@ -969,16 +1059,30 @@ mod tests {
             assert_eq!(at.as_ref(), Some(reported_at));
 
             let (told_by, heard) = mpsc::channel();
-            let (refresh, socket) =
-                refreshing_for(&cfg, Polling::AsConfigured, at, told_by, heard, |_| {});
-            let latest = Arc::new(Latest::new());
+            let (refresh, socket) = refreshing_for(
+                &cfg,
+                &arming(Polling::AsConfigured),
+                at,
+                told_by,
+                heard,
+                |_| {},
+            );
+            let latest = Arc::new(Latest::new(cfg.clone()));
             let trackers = Arc::new(arkhams_tracker());
             {
                 let (cfg, latest, trackers) =
                     (cfg.clone(), Arc::clone(&latest), Arc::clone(&trackers));
                 // ponytail: left blocked on the socket once the test is done,
                 // since nothing polls and the socket's writer is never dropped.
-                thread::spawn(move || keep_reading(&cfg, &latest, &*trackers, refresh));
+                thread::spawn(move || {
+                    keep_reading(
+                        &latest,
+                        &*trackers,
+                        refresh,
+                        never_reloading(&cfg),
+                        &arming(Polling::AsConfigured),
+                    )
+                });
             }
             let first = held_once(&latest, None, |held| {
                 held.snapshot.is_some() && held.collecting.is_none()
@@ -996,6 +1100,149 @@ mod tests {
             );
             drop(socket);
         }
+    }
+
+    /// A project the reader writes into the config is read and drawn on the
+    /// page once the file is next looked at, with no restart, as the
+    /// terminal view takes up an edit.
+    #[test]
+    fn a_project_written_into_the_config_is_drawn_without_a_restart() {
+        let before = arkham_written("poll = false", "", &a_socket("edited"));
+        let path = std::env::temp_dir().join(format!("bdi-web-{}-edited.toml", std::process::id()));
+        std::fs::write(&path, &before).expect("the config is ours to write");
+        let cfg = Config::from_toml(&before).expect("parses");
+        let dunwich = bd::parse_beads(
+            r#"[{"id":"dun-1","title":"lay the feeder cable","status":"open",
+                 "priority":2,"issue_type":"task"}]"#,
+        )
+        .expect("the rows parse");
+        let trackers = Arc::new(arkhams_tracker().with("dunwich", Fake::holding(dunwich)));
+        // Kept here, so the reading thread ends once the test drops it.
+        let (told, heard) = mpsc::channel();
+        let (refresh, _) = refreshing_for(
+            &cfg,
+            &arming(Polling::AsConfigured),
+            None,
+            told.clone(),
+            heard,
+            |_| {},
+        );
+        let latest = Arc::new(Latest::new(cfg.clone()));
+        let reading = {
+            let (path, latest, trackers) =
+                (path.clone(), Arc::clone(&latest), Arc::clone(&trackers));
+            thread::spawn(move || {
+                let reload = Reload::watching(
+                    path,
+                    Duration::from_millis(20),
+                    cfg,
+                    Box::new(Config::from_toml),
+                    Utc::now(),
+                );
+                keep_reading(
+                    &latest,
+                    &*trackers,
+                    refresh,
+                    reload,
+                    &arming(Polling::AsConfigured),
+                );
+            })
+        };
+        let reads = |project: &'static str| {
+            move |held: &Held| {
+                held.collecting.is_none()
+                    && held
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|read| read.projects.iter().any(|named| named == project))
+            }
+        };
+        let first = held_once(&latest, None, reads("arkham"));
+        let forest = Asked::of("/").expect("the forest");
+        assert!(!drawn(&forest, &latest.now()).1.contains(">dunwich"));
+
+        std::fs::write(
+            &path,
+            format!("{before}\n[[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\npoll = false\n"),
+        )
+        .expect("the config is ours to write");
+
+        held_once(&latest, Some(first), reads("dunwich"));
+        let page = drawn(&forest, &latest.now()).1;
+        assert!(page.contains(">dunwich"), "{page}");
+        assert!(page.contains("lay the feeder cable"), "{page}");
+        drop(told);
+        reading.join().expect("the reading thread ended");
+        std::fs::remove_file(&path).expect("the config is ours to remove");
+    }
+
+    /// A page started on the roots the command line named takes those
+    /// roots from the config in force, so a page opened before an edit
+    /// moved them is drawn at where they are now.
+    #[test]
+    fn a_page_is_rooted_where_the_config_in_force_places_its_roots() {
+        let cfg = Config::from_toml(
+            "[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\n\
+             [[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
+        )
+        .expect("a config")
+        .with_roots_named_on_the_command_line(&["dunwich:dun-1".to_string()])
+        .expect("dunwich is read");
+        let dunwich = bd::parse_beads(
+            r#"[{"id":"dun-1","title":"lay the feeder cable","status":"open",
+                 "priority":2,"issue_type":"task"}]"#,
+        )
+        .expect("the rows parse");
+        let trackers = arkhams_tracker().with("dunwich", Fake::holding(dunwich));
+        let snapshot = Collection::default().collect(
+            &cfg,
+            &Unasked,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            Utc::now(),
+        );
+        let held = Held {
+            cfg: Arc::new(cfg),
+            snapshot: Some(snapshot),
+            collecting: None,
+            lapsed: Vec::new(),
+            change: 0,
+        };
+        let as_launched = Start {
+            list: None,
+            roots: vec![BeadKey {
+                project: "arkham".to_string(),
+                id: "ark-1".to_string(),
+            }],
+        };
+        let asked = Asked::started_on("/", &as_launched).expect("the forest");
+        let page = drawn(&asked, &held).1;
+        assert!(page.contains("lay the feeder cable"), "{page}");
+        assert!(!page.contains("open the gate"), "{page}");
+    }
+
+    /// A config that stays unloadable, such as one that has gone from its
+    /// path, is said once rather than at every check, and again only once
+    /// it has loaded in between.
+    #[test]
+    fn a_config_that_will_not_load_is_said_once_until_it_loads() {
+        let mut broken = false;
+        assert!(newly_broken(&Reloaded::Broken, &mut broken));
+        assert!(!newly_broken(&Reloaded::Broken, &mut broken));
+        assert!(!newly_broken(&Reloaded::Untouched, &mut broken));
+        assert!(!newly_broken(&Reloaded::Broken, &mut broken));
+        assert!(!newly_broken(&Reloaded::Unchanged, &mut broken));
+        assert!(newly_broken(&Reloaded::Broken, &mut broken));
+    }
+
+    /// An edit naming a project with no address a browser keeps is refused
+    /// as a config that will not load, as it is at startup.
+    #[test]
+    fn a_config_naming_a_project_with_no_address_will_not_load() {
+        let parses = each_addressable(Box::new(Config::from_toml));
+        assert!(parses("[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\n").is_ok());
+        assert!(parses("[[projects]]\nname = \"..\"\npath = \"/home/user/arkham\"\n").is_err());
     }
 
     /// What `latest` holds once `holds` says so of a change after `seen`,
@@ -1030,6 +1277,7 @@ mod tests {
             Utc::now(),
         );
         Latest::holding(Held {
+            cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
             lapsed: Vec::new(),
@@ -1039,7 +1287,7 @@ mod tests {
 
     #[test]
     fn before_the_trackers_are_read_a_beads_page_says_so_and_the_probe_fails() {
-        let latest = Latest::new();
+        let latest = Latest::new(Config::naming(Vec::new()));
         let (status, body) = answered_to("GET", "/ark/ark-5", &latest);
         assert_eq!(status, "503 Service Unavailable");
         assert!(body.contains(phrase::not_read_yet()), "{body}");
@@ -1056,6 +1304,7 @@ mod tests {
                 .expect("a config");
         let asked_at = Utc::now() - chrono::TimeDelta::seconds(600);
         let latest = Latest::holding(Held {
+            cfg: Arc::new(cfg.clone()),
             snapshot: None,
             collecting: Some(Awaited {
                 wanted: Wanted::Everything,
@@ -1067,8 +1316,7 @@ mod tests {
         });
         let sent = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
-        let (status, _, body) =
-            answered(&head, &latest, &cfg, &Hosts::default(), &Start::default());
+        let (status, _, body) = answered(&head, &latest, &Hosts::default(), &Start::default());
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];

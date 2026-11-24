@@ -32,14 +32,15 @@ use chrono::{DateTime, Utc};
 
 use crate::config::Config;
 
-use crate::app::due_after;
+use super::due::due_after;
+use super::{armed_unread, Arming, Outstanding, Reading};
 
 /// How long after each check the next one falls due.
 ///
 /// A constant rather than a config setting, because a setting would have to
 /// be read out of the file it governs: a config edit that lengthened this
 /// would only take effect on the interval it replaced.
-pub(crate) const CHECKED_EVERY: Duration = Duration::from_secs(2);
+pub const CHECKED_EVERY: Duration = Duration::from_secs(2);
 
 /// What a check found.
 ///
@@ -56,7 +57,7 @@ pub(crate) const CHECKED_EVERY: Duration = Duration::from_secs(2);
 /// second place for it to be missed from. A borrow, so a verdict the foot
 /// draws stays cheap to copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Reloaded<'a> {
+pub enum Reloaded<'a> {
     /// Nothing came of it: the check is not due, or the file says exactly
     /// what it said when the last check read it.
     Untouched,
@@ -75,7 +76,7 @@ pub(super) enum Reloaded<'a> {
 ///
 /// Handed to a `Reload` rather than done by one, because all of that is the
 /// command line's, which is settled where `bdi` is run and not here.
-pub(crate) type Parses = Box<dyn Fn(&str) -> anyhow::Result<Config>>;
+pub type Parses = Box<dyn Fn(&str) -> anyhow::Result<Config>>;
 
 /// The config file, the config the run is working to, and when the two are
 /// next compared.
@@ -83,7 +84,7 @@ pub(crate) type Parses = Box<dyn Fn(&str) -> anyhow::Result<Config>>;
 /// Armed from the check before it rather than from an answer, which is what
 /// makes it unlike `Armed`: there is no round trip to wait on, so a check
 /// that finds nothing arms the next one just as one that reloads does.
-pub(crate) struct Reload {
+pub struct Reload {
     path: PathBuf,
     /// How long after each check the next falls due.
     every: Duration,
@@ -110,7 +111,7 @@ pub(crate) struct Reload {
 }
 
 impl Reload {
-    pub(crate) fn watching(
+    pub fn watching(
         path: PathBuf,
         every: Duration,
         in_force: Config,
@@ -129,7 +130,7 @@ impl Reload {
 
     /// How long until the config is next compared against the file, or
     /// nothing where it never will be.
-    pub(super) fn checks_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+    pub fn checks_in(&self, now: DateTime<Utc>) -> Option<Duration> {
         self.at
             .map(|at| (at - now).to_std().unwrap_or(Duration::ZERO))
     }
@@ -139,7 +140,7 @@ impl Reload {
     /// Called on every wake, whichever deadline woke the loop, the way the
     /// band's pane read is: a check that is not due answers `Untouched` and
     /// touches nothing.
-    pub(super) fn checks(&mut self, now: DateTime<Utc>) -> Reloaded<'_> {
+    pub fn checks(&mut self, now: DateTime<Utc>) -> Reloaded<'_> {
         if !self.at.is_some_and(|at| at <= now) {
             return Reloaded::Untouched;
         }
@@ -176,6 +177,23 @@ impl Reload {
         self.in_force = written;
         Reloaded::Fresh(&self.in_force)
     }
+}
+
+/// Read as `written` says from here on: the projects that poll, and the
+/// names producers are heard for, become the ones it names, and a read may
+/// go unanswered as long as it says.
+///
+/// What it says about what a read finds rides on the config the collection
+/// is handed, so whoever calls this also hands the collection `written`
+/// before it asks for the read under it.
+pub fn reads_under(
+    written: &Config,
+    arms: &Arming,
+    reading: &mut Reading,
+    outstanding: &mut Outstanding,
+) {
+    reading.now_reading(arms(written), armed_unread(arms, written));
+    outstanding.waits_out(written.tui.unanswered_after());
 }
 
 #[cfg(test)]

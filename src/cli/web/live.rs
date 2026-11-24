@@ -169,7 +169,7 @@ fn send_changes(
         seen = Some(from);
         let (page, event) = {
             let _drawing = answering.live.drawing.lock();
-            let drawn = super::drawn(asked, &held, &answering.cfg).1;
+            let drawn = super::drawn(asked, &held).1;
             let version = html::version(&drawn).unwrap_or_default().to_string();
             if holding.as_ref() == Some(&version) {
                 sent.get_or_insert_with(|| lines(&drawn));
@@ -483,8 +483,7 @@ mod tests {
         use super::super::{Config, Hosts, Latest, Start};
 
         let answering = Arc::new(Answering {
-            latest: Arc::new(Latest::new()),
-            cfg: Config::naming(Vec::new()),
+            latest: Arc::new(Latest::new(Config::naming(Vec::new()))),
             hosts: Hosts::default(),
             start: Start::default(),
             live: Streams {

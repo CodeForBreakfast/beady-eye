@@ -366,8 +366,8 @@ does for the view, so a page can show one tracker without a second config
 file. `--all-projects` reads every project, as no flag does here. It keeps
 each project current as the view does: it polls as `poll`, `--poll` and
 `--no-poll` say, and hears producers on the socket `[changes]` or `--socket`
-names. It asks no agent provider, so it shows no agents and no pane, and it
-draws every tree. That is what `--all` asks of the view, so `--all` is taken
+names. It takes up an edit to the config as the view does. It asks no agent
+provider, so it shows no agents and no pane, and it draws every tree. That is what `--all` asks of the view, so `--all` is taken
 and changes nothing.
 
 ```console
