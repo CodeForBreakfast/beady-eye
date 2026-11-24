@@ -322,6 +322,9 @@ impl Drawing<'_> {
                 Some(node) if focused.contains(&root) => self.rooted_band(html, &root, Some(node)),
                 // The tree of another root draws it as one of its rows.
                 Some(_) if self.forest.is_focused() => {}
+                // Waited for until its tracker answers, as the terminal
+                // waits, and its project's line says how that read went.
+                None if focused.contains(&root) => {}
                 _ => self.rooted_band(html, &root, None),
             }
         }
@@ -6554,6 +6557,28 @@ mod tests {
     fn the_band_names_only_the_roots_the_forest_is_drawn_with() {
         let start = Start {
             roots: vec![key("smt-4kd3p"), key("smt-4kd3p.6")],
+            ..Start::default()
+        };
+        let rooted = started_page_at(&start, "/");
+        assert_eq!(
+            rooted.matches("<p class=\"rooted\">").count(),
+            1,
+            "{rooted}"
+        );
+        assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
+    }
+
+    /// A bead the page starts on whose tracker has not answered with it is
+    /// waited for, as the terminal waits for it, and is not said to be
+    /// missing. Its project's line says whether its tracker was read.
+    #[test]
+    fn a_bead_started_on_that_no_read_has_drawn_is_not_called_missing() {
+        let unread = BeadKey {
+            project: "kadath".to_string(),
+            id: "kad-1".to_string(),
+        };
+        let start = Start {
+            roots: vec![key("smt-4kd3p.6"), unread],
             ..Start::default()
         };
         let rooted = started_page_at(&start, "/");
