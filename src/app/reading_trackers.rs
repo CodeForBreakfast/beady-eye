@@ -2,14 +2,16 @@
 //!
 //! It polls, waits out the window, reads one thing at a time and takes
 //! producers' lines exactly as a view's loop does, by driving the same three
-//! types. What a read finds goes to the watcher rather than to a screen.
+//! types through [`Refresh`], which `bdi web` drives too. What a read finds
+//! goes to the watcher rather than to a screen.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 
 use chrono::{DateTime, Utc};
 
 use crate::collect::changes::Heard;
+use crate::model::snapshot::FailedProject;
 
 use super::watcher::{Answer, ChangeSource, Said};
 use super::{Asked, Outstanding, Reading, Wanted, Watched};
@@ -18,18 +20,128 @@ use super::{Asked, Outstanding, Reading, Wanted, Watched};
 /// each project with something new to say says to the watcher.
 pub type Reads = Box<dyn FnMut(&Wanted, DateTime<Utc>) -> Watched + Send>;
 
+/// When a run with no screen reads its trackers: which read is due next,
+/// which projects have lapsed, and how long to wait for either. Whoever
+/// drives it makes each read it names and hands back what the read found.
+pub struct Refresh {
+    heard: Receiver<Heard>,
+    /// What was heard while waiting, and not yet taken.
+    waited_for: Option<Heard>,
+    outstanding: Outstanding,
+    reading: Reading,
+    /// Where `outstanding` sends a read when its turn comes, and where
+    /// [`Self::due`] takes it from. One thread does both, so a read in
+    /// flight is a read being made.
+    asking: (Sender<Asked>, Receiver<Asked>),
+}
+
+impl Refresh {
+    /// Reads of every project `reading` names, told of changes on `heard`,
+    /// and asking at once for everything.
+    pub fn new(heard: Receiver<Heard>, mut outstanding: Outstanding, reading: Reading) -> Self {
+        outstanding.ask(Wanted::Everything, Utc::now());
+        Self {
+            heard,
+            waited_for: None,
+            outstanding,
+            reading,
+            asking: mpsc::channel(),
+        }
+    }
+
+    /// Take everything heard so far, as of `now`, and hand back each project
+    /// a producer said it covers.
+    pub fn take_heard(&mut self, now: DateTime<Utc>) -> Vec<String> {
+        let heard: Vec<Heard> = self
+            .waited_for
+            .take()
+            .into_iter()
+            .chain(self.heard.try_iter())
+            .collect();
+        heard
+            .into_iter()
+            .filter_map(|heard| match heard {
+                Heard::Changed(project) => {
+                    self.outstanding.ask(Wanted::Project(project), now);
+                    None
+                }
+                Heard::Covered(project) => {
+                    self.reading.covered(&project, now);
+                    Some(project)
+                }
+            })
+            .collect()
+    }
+
+    /// The projects nothing has vouched for lately, as `now` finds them.
+    pub fn lapsed(&self, now: DateTime<Utc>) -> Vec<String> {
+        self.reading.lapsed(now)
+    }
+
+    /// The read whose turn has come by `now`, where one has. What it finds
+    /// goes to [`Self::came_back`] before the next is asked for.
+    pub fn due(&mut self, now: DateTime<Utc>) -> Option<Wanted> {
+        for wanted in self.reading.due(now) {
+            self.outstanding.ask(wanted, now);
+        }
+        self.outstanding.sends(&self.asking.0, now);
+        match self.asking.1.try_recv() {
+            Ok(Asked::Read(wanted)) => Some(wanted),
+            _ => None,
+        }
+    }
+
+    /// The read [`Self::due`] last named has come back at `now`, having read
+    /// `projects`.
+    pub fn came_back(
+        &mut self,
+        projects: &[String],
+        speaks_until: &BTreeMap<String, DateTime<Utc>>,
+        failed: &[FailedProject],
+        now: DateTime<Utc>,
+    ) {
+        self.reading.came_back(
+            self.outstanding.came_back(),
+            projects,
+            speaks_until,
+            failed,
+            now,
+        );
+    }
+
+    /// Wait until something is heard or something falls due. False once
+    /// nothing can be heard any longer, and nothing is going to fall due.
+    pub fn wait(&mut self) -> bool {
+        let now = Utc::now();
+        let wakes_in = [
+            self.outstanding.sends_in(now),
+            self.reading.next_due_in(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let heard = match wakes_in {
+            Some(wait) => match self.heard.recv_timeout(wait) {
+                Ok(heard) => heard,
+                Err(RecvTimeoutError::Timeout) => return true,
+                Err(RecvTimeoutError::Disconnected) => return false,
+            },
+            None => match self.heard.recv() {
+                Ok(heard) => heard,
+                Err(_) => return false,
+            },
+        };
+        self.waited_for = Some(heard);
+        true
+    }
+}
+
 /// A change source that reads every configured project's tracker, once at
 /// the start and then whenever a project's poll comes round or a producer
 /// reports it.
 pub struct ReadingTrackers {
     reads: Reads,
-    heard: Receiver<Heard>,
-    outstanding: Outstanding,
-    reading: Reading,
-    /// Where `outstanding` sends a read when its turn comes, and where this
-    /// source takes it from to make it. One thread does both, so a read in
-    /// flight is a read being made.
-    asking: (Sender<Asked>, Receiver<Asked>),
+    refresh: Refresh,
     told: VecDeque<Answer>,
     /// The projects the watcher has been told have lapsed, and not since
     /// told otherwise.
@@ -42,16 +154,12 @@ impl ReadingTrackers {
     pub fn new(
         reads: Reads,
         heard: Receiver<Heard>,
-        mut outstanding: Outstanding,
+        outstanding: Outstanding,
         reading: Reading,
     ) -> Self {
-        outstanding.ask(Wanted::Everything, Utc::now());
         Self {
             reads,
-            heard,
-            outstanding,
-            reading,
-            asking: mpsc::channel(),
+            refresh: Refresh::new(heard, outstanding, reading),
             told: VecDeque::new(),
             lapsed: Vec::new(),
         }
@@ -60,7 +168,7 @@ impl ReadingTrackers {
     /// Tell the watcher of each project that has lapsed since it was last
     /// told.
     fn say_what_has_lapsed(&mut self, now: DateTime<Utc>) {
-        let lapsed = self.reading.lapsed(now);
+        let lapsed = self.refresh.lapsed(now);
         for project in &lapsed {
             if !self.lapsed.contains(project) {
                 self.told.push_back(Answer {
@@ -75,16 +183,11 @@ impl ReadingTrackers {
 
     /// Make the read whose turn has come, where one has.
     fn read_what_is_due(&mut self, now: DateTime<Utc>) -> bool {
-        for wanted in self.reading.due(now) {
-            self.outstanding.ask(wanted, now);
-        }
-        self.outstanding.sends(&self.asking.0, now);
-        let Ok(Asked::Read(wanted)) = self.asking.1.try_recv() else {
+        let Some(wanted) = self.refresh.due(now) else {
             return false;
         };
         let watched = (self.reads)(&wanted, now);
-        self.reading.came_back(
-            self.outstanding.came_back(),
+        self.refresh.came_back(
             &watched.projects,
             &watched.speaks_until,
             &watched.failed_projects,
@@ -94,20 +197,15 @@ impl ReadingTrackers {
         true
     }
 
-    fn take(&mut self, heard: Heard) {
+    /// Tell the watcher each project a producer has said it covers.
+    fn take_heard(&mut self) {
         let now = Utc::now();
-        match heard {
-            Heard::Changed(project) => {
-                self.outstanding.ask(Wanted::Project(project), now);
-            }
-            Heard::Covered(project) => {
-                self.reading.covered(&project, now);
-                self.told.push_back(Answer {
-                    project,
-                    said: Said::Vouched { at: now },
-                    journal: None,
-                });
-            }
+        for project in self.refresh.take_heard(now) {
+            self.told.push_back(Answer {
+                project,
+                said: Said::Vouched { at: now },
+                journal: None,
+            });
         }
     }
 }
@@ -115,33 +213,17 @@ impl ReadingTrackers {
 impl ChangeSource for ReadingTrackers {
     fn next(&mut self) -> Option<Answer> {
         loop {
-            while let Ok(heard) = self.heard.try_recv() {
-                self.take(heard);
-            }
+            self.take_heard();
             self.say_what_has_lapsed(Utc::now());
             if let Some(answer) = self.told.pop_front() {
                 return Some(answer);
             }
-            let now = Utc::now();
-            if self.read_what_is_due(now) {
+            if self.read_what_is_due(Utc::now()) {
                 continue;
             }
-            let wakes_in = [
-                self.outstanding.sends_in(now),
-                self.reading.next_due_in(now),
-            ]
-            .into_iter()
-            .flatten()
-            .min();
-            let heard = match wakes_in {
-                Some(wait) => match self.heard.recv_timeout(wait) {
-                    Ok(heard) => heard,
-                    Err(RecvTimeoutError::Timeout) => continue,
-                    Err(RecvTimeoutError::Disconnected) => return None,
-                },
-                None => self.heard.recv().ok()?,
-            };
-            self.take(heard);
+            if !self.refresh.wait() {
+                return None;
+            }
         }
     }
 }
