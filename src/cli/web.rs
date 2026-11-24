@@ -268,8 +268,8 @@ pub(super) fn web(
         .with_context(|| format!("reading the address {listen} gave"))?;
     println!("bdi web is answering on http://{taken}");
 
-    // Held for the run, so the reading loop never runs out of anyone to
-    // hear from.
+    // `told` is held until the run ends, because a run with no watcher and no
+    // socket has nobody else to keep the reading loop waiting.
     let (told, heard) = mpsc::channel();
     let trackers = Arc::new(Through::staying(
         where_this_machine_watches(&cfg).as_deref(),
@@ -285,7 +285,7 @@ pub(super) fn web(
         &cfg,
         Polling::asked_for(&view.polling),
         where_producers_find_this_run(view, &cfg),
-        told,
+        told.clone(),
         heard,
         move |heard| passing_on.passes_on(heard.clone()),
     );
@@ -304,6 +304,7 @@ pub(super) fn web(
         move |stream| answer(stream, &answering),
     );
     keep_reading(&cfg, &latest, &*trackers, refreshing);
+    drop(told);
     Ok(ExitCode::SUCCESS)
 }
 
