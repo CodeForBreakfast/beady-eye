@@ -276,11 +276,10 @@ impl Asked {
     /// it.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
         let shown = self.drawn(snapshot, layout);
-        let held = self
-            .bead
-            .as_ref()
-            .is_some_and(|key| shown.forest.snapshot().node(key).is_some());
-        if shown.bead != Some(false) || !held {
+        let unstarted = self.without_the_starts_list().without_the_starts_roots();
+        let held = |key: &BeadKey| shown.forest.snapshot().node(key).is_some();
+        if shown.bead != Some(false) || unstarted == *self || !self.bead.as_ref().is_some_and(held)
+        {
             return shown;
         }
         let mut tried = self.clone();
@@ -290,7 +289,7 @@ impl Asked {
         let wider = [
             self.without_the_starts_list(),
             self.without_the_starts_roots(),
-            self.without_the_starts_list().without_the_starts_roots(),
+            unstarted,
         ];
         for wider in wider {
             if wider == *self || wider == tried {
