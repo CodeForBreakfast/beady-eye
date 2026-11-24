@@ -1374,7 +1374,7 @@ fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool)
     let said = if says_the_status {
         format!(
             " role=\"img\" aria-label=\"{}\"{}",
-            escaped(&phrase::status_word(status)),
+            escaped(&phrase::status_said(status)),
             styled(palette::css(glyph.style))
         )
     } else {
@@ -4598,9 +4598,9 @@ mod tests {
     }
 
     /// Every reference on a page reads as its mark, its title, then its id.
-    /// The mark is labelled with `bd`'s word for the status. The id has no
-    /// colour of its own, so a closed bead's id is as quiet as an open one's
-    /// and no fainter.
+    /// The mark is labelled with the status in the page's own words. The id
+    /// has no colour of its own, so a closed bead's id is as quiet as an open
+    /// one's and no fainter.
     #[test]
     fn a_reference_draws_its_mark_then_its_title_then_a_quiet_id() {
         let html = page_at(&address(&key("smt-4kd3p.2"))).html;
@@ -4625,10 +4625,33 @@ mod tests {
             );
             assert!(!inside(inner, "id").contains("style="), "{reference}");
         }
-        for status in ["in_progress", "open", "closed"] {
+        for status in ["In progress", "Open", "Closed"] {
             assert!(statuses.iter().any(|said| said == status), "{statuses:?}");
         }
         assert!(html.contains("class=\"g closed\""), "{html}");
+    }
+
+    /// A status mark is named for its status in the page's words, on a
+    /// tree's row, a ready row and a bead's page alike, never in `bd`'s.
+    #[test]
+    fn a_status_mark_is_named_in_the_pages_words() {
+        let raw = phrase::status_word(&Status::InProgress);
+        let named = format!(
+            "aria-label=\"{}\"",
+            phrase::status_said(&Status::InProgress)
+        );
+        for target in [
+            "/".to_string(),
+            "/?ready=1".to_string(),
+            address(&key("smt-4kd3p.2")),
+        ] {
+            let html = page_of(ground(), &target);
+            assert!(html.contains(&named), "{target}: {html}");
+            assert!(
+                !html.contains(&format!("aria-label=\"{raw}\"")),
+                "{target}: {html}"
+            );
+        }
     }
 
     /// A status's colour is drawn on the bead's status mark and nowhere
