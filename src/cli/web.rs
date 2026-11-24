@@ -596,9 +596,18 @@ fn answered(
     (status, HTML, page)
 }
 
-/// The page `asked` names, drawn from `held`, and its status.
+/// The page `asked` names, drawn from `held`, and its status. A page
+/// started on the command line's roots is drawn at them as the held config
+/// places them, since an edit can move them after the page was asked for.
 fn drawn(asked: &Asked, held: &Held) -> (&'static str, String) {
     let cfg = &held.cfg;
+    let asked = &Asked {
+        start: Start {
+            roots: cfg.roots.named_beads(),
+            ..asked.start.clone()
+        },
+        ..asked.clone()
+    };
     let drawn = html::Drawn {
         at: Utc::now(),
         offset: Local::now().offset().fix(),
@@ -646,6 +655,7 @@ mod tests {
     use super::*;
     use crate::app::Wanted;
     use crate::collect::tracker::testing::{Fake, Fakes};
+    use crate::model::join::BeadKey;
 
     /// What a request for `target` with `method` is answered, with `latest`
     /// held.
@@ -1151,6 +1161,52 @@ mod tests {
         drop(told);
         reading.join().expect("the reading thread ended");
         std::fs::remove_file(&path).expect("the config is ours to remove");
+    }
+
+    /// A page started on the roots the command line named takes those
+    /// roots from the config in force, so a page opened before an edit
+    /// moved them is drawn at where they are now.
+    #[test]
+    fn a_page_is_rooted_where_the_config_in_force_places_its_roots() {
+        let cfg = Config::from_toml(
+            "[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\n\
+             [[projects]]\nname = \"dunwich\"\npath = \"/srv/work/dunwich\"\n",
+        )
+        .expect("a config")
+        .with_roots_named_on_the_command_line(&["dunwich:dun-1".to_string()])
+        .expect("dunwich is read");
+        let dunwich = bd::parse_beads(
+            r#"[{"id":"dun-1","title":"lay the feeder cable","status":"open",
+                 "priority":2,"issue_type":"task"}]"#,
+        )
+        .expect("the rows parse");
+        let trackers = arkhams_tracker().with("dunwich", Fake::holding(dunwich));
+        let snapshot = Collection::default().collect(
+            &cfg,
+            &Unasked,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            Utc::now(),
+        );
+        let held = Held {
+            cfg: Arc::new(cfg),
+            snapshot: Some(snapshot),
+            collecting: None,
+            lapsed: Vec::new(),
+            change: 0,
+        };
+        let as_launched = Start {
+            list: None,
+            roots: vec![BeadKey {
+                project: "arkham".to_string(),
+                id: "ark-1".to_string(),
+            }],
+        };
+        let asked = Asked::started_on("/", &as_launched).expect("the forest");
+        let page = drawn(&asked, &held).1;
+        assert!(page.contains("lay the feeder cable"), "{page}");
+        assert!(!page.contains("open the gate"), "{page}");
     }
 
     /// An edit naming a project with no address a browser keeps is refused
