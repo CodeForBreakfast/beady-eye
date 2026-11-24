@@ -29,6 +29,7 @@ use crate::view::{palette, phrase, show, Freshness, Said};
 
 use super::bead::{elided_run, referenced_line};
 use super::foot::notices;
+use super::groups;
 use super::project::wants_attention;
 use super::{done, fitted, Reads, Reference};
 
@@ -616,6 +617,8 @@ impl Drawing<'_> {
         if let Some((prefix, _)) = prefix {
             let what = match &line.content {
                 Content::Bead(row) | Content::Waiting(Waiting { row, .. }) => row.title.clone(),
+                Content::Elided { count, .. } => phrase::finished_run(*count),
+                Content::Group(group) => groups::said(group),
                 _ => identity
                     .iter()
                     .chain(whole.title)
@@ -3531,6 +3534,39 @@ mod tests {
             "{}",
             fold_on(&opened, shut)
         );
+    }
+
+    /// A fold is named in words alone, so a reader who hears the page is
+    /// never read the status mark on a run of finished beads, or the warning
+    /// sign on a group.
+    #[test]
+    fn a_fold_is_named_in_words_alone() {
+        let named = |html: &str, what: &str| {
+            let at = lines_html(html)
+                .iter()
+                .position(|line| line.contains(what))
+                .expect("the line is drawn");
+            let fold = fold_on(html, at).to_string();
+            let labels = [phrase::fold(what), phrase::unfold(what)]
+                .map(|said| format!(" aria-label=\"{said}\""));
+            assert!(labels.iter().any(|label| fold.contains(label)), "{fold}");
+        };
+        named(&page_at("/").html, &phrase::finished_run(3));
+
+        let mut loose = ground();
+        loose.unattributed.push(crate::model::snapshot::LoosePane {
+            pane: crate::model::types::PaneKey {
+                session: "default".to_string(),
+                id: "w:nobody".to_string(),
+            },
+            project: PROJECT.to_string(),
+            cwd: format!("/srv/work/{PROJECT}"),
+            pane_status: crate::model::types::PaneStatus::Working,
+            display_agent: None,
+            title: None,
+            claim_refused: false,
+        });
+        named(&page_of(loose, "/"), &phrase::unattributed(1));
     }
 
     /// Every fold on the trees and on the ready list is the same control,
