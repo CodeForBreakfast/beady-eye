@@ -263,7 +263,7 @@ enum Passing {
         config: Option<String>,
         #[command(
             flatten,
-            next_help_heading = "The view's options, which bdi web refuses with a reason"
+            next_help_heading = "The view's options, which bdi web honours or refuses with a reason"
         )]
         view: ViewOptions,
     },
@@ -322,6 +322,12 @@ struct PollSwitch {
 /// the checkout — and it is the whole of why a key alone would not do.
 fn told_where_to_watch(view: &ViewOptions, cfg: &Config) -> Option<PathBuf> {
     view.socket.clone().or_else(|| cfg.changes.socket.clone())
+}
+
+/// Where producers report to this run: where it was told to watch, or where
+/// writers find `bdi` where it was told nothing.
+fn where_producers_find_this_run(view: &ViewOptions, cfg: &Config) -> Option<PathBuf> {
+    changes::where_writers_find_bdi(told_where_to_watch(view, cfg))
 }
 
 /// What this run said about polling, over what its config says about each
@@ -432,7 +438,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 );
             }
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return web::web(&config, listen, web::Hosts(allow_hosts.clone()));
+            return web::web(&config, listen, web::Hosts(allow_hosts.clone()), view);
         }
         Some(Passing::Gates {
             config,
@@ -526,7 +532,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // Settled here, where the command line and the config are both in hand.
     // The socket is asked for once, so a config the reader writes later
     // cannot move it, and nothing below this line reads the path again.
-    let watching_at = changes::where_writers_find_bdi(told_where_to_watch(&cli.view, &cfg));
+    let watching_at = where_producers_find_this_run(&cli.view, &cfg);
     // Asked again whenever the reader writes a config, so the set of
     // projects that poll is the set the file names. The command line is what
     // it carries that a config cannot: `--poll` and `--no-poll` overrule
@@ -1720,9 +1726,6 @@ detached
         (&["--brief"], "--brief: it narrows what --beads prints, and bdi web serves a page rather than printing"),
         (&["--all"], "--all: bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
         (&["--ready"], "--ready: bdi web opens on the forest, and cannot yet open on the ready list"),
-        (&["--poll"], "--poll: bdi web polls each project as its config says, and cannot yet be told to poll every one"),
-        (&["--no-poll"], "--no-poll: bdi web polls each project as its config says, and cannot yet be told to poll none"),
-        (&["--socket", "/run/bdi.sock"], "--socket: bdi web hears of moved work only through the watcher, and cannot yet take reports on a socket of its own"),
     ];
 
     fn bdi_web_refuses(args: &[&str]) -> Vec<String> {
@@ -1779,7 +1782,14 @@ detached
 
     #[test]
     fn bdi_web_refuses_nothing_it_honours() {
-        assert!(bdi_web_refuses(&["--config", "/etc/beady-eye.toml"]).is_empty());
+        for honoured in [
+            &["--config", "/etc/beady-eye.toml"][..],
+            &["--poll"],
+            &["--no-poll"],
+            &["--socket", "/run/bdi.sock"],
+        ] {
+            assert!(bdi_web_refuses(honoured).is_empty(), "{honoured:?}");
+        }
     }
 
     #[test]
