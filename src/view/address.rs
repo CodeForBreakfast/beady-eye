@@ -278,11 +278,16 @@ impl Asked {
         // ponytail: the forest is flattened again for each thing the start
         // gives way; undo the start on the first one if these pages come to
         // cost too much.
-        for wider in [self.without_the_starts_list(), self.without_the_start()] {
+        let wider = [
+            self.without_the_starts_list(),
+            self.without_the_starts_roots(),
+            self.without_the_starts_list().without_the_starts_roots(),
+        ];
+        for wider in wider {
             if shown.bead != Some(false) {
                 break;
             }
-            if wider != tried {
+            if wider != *self && wider != tried {
                 shown = wider.drawn(shown.forest.snapshot().clone(), layout);
                 tried = wider;
             }
@@ -299,16 +304,15 @@ impl Asked {
         }
     }
 
-    /// This with the list and the roots it took from the start put back to
-    /// every tree, drawn whole.
-    fn without_the_start(&self) -> Self {
+    /// This with the roots it took from the start put back to every tree.
+    fn without_the_starts_roots(&self) -> Self {
         let root = match &self.root {
             Root::AsStarted if !self.start.roots.is_empty() => Root::Whole,
             root => root.clone(),
         };
         Self {
             root,
-            ..self.without_the_starts_list()
+            ..self.clone()
         }
     }
 

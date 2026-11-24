@@ -6583,6 +6583,15 @@ mod tests {
             "{}",
             answer.html
         );
+
+        // Where the roots alone leave the bead out, the list stays.
+        let outside_the_root = address(&key("smt-4kd3p.4"));
+        let answer = started_answer(&both, &outside_the_root);
+        assert!(answer.found);
+        assert_eq!(
+            page_lines(&answer.html),
+            page_lines(&started_page_at(&ready, &outside_the_root))
+        );
     }
 
     /// The links on a page drawn from its start leave the start to the
