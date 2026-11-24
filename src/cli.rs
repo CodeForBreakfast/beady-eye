@@ -231,10 +231,11 @@ enum Passing {
         #[arg(long)]
         config: Option<String>,
     },
-    /// Answer HTTP on an address, such as 0.0.0.0:8080, with every configured
-    /// project's forest as a read-only web page, and each bead's own page at
-    /// /<project>/<bead-id>. Trackers are read as the view reads them, through
-    /// the watcher where one answers, and no agent provider is asked.
+    /// Answer HTTP on an address, such as 0.0.0.0:8080, with the forest as a
+    /// read-only web page, and each bead's own page at /<project>/<bead-id>.
+    /// Every configured project is read unless --project names some. Trackers
+    /// are read as the view reads them, through the watcher where one answers,
+    /// and no agent provider is asked, so every tree is drawn.
     // Without these resets, a --beads filter given without --beads, or
     // --json or --beads beside an option they conflict with, would be a parse
     // error rather than a refusal.
@@ -1714,9 +1715,6 @@ detached
     /// Each of the view's arguments `bdi web` refuses, alone on its command
     /// line, and the one refusal it is given.
     const REFUSED_BY_BDI_WEB: &[(&[&str], &str)] = &[
-        (&["dun-7"], "BEAD-ID: bdi web cannot yet root its page at a bead named on its command line"),
-        (&["--project", "ferry"], "--project: bdi web reads every configured project, and cannot yet read only the ones named"),
-        (&["--all-projects"], "--all-projects: bdi web reads every configured project already, and does not yet take the option that asks for it"),
         (&["--json"], "--json: bdi web serves a page rather than printing the snapshot"),
         (&["--beads"], "--beads: bdi web serves a page rather than printing each bead"),
         (&["--label", "human"], "--label: it narrows what --beads prints, and bdi web serves a page rather than printing"),
@@ -1724,17 +1722,81 @@ detached
         (&["--assignee", "alex"], "--assignee: it narrows what --beads prints, and bdi web serves a page rather than printing"),
         (&["--parent", "dun-7"], "--parent: it narrows what --beads prints, and bdi web serves a page rather than printing"),
         (&["--brief"], "--brief: it narrows what --beads prints, and bdi web serves a page rather than printing"),
-        (&["--all"], "--all: bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
-        (&["--ready"], "--ready: bdi web opens on the forest, and cannot yet open on the ready list"),
     ];
 
-    fn bdi_web_refuses(args: &[&str]) -> Vec<String> {
-        let cli = Cli::try_parse_from(["bdi", "web", "--listen", "127.0.0.1:0"].iter().chain(args))
-            .unwrap_or_else(|error| panic!("bdi web did not parse {args:?}: {error}"));
+    /// Each of the view's arguments `bdi web` takes, alone on its command
+    /// line.
+    const HONOURED_BY_BDI_WEB: &[&[&str]] = &[
+        &["--config", "/etc/beady-eye.toml"],
+        &["--project", "ferry"],
+        &["--all-projects"],
+        &["--all"],
+        &["--ready"],
+        &["dun-7"],
+        &["--poll"],
+        &["--no-poll"],
+        &["--socket", "/run/bdi.sock"],
+    ];
+
+    fn bdi_web(args: &[&str]) -> Cli {
+        Cli::try_parse_from(["bdi", "web", "--listen", "127.0.0.1:0"].iter().chain(args))
+            .unwrap_or_else(|error| panic!("bdi web did not parse {args:?}: {error}"))
+    }
+
+    fn web_view(cli: &Cli) -> &ViewOptions {
         let Some(Passing::Web { view, .. }) = &cli.passing else {
             panic!("bdi web parsed as something else");
         };
-        web::refusals(view)
+        view
+    }
+
+    fn bdi_web_refuses(args: &[&str]) -> Vec<String> {
+        web::refusals(web_view(&bdi_web(args)))
+    }
+
+    /// The projects `bdi web` started in dunwich's checkout with `args` reads.
+    fn bdi_web_reads(args: &[&str]) -> anyhow::Result<Vec<String>> {
+        let cli = bdi_web(args);
+        let cfg = config_for_this_run(
+            TWO_PROJECTS,
+            &two_repositories(),
+            &Launch {
+                reading: web::reading(web_view(&cli)),
+                ..started_in("/srv/work/dunwich/src")
+            },
+            None,
+        )?;
+        Ok(read_by(&cfg).into_iter().map(str::to_string).collect())
+    }
+
+    /// A page has no directory it was started in, so `bdi web` reads every
+    /// project unless its options name some, and then only those.
+    #[test]
+    fn bdi_web_reads_the_projects_its_options_name() {
+        let read = |args: &[&str]| bdi_web_reads(args).expect("the config is ours to read");
+        assert_eq!(read(&[]), ["dunwich", "ferry"]);
+        assert_eq!(read(&["--all-projects"]), ["dunwich", "ferry"]);
+        assert_eq!(read(&["--project", "ferry"]), ["ferry"]);
+        assert_eq!(
+            read(&["--project", "ferry", "--project", "dunwich"]),
+            ["dunwich", "ferry"]
+        );
+    }
+
+    #[test]
+    fn bdi_web_refuses_a_project_the_config_does_not_hold_as_the_view_does() {
+        let refused = bdi_web_reads(&["--project", "innsmouth"]).expect_err("no such project");
+        let the_view = config_for_this_run(
+            TWO_PROJECTS,
+            &two_repositories(),
+            &Launch {
+                reading: Reading::Named(vec!["innsmouth".to_string()]),
+                ..started_in("/srv/work/dunwich/src")
+            },
+            None,
+        )
+        .expect_err("no such project");
+        assert_eq!(format!("{refused:#}"), format!("{the_view:#}"));
     }
 
     /// The view's options are parsed rather than unknown, each alone, so
@@ -1749,8 +1811,8 @@ detached
     #[test]
     fn bdi_web_names_every_refusal_at_once() {
         assert_eq!(
-            bdi_web_refuses(&["--json", "--project", "ferry"]),
-            [REFUSED_BY_BDI_WEB[1].1, REFUSED_BY_BDI_WEB[3].1]
+            bdi_web_refuses(&["--json", "--brief"]),
+            [REFUSED_BY_BDI_WEB[0].1, REFUSED_BY_BDI_WEB[6].1]
         );
     }
 
@@ -1760,12 +1822,7 @@ detached
     fn bdi_web_refuses_the_printing_options_rather_than_their_conflicts() {
         assert_eq!(
             bdi_web_refuses(&["--beads", "--json", "--all", "--ready"]),
-            [
-                REFUSED_BY_BDI_WEB[3].1,
-                REFUSED_BY_BDI_WEB[4].1,
-                REFUSED_BY_BDI_WEB[10].1,
-                REFUSED_BY_BDI_WEB[11].1
-            ]
+            [REFUSED_BY_BDI_WEB[0].1, REFUSED_BY_BDI_WEB[1].1]
         );
     }
 
@@ -1782,14 +1839,19 @@ detached
 
     #[test]
     fn bdi_web_refuses_nothing_it_honours() {
-        for honoured in [
-            &["--config", "/etc/beady-eye.toml"][..],
-            &["--poll"],
-            &["--no-poll"],
-            &["--socket", "/run/bdi.sock"],
-        ] {
-            assert!(bdi_web_refuses(honoured).is_empty(), "{honoured:?}");
+        for args in HONOURED_BY_BDI_WEB {
+            assert!(bdi_web_refuses(args).is_empty(), "{args:?} was refused");
         }
+    }
+
+    /// `bdi web` asks no agent provider, so it draws every tree, which is
+    /// what `--all` asks of the view.
+    #[test]
+    fn bdi_web_draws_the_trees_the_view_draws_under_all() {
+        assert_eq!(
+            web::EVERY_TREE,
+            Cli::parse_from(["bdi", "--all"]).view.filter()
+        );
     }
 
     #[test]
@@ -1800,7 +1862,8 @@ detached
             .render_long_help()
             .to_string();
 
-        for (args, _) in REFUSED_BY_BDI_WEB {
+        let refused = REFUSED_BY_BDI_WEB.iter().map(|(args, _)| *args);
+        for args in refused.chain(HONOURED_BY_BDI_WEB.iter().copied()) {
             let named = if args[0].starts_with("--") {
                 args[0]
             } else {

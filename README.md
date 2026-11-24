@@ -360,11 +360,27 @@ so does every bead that bead names. Each bead has a page of its own at
 `/<project>/<bead-id>`, with the project as the config names it, so anything
 that knows a bead can link to it.
 
-It reads every configured project as the view does, through the watcher where
-one runs. It keeps each one current as the view does too: it polls as `poll`,
-`--poll` and `--no-poll` say, and hears producers on the socket `[changes]` or
-`--socket` names. It asks no agent provider, so it shows no agents and no pane. An
-open page changes as the trees do, without a reload, and keeps its place and
+It reads every configured project, through the watcher where one runs.
+`--project <name>`, given once for each, reads only the projects named, as it
+does for the view, so a page can show one tracker without a second config
+file. `--all-projects` reads every project, as no flag does here. It keeps
+each project current as the view does: it polls as `poll`, `--poll` and
+`--no-poll` say, and hears producers on the socket `[changes]` or `--socket`
+names. It asks no agent provider, so it shows no agents and no pane, and it
+draws every tree. That is what `--all` asks of the view, so `--all` is taken
+and changes nothing.
+
+```console
+$ bdi web --listen 127.0.0.1:8080 --project arkham
+```
+
+`--ready` opens the ready list on a page whose address names no list. Beads
+named on the command line, written `<project>:<bead-id>`, root a page whose
+address names no root at those beads' trees, as they start the view focused on
+them. A list or a root the address names still wins, so the page's own links
+to every tree keep working.
+
+An open page changes as the trees do, without a reload, and keeps its place and
 its folds. The server sends each change down one connection the page holds
 open, as Server-Sent Events. A browser without scripts gets the same page,
 drawn once. Each project's line says the time its beads were read, which
@@ -381,7 +397,7 @@ refused asks again 15 seconds later, and stays as it was drawn until one is
 taken.
 
 The page is read-only and asks nobody to sign in. Anyone who can reach the
-address can read every configured tracker, so listen only where everyone who
+address can read every tracker it reads, so listen only where everyone who
 can reach it may read them all.
 
 It answers only a request sent to `localhost`, to an address, or to a name

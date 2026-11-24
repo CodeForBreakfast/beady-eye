@@ -480,12 +480,13 @@ mod tests {
         use std::io::Read;
         use std::net::TcpListener;
 
-        use super::super::{Config, Hosts, Latest};
+        use super::super::{Config, Hosts, Latest, Start};
 
         let answering = Arc::new(Answering {
             latest: Arc::new(Latest::new()),
             cfg: Config::naming(Vec::new()),
             hosts: Hosts::default(),
+            start: Start::default(),
             live: Streams {
                 open: AtomicUsize::new(MOST_KEPT_CURRENT),
                 ..Streams::default()

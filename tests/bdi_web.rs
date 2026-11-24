@@ -46,21 +46,21 @@ impl Drop for Web {
     }
 }
 
-/// `bdi web` over `tracker`, on a port the system picks, answering for the
-/// host names `allowing` as well as its address, and the address it says it
-/// is answering on. A machine with no runtime directory has no socket a
-/// producer or a watcher could be found on unless the config names one.
+/// `bdi web` over `tracker` given `args`, on a port the system picks, and
+/// the address it says it is answering on. A machine with no runtime
+/// directory has no socket a producer or a watcher could be found on unless
+/// the config names one.
 fn bdi_web(
     home: &Path,
     tracker: &ShimmedTracker,
-    allowing: &[&str],
+    args: &[&str],
     runtime_dir: Option<&Path>,
 ) -> (Web, String) {
     let spawned_by = std::process::id();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
     command
         .args(["web", "--listen", "127.0.0.1:0"])
-        .args(allowing.iter().flat_map(|host| ["--allow-host", host]))
+        .args(args)
         .current_dir(home)
         .env("HOME", home)
         .env_remove("BEADS_DIR")
@@ -131,30 +131,29 @@ fn fetched(address: &str, host: &str, path: &str, offering: &str) -> (String, Ve
     (head, answer[end + 4..].to_vec())
 }
 
-/// `bdi web` over the described subtree, answering for the host names
-/// `allowing`, once it has read the tracker.
-fn a_web_over_the_tracker(named: &str, allowing: &[&str]) -> (Web, String) {
+/// `bdi web` over the described subtree given `args`, once it has read the
+/// tracker.
+fn a_web_over_the_tracker(named: &str, args: &[&str]) -> (Web, String) {
     a_web_over(
         &a_home_naming_one_project(named),
         THE_DESCRIBED_SUBTREE,
-        allowing,
+        args,
     )
 }
 
-/// `bdi web` in `home`, over a tracker holding `beads` and answering for
-/// the host names `allowing`, once it has read the tracker.
-fn a_web_over(home: &Path, beads: &str, allowing: &[&str]) -> (Web, String) {
-    let (web, address, _) = serving(home, beads, allowing);
+/// `bdi web` in `home` given `args`, over a tracker holding `beads`, once
+/// it has read the tracker.
+fn a_web_over(home: &Path, beads: &str, args: &[&str]) -> (Web, String) {
+    let (web, address, _) = serving(home, beads, args);
     (web, address)
 }
 
-/// `bdi web` in `home`, over a tracker holding `beads` and answering for
-/// the host names `allowing`, once it has read the tracker, and the tracker,
-/// which the test may change.
-fn serving(home: &Path, beads: &str, allowing: &[&str]) -> (Web, String, ShimmedTracker) {
+/// `bdi web` in `home` given `args`, over a tracker holding `beads`, once
+/// it has read the tracker, and the tracker, which the test may change.
+fn serving(home: &Path, beads: &str, args: &[&str]) -> (Web, String, ShimmedTracker) {
     let tracker = ShimmedTracker::beside(home);
     tracker.holds(beads);
-    let (web, address) = bdi_web(home, &tracker, allowing, Some(home));
+    let (web, address) = bdi_web(home, &tracker, args, Some(home));
     until_it_has_read(&address);
     (web, address, tracker)
 }
@@ -189,7 +188,8 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
 /// name as the host, so only a name the listener was given is answered.
 #[test]
 fn only_a_request_sent_to_a_host_it_was_given_is_answered() {
-    let (_web, address) = a_web_over_the_tracker("web-hosts", &["beads.example.invalid"]);
+    let (_web, address) =
+        a_web_over_the_tracker("web-hosts", &["--allow-host", "beads.example.invalid"]);
     let (status, _) = get_from(&address, "dunwich.invalid", "/");
     assert_eq!(status, "HTTP/1.1 421 Misdirected Request");
     let (status, body) = get_from(&address, "beads.example.invalid:8080", "/");
@@ -211,6 +211,45 @@ fn the_forest_a_tracker_holds_is_answered_as_a_page() {
         body.contains("href=\"/arkham/dun-0tp?at=arkham%3Adun-0tp#shown\""),
         "the root's row opens it: {body}"
     );
+}
+
+/// A second project, whose tracker cannot be read, which the page says
+/// under its name wherever `bdi web` reads it.
+const A_SECOND_PROJECT: &str = "[[projects]]\nname = \"kadath\"\npath = \"/nonexistent/kadath\"\n";
+
+#[test]
+fn a_page_draws_only_the_projects_named_with_project() {
+    let home = a_home_naming_one_project_settled("web-projects", A_SECOND_PROJECT);
+    let (_web, address) = a_web_over(&home, THE_DESCRIBED_SUBTREE, &[]);
+    let (_, every) = get(&address, "/");
+    assert!(every.contains("kadath"), "{every}");
+    drop(_web);
+    let (_web, address) = a_web_over(&home, THE_DESCRIBED_SUBTREE, &["--project", "arkham"]);
+    let (status, named) = get(&address, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(named.contains(THE_ROOT.1), "{named}");
+    assert!(!named.contains("kadath"), "{named}");
+}
+
+#[test]
+fn under_ready_a_bare_address_opens_in_the_ready_list() {
+    let (_web, address) = a_web_over_the_tracker("web-ready", &["--ready"]);
+    let (status, body) = get(&address, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(body.contains("<a class=\"ready on\""), "{body}");
+    let (_, trees) = get(&address, "/?ready=0");
+    assert!(trees.contains("<a class=\"ready\""), "{trees}");
+}
+
+#[test]
+fn a_bead_named_on_the_command_line_roots_a_bare_address_at_it() {
+    let named = format!("arkham:{}", A_BEAD_BENEATH.0);
+    let (_web, address) = a_web_over_the_tracker("web-root", &[&named]);
+    let (status, body) = get(&address, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(body.contains("<p class=\"rooted\">"), "{body}");
+    let (_, whole) = get(&address, "/?root=");
+    assert!(!whole.contains("<p class=\"rooted\">"), "{whole}");
 }
 
 #[test]

@@ -14,7 +14,7 @@
 //! for. Each is put on the forest by the forest's own action, before the
 //! folds, so the page draws what the terminal draws after the same keys.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::iter;
 
 use crate::model::join::BeadKey;
@@ -39,6 +39,9 @@ const VIEW: &str = "view";
 const READY: &str = "ready";
 const ONLY: &str = "1";
 
+/// The value `READY` says the trees with, on a page whose start is a list.
+const TREES: &str = "0";
+
 /// The query keys naming the list of the beads to check and the list of the
 /// beads left to do, each said with the value `ONLY`, and the one project a
 /// list keeps to.
@@ -46,7 +49,8 @@ const CHECK: &str = "check";
 const LEFT: &str = "left";
 const PROJECT: &str = "project";
 
-/// The query key naming the bead the forest is drawn with as its only root.
+/// The query key naming the bead the forest is drawn with as its only root,
+/// and with no bead, every tree, on a page whose start is rooted.
 const ROOT: &str = "root";
 
 /// The query keys holding what was searched for, and which way a step
@@ -61,6 +65,28 @@ const BACK: &str = "back";
 /// link to a bead ends in, so the page it opens is scrolled to the bead.
 pub const SHOWN: &str = "shown";
 
+/// What a page shows where its address does not say: the list and the beads
+/// `bdi web` was started on, as the terminal view starts on them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Start {
+    /// The list drawn in place of the trees, where one is.
+    pub list: Option<List>,
+    /// The beads the forest is drawn with as its only roots.
+    pub roots: Vec<BeadKey>,
+}
+
+/// What the forest is drawn with as its only roots.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Root {
+    /// The beads the page starts on, or every tree where it starts on none.
+    #[default]
+    AsStarted,
+    /// Every tree.
+    Whole,
+    /// The bead at this place.
+    At(Place),
+}
+
 /// What a request asks the page to show.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Asked {
@@ -73,11 +99,15 @@ pub struct Asked {
     pub place: Option<Place>,
     /// The list drawn in place of the trees, where one is.
     pub list: Option<List>,
-    /// The bead the forest is drawn with as its only root, where it is.
-    pub root: Option<Place>,
+    /// Whether `list` is the start's, the address naming none.
+    pub list_from_start: bool,
+    /// What the forest is drawn with as its only roots.
+    pub root: Root,
     /// What was searched for, where a page asks for a search's answer
     /// rather than for a bead.
     pub find: Option<Find>,
+    /// What the page shows where its address does not say.
+    pub start: Start,
 }
 
 /// A search a page asks for: the text, and whether the page steps on from
@@ -131,13 +161,20 @@ pub fn addressable(project: &str) -> bool {
 }
 
 impl Asked {
-    /// What a request for `target`, a path and its query, asks for: the
-    /// forest at `/`, and one bead at its [`address`]. Nothing where no page
-    /// is at that address.
+    /// What a request for `target` asks for of a `bdi web` started on
+    /// nothing.
+    #[cfg(test)]
     pub fn of(target: &str) -> Option<Self> {
+        Self::started_on(target, &Start::default())
+    }
+
+    /// What a request for `target`, a path and its query, asks for: the
+    /// forest at `/`, and one bead at its [`address`], each as `start` says
+    /// where the address does not. Nothing where no page is at that address.
+    pub fn started_on(target: &str, start: &Start) -> Option<Self> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
-        let (mut folds, mut place, mut root) = (Vec::new(), None, None);
-        let (mut view, mut ready, mut find, mut step) = (None, false, None, None);
+        let (mut folds, mut place, mut root) = (Vec::new(), None, Root::AsStarted);
+        let (mut view, mut ready, mut find, mut step) = (None, None, None, None);
         let (mut check, mut left, mut project) = (false, false, None);
         for pair in query.split('&') {
             let Some((key, value)) = pair.split_once('=') else {
@@ -163,7 +200,7 @@ impl Asked {
                     continue;
                 }
                 READY => {
-                    ready = value == ONLY;
+                    ready = Some(value == ONLY);
                     continue;
                 }
                 CHECK => {
@@ -179,7 +216,7 @@ impl Asked {
                     continue;
                 }
                 ROOT => {
-                    root = unplaced(&value);
+                    root = unplaced(&value).map_or(Root::Whole, Root::At);
                     continue;
                 }
                 FIND => {
@@ -206,17 +243,21 @@ impl Asked {
             }),
             _ => return None,
         };
+        let list_named = check || left || view.is_some() || ready.is_some();
         Some(Self {
             bead,
             folds,
             place,
             list: match (check, left, project) {
+                _ if !list_named => start.list.clone(),
                 (true, _, project) => Some(List::ToCheck { project }),
                 (false, true, Some(project)) => Some(List::LeftToDo { project }),
-                _ => listed(view, ready),
+                _ => listed(view, ready.unwrap_or_default()),
             },
+            list_from_start: !list_named && start.list.is_some(),
             root,
             find: find.map(|text| Find { text, step }),
+            start: start.clone(),
         })
     }
 
@@ -227,13 +268,77 @@ impl Asked {
     /// A fold naming a line the forest no longer draws is passed over, as a
     /// refresh passes over a fold on a line that has gone, and is still
     /// carried on.
+    ///
+    /// A bead's address is how anything that knows the bead links to it, so
+    /// where what this took from the start leaves the bead out, the start
+    /// gives way as little as shows the bead: its list, then its roots, then
+    /// both. Where none of that shows it, the page stays as the start draws
+    /// it.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
+        let shown = self.drawn(snapshot, layout);
+        let unstarted = self.without_the_starts_list().without_the_starts_roots();
+        let held = |key: &BeadKey| shown.forest.snapshot().node(key).is_some();
+        if shown.bead != Some(false) || unstarted == *self || !self.bead.as_ref().is_some_and(held)
+        {
+            return shown;
+        }
+        let mut tried = self.clone();
+        // ponytail: the forest is flattened again for each thing the start
+        // gives way; undo the start on the first one if these pages come to
+        // cost too much.
+        let wider = [
+            self.without_the_starts_list(),
+            self.without_the_starts_roots(),
+            unstarted,
+        ];
+        for wider in wider {
+            if wider == *self || wider == tried {
+                continue;
+            }
+            let found = wider.drawn(shown.forest.snapshot().clone(), layout);
+            if found.bead == Some(true) {
+                return found;
+            }
+            tried = wider;
+        }
+        shown
+    }
+
+    /// This with the list it took from the start put back to the trees.
+    fn without_the_starts_list(&self) -> Self {
+        Self {
+            list: self.list.clone().filter(|_| !self.list_from_start),
+            list_from_start: false,
+            ..self.clone()
+        }
+    }
+
+    /// This with the roots it took from the start put back to every tree.
+    fn without_the_starts_roots(&self) -> Self {
+        let root = match &self.root {
+            Root::AsStarted if !self.start.roots.is_empty() => Root::Whole,
+            root => root.clone(),
+        };
+        Self {
+            root,
+            ..self.clone()
+        }
+    }
+
+    /// [`Asked::forest`], with nothing taken from the start given way.
+    fn drawn(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
         let mut forest = flatten(snapshot);
         forest.laid_out_to(layout.clone());
-        if let Some(root) = &self.root {
-            if forest.go_to_place(root) {
-                forest.apply(Action::FocusForest);
+        match &self.root {
+            Root::At(root) => {
+                if forest.go_to_place(root) {
+                    forest.apply(Action::FocusForest);
+                }
             }
+            Root::AsStarted if !self.start.roots.is_empty() => {
+                forest.focus_when_drawn(self.start.roots.clone());
+            }
+            Root::AsStarted | Root::Whole => {}
         }
         if self.list.is_some() {
             forest.draw_list(self.list.clone());
@@ -387,7 +492,7 @@ impl Asked {
     /// only root, or drawn whole where it is none.
     pub fn rooting(&self, root: Option<&Place>) -> String {
         let rooted = Self {
-            root: root.cloned(),
+            root: root.cloned().map_or(Root::Whole, Root::At),
             ..self.clone()
         };
         match &self.bead {
@@ -414,18 +519,37 @@ impl Asked {
     /// so its answer keeps them and counts from the copy, as the terminal's
     /// search counts from the selection.
     pub fn carried(&self, place: Option<&Place>) -> Vec<(&'static str, String)> {
-        let list = self.list.as_ref();
+        // The start's own list is left to the start, so a page reached from
+        // it still gives way where the list would leave its bead out.
+        let started = self.list_from_start && self.list == self.start.list;
+        let list = self.list.as_ref().filter(|_| !started);
         let folds = self.folds.iter().map(|fold| {
             let key = if fold.open { OPEN } else { SHUT };
             (key, fold.name.clone())
         });
+        let trees_over_a_start = !started && list.is_none() && self.start.list.is_some();
+        let root = match &self.root {
+            Root::At(root) => Some(placed(root)),
+            Root::Whole if !self.start.roots.is_empty() => Some(String::new()),
+            Root::AsStarted | Root::Whole => None,
+        };
         folds
             .chain(view_of(list).map(|name| (VIEW, name.to_string())))
             .chain(only_ready(list).then(|| (READY, ONLY.to_string())))
+            .chain(trees_over_a_start.then(|| (READY, TREES.to_string())))
             .chain(kept_to_a_project(list))
-            .chain(self.root.as_ref().map(|root| (ROOT, placed(root))))
+            .chain(root.map(|root| (ROOT, root)))
             .chain(place.map(|place| (AT, placed(place))))
             .collect()
+    }
+
+    /// The beads the forest is asked to be drawn with as its only roots.
+    pub fn roots(&self) -> BTreeSet<BeadKey> {
+        match &self.root {
+            Root::AsStarted => self.start.roots.iter().cloned().collect(),
+            Root::Whole => BTreeSet::new(),
+            Root::At(place) => BTreeSet::from([place.key().clone()]),
+        }
     }
 
     /// The query carrying this page's folds, list and root, and the copy
