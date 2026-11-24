@@ -1940,17 +1940,30 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// page, drawn once.
 /// The part of the page's script that draws a span's short form where its
 /// whole form would be cut, as the terminal's row does. It shows every whole
-/// form, then shortens each span in turn from the end of its line, while the
-/// span or its line overflows. A badge in the state is cut by its line rather
-/// than by its own box, because the state never shrinks. It runs on load,
-/// whenever the page's size changes, and after each redraw, which puts every
-/// whole form back.
+/// form, then shortens in passes. Each pass shortens every span that
+/// overflows its own box, and the last whole span of each line that
+/// overflows, so a line gives up its spans from its end. A badge in the state
+/// is cut by its line rather than by its own box, because the state never
+/// shrinks. A pass measures every line before it changes any, so the page is
+/// laid out once a pass rather than once a span. It runs on load, whenever
+/// the page's size changes, and after each redraw, which puts every whole
+/// form back.
 const SHORTENS: &str = r##"const shorten = () => {
-  const shortening = [...document.querySelectorAll(".shortens")];
-  for (const said of shortening) said.classList.remove("short");
-  for (const said of shortening.reverse()) {
-    const line = said.closest(".line") ?? said;
-    if (said.scrollWidth > said.clientWidth || line.scrollWidth > line.clientWidth) said.classList.add("short");
+  let whole = [...document.querySelectorAll(".shortens")];
+  for (const said of whole) said.classList.remove("short");
+  whole.reverse();
+  while (whole.length) {
+    const cut = new Set(whole.filter((said) => said.scrollWidth > said.clientWidth));
+    const lines = new Set();
+    for (const said of whole) {
+      const line = said.closest(".line");
+      if (!line || lines.has(line)) continue;
+      lines.add(line);
+      if (line.scrollWidth > line.clientWidth) cut.add(said);
+    }
+    if (!cut.size) return;
+    for (const said of cut) said.classList.add("short");
+    whole = whole.filter((said) => !cut.has(said));
   }
 };
 addEventListener("DOMContentLoaded", () => new ResizeObserver(shorten).observe(document.body));
@@ -4964,8 +4977,8 @@ mod tests {
     /// A badge with a short form carries both, its whole form first, and
     /// the page's script draws the short one where the whole would be cut:
     /// it measures the badge with the whole form shown and swaps where the
-    /// badge or its line overflows, on load, on every redraw and whenever the
-    /// page's size changes.
+    /// badge overflows, or its line does and nothing after it on the line is
+    /// whole, on load, on every redraw and whenever the page's size changes.
     #[test]
     fn a_badge_with_a_short_form_carries_both_and_the_page_shows_the_one_that_fits() {
         let mut snapshot = ground();
@@ -4993,10 +5006,11 @@ mod tests {
             "{STYLE}"
         );
         for said in [
-            "for (const said of shortening) said.classList.remove(\"short\");",
-            "for (const said of shortening.reverse()) {",
-            "if (said.scrollWidth > said.clientWidth || line.scrollWidth > line.clientWidth) \
-             said.classList.add(\"short\");",
+            "for (const said of whole) said.classList.remove(\"short\");",
+            "whole.reverse();",
+            "const cut = new Set(whole.filter((said) => said.scrollWidth > said.clientWidth));",
+            "if (line.scrollWidth > line.clientWidth) cut.add(said);",
+            "for (const said of cut) said.classList.add(\"short\");",
             "new ResizeObserver(shorten).observe(document.body)",
         ] {
             assert!(SHORTENS.contains(said), "{SHORTENS}");
