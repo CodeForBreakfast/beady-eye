@@ -18,12 +18,13 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
+use crate::model::watching::Watching;
 use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
-use crate::view::row::{Cell, Layout, Progress, WARNING};
-use crate::view::show::{Prose, Tied, Ties};
+use crate::view::row::{agent_doing, Cell, Layout, Progress, WARNING};
+use crate::view::show::{Page, Prose, Tied, Ties};
 use crate::view::{palette, phrase, show, Freshness, Said};
 
 use super::bead::{elided_run, referenced_line};
@@ -780,9 +781,9 @@ impl Drawing<'_> {
         html.push_str(if linked { "</a>" } else { "</span>" });
     }
 
-    /// The bead the selection is on, as the terminal's bead view draws it,
-    /// but for its own fields, which a grid says where the head's rows end,
-    /// its prose, which reads as its author wrote it rather than in the
+    /// The bead the selection is on: its head, then its facts as a grid of
+    /// named cells where the terminal has the rows under its head, its
+    /// prose, which reads as its author wrote it rather than in the
     /// terminal's rows, and each section that names beads, which is a list
     /// with a reference to each bead it names.
     fn bead_view(&self, html: &mut String, node: &Node, offset: FixedOffset) {
@@ -805,7 +806,7 @@ impl Drawing<'_> {
             .collect();
 
         html.push_str("<div class=\"page\"><div class=\"head\">");
-        self.head(html, node, page.blocked_by.is_some());
+        self.head(html, node, &page);
         html.push_str("</div>");
         let listed_from = page.tied.first().map_or(page.rows.len(), |tied| tied.from);
         // The grid and the prose are blocks, so the row after either already
@@ -816,18 +817,11 @@ impl Drawing<'_> {
             .iter()
             .enumerate()
             .take(listed_from)
-            .skip(page.head)
+            .skip(page.sections)
         {
             if at == page.sections {
                 self.fields(html, node, offset);
                 on_a_fresh_line = true;
-            }
-            if page.blocked_by == Some(at)
-                || page.fields.contains(&at)
-                || page.flags.contains(&at)
-                || page.watchers_unknown == Some(at)
-            {
-                continue;
             }
             if let Some((rows, prose)) = page.prose.iter().find(|(rows, _)| rows.contains(&at)) {
                 if rows.start == at {
@@ -905,7 +899,8 @@ impl Drawing<'_> {
     }
 
     /// The bead's own fields as a grid of named cells, each a place an edit
-    /// control can take over, with its labels as pills under it. A field the
+    /// control can take over, with the agent on it and who watches it, as
+    /// its row names them, and its labels as pills under it. A field the
     /// bead has no value for has no cell, but for its priority and type,
     /// which every bead has. A date is the day it falls on at `offset`, with
     /// the instant in full on hover.
@@ -933,6 +928,26 @@ impl Drawing<'_> {
         cell(html, field::TYPE, &node.issue_type);
         if let Some(assignee) = &node.assignee {
             cell(html, field::ASSIGNEE, assignee);
+        }
+        if let Some(agent) = &node.agent {
+            cell(html, field::AGENT, &agent_doing(agent));
+        }
+        if let Watching::Known { agents, unreported } = &node.watching {
+            let mut watchers: Vec<String> = agents.iter().map(phrase::watcher).collect();
+            if *unreported > 0 {
+                watchers.push(phrase::unnamed_watchers(*unreported, !agents.is_empty()));
+            }
+            if !watchers.is_empty() {
+                html.push_str(&format!(
+                    "<div><dt>{}</dt><dd>{}</dd></div>",
+                    escaped(field::WATCHED_BY),
+                    watchers
+                        .iter()
+                        .map(|watcher| escaped(watcher))
+                        .collect::<Vec<_>>()
+                        .join("<br>")
+                ));
+            }
         }
         if let Some(Progress { finished, total }) = show::fraction(self.forest) {
             html.push_str(&format!("<div><dt>{}</dt><dd>", escaped(field::PROGRESS)));
@@ -963,11 +978,12 @@ impl Drawing<'_> {
         }
     }
 
-    /// The head of the bead's page: its status in words beside its id, its
-    /// title as the page's heading, where it is `blocked`, a band naming
-    /// each bead it waits on, and where a rule flags it, an amber box saying
-    /// so as its row does.
-    fn head(&self, html: &mut String, node: &Node, blocked: bool) {
+    /// The head of the bead's page: its status in words beside its id, with
+    /// a pill saying it is ready where it is and a pill for each of its
+    /// badges, its title as the page's heading, where it is blocked, a band
+    /// naming each bead it waits on, and where a rule flags it, an amber box
+    /// saying so as its row does.
+    fn head(&self, html: &mut String, node: &Node, page: &Page) {
         html.push_str(&format!(
             "<p class=\"state\"><span class=\"status{}\">",
             drawn_mark(&node.status).map_or_else(String::new, |mark| format!(" {mark}"))
@@ -975,12 +991,22 @@ impl Drawing<'_> {
         let glyph = show::named(node, Vec::new()).glyph();
         mark(html, &node.status, &glyph, false);
         html.push_str(&format!(
-            " {}</span> <span class=\"id\">{}</span></p><h2>{}</h2>",
+            " {}</span> <span class=\"id\">{}</span>",
             escaped(&phrase::status_said(&node.status)),
             escaped(&node.id),
-            escaped(&node.title)
         ));
-        if blocked {
+        if node.ready {
+            html.push_str(&format!(
+                " <span class=\"pill\">{}</span>",
+                escaped(phrase::ready())
+            ));
+        }
+        if let Some(at) = page.badges {
+            let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
+            spans(html, &page.rows[at], Block::Identity, marks, 0);
+        }
+        html.push_str(&format!("</p><h2>{}</h2>", escaped(&node.title)));
+        if page.blocked_by.is_some() {
             self.waits(html, node);
         }
         if let Some(flag) = phrase::flag(&node.anomalies) {
@@ -3676,17 +3702,18 @@ mod tests {
         }
     }
 
-    /// Under its head and down to its lists of related beads, the bead view
-    /// on the page is the terminal's, row for row. The page leaves out the
-    /// row saying what the bead is blocked by, because the head's band says
-    /// it, the rows saying the bead's own fields, because its grid says
-    /// them, the rows flagging it, because the head's amber box says them,
-    /// and the row saying no watcher answered. Its description and its notes
-    /// are each a section of prose where
-    /// the terminal has their rows, its heading and the blank over it among
+    /// The page draws none of the terminal's rows under the bead's head,
+    /// because its head and its grid say all of them: what it waits on, its
+    /// flags, its readiness, its badges, its fields, its agent and who
+    /// watches it. From the grid down to its lists of related beads, the
+    /// bead view on the page is the terminal's, row for row. Its
+    /// description and its notes are each a section of prose where the
+    /// terminal has their rows, its heading and the blank over it among
     /// them, and a section stands on lines of its own.
     #[test]
     fn the_bead_view_draws_the_terminals_rows_down_to_its_related_beads() {
+        use crate::model::watching::WatchingAgent;
+        use crate::view::draw::tests::a_pane;
         const PROSE_BLOCK: &str = "¶";
         let described = || {
             with_the_bead_changed(|bead| {
@@ -3694,6 +3721,18 @@ mod tests {
                     "Read smt-4kd3p.8 first.",
                     "Both settings are in.",
                 );
+                bead.ready = true;
+                bead.agent = Some(a_pane());
+                bead.watching = Watching::Known {
+                    agents: vec![WatchingAgent {
+                        agent: "claude".to_string(),
+                        display_agent: Some("dunwich desk".to_string()),
+                        caption: None,
+                    }],
+                    unreported: 1,
+                };
+                bead.badges = vec![a_badge()];
+                bead.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
             })
         };
         let html = page_of(described(), &address(&key("smt-4kd3p.6")));
@@ -3703,11 +3742,8 @@ mod tests {
         let lists = view
             .find("<section class=\"tied\">")
             .expect("the bead names beads");
-        let mut under_head = format!(
-            "{}{}",
-            &view[element_end(view, head)..grid],
-            &view[element_end(view, grid)..lists]
-        );
+        assert_eq!(view[element_end(view, head)..grid].trim(), "", "{view}");
+        let mut under_head = view[element_end(view, grid)..lists].to_string();
         while let Some(prose) = under_head.find("<section class=\"written\">") {
             let end = element_end(&under_head, prose);
             under_head.replace_range(prose..end, &format!("\n{PROSE_BLOCK}\n"));
@@ -3730,19 +3766,12 @@ mod tests {
             usize::MAX,
             &|related| show::followable(&forest, related),
         );
-        let blocked_by = said.blocked_by.expect("the bead says what blocks it");
         let terminal_rows: Vec<String> = said
             .rows
             .iter()
             .enumerate()
             .take(said.tied[0].from)
-            .skip(said.head)
-            .filter(|(at, _)| {
-                *at != blocked_by
-                    && !said.fields.contains(at)
-                    && !said.flags.contains(at)
-                    && said.watchers_unknown != Some(*at)
-            })
+            .skip(said.sections)
             .filter_map(
                 |(at, row)| match said.prose.iter().find(|(rows, _)| rows.contains(&at)) {
                     Some((rows, _)) => (rows.start == at).then(|| PROSE_BLOCK.to_string()),
@@ -4053,6 +4082,110 @@ mod tests {
         })
     }
 
+    /// A badge as a config draws one, linked where it points.
+    fn a_badge() -> crate::model::badges::Badged {
+        crate::model::badges::Badged {
+            key: "pr".to_string(),
+            text: "⇢ #12".to_string(),
+            short: None,
+            link: Some("https://example.invalid/dunwich/12".to_string()),
+            colour: None,
+            drawn_on: crate::config::DrawnOn::Own,
+        }
+    }
+
+    /// A ready bead's state line says so in a pill after its id, and each
+    /// of its badges is a pill after that, linked where the badge points.
+    /// Each pill is a word of the line's text, apart from what comes before
+    /// it, as it is apart on the screen.
+    #[test]
+    fn a_beads_state_line_says_it_is_ready_and_holds_its_badges() {
+        let next = crate::model::badges::Badged {
+            text: "⇢ #13".to_string(),
+            link: Some("https://example.invalid/dunwich/13".to_string()),
+            ..a_badge()
+        };
+        let badged = with_the_bead_changed(|bead| {
+            bead.ready = true;
+            bead.badges = vec![a_badge(), next.clone()];
+        });
+        let html = page_of(badged, &address(&key("smt-4kd3p.6")));
+        let state = inside(inside(&html, "head"), "state");
+        assert_eq!(
+            parts(state).0[1..],
+            ["span.id", "span.pill", "a.pill", "a.pill"],
+            "{state}"
+        );
+        assert_eq!(text_of(inside(state, "pill")), phrase::ready());
+        for link in ["12", "13"] {
+            assert!(
+                state.contains(&format!("href=\"https://example.invalid/dunwich/{link}\"")),
+                "{state}"
+            );
+        }
+        let text = text_of(state);
+        for pill in [phrase::ready(), "⇢ #12", "⇢ #13"] {
+            let at = text.find(pill).expect("the line holds the pill");
+            assert!(text[..at].ends_with(char::is_whitespace), "{text:?}");
+        }
+    }
+
+    /// The agent on a bead and who watches it are cells of its grid, each
+    /// named as the bead's row names it but for the row's marks. Watchers
+    /// the page cannot name are counted after those it can.
+    #[test]
+    fn a_beads_agent_and_watchers_are_cells_of_its_grid() {
+        use crate::model::watching::WatchingAgent;
+        use crate::view::draw::tests::a_pane;
+        use phrase::field;
+
+        let watched = |agents: Vec<WatchingAgent>, unreported: usize| {
+            let snapshot = with_the_bead_changed(|bead| {
+                let mut agent = a_pane();
+                agent.title = Some("arkham desk".to_string());
+                bead.agent = Some(agent);
+                bead.watching = Watching::Known {
+                    agents: agents.clone(),
+                    unreported,
+                };
+            });
+            let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+            let aside = text_of(aside_of(&html));
+            for mark in [crate::view::row::AGENT, crate::view::row::WATCHED] {
+                assert!(!aside.contains(mark), "{aside}");
+            }
+            fields_of(&html)
+                .into_iter()
+                .filter(|(name, _)| [field::AGENT, field::WATCHED_BY].contains(&name.as_str()))
+                .collect::<Vec<_>>()
+        };
+        let cell = |name: &str, value: &str| (name.to_string(), value.to_string());
+        let desk = WatchingAgent {
+            agent: "claude".to_string(),
+            display_agent: Some("dunwich desk".to_string()),
+            caption: Some("idle".to_string()),
+        };
+
+        assert_eq!(
+            watched(vec![desk], 2),
+            [
+                cell(field::AGENT, "arkham desk · working"),
+                cell(field::WATCHED_BY, "dunwich desk · idle 2 more agents"),
+            ]
+        );
+        assert_eq!(
+            watched(Vec::new(), 1),
+            [
+                cell(field::AGENT, "arkham desk · working"),
+                cell(field::WATCHED_BY, "1 agent"),
+            ]
+        );
+        assert_eq!(
+            watched(Vec::new(), 0),
+            [cell(field::AGENT, "arkham desk · working")]
+        );
+    }
+
     /// Each cell of a bead page's grid, as its name and what it says.
     fn fields_of(html: &str) -> Vec<(String, String)> {
         let grid = inside(html, "fields");
@@ -4063,7 +4196,8 @@ mod tests {
             .skip(1)
             .map(|cell| {
                 let (name, value) = cell.split_once("</dt>").expect("a cell names itself");
-                (words(&text_of(name)), words(&text_of(value)))
+                let value = value.replace("<br>", " ");
+                (words(&text_of(name)), words(&text_of(&value)))
             })
             .collect()
     }
@@ -4361,7 +4495,8 @@ mod tests {
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
         let aside = &html[html.find("<aside>").expect("the bead view")..];
         assert!(!aside.contains("class=\"waits\""), "{aside}");
-        assert!(text_of(aside).lines().any(|line| line.trim() == "ready"));
+        let state = inside(inside(aside, "head"), "state");
+        assert_eq!(text_of(inside(state, "pill")), phrase::ready());
     }
 
     /// Every bead on every page is named by the one component: no bead's id

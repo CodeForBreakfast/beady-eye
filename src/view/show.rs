@@ -368,18 +368,10 @@ pub fn followable(forest: &Forest, related: &Related) -> bool {
 /// is drawn on.
 pub struct Page {
     pub rows: Vec<Vec<Span<'static>>>,
-    /// How many of the first rows the bead's own glyph, id and title take.
-    pub head: usize,
     /// The row that names the beads this one is blocked by, where it is.
     pub blocked_by: Option<usize>,
-    /// The rows that say the bead's own fields, each as the bead holds it:
-    /// its labels, its status, priority and type, who created it and who it is
-    /// assigned to, its dates, and its progress.
-    pub fields: Vec<usize>,
-    /// The rows that each say one anomaly rule that fired on the bead.
-    pub flags: Vec<usize>,
-    /// The row saying no watcher answered for the bead, where none did.
-    pub watchers_unknown: Option<usize>,
+    /// The row holding the bead's badges, where it has any.
+    pub badges: Option<usize>,
     /// The row the first section under the head starts on, which is the
     /// last row where the bead has no section.
     pub sections: usize,
@@ -616,10 +608,7 @@ pub fn said(
         row.extend(line);
         rows.push(row);
     }
-    let head = rows.len();
-    let mut fields = Vec::new();
     if !node.labels.is_empty() {
-        fields.push(rows.len());
         rows.push(indented(vec![Span::styled(
             node.labels.join(BETWEEN_LABELS),
             palette::QUIET,
@@ -632,7 +621,6 @@ pub fn said(
             .as_ref()
             .map(|assignee| format!("{ASSIGNEE} {assignee}")),
     );
-    fields.push(rows.len());
     rows.push(indented(vec![
         Span::styled(
             phrase::status_word(&cells.status),
@@ -646,16 +634,13 @@ pub fn said(
         rows.push(indented(vec![Span::raw(readiness)]));
     }
     for dates in dates(node) {
-        fields.push(rows.len());
         rows.push(indented(vec![Span::raw(dates)]));
     }
     if let Some(agent) = &cells.agent {
         rows.push(indented(vec![Span::styled(agent.clone(), palette::AGENT)]));
     }
-    let mut watchers_unknown = None;
     match &node.watching {
         Watching::Unknown => {
-            watchers_unknown = Some(rows.len());
             rows.push(indented(vec![Span::styled(
                 phrase::watches_unknown(),
                 palette::QUIET,
@@ -671,9 +656,7 @@ pub fn said(
             }
         }
     }
-    let mut flags = Vec::new();
     for anomaly in &cells.anomalies {
-        flags.push(rows.len());
         rows.push(indented(vec![Span::styled(
             row::anomaly_alone(anomaly),
             palette::ATTENTION,
@@ -692,12 +675,13 @@ pub fn said(
             badge_style(badge, &cells.status),
         ));
     }
+    let mut badged = None;
     if badges.len() > 1 {
+        badged = Some(rows.len());
         marks.insert(rows.len(), marked);
         rows.push(badges);
     }
     if let Some(progress) = cells.progress {
-        fields.push(rows.len());
         rows.push(indented(vec![Span::raw(done(
             progress.finished,
             progress.total,
@@ -782,11 +766,8 @@ pub fn said(
 
     Page {
         rows,
-        head,
         blocked_by,
-        fields,
-        flags,
-        watchers_unknown,
+        badges: badged,
         sections,
         related,
         tied: lists,
