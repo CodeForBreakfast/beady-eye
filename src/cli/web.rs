@@ -721,12 +721,13 @@ mod tests {
         let start = Utc::now();
         let (mut refresh, _socket) = refreshing_as(&cfg, Polling::AsConfigured);
         assert_eq!(due_by(&mut refresh, start), Some(Wanted::Everything));
-        let speaks_until = BTreeMap::from([(
-            "arkham".to_string(),
-            start + chrono::TimeDelta::minutes(2),
-        )]);
+        let speaks_until =
+            BTreeMap::from([("arkham".to_string(), start + chrono::TimeDelta::minutes(2))]);
         refresh.came_back(&["arkham".to_string()], &speaks_until, &[], start);
-        assert_eq!(due_by(&mut refresh, start + chrono::TimeDelta::minutes(1)), None);
+        assert_eq!(
+            due_by(&mut refresh, start + chrono::TimeDelta::minutes(1)),
+            None
+        );
         assert_eq!(
             due_by(&mut refresh, start + chrono::TimeDelta::minutes(2)),
             Some(Wanted::Project("arkham".to_string()))
@@ -754,7 +755,14 @@ mod tests {
     /// producers where the config says, and passing nothing on.
     fn refreshing_as(cfg: &Config, polling: Polling) -> (Refreshing, Option<Socket>) {
         let (told, heard) = mpsc::channel();
-        refreshing_for(cfg, polling, cfg.changes.socket.clone(), told, heard, |_| {})
+        refreshing_for(
+            cfg,
+            polling,
+            cfg.changes.socket.clone(),
+            told,
+            heard,
+            |_| {},
+        )
     }
 
     /// The read due by `at`, once the window any ask waits out is over.
@@ -777,7 +785,11 @@ mod tests {
         }
         refresh.take_heard(start + chrono::TimeDelta::seconds(1));
         let interval = chrono::TimeDelta::from_std(cfg.tui.refresh()).expect("an interval");
-        due_by(&mut refresh, start + interval + chrono::TimeDelta::seconds(2)).is_some()
+        due_by(
+            &mut refresh,
+            start + interval + chrono::TimeDelta::seconds(2),
+        )
+        .is_some()
     }
 
     /// Say `line` on the socket at `at` as a producer does, and hand back
@@ -787,9 +799,7 @@ mod tests {
         let mut to = std::os::unix::net::UnixStream::connect(at).expect("the socket takes it");
         writeln!(to, "{line}").expect("written");
         let mut answer = String::new();
-        BufReader::new(to)
-            .read_line(&mut answer)
-            .expect("answered");
+        BufReader::new(to).read_line(&mut answer).expect("answered");
         answer.trim_end().to_string()
     }
 
@@ -828,7 +838,11 @@ mod tests {
     fn a_project_that_leaves_poll_unset_stops_polling_once_a_producer_covers_it() {
         let cfg = arkham("", "", &a_socket("covered"));
         assert!(read_again(&cfg, Polling::AsConfigured, &[]));
-        assert!(!read_again(&cfg, Polling::AsConfigured, &["covered arkham"]));
+        assert!(!read_again(
+            &cfg,
+            Polling::AsConfigured,
+            &["covered arkham"]
+        ));
     }
 
     /// What a producer says on the socket is passed on to the watcher this
@@ -840,10 +854,16 @@ mod tests {
         let passed_on = Arc::new(Mutex::new(Vec::new()));
         let passing = Arc::clone(&passed_on);
         let (told, heard) = mpsc::channel();
-        let (mut refresh, _socket) =
-            refreshing_for(&cfg, Polling::AsConfigured, Some(socket.clone()), told, heard, move |heard| {
+        let (mut refresh, _socket) = refreshing_for(
+            &cfg,
+            Polling::AsConfigured,
+            Some(socket.clone()),
+            told,
+            heard,
+            move |heard| {
                 passing.lock().expect("held").push(heard.clone());
-            });
+            },
+        );
         assert_eq!(say(&socket, "arkham"), "ok arkham");
         assert_eq!(
             *passed_on.lock().expect("held"),
@@ -888,7 +908,10 @@ mod tests {
         at(62);
         assert_eq!(latest.now().lapsed, ["arkham"]);
         let page = drawn(&Asked::of("/").expect("the forest"), &latest.now(), &cfg).1;
-        assert!(page.contains("<span class=\"mark warn\">?</span>"), "{page}");
+        assert!(
+            page.contains("<span class=\"mark warn\">?</span>"),
+            "{page}"
+        );
     }
 
     /// A producer's report on the socket this run watches, the one the
@@ -945,7 +968,11 @@ mod tests {
 
     /// What `latest` holds once `holds` says so of a change after `seen`,
     /// and what a page drawn from it is drawn from.
-    fn held_once(latest: &Latest, seen: Option<DrawnFrom>, holds: impl Fn(&Held) -> bool) -> DrawnFrom {
+    fn held_once(
+        latest: &Latest,
+        seen: Option<DrawnFrom>,
+        holds: impl Fn(&Held) -> bool,
+    ) -> DrawnFrom {
         let until = Instant::now() + Duration::from_secs(10);
         let mut seen = seen;
         loop {
