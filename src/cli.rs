@@ -1767,6 +1767,17 @@ detached
     }
 
     #[test]
+    fn bdi_web_refuses_a_contradiction_as_the_view_does() {
+        for pair in [
+            &["--poll", "--no-poll"][..],
+            &["--all-projects", "--project", "ferry"],
+        ] {
+            let asked = [&["bdi", "web", "--listen", "127.0.0.1:0"][..], pair].concat();
+            assert!(Cli::try_parse_from(asked).is_err(), "{pair:?} was taken");
+        }
+    }
+
+    #[test]
     fn bdi_web_refuses_nothing_it_honours() {
         assert!(bdi_web_refuses(&["--config", "/etc/beady-eye.toml"]).is_empty());
     }
