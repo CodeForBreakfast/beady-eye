@@ -840,7 +840,9 @@ moved. It defaults to `$XDG_RUNTIME_DIR/beady-eye/changes.sock`, and a machine
 with no `$XDG_RUNTIME_DIR` has no channel until this names one. `--socket`
 overrides it for one run, which is how two `bdi` runs on one machine each get
 a channel. [Telling `bdi` where to watch](#telling-bdi-where-to-watch) has
-the whole of it.
+the whole of it. `bdi web` watches it as a view does, so a server with no
+`$XDG_RUNTIME_DIR`, such as a container, names a socket here or with
+`--socket` to hear producers.
 
 `covered_for_seconds` is how long a project that does not poll is taken to be
 current after its last read, or after the last `covered` line or heartbeat
@@ -1076,7 +1078,7 @@ A Dolt trigger, a git hook, a systemd path unit or a cron job comparing a head
 hash all work equally well; `bdi` provides the socket and cannot tell them apart.
 
 `--poll` and `--no-poll` override every project's `poll` setting for one run
-of a view or of `bdi gates`, which is how to find out whether a suspect
+of a view, of `bdi web` or of `bdi gates`, which is how to find out whether a suspect
 producer was the only thing wrong.
 
 ### Telling `bdi` where to watch

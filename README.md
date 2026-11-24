@@ -363,10 +363,12 @@ that knows a bead can link to it.
 It reads every configured project, through the watcher where one runs.
 `--project <name>`, given once for each, reads only the projects named, as it
 does for the view, so a page can show one tracker without a second config
-file. `--all-projects` reads every project, as no flag does here. It asks no
-agent provider, so it shows no agents and no pane, and it draws every tree.
-That is what `--all` asks of the view, so `--all` is taken and changes
-nothing.
+file. `--all-projects` reads every project, as no flag does here. It keeps
+each project current as the view does: it polls as `poll`, `--poll` and
+`--no-poll` say, and hears producers on the socket `[changes]` or `--socket`
+names. It asks no agent provider, so it shows no agents and no pane, and it
+draws every tree. That is what `--all` asks of the view, so `--all` is taken
+and changes nothing.
 
 ```console
 $ bdi web --listen 127.0.0.1:8080 --project arkham

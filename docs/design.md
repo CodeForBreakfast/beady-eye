@@ -4569,8 +4569,7 @@ ignored, and is not refused as unknown. `--json`, `--beads` and the options
 that narrow `--beads` are refused for good, because `bdi web` serves a page
 rather than printing. Every other option is refused only until `bdi web`
 honours it. Two options that contradict each other, such as `--poll` and
-`--no-poll`, are still refused as a contradiction, as they will be once
-`bdi web` honours both.
+`--no-poll`, are refused as a contradiction, as the view refuses them.
 
 **A page dates its reads by the clock.** The terminal says how long ago a
 project was read, because it redraws as the age moves. A page with no script,
@@ -4626,10 +4625,13 @@ it last heard once it is shown.
 **It reads as a view reads, and asks no agent provider.** It runs where no
 herdr does, so it draws no agent, no pane and no tail, and every tree is
 drawn. It reads every configured project, through the watcher where one
-answers, again as the watcher says each changed or as a deferral it held
-back comes due, and each project that polls again `refresh_seconds` after the
-interval's last reads. A project set `poll = false` is never read again on
-the interval.
+answers, and keeps each current as the terminal does. Each project polls as
+`poll`, `--poll` and `--no-poll` say, a producer is heard on the socket
+`[changes]` or `--socket` names and passed on to the watcher, and a covered
+project stands its poll down. A project that does not poll is drawn lapsed once
+nothing has vouched for it for `covered_for_seconds`. The watcher's change source
+and `bdi web` drive one loop for this, `app::Refreshing`, over the same `Reading`
+and `Outstanding` the terminal's loop drives.
 A page drawn while a read is out marks the project as being read, and marks it
 as no longer answering once the read has been out for
 `unanswered_after_seconds`, over the rows the last read left. The page

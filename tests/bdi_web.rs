@@ -47,8 +47,15 @@ impl Drop for Web {
 }
 
 /// `bdi web` over `tracker` given `args`, on a port the system picks, and
-/// the address it says it is answering on.
-fn bdi_web(home: &Path, tracker: &ShimmedTracker, args: &[&str]) -> (Web, String) {
+/// the address it says it is answering on. A machine with no runtime
+/// directory has no socket a producer or a watcher could be found on unless
+/// the config names one.
+fn bdi_web(
+    home: &Path,
+    tracker: &ShimmedTracker,
+    args: &[&str],
+    runtime_dir: Option<&Path>,
+) -> (Web, String) {
     let spawned_by = std::process::id();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
     command
@@ -59,7 +66,8 @@ fn bdi_web(home: &Path, tracker: &ShimmedTracker, args: &[&str]) -> (Web, String
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DOLT_PASSWORD")
         .env_remove("BDI_PROJECT")
-        .env("XDG_RUNTIME_DIR", home)
+        .env_remove("XDG_RUNTIME_DIR")
+        .envs(runtime_dir.map(|dir| ("XDG_RUNTIME_DIR", dir)))
         .envs(tracker.environment())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -145,13 +153,35 @@ fn a_web_over(home: &Path, beads: &str, args: &[&str]) -> (Web, String) {
 fn serving(home: &Path, beads: &str, args: &[&str]) -> (Web, String, ShimmedTracker) {
     let tracker = ShimmedTracker::beside(home);
     tracker.holds(beads);
-    let (web, address) = bdi_web(home, &tracker, args);
+    let (web, address) = bdi_web(home, &tracker, args, Some(home));
+    until_it_has_read(&address);
+    (web, address, tracker)
+}
+
+/// Wait until the `bdi web` at `address` has read the tracker.
+fn until_it_has_read(address: &str) {
     let giving_up = Instant::now() + GIVING_UP;
-    while get(&address, "/healthz").0 != "HTTP/1.1 200 OK" {
+    while get(address, "/healthz").0 != "HTTP/1.1 200 OK" {
         assert!(Instant::now() < giving_up, "bdi web never read the tracker");
         std::thread::sleep(Duration::from_millis(20));
     }
-    (web, address, tracker)
+}
+
+/// A server with nowhere a producer or a watcher could be found, such as a
+/// container, still keeps the page current by polling, so it stays up.
+#[test]
+fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
+    let home = a_home_naming_one_project("web-no-socket");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let (mut web, address) = bdi_web(&home, &tracker, &[], None);
+    until_it_has_read(&address);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        web.0.try_wait().expect("bdi web can be asked").is_none(),
+        "bdi web stopped once it had read"
+    );
+    assert_eq!(get(&address, "/").0, "HTTP/1.1 200 OK");
 }
 
 /// A page elsewhere that points a name of its own at the listener sends that

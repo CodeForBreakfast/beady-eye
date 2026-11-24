@@ -35,17 +35,14 @@ use super::{Collecting, Hearing, PassingOn};
 /// opens, so it is still on the primary screen when the view tears down, and
 /// it can be redirected to a file where a notice never can.
 ///
-/// A view refused because something holds the socket says nothing where a
-/// watcher answers. The watcher takes the socket from whatever holds it, so
-/// it is the holder or about to be, and the view reads through it: every
-/// change pushed there reaches this view, and nothing is polled.
+/// Which refusals are worth saying is
+/// `changes::opened_unless_a_watcher_holds_it`'s to decide.
 fn inbound(
     opened: Result<Socket, changes::Refused>,
     a_watcher_answers: impl FnOnce() -> bool,
 ) -> (Option<Socket>, Option<Notice>) {
-    match opened {
-        Ok(socket) => (Some(socket), None),
-        Err(changes::Refused::AlreadyWatching(_)) if a_watcher_answers() => (None, None),
+    match changes::opened_unless_a_watcher_holds_it(opened, a_watcher_answers) {
+        Ok(socket) => (socket, None),
         Err(refused) => {
             eprintln!("bdi: {refused}");
             (None, Some(said_at_the_foot(&refused)))
