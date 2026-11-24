@@ -1708,7 +1708,6 @@ detached
     /// Each of the view's arguments `bdi web` refuses, alone on its command
     /// line, and the one refusal it is given.
     const REFUSED_BY_BDI_WEB: &[(&[&str], &str)] = &[
-        (&["dun-7"], "BEAD-ID: bdi web cannot yet root its page at a bead named on its command line"),
         (&["--json"], "--json: bdi web serves a page rather than printing the snapshot"),
         (&["--beads"], "--beads: bdi web serves a page rather than printing each bead"),
         (&["--label", "human"], "--label: it narrows what --beads prints, and bdi web serves a page rather than printing"),
@@ -1716,11 +1715,20 @@ detached
         (&["--assignee", "alex"], "--assignee: it narrows what --beads prints, and bdi web serves a page rather than printing"),
         (&["--parent", "dun-7"], "--parent: it narrows what --beads prints, and bdi web serves a page rather than printing"),
         (&["--brief"], "--brief: it narrows what --beads prints, and bdi web serves a page rather than printing"),
-        (&["--all"], "--all: bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
-        (&["--ready"], "--ready: bdi web opens on the forest, and cannot yet open on the ready list"),
         (&["--poll"], "--poll: bdi web polls each project as its config says, and cannot yet be told to poll every one"),
         (&["--no-poll"], "--no-poll: bdi web polls each project as its config says, and cannot yet be told to poll none"),
         (&["--socket", "/run/bdi.sock"], "--socket: bdi web hears of moved work only through the watcher, and cannot yet take reports on a socket of its own"),
+    ];
+
+    /// Each of the view's arguments `bdi web` takes, alone on its command
+    /// line.
+    const HONOURED_BY_BDI_WEB: &[&[&str]] = &[
+        &["--config", "/etc/beady-eye.toml"],
+        &["--project", "ferry"],
+        &["--all-projects"],
+        &["--all"],
+        &["--ready"],
+        &["dun-7"],
     ];
 
     fn bdi_web(args: &[&str]) -> Cli {
@@ -1796,8 +1804,8 @@ detached
     #[test]
     fn bdi_web_names_every_refusal_at_once() {
         assert_eq!(
-            bdi_web_refuses(&["--json", "dun-7"]),
-            [REFUSED_BY_BDI_WEB[0].1, REFUSED_BY_BDI_WEB[1].1]
+            bdi_web_refuses(&["--json", "--poll"]),
+            [REFUSED_BY_BDI_WEB[0].1, REFUSED_BY_BDI_WEB[7].1]
         );
     }
 
@@ -1807,12 +1815,7 @@ detached
     fn bdi_web_refuses_the_printing_options_rather_than_their_conflicts() {
         assert_eq!(
             bdi_web_refuses(&["--beads", "--json", "--all", "--ready"]),
-            [
-                REFUSED_BY_BDI_WEB[1].1,
-                REFUSED_BY_BDI_WEB[2].1,
-                REFUSED_BY_BDI_WEB[8].1,
-                REFUSED_BY_BDI_WEB[9].1
-            ]
+            [REFUSED_BY_BDI_WEB[0].1, REFUSED_BY_BDI_WEB[1].1]
         );
     }
 
@@ -1829,13 +1832,16 @@ detached
 
     #[test]
     fn bdi_web_refuses_nothing_it_honours() {
-        for args in [
-            &["--config", "/etc/beady-eye.toml"][..],
-            &["--project", "ferry"],
-            &["--all-projects"],
-        ] {
+        for args in HONOURED_BY_BDI_WEB {
             assert!(bdi_web_refuses(args).is_empty(), "{args:?} was refused");
         }
+    }
+
+    /// `bdi web` asks no agent provider, so it draws every tree, which is
+    /// what `--all` asks of the view.
+    #[test]
+    fn bdi_web_draws_the_trees_the_view_draws_under_all() {
+        assert_eq!(web::EVERY_TREE, Cli::parse_from(["bdi", "--all"]).view.filter());
     }
 
     #[test]
@@ -1846,7 +1852,8 @@ detached
             .render_long_help()
             .to_string();
 
-        for (args, _) in REFUSED_BY_BDI_WEB {
+        let refused = REFUSED_BY_BDI_WEB.iter().map(|(args, _)| *args);
+        for args in refused.chain(HONOURED_BY_BDI_WEB.iter().copied()) {
             let named = if args[0].starts_with("--") {
                 args[0]
             } else {

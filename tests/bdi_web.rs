@@ -201,6 +201,27 @@ fn a_page_draws_only_the_projects_named_with_project() {
 }
 
 #[test]
+fn under_ready_a_bare_address_opens_in_the_ready_list() {
+    let (_web, address) = a_web_over_the_tracker("web-ready", &["--ready"]);
+    let (status, body) = get(&address, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(body.contains("<a class=\"ready on\""), "{body}");
+    let (_, trees) = get(&address, "/?ready=0");
+    assert!(trees.contains("<a class=\"ready\""), "{trees}");
+}
+
+#[test]
+fn a_bead_named_on_the_command_line_roots_a_bare_address_at_it() {
+    let named = format!("arkham:{}", A_BEAD_BENEATH.0);
+    let (_web, address) = a_web_over_the_tracker("web-root", &[&named]);
+    let (status, body) = get(&address, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(body.contains("<p class=\"rooted\">"), "{body}");
+    let (_, whole) = get(&address, "/?root=");
+    assert!(!whole.contains("<p class=\"rooted\">"), "{whole}");
+}
+
+#[test]
 fn a_beads_address_answers_with_that_bead_shown() {
     let (_web, address) = a_web_over_the_tracker("web-bead", &[]);
     let (status, body) = get(&address, &format!("/arkham/{}", A_BEAD_BENEATH.0));
