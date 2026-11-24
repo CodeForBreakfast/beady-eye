@@ -276,7 +276,11 @@ impl Asked {
     /// it.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
         let shown = self.drawn(snapshot, layout);
-        if shown.bead != Some(false) {
+        let held = self
+            .bead
+            .as_ref()
+            .is_some_and(|key| shown.forest.snapshot().node(key).is_some());
+        if shown.bead != Some(false) || !held {
             return shown;
         }
         let mut tried = self.clone();
