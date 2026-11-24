@@ -1690,6 +1690,7 @@ aside>p.missing{margin:4px 16px}\
 align-items:baseline;white-space:normal}\
 .line:not(.heading,.section){padding-block:6px;border-bottom:1px solid var(--line)}\
 .line:not(.heading,.section)>.left>.rails{align-self:stretch;margin-block:-6px}\
+.line:not(.heading,.section,:has(a.fold)){--arm:15px}\
 .line>:has(+.bead){grid-area:1/1/4/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
 .line>.left:has(>.rails){display:inline-flex;align-items:flex-start;max-width:100%}\
@@ -2903,14 +2904,18 @@ mod tests {
     /// or not it draws a bead: a shut run of finished beads, a blocker no
     /// tracker holds and a root that would not read are ruled off as a
     /// bead's row is, with the same room above and below its words and its
-    /// rails drawn through that room. Only the headings over the trees and
-    /// the ready list's sections draw their own edges.
+    /// rails drawn through that room. A line with no fold control meets its
+    /// rail as far below the rail's top as that room is tall, so its elbow
+    /// stays level with its words. Only the headings over the trees and the
+    /// ready list's sections draw their own edges.
     #[test]
     fn a_phone_tree_line_is_ruled_off_whatever_it_draws() {
         let phone = rules_under("(max-width:720px)");
         for rule in [
+            ".line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}",
             ".line:not(.heading,.section){padding-block:6px;border-bottom:1px solid var(--line)}",
             ".line:not(.heading,.section)>.left>.rails{align-self:stretch;margin-block:-6px}",
+            ".line:not(.heading,.section,:has(a.fold)){--arm:15px}",
         ] {
             assert!(phone.contains(rule), "{rule}");
         }
