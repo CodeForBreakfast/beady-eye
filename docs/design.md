@@ -4560,6 +4560,16 @@ forest does not draw is answered 404, with the forest and a line saying so.
 `bdi web` refuses to start for a project named `.`, `..` or nothing, because a
 browser drops such a segment from the path.
 
+**`bdi web` takes the view's options, and refuses by name each it does not
+honour, with the reason.** Graeme: there should be a good reason for any of
+bdi's regular options not to work with `bdi web`. An option is not taken and
+ignored, and is not refused as unknown. `--json`, `--beads` and the options
+that narrow `--beads` are refused for good, because `bdi web` serves a page
+rather than printing. Every other option is refused only until `bdi web`
+honours it. Two options that contradict each other, such as `--poll` and
+`--no-poll`, are still refused as a contradiction, as they will be once
+`bdi web` honours both.
+
 **A page dates its reads by the clock.** The terminal says how long ago a
 project was read, because it redraws as the age moves. A page with no script,
 or one whose connection has gone, would go on saying *30s ago*, so each

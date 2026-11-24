@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use clap::builder::Resettable;
 use clap::{Args, Parser, Subcommand};
 
 use crate::app::{
@@ -88,6 +89,18 @@ struct Cli {
     #[command(subcommand)]
     passing: Option<Passing>,
 
+    /// Read the configuration from this file, rather than
+    /// ~/.config/beady-eye/config.toml.
+    #[arg(long)]
+    config: Option<String>,
+
+    #[command(flatten)]
+    view: ViewOptions,
+}
+
+/// What the view is asked to read, draw or print.
+#[derive(Args)]
+struct ViewOptions {
     /// Start focused on this bead, as Shift+F on it would. Write it as
     /// <project>:<bead-id> where bdi is reading more than one project; a bare
     /// id means the one project being read. A bead under a project the
@@ -96,11 +109,6 @@ struct Cli {
     /// Under --beads, only each named bead's dependency tree is written.
     #[arg(value_name = "BEAD-ID")]
     beads: Vec<String>,
-
-    /// Read the configuration from this file, rather than
-    /// ~/.config/beady-eye/config.toml.
-    #[arg(long)]
-    config: Option<String>,
 
     /// Read only the projects named, repeating the option for each, from
     /// wherever bdi is started. The ones left out are not read at all,
@@ -179,6 +187,17 @@ struct Cli {
     socket: Option<PathBuf>,
 }
 
+impl ViewOptions {
+    /// Which trees are drawn.
+    fn filter(&self) -> Filter {
+        if self.all {
+            Filter::All
+        } else {
+            Filter::LiveAgents
+        }
+    }
+}
+
 /// A command `bdi` passes to bd rather than draws.
 #[derive(Subcommand)]
 enum Passing {
@@ -216,6 +235,18 @@ enum Passing {
     /// project's forest as a read-only web page, and each bead's own page at
     /// /<project>/<bead-id>. Trackers are read as the view reads them, through
     /// the watcher where one answers, and no agent provider is asked.
+    // Without these resets, a --beads filter given without --beads, or
+    // --json or --beads beside an option they conflict with, would be a parse
+    // error rather than a refusal.
+    #[command(
+        mut_arg("labels", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("issue_type", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("assignee", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("parent", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("brief", |arg| arg.requires(Resettable::Reset)),
+        mut_arg("each_bead", |arg| arg.conflicts_with(Resettable::Reset)),
+        mut_arg("ready", |arg| arg.conflicts_with(Resettable::Reset))
+    )]
     Web {
         /// The address to take requests on.
         #[arg(long, value_name = "ADDRESS")]
@@ -230,6 +261,11 @@ enum Passing {
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
         config: Option<String>,
+        #[command(
+            flatten,
+            next_help_heading = "The view's options, which bdi web refuses with a reason"
+        )]
+        view: ViewOptions,
     },
     /// Settle every configured project's gh:pr, gh:issue, gh:release, gh:run
     /// and timer gates, looking again every [gates] poll_seconds: close a gate
@@ -284,8 +320,8 @@ struct PollSwitch {
 /// it are told one path and the second is refused the channel. That is the
 /// normal case here rather than an edge — a run in a worktree beside a run in
 /// the checkout — and it is the whole of why a key alone would not do.
-fn told_where_to_watch(cli: &Cli, cfg: &Config) -> Option<PathBuf> {
-    cli.socket.clone().or_else(|| cfg.changes.socket.clone())
+fn told_where_to_watch(view: &ViewOptions, cfg: &Config) -> Option<PathBuf> {
+    view.socket.clone().or_else(|| cfg.changes.socket.clone())
 }
 
 /// What this run said about polling, over what its config says about each
@@ -337,13 +373,13 @@ enum Reading {
 }
 
 impl Reading {
-    fn asked_for(cli: &Cli) -> Self {
-        if cli.all_projects {
+    fn asked_for(view: &ViewOptions) -> Self {
+        if view.all_projects {
             Reading::EveryProject
-        } else if cli.projects.is_empty() {
+        } else if view.projects.is_empty() {
             Reading::WhereBdiWasStarted
         } else {
-            Reading::Named(cli.projects.clone())
+            Reading::Named(view.projects.clone())
         }
     }
 }
@@ -386,7 +422,15 @@ pub fn run() -> anyhow::Result<ExitCode> {
             listen,
             allow_hosts,
             config,
+            view,
         }) => {
+            let refused = web::refusals(view);
+            if !refused.is_empty() {
+                anyhow::bail!(
+                    "bdi web refuses what it cannot honour:\n{}",
+                    refused.join("\n")
+                );
+            }
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
             return web::web(&config, listen, web::Hosts(allow_hosts.clone()));
         }
@@ -408,7 +452,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         }
         None => {}
     }
-    if cli.each_bead && cli.ready && !cli.beads.is_empty() {
+    if cli.view.each_bead && cli.view.ready && !cli.view.beads.is_empty() {
         anyhow::bail!(
             "--beads with a bead named already lists the ready beads in its tree, \
              and --ready would list every tree's; leave out one or the other"
@@ -417,8 +461,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let launch = Launch {
         cwd: &cwd,
-        reading: Reading::asked_for(&cli),
-        roots: &cli.beads,
+        reading: Reading::asked_for(&cli.view),
+        roots: &cli.view.beads,
     };
     let Settled {
         config: mut cfg,
@@ -432,12 +476,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
         ),
     }?;
 
-    let filter = if cli.all {
-        Filter::All
-    } else {
-        Filter::LiveAgents
-    };
-    if cli.json {
+    let filter = cli.view.filter();
+    if cli.view.json {
         let mut snapshot = crate::app::run(
             &cfg,
             &herdr::Herdr::new(&RealRunner as &dyn Runner),
@@ -453,8 +493,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
         print_document(&serde_json::to_string_pretty(&snapshot)?)?;
         return Ok(ExitCode::SUCCESS);
     }
-    if cli.each_bead {
-        let only = only_asked_for(&cli, &cfg)?;
+    if cli.view.each_bead {
+        let only = only_asked_for(&cli.view, &cfg)?;
         let snapshot = read_for_each_bead(
             &cfg,
             where_this_machine_watches(&cfg).as_deref(),
@@ -464,10 +504,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
         );
         print_document(&beads_document(
             &snapshot,
-            cli.ready,
+            cli.view.ready,
             &cfg.roots.named_beads(),
             &only,
-            cli.brief,
+            cli.view.brief,
             &cfg.delivery,
         )?)?;
         return Ok(ExitCode::SUCCESS);
@@ -486,12 +526,12 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // Settled here, where the command line and the config are both in hand.
     // The socket is asked for once, so a config the reader writes later
     // cannot move it, and nothing below this line reads the path again.
-    let watching_at = changes::where_writers_find_bdi(told_where_to_watch(&cli, &cfg));
+    let watching_at = changes::where_writers_find_bdi(told_where_to_watch(&cli.view, &cfg));
     // Asked again whenever the reader writes a config, so the set of
     // projects that poll is the set the file names. The command line is what
     // it carries that a config cannot: `--poll` and `--no-poll` overrule
     // every project's own key, and they are settled here.
-    let arms = arming(Polling::asked_for(&cli.polling));
+    let arms = arming(Polling::asked_for(&cli.view.polling));
     // Built before the config goes to the collector, and holding a copy of
     // it: what a re-read is compared against is the config this run is
     // working to, and after this line the collector owns the only other one.
@@ -501,8 +541,8 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // split is decided and why.
     let reload = read_from.map(|path| {
         let cwd = cwd.clone();
-        let reading = Reading::asked_for(&cli);
-        let roots = cli.beads.clone();
+        let reading = Reading::asked_for(&cli.view);
+        let roots = cli.view.beads.clone();
         Reload::watching(
             path,
             CHECKED_EVERY,
@@ -546,7 +586,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     crate::tui::run(
         &started_on,
         filter,
-        cli.ready,
+        cli.view.ready,
         arms,
         agents,
         Hearing {
@@ -648,18 +688,18 @@ fn beads_document(
 }
 
 /// Which beads `bdi --beads` keeps, as its command line narrows them.
-fn only_asked_for(cli: &Cli, cfg: &Config) -> anyhow::Result<Only> {
+fn only_asked_for(view: &ViewOptions, cfg: &Config) -> anyhow::Result<Only> {
     Ok(Only {
-        labels: cli
+        labels: view
             .labels
             .iter()
             .map(|label| label.trim())
             .filter(|label| !label.is_empty())
             .map(str::to_string)
             .collect(),
-        issue_type: cli.issue_type.clone(),
-        assignee: cli.assignee.clone(),
-        beneath: cli
+        issue_type: view.issue_type.clone(),
+        assignee: view.assignee.clone(),
+        beneath: view
             .parent
             .as_deref()
             .map(|named| cfg.bead_read(named))
@@ -1543,20 +1583,20 @@ detached
     fn bead_ids_are_taken_as_arguments() {
         let cli = Cli::parse_from(["bdi", "dun-7", "ferry:fer-9", "--json"]);
 
-        assert_eq!(cli.beads, ["dun-7", "ferry:fer-9"]);
-        assert!(cli.json);
+        assert_eq!(cli.view.beads, ["dun-7", "ferry:fer-9"]);
+        assert!(cli.view.json);
     }
 
     #[test]
     fn the_projects_to_draw_are_taken_as_a_repeatable_option() {
         let cli = Cli::parse_from(["bdi", "--project", "dunwich", "--project", "ferry"]);
 
-        assert_eq!(cli.projects, ["dunwich", "ferry"]);
+        assert_eq!(cli.view.projects, ["dunwich", "ferry"]);
     }
 
     #[test]
     fn no_project_is_named_unless_one_is_asked_for() {
-        assert!(Cli::parse_from(["bdi"]).projects.is_empty());
+        assert!(Cli::parse_from(["bdi"]).view.projects.is_empty());
     }
 
     /// The run says nothing about which projects to read unless it is asked
@@ -1564,7 +1604,7 @@ detached
     #[test]
     fn a_run_that_names_no_project_leaves_it_to_the_directory() {
         assert_eq!(
-            Reading::asked_for(&Cli::parse_from(["bdi"])),
+            Reading::asked_for(&Cli::parse_from(["bdi"]).view),
             Reading::WhereBdiWasStarted
         );
     }
@@ -1572,11 +1612,11 @@ detached
     #[test]
     fn a_run_can_ask_for_every_project_or_name_the_ones_it_wants() {
         assert_eq!(
-            Reading::asked_for(&Cli::parse_from(["bdi", "--all-projects"])),
+            Reading::asked_for(&Cli::parse_from(["bdi", "--all-projects"]).view),
             Reading::EveryProject
         );
         assert_eq!(
-            Reading::asked_for(&Cli::parse_from(["bdi", "--project", "ferry"])),
+            Reading::asked_for(&Cli::parse_from(["bdi", "--project", "ferry"]).view),
             Reading::Named(vec!["ferry".to_string()])
         );
     }
@@ -1595,15 +1635,15 @@ detached
     fn all_is_the_filter_and_not_the_read_set() {
         let cli = Cli::parse_from(["bdi", "--all"]);
 
-        assert!(cli.all);
-        assert_eq!(Reading::asked_for(&cli), Reading::WhereBdiWasStarted);
+        assert!(cli.view.all);
+        assert_eq!(Reading::asked_for(&cli.view), Reading::WhereBdiWasStarted);
     }
 
     /// `--beads` is a document of its own rather than a way of drawing the
     /// forest, so the forest's options contradict it.
     #[test]
     fn beads_stands_apart_from_the_forests_options() {
-        assert!(Cli::parse_from(["bdi", "--beads"]).each_bead);
+        assert!(Cli::parse_from(["bdi", "--beads"]).view.each_bead);
         for forest in [&["--json"][..], &["--all"]] {
             let asked = [&["bdi", "--beads"][..], forest].concat();
             assert!(
@@ -1618,8 +1658,8 @@ detached
     #[test]
     fn beads_takes_the_beads_whose_dependencies_it_lists() {
         let cli = Cli::parse_from(["bdi", "--beads", "dun-7", "ferry:fer-9"]);
-        assert!(cli.each_bead);
-        assert_eq!(cli.beads, ["dun-7", "ferry:fer-9"]);
+        assert!(cli.view.each_bead);
+        assert_eq!(cli.view.beads, ["dun-7", "ferry:fer-9"]);
     }
 
     /// `--ready` is where the view starts, and a bead named beside it roots
@@ -1627,10 +1667,10 @@ detached
     /// it to list the ready list's beads.
     #[test]
     fn ready_starts_the_view_or_narrows_the_beads_document() {
-        assert!(Cli::parse_from(["bdi", "--ready", "dun-7"]).ready);
-        assert!(Cli::parse_from(["bdi", "--ready", "--all"]).ready);
+        assert!(Cli::parse_from(["bdi", "--ready", "dun-7"]).view.ready);
+        assert!(Cli::parse_from(["bdi", "--ready", "--all"]).view.ready);
         let listed = Cli::parse_from(["bdi", "--beads", "--ready"]);
-        assert!(listed.each_bead && listed.ready);
+        assert!(listed.view.each_bead && listed.view.ready);
         assert!(Cli::try_parse_from(["bdi", "--ready", "--json"]).is_err());
     }
 
@@ -1665,9 +1705,104 @@ detached
         assert!(Cli::try_parse_from(["bdi", "watch", "--poll"]).is_err());
     }
 
+    /// Each of the view's arguments `bdi web` refuses, alone on its command
+    /// line, and the one refusal it is given.
+    const REFUSED_BY_BDI_WEB: &[(&[&str], &str)] = &[
+        (&["dun-7"], "BEAD-ID: bdi web cannot yet root its page at a bead named on its command line"),
+        (&["--project", "ferry"], "--project: bdi web reads every configured project, and cannot yet read only the ones named"),
+        (&["--all-projects"], "--all-projects: bdi web reads every configured project already, and does not yet take the option that asks for it"),
+        (&["--json"], "--json: bdi web serves a page rather than printing the snapshot"),
+        (&["--beads"], "--beads: bdi web serves a page rather than printing each bead"),
+        (&["--label", "human"], "--label: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--type", "bug"], "--type: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--assignee", "alex"], "--assignee: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--parent", "dun-7"], "--parent: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--brief"], "--brief: it narrows what --beads prints, and bdi web serves a page rather than printing"),
+        (&["--all"], "--all: bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
+        (&["--ready"], "--ready: bdi web opens on the forest, and cannot yet open on the ready list"),
+        (&["--poll"], "--poll: bdi web polls each project as its config says, and cannot yet be told to poll every one"),
+        (&["--no-poll"], "--no-poll: bdi web polls each project as its config says, and cannot yet be told to poll none"),
+        (&["--socket", "/run/bdi.sock"], "--socket: bdi web hears of moved work only through the watcher, and cannot yet take reports on a socket of its own"),
+    ];
+
+    fn bdi_web_refuses(args: &[&str]) -> Vec<String> {
+        let cli = Cli::try_parse_from(["bdi", "web", "--listen", "127.0.0.1:0"].iter().chain(args))
+            .unwrap_or_else(|error| panic!("bdi web did not parse {args:?}: {error}"));
+        let Some(Passing::Web { view, .. }) = &cli.passing else {
+            panic!("bdi web parsed as something else");
+        };
+        web::refusals(view)
+    }
+
+    /// The view's options are parsed rather than unknown, each alone, so
+    /// that bdi web can say why it will not take one.
+    #[test]
+    fn bdi_web_refuses_each_of_the_views_arguments_with_its_reason() {
+        for (args, refusal) in REFUSED_BY_BDI_WEB {
+            assert_eq!(bdi_web_refuses(args), [*refusal], "for {args:?}");
+        }
+    }
+
+    #[test]
+    fn bdi_web_names_every_refusal_at_once() {
+        assert_eq!(
+            bdi_web_refuses(&["--json", "--project", "ferry"]),
+            [REFUSED_BY_BDI_WEB[1].1, REFUSED_BY_BDI_WEB[3].1]
+        );
+    }
+
+    /// `--json` and `--beads` contradict the view's other options only in
+    /// what they print, and bdi web prints nothing.
+    #[test]
+    fn bdi_web_refuses_the_printing_options_rather_than_their_conflicts() {
+        assert_eq!(
+            bdi_web_refuses(&["--beads", "--json", "--all", "--ready"]),
+            [
+                REFUSED_BY_BDI_WEB[3].1,
+                REFUSED_BY_BDI_WEB[4].1,
+                REFUSED_BY_BDI_WEB[10].1,
+                REFUSED_BY_BDI_WEB[11].1
+            ]
+        );
+    }
+
+    #[test]
+    fn bdi_web_refuses_a_contradiction_as_the_view_does() {
+        for pair in [
+            &["--poll", "--no-poll"][..],
+            &["--all-projects", "--project", "ferry"],
+        ] {
+            let asked = [&["bdi", "web", "--listen", "127.0.0.1:0"][..], pair].concat();
+            assert!(Cli::try_parse_from(asked).is_err(), "{pair:?} was taken");
+        }
+    }
+
+    #[test]
+    fn bdi_web_refuses_nothing_it_honours() {
+        assert!(bdi_web_refuses(&["--config", "/etc/beady-eye.toml"]).is_empty());
+    }
+
+    #[test]
+    fn bdi_web_help_lists_the_views_options() {
+        let help = Cli::command()
+            .find_subcommand_mut("web")
+            .expect("bdi has a web subcommand")
+            .render_long_help()
+            .to_string();
+
+        for (args, _) in REFUSED_BY_BDI_WEB {
+            let named = if args[0].starts_with("--") {
+                args[0]
+            } else {
+                "BEAD-ID"
+            };
+            assert!(help.contains(named), "bdi web --help leaves out {named}");
+        }
+    }
+
     fn the_view_polls(args: &[&str]) -> Polling {
         let cli = Cli::parse_from(["bdi"].iter().chain(args));
-        Polling::asked_for(&cli.polling)
+        Polling::asked_for(&cli.view.polling)
     }
 
     fn bdi_gates_polls(args: &[&str]) -> Polling {
@@ -1700,7 +1835,7 @@ detached
 
         assert_eq!(
             told_where_to_watch(
-                &Cli::parse_from(["bdi", "--socket", "/run/user/1000/second.sock"]),
+                &Cli::parse_from(["bdi", "--socket", "/run/user/1000/second.sock"]).view,
                 &configured
             ),
             Some(PathBuf::from("/run/user/1000/second.sock"))
@@ -1715,7 +1850,7 @@ detached
         let configured = a_config_watching(Some("/var/folders/T/bdi.sock"));
 
         assert_eq!(
-            told_where_to_watch(&Cli::parse_from(["bdi"]), &configured),
+            told_where_to_watch(&Cli::parse_from(["bdi"]).view, &configured),
             Some(PathBuf::from("/var/folders/T/bdi.sock"))
         );
     }
@@ -1725,7 +1860,7 @@ detached
     #[test]
     fn a_run_neither_told_nor_configured_is_told_nothing() {
         assert_eq!(
-            told_where_to_watch(&Cli::parse_from(["bdi"]), &a_config_watching(None)),
+            told_where_to_watch(&Cli::parse_from(["bdi"]).view, &a_config_watching(None)),
             None
         );
     }
@@ -2118,15 +2253,15 @@ kadath = ["kad-11"]
             asked: Mutex::default(),
         };
         let cli = Cli::try_parse_from([&["bdi", "--beads"][..], asked].concat())?;
-        let only = only_asked_for(&cli, &cfg)?;
+        let only = only_asked_for(&cli.view, &cfg)?;
 
         let snapshot = read_for_each_bead(&cfg, None, &tracker, None, noon());
         Ok(serde_json::from_str(&beads_document(
             &snapshot,
-            cli.ready,
+            cli.view.ready,
             &[],
             &only,
-            cli.brief,
+            cli.view.brief,
             &cfg.delivery,
         )?)?)
     }

@@ -31,7 +31,7 @@ use crate::view::address::{self, Asked};
 use crate::view::draw::html;
 use crate::view::phrase;
 
-use super::{read_config, where_this_machine_watches, Launch, Reading};
+use super::{read_config, where_this_machine_watches, Launch, Reading, ViewOptions};
 
 mod live;
 
@@ -198,6 +198,36 @@ fn name_of(host: &str) -> Option<&str> {
         None => rest.is_empty(),
     };
     (port_is_sound && !name.is_empty()).then_some(name)
+}
+
+/// Why `bdi web` will not take each of the view's arguments it was given,
+/// each named as `--help` names it. The refusals of `--json`, `--beads` and
+/// the options that narrow `--beads` are for good. The rest stand until
+/// `bdi web` honours the option.
+pub(super) fn refusals(view: &ViewOptions) -> Vec<String> {
+    const BEADS_PRINTS: &str =
+        "it narrows what --beads prints, and bdi web serves a page rather than printing";
+    [
+        (!view.beads.is_empty(), "BEAD-ID", "bdi web cannot yet root its page at a bead named on its command line"),
+        (!view.projects.is_empty(), "--project", "bdi web reads every configured project, and cannot yet read only the ones named"),
+        (view.all_projects, "--all-projects", "bdi web reads every configured project already, and does not yet take the option that asks for it"),
+        (view.json, "--json", "bdi web serves a page rather than printing the snapshot"),
+        (view.each_bead, "--beads", "bdi web serves a page rather than printing each bead"),
+        (!view.labels.is_empty(), "--label", BEADS_PRINTS),
+        (view.issue_type.is_some(), "--type", BEADS_PRINTS),
+        (view.assignee.is_some(), "--assignee", BEADS_PRINTS),
+        (view.parent.is_some(), "--parent", BEADS_PRINTS),
+        (view.brief, "--brief", BEADS_PRINTS),
+        (view.all, "--all", "bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
+        (view.ready, "--ready", "bdi web opens on the forest, and cannot yet open on the ready list"),
+        (view.polling.poll, "--poll", "bdi web polls each project as its config says, and cannot yet be told to poll every one"),
+        (view.polling.no_poll, "--no-poll", "bdi web polls each project as its config says, and cannot yet be told to poll none"),
+        (view.socket.is_some(), "--socket", "bdi web hears of moved work only through the watcher, and cannot yet take reports on a socket of its own"),
+    ]
+    .into_iter()
+    .filter(|(given, _, _)| *given)
+    .map(|(_, named, why)| format!("{named}: {why}"))
+    .collect()
 }
 
 /// Answer requests on `listen` until a signal ends the process, drawing each
