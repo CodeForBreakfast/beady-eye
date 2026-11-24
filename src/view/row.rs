@@ -417,7 +417,13 @@ pub fn abbreviate<'a>(id: &'a str, parent: Option<&str>) -> &'a str {
 /// this is and not about the work, and beside the caption would read as doubt
 /// about what the agent is doing.
 pub fn agent_marker(agent: &AgentRef) -> String {
-    named(agent, agent.title.as_deref().unwrap_or(&agent.pane.id))
+    format!("{AGENT} {}", agent_doing(agent))
+}
+
+/// A live agent as [`agent_marker`] says it, without the marker, for a page
+/// that names the agent under a label of its own.
+pub fn agent_doing(agent: &AgentRef) -> String {
+    doing(agent, agent.title.as_deref().unwrap_or(&agent.pane.id))
 }
 
 /// The same cell with the agent named by its pane rather than by its caption.
@@ -427,14 +433,11 @@ pub fn agent_marker(agent: &AgentRef) -> String {
 /// own title says the shorter of the two forms, so the caption is what a
 /// narrow row spends rather than the title of the bead it is a row for.
 pub fn agent_briefly(agent: &AgentRef) -> String {
-    named(agent, &agent.pane.id)
+    format!("{AGENT} {}", doing(agent, &agent.pane.id))
 }
 
-fn named(agent: &AgentRef, doing: &str) -> String {
-    let mut said = vec![
-        format!("{AGENT} {doing}"),
-        phrase::pane_state(&agent.pane_status),
-    ];
+fn doing(agent: &AgentRef, doing: &str) -> String {
+    let mut said = vec![doing.to_string(), phrase::pane_state(&agent.pane_status)];
     said.extend(phrase::join_caveat(agent.source).map(str::to_string));
     said.join(" · ")
 }
@@ -496,6 +499,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
         }
     }

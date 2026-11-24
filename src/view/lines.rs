@@ -314,15 +314,18 @@ impl GroupKind {
     /// its one line, so a reader has one place to look.
     pub const UNDER_A_PROJECT: [GroupKind; 2] = [GroupKind::HiddenTrees, GroupKind::Unattributed];
 
-    /// Whether what a group holds is live, which is what rests it open. A
-    /// count is not a view: a shut group over live panes says they exist and
-    /// nothing about which they are or what is on them. What collection and
-    /// the filter did is a report about the reading rather than work in
-    /// flight, and rests as the report it is.
-    pub(crate) fn live(self) -> bool {
+    /// Whether a group rests open. A count is not a view: a shut group over
+    /// live panes says they exist and nothing about which they are or what
+    /// is on them, and a shut group over projects that could not be read
+    /// hides the one thing a reader must not miss. What the filter held back
+    /// is the reader's own choice, and rests shut.
+    pub(crate) fn rests_open(self) -> bool {
         match self {
-            GroupKind::Unconfigured | GroupKind::Conflicts | GroupKind::Unattributed => true,
-            GroupKind::FailedProjects | GroupKind::HiddenTrees => false,
+            GroupKind::FailedProjects
+            | GroupKind::Unconfigured
+            | GroupKind::Conflicts
+            | GroupKind::Unattributed => true,
+            GroupKind::HiddenTrees => false,
         }
     }
 }

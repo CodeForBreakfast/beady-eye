@@ -18,20 +18,23 @@ use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
+use crate::model::watching::Watching;
 use crate::view::address::{line_name, Asked, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Mark, Marked};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
-use crate::view::markdown::Flow;
-use crate::view::row::{Cell, Layout, Progress, WARNING};
-use crate::view::{palette, phrase, show, Said};
+use crate::view::row::{agent_doing, Cell, Layout, Progress, WARNING};
+use crate::view::show::{Page, Prose, Tied, Ties};
+use crate::view::{palette, phrase, show, Freshness, Said};
 
 use super::bead::{elided_run, referenced_line};
 use super::foot::notices;
 use super::project::wants_attention;
 use super::{done, fitted, Reads, Reference};
 
-/// The columns the bead view wraps its prose at, which is what `bd show`
+mod prose;
+
+/// The columns the bead view's rows are laid out in, which is what `bd show`
 /// wraps at.
 const PROSE: usize = 80;
 
@@ -79,6 +82,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         |node| phrase::bead_page_title(&node.title),
     );
     let mut html = String::from("<body>");
+    let offset = drawn.offset;
     if shown.bead.is_none() {
         drawing.title(&mut html, drawn.at, drawn.offset);
     }
@@ -101,7 +105,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         match node {
             Some(node) => {
                 drawing.actions(&mut html, node);
-                drawing.bead_view(&mut html, node);
+                drawing.bead_view(&mut html, node, offset);
             }
             None => html.push_str(&format!(
                 "<p class=\"missing\">{}</p>",
@@ -375,7 +379,7 @@ impl Drawing<'_> {
         // A project's heading and the lines under it are one section, so the
         // heading sticks only while its own lines scroll.
         let mut in_project = false;
-        let mut folding = false;
+        let mut folding = self.across_projects() && self.folded_line(html, &reads, drawn.offset);
         for (at, line) in lines.viewport(0, lines.len()) {
             if in_project && line.depth == 0 {
                 html.push_str("</section>");
@@ -383,21 +387,26 @@ impl Drawing<'_> {
             }
             let heading = matches!(line.content, Content::Project(_));
             if folding && line.depth == 0 && !heading {
-                html.push_str("</details>");
+                self.unfolded_end(html, &reads, drawn.offset);
                 folding = false;
             }
             match &line.content {
                 // Counted in the top bar and the menu, which list those beads.
                 Content::Note(Note::ToCheck(_)) => {}
+                // Listed with what its tracker said once the headings end.
+                Content::Project(project) if folding && self.unread(&project.project) => {}
                 Content::Project(project) => {
-                    if !folding && self.across_projects() {
-                        self.folded_line(html, &reads, drawn.offset);
-                        folding = true;
-                    }
                     html.push_str("<section>");
                     in_project = true;
                     self.open_line(html, at, line, " heading", String::new());
                     self.heading(html, line, project, &reads, drawn.offset);
+                }
+                Content::Section { section, count } => {
+                    self.open_line(html, at, line, " section", String::new());
+                    html.push_str(&format!(
+                        "<h2>{}</h2></div>\n",
+                        escaped(&phrase::section(section, *count))
+                    ));
                 }
                 _ => self.forest_line(html, at, line, &reads),
             }
@@ -406,51 +415,83 @@ impl Drawing<'_> {
             html.push_str("</section>");
         }
         if folding {
-            html.push_str("</details>");
+            self.unfolded_end(html, &reads, drawn.offset);
         }
     }
 
     /// The one line a list across projects folds their headings into, which
-    /// opens to them: how many projects have no read gone badly and, once
-    /// every one of those has been read, when the oldest of them was, then
+    /// opens to them: how many projects there are and, once every one with
+    /// no read gone badly has been read, when the oldest of those was, then
     /// each project whose read went badly, named in the colour of a flag
     /// beside the mark its heading draws. A project whose first read is still
-    /// out is counted and holds the time back, as it does in the title.
-    fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) {
+    /// out holds the time back, as it does in the title. A project whose
+    /// tracker could not be read is named as one whose read went badly, from
+    /// its failure rather than any heading it keeps. Nothing is drawn, and
+    /// the answer is false, where there is no project to say anything of.
+    fn folded_line(&self, html: &mut String, reads: &Reads, offset: FixedOffset) -> bool {
         let lines = self.forest.lines();
         let (troubled, fresh): (Vec<_>, Vec<_>) = lines
             .viewport(0, lines.len())
             .filter_map(|(_, line)| match &line.content {
-                Content::Project(project) => Some((project, reads.of(project))),
+                Content::Project(project) if !self.unread(&project.project) => {
+                    Some((project, reads.of(project)))
+                }
                 _ => None,
             })
             .partition(|(_, how_fresh)| how_fresh.is_some_and(|fresh| wants_attention(fresh.mark)));
-        html.push_str("<details class=\"projects\"><summary>");
-        if !fresh.is_empty() {
-            html.push_str(&format!(
-                "<span class=\"fresh\">{}",
-                escaped(&phrase::projects(fresh.len()))
-            ));
-            let read: Option<Vec<_>> = fresh
-                .iter()
-                .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
-                .collect();
-            if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
-                read_time(html, oldest, offset, reads.now);
-            }
-            html.push_str("</span>");
+        let failed = &self.forest.snapshot().failed_projects;
+        if troubled.is_empty() && fresh.is_empty() && failed.is_empty() {
+            return false;
         }
+        html.push_str(&format!(
+            "<details class=\"projects\"><summary><span class=\"fresh\">{}",
+            escaped(&phrase::projects(
+                fresh.len() + troubled.len() + failed.len()
+            ))
+        ));
+        let read: Option<Vec<_>> = fresh
+            .iter()
+            .map(|(_, how_fresh)| how_fresh.and_then(|fresh| fresh.read_at))
+            .collect();
+        if let Some(oldest) = read.and_then(|read| read.into_iter().min()) {
+            read_time(html, oldest, offset, reads.now);
+        }
+        html.push_str("</span>");
+        let unread = failed
+            .iter()
+            .filter_map(|failed| Some((failed.project.as_str(), reads.of_failed(failed)?)));
         let troubled = troubled
             .into_iter()
-            .filter_map(|(project, how_fresh)| Some((project, how_fresh?)));
+            .filter_map(|(project, how_fresh)| Some((project.project.as_str(), how_fresh?)))
+            .chain(unread);
         for (project, how_fresh) in troubled {
-            html.push_str(&format!(
-                "<span class=\"flag\">{} {}</span>",
-                escaped(phrase::mark(how_fresh, reads.now)),
-                escaped(&project.project)
-            ));
+            html.push_str("<span class=\"flag\">");
+            freshness_mark(html, how_fresh, reads.now);
+            html.push_str(&format!(" {}</span>", escaped(project)));
         }
         html.push_str("</summary>");
+        true
+    }
+
+    /// What the folded line opens to after the headings, and the end of it:
+    /// each project whose tracker could not be read, drawn where its heading
+    /// would be, with the mark of a read that went badly and what its
+    /// tracker said in place of what it holds.
+    fn unfolded_end(&self, html: &mut String, reads: &Reads, offset: FixedOffset) {
+        for failed in &self.forest.snapshot().failed_projects {
+            html.push_str(&format!(
+                "<section><div class=\"line heading\"><span class=\"left\"><h2>{}</h2></span>",
+                escaped(&failed.project)
+            ));
+            if let Some(how_fresh) = reads.of_failed(failed) {
+                read_mark(html, how_fresh, reads.now, offset);
+            }
+            html.push_str(&format!(
+                "<span class=\"state\"><span class=\"flag unread\">{}</span></span></div>\n</section>",
+                escaped(&phrase::tracker_failure(&failed.tracker))
+            ));
+        }
+        html.push_str("</details>");
     }
 
     /// A line's opening tag, classed `kind` and styled `css`, and the anchor
@@ -490,21 +531,7 @@ impl Drawing<'_> {
         );
         html.push_str(&format!("<h2>{}</h2></span>", escaped(&project.project)));
         if let Some(how_fresh) = reads.of(project) {
-            let tone = if wants_attention(how_fresh.mark) {
-                " warn"
-            } else if how_fresh.mark == crate::view::Mark::Read {
-                " ok"
-            } else {
-                ""
-            };
-            html.push_str(&format!(
-                "<span class=\"read\"><span class=\"mark{tone}\">{}</span>",
-                escaped(phrase::mark(how_fresh, reads.now))
-            ));
-            if let Some(at) = how_fresh.read_at {
-                read_time(html, at, offset, reads.now);
-            }
-            html.push_str("</span>");
+            read_mark(html, how_fresh, reads.now, offset);
         }
         let counts = &project.counts;
         html.push_str("<span class=\"state\">");
@@ -532,13 +559,15 @@ impl Drawing<'_> {
             let to_check = Some(List::ToCheck {
                 project: Some(project.project.clone()),
             });
+            let said = escaped(&format!(
+                "{WARNING} {}",
+                phrase::anomalies_beneath(counts.anomalies)
+            ));
             html.push_str(&format!(
-                "<a class=\"flag\" href=\"{}\">{}</a>",
+                "<a class=\"flag\" href=\"{}\" title=\"{said}\" aria-label=\"{said}\" \
+                 data-briefly=\"{}\">{said}</a>",
                 escaped(&self.asked.listing(to_check)),
-                escaped(&format!(
-                    "{WARNING} {}",
-                    phrase::anomalies_beneath(counts.anomalies)
-                ))
+                escaped(&phrase::anomalies_beneath_briefly(counts.anomalies))
             ));
         }
         html.push_str("</span></div>\n");
@@ -655,6 +684,15 @@ impl Drawing<'_> {
         }
     }
 
+    /// Whether `project`'s tracker could not be read.
+    fn unread(&self, project: &str) -> bool {
+        self.forest
+            .snapshot()
+            .failed_projects
+            .iter()
+            .any(|failed| failed.project == project)
+    }
+
     /// Whether the lines are a list that draws beads of more than one
     /// project, with no heading over each project's rows.
     fn across_projects(&self) -> bool {
@@ -743,10 +781,12 @@ impl Drawing<'_> {
         html.push_str(if linked { "</a>" } else { "</span>" });
     }
 
-    /// The bead the selection is on, as the terminal's bead view draws it:
-    /// its head drawn as a reference to itself, and every bead it names drawn
-    /// as a reference to that bead.
-    fn bead_view(&self, html: &mut String, node: &Node) {
+    /// The bead the selection is on: its head, then its facts as a grid of
+    /// named cells where the terminal has the rows under its head, its
+    /// prose, which reads as its author wrote it rather than in the
+    /// terminal's rows, and each section that names beads, which is a list
+    /// with a reference to each bead it names.
+    fn bead_view(&self, html: &mut String, node: &Node, offset: FixedOffset) {
         let forest = self.forest;
         let mentioned = show::mentioned(forest, node);
         let followable = |related: &Related| show::followable(forest, related);
@@ -766,64 +806,184 @@ impl Drawing<'_> {
             .collect();
 
         html.push_str("<div class=\"page\"><div class=\"head\">");
-        self.head(html, node, page.blocked_by.is_some());
+        self.head(html, node, &page);
         html.push_str("</div>");
-        let mut in_prose = false;
-        for (at, row) in page.rows.iter().enumerate().skip(page.head) {
-            if page.blocked_by == Some(at) {
+        let listed_from = page.tied.first().map_or(page.rows.len(), |tied| tied.from);
+        // The grid and the prose are blocks, so the row after either already
+        // starts a line.
+        let mut on_a_fresh_line = false;
+        for (at, row) in page
+            .rows
+            .iter()
+            .enumerate()
+            .take(listed_from)
+            .skip(page.sections)
+        {
+            if at == page.sections {
+                self.fields(html, node, offset);
+                on_a_fresh_line = true;
+            }
+            if let Some((rows, prose)) = page.prose.iter().find(|(rows, _)| rows.contains(&at)) {
+                if rows.start == at {
+                    self.prose(html, node, *prose);
+                    on_a_fresh_line = true;
+                }
                 continue;
             }
             let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
-            // A row of prose starts with two spans: the indent the page gives
-            // it, and the lead or the hang the text gives it.
-            let (lead, rest) = row.split_at(row.len().min(2));
-            let flow = page.prose.get(&at);
-            // A row of prose broken from the one above only to fit the
-            // terminal's width keeps that break in an element of its own, so a
-            // page narrower than the terminal can let the prose flow.
-            if let Some(Flow::Joins(joint)) = flow {
-                html.push_str(joint);
-                html.push_str("<span class=\"w\">\n");
-                spans(html, lead, Block::Identity, marks, 0);
-                html.push_str("</span>");
-                spans(html, rest, Block::Identity, marks, lead.len());
-                continue;
+            if !std::mem::take(&mut on_a_fresh_line) {
+                html.push('\n');
             }
-            if std::mem::take(&mut in_prose) {
-                html.push_str("</span></span>");
-            }
+            spans(html, row, Block::Identity, marks, 0);
+        }
+        if page.sections == listed_from {
+            self.fields(html, node, offset);
+        } else if !on_a_fresh_line {
             html.push('\n');
-            // A line of prose is an element of its own, with what it starts
-            // with apart from its text, so a phone can set the text in a face
-            // of its own and hang every row of it under the text's start.
-            if let Some(Flow::Opens) = flow {
-                html.push_str("<span class=\"p\"><span class=\"lead\">");
-                spans(html, lead, Block::Identity, marks, 0);
-                html.push_str("</span><span class=\"t\">");
-                spans(html, rest, Block::Identity, marks, lead.len());
-                in_prose = true;
-            } else if let Some(related) = named.get(&at) {
-                let (arrow, rest) = row.split_at(row.len().min(2));
-                html.push_str("<span class=\"arrow\">");
-                spans(html, arrow, Block::Identity, &[], 0);
-                html.push_str("</span>");
-                if !self.related(html, related) {
-                    spans(html, rest, Block::Identity, &[], 0);
-                }
-            } else {
-                spans(html, row, Block::Identity, marks, 0);
-            }
         }
-        if in_prose {
-            html.push_str("</span></span>");
+        for tied in &page.tied {
+            self.tied(html, tied, &named);
         }
-        html.push_str("\n</div>");
+        html.push_str("</div>");
     }
 
-    /// The head of the bead's page: its status in words beside its id, its
-    /// title as the page's heading, and where it is `blocked`, a band naming
-    /// each bead it waits on.
-    fn head(&self, html: &mut String, node: &Node, blocked: bool) {
+    /// A section of the bead's page that names beads, as a list under its
+    /// name with a reference on each line. Its count is left out where the
+    /// beads are the parent, which a bead has one of.
+    fn tied(&self, html: &mut String, tied: &Tied, named: &HashMap<usize, &Related>) {
+        html.push_str(&format!(
+            "<section class=\"tied\"><h3>{}",
+            escaped(phrase::tied(tied.ties))
+        ));
+        if tied.ties != Ties::Parent {
+            html.push_str(&format!(
+                " <span class=\"count\">{}</span>",
+                tied.beads.len()
+            ));
+        }
+        html.push_str("</h3><ul role=\"list\">");
+        for related in tied.beads.clone().filter_map(|at| named.get(&at)) {
+            html.push_str("<li>");
+            if !self.related(html, related) {
+                html.push_str(&format!(
+                    "<span class=\"id\">{}</span> {}",
+                    escaped(&related.id),
+                    escaped(phrase::not_in_the_answer())
+                ));
+            }
+            html.push_str("</li>");
+        }
+        html.push_str("</ul></section>");
+    }
+
+    /// The section of the bead's page that holds its description or its
+    /// notes, as written prose under its name. A bead the prose names is
+    /// drawn as the reference that opens it.
+    fn prose(&self, html: &mut String, node: &Node, which: Prose) {
+        let text = match which {
+            Prose::Description => node.description(),
+            Prose::Notes => node.notes(),
+        }
+        .unwrap_or_default();
+        let named = |id: &str| {
+            let related = show::named_in(self.forest, node, id)?;
+            let mut reference = String::new();
+            self.related(&mut reference, &related).then_some(reference)
+        };
+        html.push_str(&format!(
+            "<section class=\"written\"><h3>{}</h3><div class=\"prose\">",
+            escaped(phrase::prose(which))
+        ));
+        html.push_str(&prose::written(&text, &named));
+        html.push_str("</div></section>");
+    }
+
+    /// The bead's own fields as a grid of named cells, each a place an edit
+    /// control can take over, with the agent on it and who watches it, as
+    /// its row names them, and its labels as pills under it. A field the
+    /// bead has no value for has no cell, but for its priority and type,
+    /// which every bead has. A date is the day it falls on at `offset`, with
+    /// the instant in full on hover.
+    fn fields(&self, html: &mut String, node: &Node, offset: FixedOffset) {
+        use phrase::field;
+        let cell = |html: &mut String, name: &str, value: &str| {
+            html.push_str(&format!(
+                "<div><dt>{}</dt><dd>{}</dd></div>",
+                escaped(name),
+                escaped(value)
+            ));
+        };
+        let date = |html: &mut String, name: &str, at: Option<DateTime<Utc>>| {
+            if let Some(at) = at {
+                html.push_str(&format!(
+                    "<div><dt>{}</dt><dd title=\"{}\">{}</dd></div>",
+                    escaped(name),
+                    escaped(&phrase::instant_in_full(at, offset)),
+                    escaped(&phrase::day(at, offset))
+                ));
+            }
+        };
+        html.push_str("<dl class=\"fields\">");
+        cell(html, field::PRIORITY, &phrase::priority(node.priority));
+        cell(html, field::TYPE, &node.issue_type);
+        if let Some(assignee) = &node.assignee {
+            cell(html, field::ASSIGNEE, assignee);
+        }
+        if let Some(agent) = &node.agent {
+            cell(html, field::AGENT, &agent_doing(agent));
+        }
+        if let Watching::Known { agents, unreported } = &node.watching {
+            let mut watchers: Vec<String> = agents.iter().map(phrase::watcher).collect();
+            if *unreported > 0 {
+                watchers.push(phrase::unnamed_watchers(*unreported, !agents.is_empty()));
+            }
+            if !watchers.is_empty() {
+                html.push_str(&format!(
+                    "<div><dt>{}</dt><dd>{}</dd></div>",
+                    escaped(field::WATCHED_BY),
+                    watchers
+                        .iter()
+                        .map(|watcher| escaped(watcher))
+                        .collect::<Vec<_>>()
+                        .join("<br>")
+                ));
+            }
+        }
+        if let Some(Progress { finished, total }) = show::fraction(self.forest) {
+            html.push_str(&format!("<div><dt>{}</dt><dd>", escaped(field::PROGRESS)));
+            progress(
+                html,
+                finished,
+                total,
+                &phrase::done_of(finished, total),
+                None,
+            );
+            html.push_str("</dd></div>");
+        }
+        date(html, field::CREATED, node.created_at);
+        date(html, field::UPDATED, node.updated_at);
+        if let Some(created_by) = &node.created_by {
+            cell(html, field::CREATED_BY, created_by);
+        }
+        date(html, field::STARTED, node.started_at);
+        date(html, field::CLOSED, node.closed_at);
+        date(html, field::DEFERRED_UNTIL, node.defer_until);
+        html.push_str("</dl>");
+        if !node.labels.is_empty() {
+            html.push_str("<p class=\"labels\">");
+            for label in &node.labels {
+                html.push_str(&format!("<span class=\"pill\">{}</span>", escaped(label)));
+            }
+            html.push_str("</p>");
+        }
+    }
+
+    /// The head of the bead's page: its status in words beside its id, with
+    /// a pill saying it is ready where it is and a pill for each of its
+    /// badges, its title as the page's heading, where it is blocked, a band
+    /// naming each bead it waits on, and where a rule flags it, an amber box
+    /// saying so as its row does.
+    fn head(&self, html: &mut String, node: &Node, page: &Page) {
         html.push_str(&format!(
             "<p class=\"state\"><span class=\"status{}\">",
             drawn_mark(&node.status).map_or_else(String::new, |mark| format!(" {mark}"))
@@ -831,13 +991,29 @@ impl Drawing<'_> {
         let glyph = show::named(node, Vec::new()).glyph();
         mark(html, &node.status, &glyph, false);
         html.push_str(&format!(
-            " {}</span> <span class=\"id\">{}</span></p><h2>{}</h2>",
+            " {}</span> <span class=\"id\">{}</span>",
             escaped(&phrase::status_said(&node.status)),
             escaped(&node.id),
-            escaped(&node.title)
         ));
-        if blocked {
+        if node.ready {
+            html.push_str(&format!(
+                " <span class=\"pill\">{}</span>",
+                escaped(phrase::ready())
+            ));
+        }
+        if let Some(at) = page.badges {
+            let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
+            spans(html, &page.rows[at], Block::Identity, marks, 0);
+        }
+        html.push_str(&format!("</p><h2>{}</h2>", escaped(&node.title)));
+        if page.blocked_by.is_some() {
             self.waits(html, node);
+        }
+        if let Some(flag) = phrase::flag(&node.anomalies) {
+            html.push_str(&format!(
+                "<p class=\"alert\">{}</p>",
+                escaped(&format!("{WARNING} {flag}"))
+            ));
         }
     }
 
@@ -1009,6 +1185,47 @@ fn menu_name(list: Option<&List>) -> String {
     }
 }
 
+/// The mark beside a project's name, then when it was read.
+fn read_mark(html: &mut String, how_fresh: Freshness, now: DateTime<Utc>, offset: FixedOffset) {
+    html.push_str("<span class=\"read\">");
+    freshness_mark(html, how_fresh, now);
+    if let Some(at) = how_fresh.read_at {
+        read_time(html, at, offset, now);
+    }
+    html.push_str("</span>");
+}
+
+/// How a project's read went, toned for it. A read outstanding is a ring the
+/// stylesheet turns, and held still once the read goes unanswered. The
+/// terminal turns its mark by drawing a frame from the clock, which a page
+/// drawn once cannot follow. Every read that has come back keeps the
+/// terminal's mark, which holds still.
+fn freshness_mark(html: &mut String, how_fresh: Freshness, now: DateTime<Utc>) {
+    use crate::view::Mark;
+    let tone = if wants_attention(how_fresh.mark) {
+        " warn"
+    } else if how_fresh.mark == Mark::Read {
+        " ok"
+    } else {
+        ""
+    };
+    let (ring, named) = match how_fresh.mark {
+        Mark::Collecting => (" reading", phrase::being_read()),
+        Mark::Unanswered => (" reading held", phrase::not_answering()),
+        Mark::Read | Mark::Refused | Mark::Lapsed => {
+            html.push_str(&format!(
+                "<span class=\"mark{tone}\">{}</span>",
+                escaped(phrase::mark(how_fresh, now))
+            ));
+            return;
+        }
+    };
+    html.push_str(&format!(
+        "<span class=\"mark{ring}{tone}\" role=\"img\" aria-label=\"{}\"></span>",
+        escaped(named)
+    ));
+}
+
 /// When something was read `at`, as the time of day in `offset`, which the
 /// page's script says as how long ago, and shows only once it is old enough
 /// to be news.
@@ -1157,7 +1374,7 @@ fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool)
     let said = if says_the_status {
         format!(
             " role=\"img\" aria-label=\"{}\"{}",
-            escaped(&phrase::status_word(status)),
+            escaped(&phrase::status_said(status)),
             styled(palette::css(glyph.style))
         )
     } else {
@@ -1219,16 +1436,25 @@ fn escaped(text: &str) -> String {
 /// Its colours are `palette::page_colours`. The type is three faces:
 /// `--body` for the page, `--display` for a heading, and `--code` for code.
 /// Each names its face first and falls back to the reader's own.
+///
+/// Text is set in five sizes, and every size the page sets names one of
+/// them: `--size-title` for a bead's title, `--size-heading` for a project's
+/// name, `--size-row` for a row, `--size-detail` for a detail and
+/// `--size-label` for a small capitals label. A phone sets a row at
+/// `--size-row-phone`. A search field is set at `--size-field` because iOS
+/// zooms the page into any field set smaller than 16 pixels.
 const STYLE: &str = "\
-:root{--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
+:root{--size-title:22px;--size-heading:15px;--size-row:14px;--size-detail:12.5px;--size-label:11.5px;\
+--size-row-phone:15.5px;--size-field:16px;\
+--chevron:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\");\
 --body:Inter,system-ui,-apple-system,\"Segoe UI\",sans-serif;\
 --display:\"Space Grotesk\",Inter,system-ui,sans-serif;\
 --code:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}\
 html{color-scheme:light dark}\
-body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}\
+body{margin:0;background:var(--surface);color:var(--fg);font:var(--size-row)/1.45 var(--body)}\
 body{display:flex;flex-direction:column;min-height:100dvh;box-sizing:border-box}main{flex:1 0 auto;align-content:start}\
 .code{font-family:var(--code)}\
-.code{font-size:.9em}.line .bead .code{font-size:inherit}\
+.code{font-size:var(--size-detail)}.line .bead .code{font-size:inherit}\
 main{display:grid;grid-template-columns:minmax(0,1fr)}\
 main.open{position:relative;grid-template-columns:minmax(0,1fr) 500px}\
 main.open::before{content:\"\";position:absolute;inset:0 0 0 auto;width:500px;box-sizing:border-box;\
@@ -1245,7 +1471,7 @@ position:relative}\
 .line>.more{display:flex;align-items:center;gap:8px;min-width:0;padding-left:2ch;overflow:hidden}\
 .line>.more>.pill{min-width:0;overflow:hidden;text-overflow:ellipsis}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
-.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 11.5px/18px var(--body);\
+.pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 var(--size-label)/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 #shown{position:absolute;top:0}\
@@ -1258,7 +1484,7 @@ border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:colo
 .line u::after{top:var(--arm,16px);width:10px;border-top-width:1.5px}\
 .line u.blocks::before,.line u.blocks::after{border-style:dashed;border-color:var(--faint)}\
 .line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after{content:\"\";flex:none;align-self:center;\
-width:28px;height:28px;font-size:13px;line-height:28px;text-align:center;color:var(--faint)}\
+width:28px;height:28px;font-size:var(--size-detail);line-height:28px;text-align:center;color:var(--faint)}\
 .line>.rails:has(>u.up):not(:has(>.fold))::after{content:\"\\2191\"}\
 .line :has(>a.fold){display:inline-flex;vertical-align:middle;font-size:0}\
 .line a.fold{flex:none;align-self:center;display:grid;place-items:center;width:28px;height:28px;\
@@ -1270,8 +1496,8 @@ box-sizing:border-box;border-radius:6px;color:var(--faint)}\
 .line a.fold:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 a{color:inherit;text-decoration:none}\
 a.bead:hover .title,a.close:hover{text-decoration:underline}\
-.bead .id{font:500 12px var(--body);color:var(--muted);letter-spacing:.01em}\
-.missing>.project,.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 11.5px/18px var(--body);color:var(--muted)}\
+.bead .id{font:500 var(--size-detail) var(--body);color:var(--muted);letter-spacing:.01em}\
+.missing>.project,.bead .project{padding:0 8px;border:1px solid var(--line);border-radius:999px;font:500 var(--size-label)/18px var(--body);color:var(--muted)}\
 aside{--tree:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 3h4M5 3v9h4M5 7.5h4'/><circle cx='11.5' cy='7.5' r='1.5'/><circle cx='11.5' cy='12' r='1.5'/></svg>\");\
 --copy:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='5' width='8' height='8' rx='1.5'/><path d='M3 10V4a1 1 0 011-1h6'/></svg>\");\
 --cross:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><path d='M4 4l8 8M12 4l-8 8'/></svg>\");\
@@ -1286,7 +1512,7 @@ aside>.close::before,.acts>::before{content:\"\";flex:none;width:16px;height:16p
 -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}\
 aside>.close::before{--icon:var(--cross)}.acts>.root::before{--icon:var(--tree)}.acts>.copy::before{--icon:var(--copy)}\
 .acts>*{display:inline-flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 10px;border:0;\
-border-radius:8px;background:none;color:var(--muted);font:500 13px var(--body);white-space:nowrap;cursor:pointer}\
+border-radius:8px;background:none;color:var(--muted);font:500 var(--size-detail) var(--body);white-space:nowrap;cursor:pointer}\
 .acts>:hover{background:var(--sunk);color:var(--fg)}\
 .acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
 aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
@@ -1297,39 +1523,78 @@ main.open .line .bead>.project{display:none}}\
 main.open:has(.page)>.forest{display:none}\
 aside{position:static;max-height:none;overflow:visible}aside>:is(.acts,.close){background:var(--surface)}}\
 .page{white-space:pre-wrap}\
-.page .w{display:none}\
-.page .p{display:inline-grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;\
-vertical-align:top;width:100%;white-space:normal}\
-.page .lead{white-space:pre}\
-.page .p .t{font-size:15px;line-height:1.5;overflow-wrap:anywhere}\
+.prose{white-space:normal;font-size:var(--size-row);line-height:1.5;overflow-wrap:anywhere}\
+.prose>*{margin:0 0 10px}.prose>:last-child{margin-bottom:0}\
+.prose :is(ul,ol){padding-left:22px}.prose li+li{margin-top:4px}\
+.prose h4{font:600 var(--size-heading) var(--display);line-height:1.4}\
+.prose blockquote{margin-inline:0;padding-left:12px;border-left:3px solid var(--rail);color:var(--muted)}\
+.prose pre{white-space:pre-wrap;padding:8px 10px;border-radius:6px;background:var(--sunk);border:1px solid var(--line)}\
+.prose :not(pre)>code{padding:1px 5px;border-radius:4px;background:var(--sunk);border:1px solid var(--line)}\
+.prose table{border-collapse:collapse;font-size:var(--size-detail)}\
+.prose :is(th,td){padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left}\
+.prose hr{border:0;border-top:1px solid var(--line)}\
+.prose a.link{color:var(--accent);text-decoration:underline;text-decoration-color:var(--rail);text-underline-offset:3px}\
+.prose a.address{display:inline-block;max-width:calc(100% - 1ch);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\
+vertical-align:bottom}\
+.page .prose .bead{display:inline;width:auto}.page .prose .bead>span:not([class]){display:inline}\
+.page .prose .bead .title{font-size:inherit;line-height:inherit;color:var(--accent)}.page .prose .bead .id{font-size:var(--size-detail)}\
 .page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
 .page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
-.page .head .state>.id,.waits>.id,.missing>.id{font:500 12.5px var(--body);color:var(--muted);letter-spacing:.01em}\
+.page .head .state>.id,.waits>.id,.missing>.id{font:500 var(--size-detail) var(--body);color:var(--muted);letter-spacing:.01em}\
 .status{--status:var(--muted);display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 8px;\
-border-radius:999px;font:600 12.5px var(--body);color:var(--fg);background:color-mix(in srgb,var(--status) 12%,transparent)}\
+border-radius:999px;font:600 var(--size-detail) var(--body);color:var(--fg);background:color-mix(in srgb,var(--status) 12%,transparent)}\
 .status>.g{color:var(--status)}\
 .status.open{--status:var(--status-open)}.status.in-progress{--status:var(--status-in-progress)}\
 .status.blocked{--status:var(--status-blocked)}.status.closed{--status:var(--status-closed)}\
 .status.deferred{--status:var(--status-deferred)}\
-.page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
+.page .head h2{margin:0;font:600 var(--size-title)/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
-.waits>p{margin:0;font:600 11.5px var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}\
+.waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2{font:600 var(--size-label) var(--body);letter-spacing:.07em;\
+text-transform:uppercase}\
+.line.section{min-height:0;padding-block:16px 6px}.line.section>h2{margin:0;color:var(--muted);white-space:normal}\
+.waits>p{margin:0;color:var(--muted)}\
+.page section{margin-top:18px;white-space:normal}\
+.page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}\
+.page .tied .count{font-weight:500;letter-spacing:0}\
+.page .tied ul{margin:0;padding:0;list-style:none;border:1px solid var(--line);border-radius:10px;overflow:hidden;\
+background:var(--surface)}\
+.page .tied li{padding:9px 12px}.page .tied li+li{border-top:1px solid var(--line)}\
+.page .tied .bead{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;align-items:baseline}\
+.page .tied .bead>span:not([class]){display:none}\
+.page .tied .bead .g{grid-area:1/1;align-self:start;margin-top:4px}\
+.page .tied .bead .title{grid-area:1/2;line-height:20px;overflow-wrap:anywhere}\
+.page .tied .bead .id{grid-area:1/3}\
+.fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;margin:14px 0 0;padding:14px 0;\
+border-block:1px solid var(--line);white-space:normal;font-family:var(--body)}\
+.fields>div{min-width:0}\
+.fields dt{color:var(--muted)}\
+.fields dd{margin:2px 0 0;font-size:var(--size-row);overflow-wrap:anywhere}\
+.labels{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;white-space:normal;color:var(--muted)}\
 footer .close{display:inline-block;margin-bottom:8px}\
 html{scroll-padding-top:44px}\
 .line.heading{position:sticky;top:0;z-index:2;align-items:center;flex-wrap:wrap;gap:4px 12px;width:auto;min-height:40px;\
-padding-block:4px;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:12.5px;color:var(--muted)}\
+padding-block:0;margin-bottom:4px;background:var(--sunk);border-block:1px solid var(--line);font-size:var(--size-detail);color:var(--muted)}\
 .forest>section:not(:first-child){margin-top:18px}\
-.heading .left{min-width:0}.heading h2{white-space:normal;overflow-wrap:anywhere}\
-.heading h2{display:inline;margin:0;font:600 15px var(--display);color:var(--fg)}\
-.heading .state{display:flex;flex:0 1 auto;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
+.heading .left{display:flex;align-items:center;flex:1000 1 5em;min-width:0;max-width:max-content}\
+.heading h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+.heading h2{display:inline;margin:0;font:600 var(--size-heading) var(--display);color:var(--fg)}\
+.heading .read{display:flex;align-items:center;flex:1 1 0}\
+.heading .read>[data-shown-once-older-than]{width:0;flex-grow:1;overflow:hidden;text-overflow:ellipsis;white-space:pre}\
+.heading .state{display:flex;flex:none;max-width:100%;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding-left:0}\
 .heading .read,.heading .state>*{white-space:nowrap}\
+.heading .state:has(>.unread){flex:0 1 auto}.heading .state>.unread{white-space:normal;overflow-wrap:anywhere}\
 .heading .state a:hover{text-decoration:underline}\
 .heading .state a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .mark.ok{color:var(--ok)}.mark.warn,.flag{color:var(--warn)}\
+.mark.reading{display:inline-block;box-sizing:border-box;width:10px;height:10px;border:1.75px solid currentColor;\
+border-top-color:transparent;border-radius:50%;vertical-align:-1px;animation:reading 1s linear 5}\
+.mark.reading.held{animation:none;border-style:dotted;border-top-color:currentColor}\
+@keyframes reading{to{transform:rotate(360deg)}}\
+@media (prefers-reduced-motion:reduce){.mark.reading{animation:none}}\
 .projects{border-bottom:1px solid var(--line)}\
 .projects>summary{list-style:none;cursor:pointer;display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;\
-min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:13px;color:var(--muted)}\
+min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:var(--size-detail);color:var(--muted)}\
 .projects>summary::-webkit-details-marker{display:none}\
 .projects .fresh{color:var(--fg);font-weight:600}.projects .fresh>span{color:var(--muted);font-weight:400}\
 .projects>summary::after{content:\"\";flex:none;width:13px;height:13px;margin-left:auto;background:var(--accent);\
@@ -1342,7 +1607,7 @@ min-height:40px;padding:4px 12px;box-sizing:border-box;font-size:13px;color:var(
 .prog .bar>span{display:block;height:100%;background:var(--ok)}\
 footer p,.missing{margin:0}\
 footer .said{padding:8px 12px;background:var(--surface)}\
-footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;\
+footer .notice{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:var(--size-detail);\
 background:var(--warn-soft);color:var(--warn);border-top:1px solid var(--line)}\
 nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3 3 7-7'/></svg>\");\
 --lens:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'><circle cx='7' cy='7' r='4.5'/><path d='M10.5 10.5L14 14'/></svg>\");\
@@ -1350,7 +1615,7 @@ nav{--tick:url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' view
 display:flex;align-items:center;gap:12px;min-height:56px;box-sizing:border-box;padding:0 20px;\
 border-bottom:1px solid var(--line);background:var(--surface)}\
 header.title{display:none}\
-nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 17px var(--display);white-space:nowrap}\
+nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;font:600 var(--size-heading) var(--display);white-space:nowrap}\
 nav .brand::before{content:\"\";width:20px;height:20px;box-sizing:border-box;border:2px solid var(--accent);border-radius:50%;\
 background:radial-gradient(circle,var(--accent) 3.5px,transparent 4px)}\
 .lists summary::after,.lists a::before,nav button::before{content:\"\";flex:none;background:currentColor;\
@@ -1370,16 +1635,15 @@ background:var(--raised);border:1px solid var(--line);border-radius:12px;box-sha
 .lists a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}\
 .lists a.on::before{background:currentColor}\
 .lists a:hover:not(.on){background:var(--sunk)}\
-.lists .count{flex:none;margin-left:auto;font-size:12.5px;font-weight:normal;color:var(--muted)}\
-.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);\
-font:600 11px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}\
+.lists .count{flex:none;margin-left:auto;font-size:var(--size-detail);font-weight:normal;color:var(--muted)}\
+.lists .hd{margin:6px 4px 0;padding:10px 6px 4px;border-top:1px solid var(--line);color:var(--muted)}\
 nav .ready{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:8px;font-weight:500;color:var(--muted)}\
 nav .ready::before{content:\"\";flex:none;width:30px;height:18px;border-radius:9px;\
 background:radial-gradient(circle at 9px 50%,var(--surface) 7px,transparent 7.5px),var(--rail)}\
 nav .ready.on{color:var(--fg)}\
 nav .ready.on::before{background:radial-gradient(circle at calc(100% - 9px) 50%,var(--surface) 7px,transparent 7.5px),var(--accent)}\
 nav .check{display:flex;align-items:center;height:30px;padding:0 11px;border-radius:999px;\
-background:var(--warn-soft);color:var(--warn);font-weight:600;font-size:13px;white-space:nowrap}\
+background:var(--warn-soft);color:var(--warn);font-weight:600;font-size:var(--size-detail);white-space:nowrap}\
 nav .check.on{box-shadow:inset 0 0 0 1.5px currentColor}\
 nav form{flex:0 1 320px;margin-left:auto;display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;\
 padding:0 12px;border-radius:8px;background:var(--sunk);color:var(--muted)}\
@@ -1396,23 +1660,25 @@ nav input::placeholder{color:var(--muted);opacity:1}\
 nav label span{display:none}\
 nav a:focus-visible,nav summary:focus-visible,nav button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
 .rooted,nav+.missing{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 20px;\
-border-bottom:1px solid var(--line);font-size:13.5px}\
+border-bottom:1px solid var(--line);font-size:var(--size-row)}\
 .rooted{flex-wrap:nowrap;white-space:nowrap;background:var(--accent-soft)}\
-.missing{background:var(--warn-soft);color:var(--warn)}aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
+.missing{background:var(--warn-soft);color:var(--warn)}\
+.page .alert{margin:0;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn)}\
+aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
 .rooted .said{color:var(--muted)}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
 .rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis}\
 .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
 .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 a.step:hover{text-decoration:underline}\
 @media (max-width:720px){header.title{display:flex;align-items:baseline;gap:10px;padding:14px 16px 6px}\
-header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display);overflow-wrap:anywhere}\
-header.title>span{font-size:12.5px;color:var(--muted);white-space:nowrap}\
+header.title h1{flex:1;min-width:0;margin:0;font:600 var(--size-title) var(--display);overflow-wrap:anywhere}\
+header.title>span{font-size:var(--size-detail);color:var(--muted);white-space:nowrap}\
 .rooted,nav+.missing{padding:9px 14px}.all::before{content:none}\
 body:has(main>aside)>nav{display:none}\
 main:has(>aside>.acts){align-content:stretch}\
 aside{align-self:stretch;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto}\
 aside>.close{grid-area:1/1;position:static;justify-self:start;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;gap:2px;min-height:44px;padding:8px 16px 0 8px;\
-border:0;background:none;font-size:16px;color:var(--accent)}\
+border:0;background:none;font-size:var(--size-row-phone);color:var(--accent)}\
 aside>.close::before{--icon:var(--chevron);width:20px;height:20px;transform:rotate(90deg)}\
 aside>.acts{grid-row:3;top:auto;bottom:0;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line)}\
@@ -1422,7 +1688,7 @@ aside>p.missing{margin:4px 16px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
-.line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
+.line>:has(+.bead){grid-area:1/1/4/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
 .line>.left:has(>.rails){display:inline-flex;align-items:flex-start;max-width:100%}\
 .line>.left>.rails+span{min-width:0}\
@@ -1430,23 +1696,29 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line i::before,.line u::before,.line u::after{left:10px}\
 .line>:has(+.bead):not(:has(>.fold))::after,.line .rails:not(:has(>.fold))::after\
 {align-self:flex-start;width:32px;height:20px;line-height:20px}\
-.line a.fold{align-self:flex-start;width:32px;height:44px}\
+.line a.fold{align-self:flex-start;width:32px;height:44px}.line.heading a.fold{align-self:center;height:38px}\
+.heading .prog .bar{display:none}\
+.heading a.flag{font-size:0}.heading a.flag::before{content:attr(data-briefly);font-size:var(--size-detail)}\
 .line>:has(+.bead)>a.fold{place-items:start center;padding-top:9px}\
 .line:has(>.left a.fold){--arm:22px}.line>.left:has(a.fold){align-items:center}\
 .line>:has(+.bead)::after{margin-top:6px}\
 .line>.bead{grid-area:1/2/3/-1;display:grid;grid:subgrid/subgrid;align-items:baseline}\
-.line .g{grid-area:1/1;align-self:start;font-size:14px;text-align:center}\
+.line .g{grid-area:1/1;align-self:start;font-size:var(--size-row);text-align:center}\
 .line .g:is(.open,.in-progress,.blocked,.closed,.deferred){margin-top:4px}\
-.line .title{grid-area:1/2/2/-1;min-width:10em;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
-.line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:12px}\
+.line .title{grid-area:1/2/2/-1;min-width:10em;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
+.line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:var(--size-detail)}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
-.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
-.line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
-.line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}.line>.bead~.state>.prog>.bar{display:none}\
-.line>.bead~.state>.flag{display:inline-block;vertical-align:top}\
-nav{order:1;position:sticky;bottom:0;z-index:2;min-height:0;gap:6px;\
+.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;max-width:calc(100% - 8px)}\
+.line>.more{grid-column:5;padding-left:2ch}\
+.line>.bead~.state{grid-column:6;min-width:0;margin-left:0;overflow-wrap:anywhere}\
+.line .pill,.line>.bead>.project{white-space:nowrap;box-sizing:border-box;overflow:clip;text-overflow:ellipsis}\
+.line .pill{max-width:100%}\
+.line>.bead>.project,.line>.more{min-width:0}\
+.line:has(>.more)>.bead~.state{grid-area:3/3/4/-1}\
+.line>.bead~.state>.flag{display:inline-block;vertical-align:top}.line .prog:empty{display:none}\
+nav{order:1;position:sticky;bottom:0;z-index:3;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
-font-size:13.5px}\
+font-size:var(--size-row)}\
 nav>*,nav>form{flex:1 1 0;min-width:0;margin:0}nav>.lists{flex-grow:1.3;position:static}nav>:is(.brand,.check){display:none}\
 .lists summary,nav>.ready,nav form{justify-content:center;gap:6px;height:48px;padding:0 4px;border:0;border-radius:10px;\
 background:none;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden}\
@@ -1470,26 +1742,27 @@ nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([v
 background:var(--surface);border-bottom:1px solid var(--line)}\
 html:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){scroll-padding-top:116px}body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))){padding-top:52px}\
 body:has(nav form:focus-within,nav input[type=search]:is(:not(:placeholder-shown),:not([value='']))) .line.heading{top:52px}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:16px;font-weight:normal}\
-footer a.step{display:inline-block;padding:0 10px;font-size:18px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) input{flex:1;width:auto;padding:7px 8px;border-radius:8px;text-align:left;background:var(--sunk);font-size:var(--size-field);font-weight:normal}\
+footer a.step{display:inline-block;padding:0 10px;font-size:var(--size-row-phone)}\
 footer .notice{padding:9px 16px}\
 html{scroll-padding-top:64px}.line.heading{gap:4px 10px;margin-bottom:0}\
-nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:16px}\
+nav:has(form:focus-within,input[type=search]:is(:not(:placeholder-shown),:not([value='']))) button{display:block;order:0;width:auto;height:auto;background:none;color:var(--accent);font-size:var(--size-row-phone)}\
 .lists>div{display:none}\
 .lists[open]>div{display:block;position:absolute;top:auto;left:0;right:0;bottom:100%;width:auto;padding:8px 10px 16px;\
 max-height:calc(100dvh - 74px - env(safe-area-inset-bottom));overflow-y:auto;border:0;border-radius:18px 18px 0 0}\
 .lists[open]>div::before{content:\"\";display:block;width:38px;height:5px;margin:2px auto 8px;border-radius:3px;background:var(--rail)}\
-.lists[open] a{padding:13px 12px;font-size:16px}\
+.lists[open] a{padding:13px 12px;font-size:var(--size-row-phone)}\
 .lists[open]>summary::before{content:\"\";position:fixed;inset:0;background:rgba(8,12,16,.42);cursor:default}\
 nav:has(.lists[open]) form{visibility:hidden}\
-.page .arrow{display:none}\
+.page .tied .bead{width:auto;grid-template-columns:12px minmax(0,1fr)}.page .tied .bead .id{grid-area:2/2}\
 .page .bead{display:inline-grid;grid-template-columns:1.6em minmax(0,1fr);vertical-align:top;\
 white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead>span:not([class]){display:none}\
-.page .bead .g{grid-area:1/1;font-size:14px;text-align:center}\
-.page .bead .title{grid-area:1/2;font-size:15px;line-height:1.35;overflow-wrap:anywhere}\
-.page .bead .id{grid-area:2/2;font-size:12px;font-family:var(--body)}\
-.waits>.bead{width:100%}}\
+.page .bead .g{grid-area:1/1;font-size:var(--size-row);text-align:center}\
+.page .bead .title{grid-area:1/2;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
+.page .bead .id{grid-area:2/2;font-size:var(--size-detail);font-family:var(--body)}\
+.waits>.bead{width:100%}.waits>.bead>.g{align-self:start;margin-top:4px}.waits>.bead>.title{line-height:20px}\
+.fields{grid-template-columns:repeat(2,minmax(0,1fr))}.prose{font-size:var(--size-row-phone)}}\
 :is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
 font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
@@ -1796,6 +2069,12 @@ mod tests {
         for bead in &mut beads[1..] {
             bead.parent = Some(root.clone());
         }
+        let mut children: Vec<Related> = beads[1..]
+            .iter()
+            .map(|bead| related(bead, Edge::ParentChild))
+            .collect();
+        children.sort_by(|a, b| a.id.cmp(&b.id));
+        beads[0].children = children;
         let link = |bead| Link {
             bead,
             edge: Edge::ParentChild,
@@ -2275,7 +2554,7 @@ mod tests {
         assert!(phone.contains("header.title{display:flex;"), "{phone}");
         assert!(
             phone.contains(
-                "header.title h1{flex:1;min-width:0;margin:0;font:600 18px var(--display)"
+                "header.title h1{flex:1;min-width:0;margin:0;font:600 var(--size-title) var(--display)"
             ),
             "{phone}"
         );
@@ -2734,9 +3013,104 @@ mod tests {
         let asked = Asked::of("/").expect("the forest");
         let html = page(ground(), &Layout::default(), &asked, drawn).html;
         assert!(
-            line_html(&html, 0).contains("<span class=\"mark warn\">"),
+            line_html(&html, 0).contains("<span class=\"mark reading held warn\""),
             "{}",
             line_html(&html, 0)
+        );
+    }
+
+    /// A page drawn with every project's read out for `outstanding`, which
+    /// the read may be for `patience` before it goes unanswered, at `at`.
+    fn drawn_mid_read(asked: &str, outstanding: i64, patience: i64, at: DateTime<Utc>) -> String {
+        let drawn = Drawn {
+            at,
+            collecting: vec![Awaited {
+                wanted: crate::app::Wanted::Everything,
+                asked_at: drawn_at() - chrono::TimeDelta::seconds(outstanding),
+                patience: chrono::TimeDelta::seconds(patience),
+            }],
+            ..drawing()
+        };
+        let asked = Asked::of(asked).expect("a page is at the address");
+        page(beside_dunwich(), &Layout::default(), &asked, drawn).html
+    }
+
+    /// Whether `html` holds a character of the braille block the terminal
+    /// turns its mark through.
+    fn has_braille(html: &str) -> bool {
+        html.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c))
+    }
+
+    /// A project being read wears a ring the stylesheet turns, named for a
+    /// reader who hears the page, and no frame of the terminal's mark. The
+    /// page needs no clock to draw it, so a page drawn a moment later in the
+    /// same read is the same page.
+    #[test]
+    fn a_project_being_read_wears_a_turning_ring_and_no_terminal_frame() {
+        let reading = format!(
+            "<span class=\"mark reading\" role=\"img\" aria-label=\"{}\"></span>",
+            phrase::being_read()
+        );
+        let html = drawn_mid_read("/", 1, 30, drawn_at());
+        assert!(line_html(&html, 0).contains(&reading), "{html}");
+        assert!(!has_braille(&html), "{html}");
+        let later = drawn_mid_read("/", 1, 30, drawn_at() + chrono::TimeDelta::milliseconds(80));
+        assert_eq!(later, html);
+    }
+
+    /// A read gone unanswered wears the same ring held still, in the
+    /// warning's colour, on its heading and on the line the projects fold
+    /// into, and no frame of the terminal's mark on either.
+    #[test]
+    fn a_project_whose_read_is_held_wears_the_ring_stopped() {
+        let held = format!(
+            "<span class=\"mark reading held warn\" role=\"img\" aria-label=\"{}\"></span>",
+            phrase::not_answering()
+        );
+        let forest = drawn_mid_read("/", 60, 30, drawn_at());
+        assert!(line_html(&forest, 0).contains(&held), "{forest}");
+        assert!(!has_braille(&forest), "{forest}");
+
+        let ready = Asked::default().listing(listed(None, true));
+        let listed = drawn_mid_read(&ready, 60, 30, drawn_at());
+        assert!(
+            folded(&listed).contains(&format!("<span class=\"flag\">{held} dunwich</span>")),
+            "{}",
+            folded(&listed)
+        );
+        assert!(!has_braille(&listed), "{listed}");
+    }
+
+    /// The ring turns for five seconds at most, and then rests where it
+    /// started, so motion the reader cannot stop ends of itself.
+    #[test]
+    fn the_ring_stops_turning_after_five_seconds() {
+        assert!(STYLE.contains("animation:reading 1s linear 5}"), "{STYLE}");
+    }
+
+    /// The ring stops turning for a reader who has asked for less motion,
+    /// and still reads as a read under way.
+    #[test]
+    fn the_ring_holds_still_for_a_reader_who_asks_for_less_motion() {
+        assert!(
+            STYLE.contains("@media (prefers-reduced-motion:reduce){.mark.reading{animation:none}}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".mark.reading.held{animation:none"),
+            "{STYLE}"
+        );
+    }
+
+    /// Once the ring holds still, a read gone unanswered still differs from
+    /// one under way by its shape: a closed dotted ring against an open arc.
+    #[test]
+    fn a_held_ring_is_told_from_a_turning_one_by_its_shape_as_well_as_its_colour() {
+        assert!(
+            STYLE.contains(
+                ".mark.reading.held{animation:none;border-style:dotted;border-top-color:currentColor}"
+            ),
+            "{STYLE}"
         );
     }
 
@@ -2878,8 +3252,13 @@ mod tests {
             ..drawing()
         };
         let asked = Asked::of("/").expect("the forest");
-        let lines = page_lines(&page(ground(), &Layout::default(), &asked, drawn).html);
-        assert!(lines[0].starts_with("▾ summit-works ⠿"), "{}", lines[0]);
+        let html = page(ground(), &Layout::default(), &asked, drawn).html;
+        assert!(
+            line_html(&html, 0).contains("<span class=\"mark reading held warn\""),
+            "{}",
+            line_html(&html, 0)
+        );
+        let lines = page_lines(&html);
         assert!(lines
             .iter()
             .any(|line| line.contains("apply the two niri settings")));
@@ -3327,23 +3706,71 @@ mod tests {
         }
     }
 
-    /// Under its head, the bead view on the page is the terminal's, row for
-    /// row, with every bead it names drawn as a reference to that bead. The
-    /// row saying what the bead is blocked by is the one the page leaves
-    /// out, because the head's band says it.
+    /// A bead page's grid starts straight after its head. The page keeps
+    /// its text's line breaks, so even a lone one between the two would draw
+    /// as an empty line.
     #[test]
-    fn the_bead_view_draws_the_terminals_rows_with_every_bead_named_by_a_reference() {
-        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+    fn a_beads_head_sits_directly_above_its_grid() {
+        let html = page_of(with_the_bead_changed(|_| {}), &address(&key("smt-4kd3p.6")));
         let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
         let head = view.find("<div class=\"head\">").expect("the head");
-        let under_head = &view[element_end(view, head)..view.find("</aside>").unwrap()];
-        let page_rows: Vec<String> = text_of(&in_the_terminals_order(under_head))
+        let grid = view.find("<dl class=\"fields\">").expect("the grid");
+        assert_eq!(&view[element_end(view, head)..grid], "", "{view}");
+    }
+
+    /// The page draws none of the terminal's rows under the bead's head,
+    /// because its head and its grid say all of them: what it waits on, its
+    /// flags, its readiness, its badges, its fields, its agent and who
+    /// watches it. From the grid down to its lists of related beads, the
+    /// bead view on the page is the terminal's, row for row. Its
+    /// description and its notes are each a section of prose where the
+    /// terminal has their rows, its heading and the blank over it among
+    /// them, and a section stands on lines of its own.
+    #[test]
+    fn the_bead_view_draws_the_terminals_rows_down_to_its_related_beads() {
+        use crate::model::watching::WatchingAgent;
+        use crate::view::draw::tests::a_pane;
+        const PROSE_BLOCK: &str = "¶";
+        let described = || {
+            with_the_bead_changed(|bead| {
+                bead.row = crate::model::types::Printed::saying(
+                    "Read smt-4kd3p.8 first.",
+                    "Both settings are in.",
+                );
+                bead.ready = true;
+                bead.agent = Some(a_pane());
+                bead.watching = Watching::Known {
+                    agents: vec![WatchingAgent {
+                        agent: "claude".to_string(),
+                        display_agent: Some("dunwich desk".to_string()),
+                        caption: None,
+                    }],
+                    unreported: 1,
+                };
+                bead.badges = vec![a_badge()];
+                bead.anomalies = vec![Anomaly::StaleClaim { days: 58 }];
+            })
+        };
+        let html = page_of(described(), &address(&key("smt-4kd3p.6")));
+        let view = &html[html.find("<div class=\"page\">").expect("the bead view")..];
+        let head = view.find("<div class=\"head\">").expect("the head");
+        let grid = view.find("<dl class=\"fields\">").expect("the grid");
+        let lists = view
+            .find("<section class=\"tied\">")
+            .expect("the bead names beads");
+        assert_eq!(view[element_end(view, head)..grid].trim(), "", "{view}");
+        let mut under_head = view[element_end(view, grid)..lists].to_string();
+        while let Some(prose) = under_head.find("<section class=\"written\">") {
+            let end = element_end(&under_head, prose);
+            under_head.replace_range(prose..end, &format!("\n{PROSE_BLOCK}\n"));
+        }
+        let page_rows: Vec<String> = text_of(&in_the_terminals_order(&under_head))
             .lines()
-            .skip(1)
             .map(words)
+            .filter(|row| !row.is_empty())
             .collect();
 
-        let mut forest = flatten(ground());
+        let mut forest = flatten(described());
         assert!(forest.go_to(&key("smt-4kd3p.6")));
         let node = show::selected(&forest).expect("the bead");
         let mentioned = show::mentioned(&forest, node);
@@ -3355,26 +3782,27 @@ mod tests {
             usize::MAX,
             &|related| show::followable(&forest, related),
         );
-        let blocked_by = said.blocked_by.expect("the bead says what blocks it");
         let terminal_rows: Vec<String> = said
             .rows
             .iter()
             .enumerate()
-            .skip(said.head)
-            .filter(|(at, _)| *at != blocked_by)
-            .map(|(_, row)| {
-                words(
-                    &row.iter()
-                        .map(|span| span.content.as_ref())
-                        .collect::<String>(),
-                )
-            })
+            .take(said.tied[0].from)
+            .skip(said.sections)
+            .filter_map(
+                |(at, row)| match said.prose.iter().find(|(rows, _)| rows.contains(&at)) {
+                    Some((rows, _)) => (rows.start == at).then(|| PROSE_BLOCK.to_string()),
+                    None => Some(words(
+                        &row.iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>(),
+                    )),
+                },
+            )
             .collect();
 
+        assert_eq!(said.prose.len(), 2, "{:?}", said.prose);
         assert_eq!(page_rows, terminal_rows);
-        assert!(terminal_rows
-            .iter()
-            .any(|row| row == "→ ○ smt-4kd3p.1 wire the niri theme include"));
+        assert!(!terminal_rows.is_empty());
     }
 
     /// The head of a bead's page says its status in words and its id, then
@@ -3415,7 +3843,7 @@ mod tests {
     #[test]
     fn a_bead_pages_title_is_set_large_in_the_display_face() {
         assert!(STYLE.contains(
-            ".page .head h2{margin:0;font:600 22px/1.25 var(--display);white-space:pre-wrap;"
+            ".page .head h2{margin:0;font:600 var(--size-title)/1.25 var(--display);white-space:pre-wrap;"
         ));
         assert!(!STYLE.contains(".page .head .title"));
     }
@@ -3573,6 +4001,52 @@ mod tests {
         assert!(!text_of(&html).contains(phrase::blocked_by_ahead()));
     }
 
+    /// A bead some rule flags says so in its head as its row says it, in
+    /// one amber box under its title and what it waits on. No row under the
+    /// head says the rules in the terminal's words.
+    #[test]
+    fn a_flagged_beads_head_says_the_rows_flag_in_an_amber_box() {
+        let fired = vec![
+            Anomaly::StaleClaim { days: 58 },
+            Anomaly::OrphanClaim { refused: None },
+        ];
+        let checked = with_the_bead_changed(|node| node.anomalies = fired.clone());
+        let html = page_of(checked, &address(&key("smt-4kd3p.6")));
+        let head = inside(&html, "head");
+        assert_eq!(
+            parts(head).0,
+            ["p.state", "h2", "div.waits", "p.alert"],
+            "{head}"
+        );
+        let said = phrase::flag(&fired).expect("two rules fired");
+        assert_eq!(text_of(inside(head, "alert")), format!("{WARNING} {said}"));
+        let aside = text_of(aside_of(&html));
+        for rule in &fired {
+            assert!(!aside.contains(&phrase::anomaly(rule)), "{aside}");
+        }
+        assert!(STYLE.contains(
+            ".page .alert{margin:0;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn)}"
+        ));
+    }
+
+    /// A bead no rule flags has no amber box in its head.
+    #[test]
+    fn an_unflagged_beads_head_has_no_amber_box() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(!inside(&html, "head").contains("alert"));
+    }
+
+    /// Where no watcher answers for a bead's project, its page does not say
+    /// so, because a reader can do nothing with it.
+    #[test]
+    fn a_beads_page_says_nothing_of_watchers_no_watcher_answered_for() {
+        use crate::model::watching::Watching;
+        let unknown = with_the_bead_changed(|node| node.watching = Watching::Unknown);
+        let html = page_of(unknown, &address(&key("smt-4kd3p.6")));
+        let aside = text_of(aside_of(&html));
+        assert!(!aside.contains(phrase::watches_unknown()), "{aside}");
+    }
+
     /// Ids are per tracker, so a bead can depend on two beads of one id. The
     /// one the band names is the one that blocks it.
     #[test]
@@ -3605,6 +4079,229 @@ mod tests {
             change(&mut std::sync::Arc::make_mut(tree).beads[6]);
         }
         ground
+    }
+
+    /// `smt-4kd3p.6` with a value in every field the grid can name. It was
+    /// created half an hour before midnight in UTC, which is half an hour
+    /// after it an hour east.
+    fn with_every_field() -> Snapshot {
+        let at = |instant: &str| Some(instant.parse().expect("an instant"));
+        with_the_bead_changed(|bead| {
+            bead.assignee = Some("pickman".to_string());
+            bead.created_by = Some("carter".to_string());
+            bead.created_at = at("2026-08-29T23:30:00Z");
+            bead.updated_at = at("2026-09-26T10:00:00Z");
+            bead.started_at = at("2026-09-01T09:00:00Z");
+            bead.closed_at = at("2026-09-30T16:00:00Z");
+            bead.defer_until = at("2026-12-01T00:00:00Z");
+            bead.labels = vec!["signals".to_string(), "winter".to_string()];
+        })
+    }
+
+    /// A badge as a config draws one, linked where it points.
+    fn a_badge() -> crate::model::badges::Badged {
+        crate::model::badges::Badged {
+            key: "pr".to_string(),
+            text: "⇢ #12".to_string(),
+            short: None,
+            link: Some("https://example.invalid/dunwich/12".to_string()),
+            colour: None,
+            drawn_on: crate::config::DrawnOn::Own,
+        }
+    }
+
+    /// A ready bead's state line says so in a pill after its id, and each
+    /// of its badges is a pill after that, linked where the badge points.
+    /// Each pill is a word of the line's text, apart from what comes before
+    /// it, as it is apart on the screen.
+    #[test]
+    fn a_beads_state_line_says_it_is_ready_and_holds_its_badges() {
+        let next = crate::model::badges::Badged {
+            text: "⇢ #13".to_string(),
+            link: Some("https://example.invalid/dunwich/13".to_string()),
+            ..a_badge()
+        };
+        let badged = with_the_bead_changed(|bead| {
+            bead.ready = true;
+            bead.badges = vec![a_badge(), next.clone()];
+        });
+        let html = page_of(badged, &address(&key("smt-4kd3p.6")));
+        let state = inside(inside(&html, "head"), "state");
+        assert_eq!(
+            parts(state).0[1..],
+            ["span.id", "span.pill", "a.pill", "a.pill"],
+            "{state}"
+        );
+        assert_eq!(text_of(inside(state, "pill")), phrase::ready());
+        for link in ["12", "13"] {
+            assert!(
+                state.contains(&format!("href=\"https://example.invalid/dunwich/{link}\"")),
+                "{state}"
+            );
+        }
+        let text = text_of(state);
+        for pill in [phrase::ready(), "⇢ #12", "⇢ #13"] {
+            let at = text.find(pill).expect("the line holds the pill");
+            assert!(text[..at].ends_with(char::is_whitespace), "{text:?}");
+        }
+    }
+
+    /// The agent on a bead and who watches it are cells of its grid, each
+    /// named as the bead's row names it but for the row's marks. Watchers
+    /// the page cannot name are counted after those it can.
+    #[test]
+    fn a_beads_agent_and_watchers_are_cells_of_its_grid() {
+        use crate::model::watching::WatchingAgent;
+        use crate::view::draw::tests::a_pane;
+        use phrase::field;
+
+        let watched = |agents: Vec<WatchingAgent>, unreported: usize| {
+            let snapshot = with_the_bead_changed(|bead| {
+                let mut agent = a_pane();
+                agent.title = Some("arkham desk".to_string());
+                bead.agent = Some(agent);
+                bead.watching = Watching::Known {
+                    agents: agents.clone(),
+                    unreported,
+                };
+            });
+            let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+            let aside = text_of(aside_of(&html));
+            for mark in [crate::view::row::AGENT, crate::view::row::WATCHED] {
+                assert!(!aside.contains(mark), "{aside}");
+            }
+            fields_of(&html)
+                .into_iter()
+                .filter(|(name, _)| [field::AGENT, field::WATCHED_BY].contains(&name.as_str()))
+                .collect::<Vec<_>>()
+        };
+        let cell = |name: &str, value: &str| (name.to_string(), value.to_string());
+        let desk = WatchingAgent {
+            agent: "claude".to_string(),
+            display_agent: Some("dunwich desk".to_string()),
+            caption: Some("idle".to_string()),
+        };
+
+        assert_eq!(
+            watched(vec![desk], 2),
+            [
+                cell(field::AGENT, "arkham desk · working"),
+                cell(field::WATCHED_BY, "dunwich desk · idle 2 more agents"),
+            ]
+        );
+        assert_eq!(
+            watched(Vec::new(), 1),
+            [
+                cell(field::AGENT, "arkham desk · working"),
+                cell(field::WATCHED_BY, "1 agent"),
+            ]
+        );
+        assert_eq!(
+            watched(Vec::new(), 0),
+            [cell(field::AGENT, "arkham desk · working")]
+        );
+    }
+
+    /// Each cell of a bead page's grid, as its name and what it says.
+    fn fields_of(html: &str) -> Vec<(String, String)> {
+        let grid = inside(html, "fields");
+        let (cells, between) = parts(grid);
+        assert!(cells.iter().all(|cell| cell == "div"), "{grid}");
+        assert_eq!(between, "", "{grid}");
+        grid.split("<div>")
+            .skip(1)
+            .map(|cell| {
+                let (name, value) = cell.split_once("</dt>").expect("a cell names itself");
+                let value = value.replace("<br>", " ");
+                (words(&text_of(name)), words(&text_of(&value)))
+            })
+            .collect()
+    }
+
+    /// A bead page's fields are a grid of named cells: priority, type,
+    /// assignee, progress, created and updated, then who created it and
+    /// when it was started, closed and deferred until.
+    #[test]
+    fn a_bead_pages_fields_are_a_grid_of_named_cells() {
+        let html = page_of(with_every_field(), &address(&key("smt-4kd3p.6")));
+        let cell = |name: &str, value: &str| (name.to_string(), value.to_string());
+        assert_eq!(
+            fields_of(&html),
+            [
+                cell("Priority", "P2"),
+                cell("Type", "task"),
+                cell("Assignee", "pickman"),
+                cell("Progress", "0 of 3 done"),
+                cell("Created", "30 Aug 2026"),
+                cell("Updated", "26 Sep 2026"),
+                cell("Created by", "carter"),
+                cell("Started", "1 Sep 2026"),
+                cell("Closed", "30 Sep 2026"),
+                cell("Deferred until", "1 Dec 2026"),
+            ]
+        );
+    }
+
+    /// A field the bead has no value for has no cell, but for its priority
+    /// and its type, which every bead has.
+    #[test]
+    fn a_field_the_bead_has_no_value_for_has_no_cell() {
+        let html = page_at(&address(&key("smt-4kd3p.4"))).html;
+        let cell = |name: &str, value: &str| (name.to_string(), value.to_string());
+        assert_eq!(
+            fields_of(&html),
+            [cell("Priority", "P2"), cell("Type", "task")]
+        );
+    }
+
+    /// A date says the day it falls on in the zone the page is drawn in,
+    /// and the instant in full on hover. It is not a time the page's script
+    /// rewrites as how long ago.
+    #[test]
+    fn a_date_in_the_grid_reads_as_a_date_with_the_instant_in_full_on_hover() {
+        let html = page_of(with_every_field(), &address(&key("smt-4kd3p.6")));
+        let grid = inside(&html, "fields");
+        assert!(
+            grid.contains("<dd title=\"00:30:00 +01:00 on 30 August 2026\">30 Aug 2026</dd>"),
+            "{grid}"
+        );
+        assert!(!grid.contains("<time"), "{grid}");
+    }
+
+    /// The grid sits where the head's rows end, before the first section,
+    /// and its labels are pills under it. No row says those fields again.
+    #[test]
+    fn a_bead_pages_labels_are_pills_under_its_grid() {
+        let html = page_of(with_every_field(), &address(&key("smt-4kd3p.6")));
+        let page = inside(&html, "page");
+        let drawn = parts(page).0;
+        let grid = drawn.iter().position(|part| part == "dl.fields");
+        assert_eq!(
+            drawn[grid.expect("the grid")..][..2],
+            ["dl.fields", "p.labels"]
+        );
+        let labels = inside(&html, "labels");
+        assert_eq!(
+            labels,
+            "<span class=\"pill\">signals</span><span class=\"pill\">winter</span>"
+        );
+        let grid_at = page.find("<dl class=\"fields\">").expect("the grid");
+        assert!(grid_at < page.find("<section class=\"tied\">").expect("a section"));
+        let labels_end = element_end(page, page.find("<p class=\"labels\">").expect("labels"));
+        let rest = text_of(&format!("{}{}", &page[..grid_at], &page[labels_end..]));
+        for said in ["signals, winter", "pickman", "carter", "2026-", "· P2 ·"] {
+            assert!(!rest.contains(said), "{said} in {rest}");
+        }
+    }
+
+    /// The grid has three columns on a desktop and two on a phone.
+    #[test]
+    fn the_grid_has_three_columns_on_a_desktop_and_two_on_a_phone() {
+        assert!(
+            STYLE.contains(".fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));")
+        );
+        assert!(rules_under("(max-width:720px)")
+            .contains(".fields{grid-template-columns:repeat(2,minmax(0,1fr))}"));
     }
 
     /// What the band a blocked bead's head draws under its title says above
@@ -3814,7 +4511,8 @@ mod tests {
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
         let aside = &html[html.find("<aside>").expect("the bead view")..];
         assert!(!aside.contains("class=\"waits\""), "{aside}");
-        assert!(text_of(aside).lines().any(|line| line.trim() == "ready"));
+        let state = inside(inside(aside, "head"), "state");
+        assert_eq!(text_of(inside(state, "pill")), phrase::ready());
     }
 
     /// Every bead on every page is named by the one component: no bead's id
@@ -3916,9 +4614,9 @@ mod tests {
     }
 
     /// Every reference on a page reads as its mark, its title, then its id.
-    /// The mark is labelled with `bd`'s word for the status. The id has no
-    /// colour of its own, so a closed bead's id is as quiet as an open one's
-    /// and no fainter.
+    /// The mark is labelled with the status in the page's own words. The id
+    /// has no colour of its own, so a closed bead's id is as quiet as an open
+    /// one's and no fainter.
     #[test]
     fn a_reference_draws_its_mark_then_its_title_then_a_quiet_id() {
         let html = page_at(&address(&key("smt-4kd3p.2"))).html;
@@ -3943,10 +4641,33 @@ mod tests {
             );
             assert!(!inside(inner, "id").contains("style="), "{reference}");
         }
-        for status in ["in_progress", "open", "closed"] {
+        for status in ["In progress", "Open", "Closed"] {
             assert!(statuses.iter().any(|said| said == status), "{statuses:?}");
         }
         assert!(html.contains("class=\"g closed\""), "{html}");
+    }
+
+    /// A status mark is named for its status in the page's words, on a
+    /// tree's row, a ready row and a bead's page alike, never in `bd`'s.
+    #[test]
+    fn a_status_mark_is_named_in_the_pages_words() {
+        let raw = phrase::status_word(&Status::InProgress);
+        let named = format!(
+            "aria-label=\"{}\"",
+            phrase::status_said(&Status::InProgress)
+        );
+        for target in [
+            "/".to_string(),
+            "/?ready=1".to_string(),
+            address(&key("smt-4kd3p.2")),
+        ] {
+            let html = page_of(ground(), &target);
+            assert!(html.contains(&named), "{target}: {html}");
+            assert!(
+                !html.contains(&format!("aria-label=\"{raw}\"")),
+                "{target}: {html}"
+            );
+        }
     }
 
     /// A status's colour is drawn on the bead's status mark and nowhere
@@ -4115,7 +4836,7 @@ mod tests {
     /// A row's project is quiet, and makes room beside an open bead on a
     /// desktop as a flag's words do. A phone draws it on the row's second
     /// line, in a column of its own between the id and the row's other
-    /// cells, and breaks a long name there rather than push them aside.
+    /// cells.
     #[test]
     fn a_rows_project_is_drawn_after_its_id_and_gives_way_to_an_open_bead() {
         assert!(STYLE.contains(".bead .project{padding:0 8px;border:1px solid var(--line);"));
@@ -4125,7 +4846,7 @@ mod tests {
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr)",
-            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;",
             ".line>.more{grid-column:5;",
             ".line>.bead~.state{grid-column:6;",
         ] {
@@ -4185,8 +4906,8 @@ mod tests {
     }
 
     /// Only a project whose read went badly is named on the folded line, in
-    /// the colour of a flag with the mark its heading draws. The rest are
-    /// counted, and the read time is the oldest of theirs.
+    /// the colour of a flag with the mark its heading draws. Every project is
+    /// counted, and the read time is the oldest of the rest.
     #[test]
     fn the_folded_line_names_only_a_project_whose_read_went_badly() {
         let (both, _) = dunwich_read_an_hour_ago();
@@ -4205,22 +4926,154 @@ mod tests {
 
         let line = folded(&html);
         assert!(
-            words(&text_of(line)).starts_with("1 project read "),
+            words(&text_of(line)).starts_with("2 projects read "),
             "{line}"
         );
         assert!(line.contains(&fresh.to_rfc3339()), "{line}");
-        let unanswered = phrase::mark(
+        assert!(
+            line.contains(&format!(
+                "<span class=\"flag\"><span class=\"mark reading held warn\" role=\"img\" \
+                 aria-label=\"{}\"></span> dunwich</span>",
+                phrase::not_answering()
+            )),
+            "{line}"
+        );
+        assert!(!text_of(line).contains(PROJECT), "{line}");
+    }
+
+    /// The ground beside dunwich, whose tracker could not be read, so it was
+    /// read and has no tree.
+    fn beside_unread_dunwich() -> Snapshot {
+        let mut ground = ground();
+        ground.projects.push("dunwich".to_string());
+        ground.read_at.insert("dunwich".to_string(), drawn_at());
+        ground.failed_projects = vec![crate::model::snapshot::FailedProject {
+            project: "dunwich".to_string(),
+            tracker: crate::model::snapshot::TrackerFailure::Unavailable,
+        }];
+        ground
+    }
+
+    /// What dunwich's tracker said when it would not be read.
+    fn dunwich_said() -> String {
+        phrase::tracker_failure(&crate::model::snapshot::TrackerFailure::Unavailable)
+    }
+
+    /// A project whose tracker could not be read has no heading, and the
+    /// folded line still names it, in the colour of a flag with the mark of
+    /// a read that went badly. Opened, the line lists it after the headings
+    /// with what its tracker said.
+    #[test]
+    fn the_folded_line_names_a_project_whose_tracker_could_not_be_read() {
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(beside_unread_dunwich(), &ready);
+
+        let line = folded(&html);
+        assert!(
+            words(&text_of(line)).starts_with("2 projects read "),
+            "{line}"
+        );
+        let refused = phrase::mark(
             crate::view::Freshness {
-                mark: crate::view::Mark::Unanswered,
+                mark: crate::view::Mark::Refused,
                 read_at: None,
             },
             drawn_at(),
         );
         assert!(
-            line.contains(&format!("<span class=\"flag\">{unanswered} dunwich</span>")),
+            line.contains(&format!(
+                "<span class=\"flag\"><span class=\"mark warn\">{refused}</span> dunwich</span>"
+            )),
             "{line}"
         );
-        assert!(!text_of(line).contains(PROJECT), "{line}");
+
+        let opened = inside(&html, "projects");
+        let unread = opened
+            .split("<div class=\"line heading\"")
+            .find(|heading| heading.contains("<h2>dunwich</h2>"))
+            .expect("dunwich is listed");
+        assert!(
+            unread.contains(&format!("<span class=\"mark warn\">{refused}</span>")),
+            "{unread}"
+        );
+        assert!(text_of(unread).contains(&dunwich_said()), "{unread}");
+    }
+
+    /// A pane working in a project whose tracker could not be read keeps the
+    /// project's heading, and the folded line still counts and names the
+    /// project once, opening to it once with what its tracker said.
+    #[test]
+    fn the_folded_line_names_an_unread_project_with_a_pane_in_it_once() {
+        let mut unread = beside_unread_dunwich();
+        unread.unattributed.push(crate::model::snapshot::LoosePane {
+            pane: crate::model::types::PaneKey {
+                session: "default".to_string(),
+                id: "w:nobody".to_string(),
+            },
+            project: "dunwich".to_string(),
+            cwd: "/srv/work/dunwich".to_string(),
+            pane_status: crate::model::types::PaneStatus::Working,
+            display_agent: None,
+            title: None,
+            claim_refused: false,
+        });
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(unread, &ready);
+
+        let line = folded(&html);
+        assert!(
+            line.contains(&format!("<span class=\"fresh\">{}", phrase::projects(2))),
+            "{line}"
+        );
+        assert_eq!(text_of(line).matches("dunwich").count(), 1, "{line}");
+        let opened = inside(&html, "projects");
+        assert_eq!(opened.matches("<h2>dunwich</h2>").count(), 1, "{opened}");
+        assert!(text_of(opened).contains(&dunwich_said()), "{opened}");
+    }
+
+    /// Every project the list covers could fail to be read, and the folded
+    /// line still names them, though none has a heading to fold.
+    #[test]
+    fn the_folded_line_names_unread_projects_where_none_has_a_heading() {
+        let mut unread = beside_unread_dunwich();
+        unread.trees.clear();
+        unread.collected.clear();
+        unread
+            .failed_projects
+            .push(crate::model::snapshot::FailedProject {
+                project: PROJECT.to_string(),
+                tracker: crate::model::snapshot::TrackerFailure::Auth,
+            });
+        let ready = Asked::default().listing(listed(None, true));
+        let html = page_of(unread, &ready);
+
+        let line = folded(&html);
+        assert!(
+            line.contains(&format!(
+                "<span class=\"fresh\">{}</span>",
+                phrase::projects(2)
+            )),
+            "{line}"
+        );
+        assert!(line.contains("dunwich"), "{line}");
+        assert!(line.contains(PROJECT), "{line}");
+    }
+
+    /// The trees draw a project whose tracker could not be read below them,
+    /// named with what its tracker said, without the reader opening anything.
+    #[test]
+    fn the_trees_name_a_project_whose_tracker_could_not_be_read() {
+        let html = page_of(beside_unread_dunwich(), "/");
+        let failed = crate::model::snapshot::FailedProject {
+            project: "dunwich".to_string(),
+            tracker: crate::model::snapshot::TrackerFailure::Unavailable,
+        };
+        assert!(
+            lines_html(&html)
+                .iter()
+                .any(|line| text_of(line).contains(&phrase::failed_project(&failed))),
+            "{html}"
+        );
     }
 
     /// The trees keep a heading over each project's own trees, a list kept
@@ -4344,7 +5197,9 @@ mod tests {
     /// heading is not a bead's row, and its bar keeps its own width.
     #[test]
     fn a_desktop_row_ellipsises_its_title_before_the_columns_at_its_right() {
-        assert!(!STYLE.contains("max-content"), "{STYLE}");
+        for as_wide_as_its_content in ["{width:max-content", ";width:max-content"] {
+            assert!(!STYLE.contains(as_wide_as_its_content), "{STYLE}");
+        }
         let desktop = rules_under("(width>720px)");
         for rule in [
             ".line>.bead{display:flex;align-items:center;gap:10px;min-width:12ch;overflow:hidden;margin-right:auto}",
@@ -4359,29 +5214,75 @@ mod tests {
         }
     }
 
-    /// A phone row's progress is its fraction alone, with no bar to make the
-    /// row wider than the screen.
+    /// A phone row draws its progress as a desktop row does, the bar beside
+    /// the fraction. A project's band is not a row.
     #[test]
-    fn a_phone_row_draws_its_progress_without_a_bar() {
+    fn a_phone_row_keeps_its_progress_bar() {
         let phone = rules_under("(max-width:720px)");
-        assert!(
-            phone.contains(".line>.bead~.state>.prog>.bar{display:none}"),
-            "{phone}"
-        );
+        for rule in phone.split('}') {
+            let (selector, body) = rule.split_once('{').unwrap_or((rule, ""));
+            let of_a_row = selector.contains(".bar") && !selector.contains(".heading");
+            assert!(!(of_a_row && body.contains("display:none")), "{rule}}}");
+        }
     }
 
-    /// A pill leaves wrapping to its row, so a long badge wraps on a phone
-    /// rather than push the row wider than the screen.
+    /// A phone row with no progress ends at its flag. Its empty progress
+    /// column would otherwise wrap under the flag as a blank line. A desktop
+    /// row keeps the empty column, which lines up the bars below it.
     #[test]
-    fn a_pill_wraps_where_its_row_does() {
-        let pill = STYLE
-            .split(".pill{")
-            .nth(1)
-            .and_then(|rest| rest.split('}').next());
-        assert!(
-            pill.is_some_and(|rule| !rule.contains("white-space")),
-            "{STYLE}"
-        );
+    fn a_phone_row_without_progress_draws_no_progress_column() {
+        let hidden = ".line .prog:empty{display:none}";
+        assert!(rules_under("(max-width:720px)").contains(hidden), "{STYLE}");
+        assert_eq!(STYLE.matches(hidden).count(), 1, "{STYLE}");
+    }
+
+    /// On a phone the lists menu opens as a sheet inside the bar, so the bar
+    /// stacks above a project's sticky header or the header covers the sheet.
+    #[test]
+    fn a_phone_menu_sheet_stacks_above_a_projects_sticky_header() {
+        let z_index = |rules: &str, selector: &str| -> i32 {
+            rules
+                .split('}')
+                .find_map(|rule| rule.trim().strip_prefix(selector)?.strip_prefix('{'))
+                .and_then(|body| body.split("z-index:").nth(1))
+                .and_then(|after| after.split([';', '}']).next()?.parse().ok())
+                .unwrap_or_else(|| panic!("{selector} sets a z-index"))
+        };
+        let bar = z_index(rules_under("(max-width:720px)"), "nav");
+        let header = z_index(STYLE, ".line.heading");
+        assert!(bar > header, "the bar at {bar}, a header at {header}");
+    }
+
+    /// On a phone a row's pills and its project tag each stay whole on one
+    /// line. Pills wrap between each other in their cell and never inside
+    /// one. A row carrying pills draws its state on a line of its own under
+    /// them, with what it hangs under drawn down beside that line too, so a
+    /// flag's words are never squeezed into what the pills leave. A label
+    /// longer than the row has room for ends in an ellipsis rather than
+    /// push the row past the screen's edge.
+    #[test]
+    fn a_phone_rows_pills_never_break_inside_a_word() {
+        let phone = rules_under("(max-width:720px)");
+        for rule in [
+            ".line .pill,.line>.bead>.project{white-space:nowrap;box-sizing:border-box;overflow:clip;text-overflow:ellipsis}",
+            ".line .pill{max-width:100%}",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;max-width:calc(100% - 8px)}",
+            ".line>.bead>.project,.line>.more{min-width:0}",
+            ".line:has(>.more)>.bead~.state{grid-area:3/3/4/-1}",
+            ".line>:has(+.bead){grid-area:1/1/4/2;",
+        ] {
+            assert!(phone.contains(rule), "{rule}");
+        }
+        for cell in [".line>.bead>.project{", ".line>.more{"] {
+            let rule = phone
+                .split(cell)
+                .nth(1)
+                .and_then(|rest| rest.split('}').next());
+            assert!(
+                rule.is_some_and(|rule| !rule.contains("overflow-wrap")),
+                "{cell}"
+            );
+        }
     }
 
     /// A badge a config gave a literal colour is drawn in that colour on the
@@ -4626,82 +5527,137 @@ mod tests {
         );
     }
 
-    /// A phone lets the bead view's prose flow rather than keep the rows the
-    /// terminal's width broke it into. So each such break is an element of
-    /// its own, and with every one of them taken out a paragraph reads whole,
-    /// while an item the author started on a line of its own keeps its line.
-    #[test]
-    fn a_break_put_in_the_bead_views_prose_to_fit_the_terminal_can_be_taken_out() {
-        let paragraph = "The diaphone has not sounded since the spring, so run it for a full cycle once the reflector is back in and record each burn in https://example.invalid/dunwich/logbook/diaphone/the-spring-cycle-once-the-reflector-is-back-in-and-every-burn-recorded.";
+    /// The bead view's description and its notes, each as the element of
+    /// prose the page draws it in.
+    fn prose_of(description: &str, notes: &str) -> Vec<String> {
         let snapshot = with_the_bead_changed(|bead| {
-            bead.row = crate::model::types::Printed::saying(
-                &format!("{paragraph}\n\n- one item\n- another item"),
-                "",
-            );
+            bead.row = crate::model::types::Printed::saying(description, notes);
         });
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
-        let view = inside(&html, "page");
-        assert!(view.contains("<span class=\"w\">\n"), "{view}");
-
-        let mut flowed = String::new();
-        let mut rest = view;
-        while let Some(at) = rest.find("<span class=\"w\">") {
-            flowed.push_str(&rest[..at]);
-            rest = &rest[element_end(rest, at)..];
-        }
-        flowed.push_str(rest);
-        let lines: Vec<String> = text_of(&flowed).lines().map(words).collect();
-        assert!(lines.contains(&paragraph.to_string()), "{lines:#?}");
-        assert!(lines.contains(&"• one item".to_string()), "{lines:#?}");
-        assert!(lines.contains(&"• another item".to_string()), "{lines:#?}");
+        html.match_indices("<div class=\"prose\">")
+            .map(|(open, _)| html[open..element_end(&html, open)].to_string())
+            .collect()
     }
 
-    /// A phone sets the bead view's prose in a face of its own and lets it
-    /// flow, and a wrapped item still hangs under its text rather than its
-    /// marker. So each line of prose is an element holding its lead, the
-    /// indent and any marker, apart from its text, and all of a wrapped
-    /// item's rows are in the one element. A line of code is laid out by
-    /// its author and is not prose.
+    /// The bead view's prose is drawn from what its author wrote rather than
+    /// from the rows the terminal broke it into, so a page of any width lets
+    /// a paragraph flow whole, an item is an item, and code is laid out as
+    /// its author laid it out.
     #[test]
-    fn each_line_of_the_bead_views_prose_holds_its_lead_apart_from_its_text() {
+    fn the_bead_views_prose_flows_as_its_author_wrote_it() {
+        let paragraph = "The diaphone has not sounded since the spring, so run it for a full cycle once the reflector is back in and the lamp has been relit on the gallery.";
         let item = "re-silver the reflector before the lamp goes back in, and test the diaphone once it is back in its housing on the gallery";
-        let snapshot = with_the_bead_changed(|bead| {
-            bead.row = crate::model::types::Printed::saying(
-                &format!("A first paragraph.\n\n- {item}\n\n```\nlog the burn\n```"),
-                "",
-            );
-        });
-        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
-        let view = inside(&html, "page");
-        let mut lines = Vec::new();
-        let mut from = 0;
-        while let Some(found) = view[from..].find("<span class=\"p\">") {
-            let open = from + found;
-            let end = element_end(view, open);
-            let line = &view[open..end];
-            let (shape, between) = parts(inside(line, "p"));
-            assert_eq!(shape, ["span.lead", "span.t"], "{line}");
-            assert_eq!(between, "", "{line}");
-            let mut text = inside(line, "t").to_string();
-            while let Some(at) = text.find("<span class=\"w\">") {
-                text.replace_range(at..element_end(&text, at), "");
-            }
-            lines.push((text_of(inside(line, "lead")), words(&text_of(&text))));
-            from = end;
-        }
+        let prose = prose_of(
+            &format!("{paragraph}\n\n- {item}\n- another item\n\n```\nlog the burn\n```"),
+            "",
+        );
+        let [description] = prose.as_slice() else {
+            panic!("one element of prose: {prose:#?}");
+        };
+        let (shape, between) = parts(inside(description, "prose"));
+        assert_eq!(shape, ["p", "ul", "pre.code"], "{description}");
+        assert_eq!(between, "", "{description}");
         assert!(
-            lines.contains(&("  ".to_string(), "A first paragraph.".to_string())),
-            "{lines:#?}"
+            description.contains(&format!("<p>{paragraph}</p>")),
+            "{description}"
         );
         assert!(
-            lines.contains(&("  • ".to_string(), item.to_string())),
-            "{lines:#?}"
+            description.contains(&format!("<li>{item}</li><li>another item</li>")),
+            "{description}"
         );
         assert!(
-            !lines.iter().any(|(_, text)| text.contains("log the burn")),
-            "{lines:#?}"
+            description.contains("<code>log the burn\n</code>"),
+            "{description}"
         );
-        assert!(text_of(view).contains("log the burn"), "{view}");
+    }
+
+    /// A description that names a bead in its prose, holds separate lines,
+    /// and gives a long web address reads as written prose: the lines stay
+    /// apart, the bead is the reference that opens it, and the address is a
+    /// short link that opens in a new tab. The notes read the same way.
+    #[test]
+    fn a_beads_description_and_notes_read_as_written_prose() {
+        let lines = "Options: re-silver or replace\nRecommendation: re-silver";
+        let named = "Wait for smt-4kd3p.4 first.";
+        let long = "https://lamps.arkham.example/dunwich/logbook/diaphone/the-spring-cycle-once-the-reflector-is-back-in";
+        let prose = prose_of(
+            &format!("{lines}\n\n{named}\n\nThe log is at {long}."),
+            "Checked by the keeper\nat dusk",
+        );
+        let [description, notes] = prose.as_slice() else {
+            panic!("the description and the notes: {prose:#?}");
+        };
+        assert!(
+            description
+                .contains("<p>Options: re-silver or replace<br>Recommendation: re-silver</p>"),
+            "{description}"
+        );
+        let reference = {
+            let open = description.find("<a class=\"bead\"").expect("a reference");
+            &description[open..element_end(description, open)]
+        };
+        assert!(
+            reference.contains("<span class=\"title\">restore app theming</span>")
+                && reference.contains("<span class=\"id\">smt-4kd3p.4</span>"),
+            "{reference}"
+        );
+        assert!(
+            reference.contains(&format!("href=\"{}", address(&key("smt-4kd3p.4")))),
+            "{reference}"
+        );
+        assert!(
+            description.contains(&format!(
+                "<a class=\"link address\" href=\"{long}\" title=\"{long}\" \
+                 target=\"_blank\" rel=\"noopener noreferrer\">\
+                 lamps.arkham.example › the-spring-cycle-once-the-reflector-is-back-in</a>."
+            )),
+            "{description}"
+        );
+        assert_eq!(
+            notes,
+            "<div class=\"prose\"><p>Checked by the keeper<br>at dusk</p></div>"
+        );
+    }
+
+    /// The bead view's prose names a bead it waits on as well, which the
+    /// window lists under what it depends on, and never names itself.
+    #[test]
+    fn the_prose_names_every_bead_but_the_one_it_is_about() {
+        let prose = prose_of("After smt-4kd3p.1, before smt-4kd3p.6.", "");
+        let [description] = prose.as_slice() else {
+            panic!("one element of prose: {prose:#?}");
+        };
+        assert_eq!(
+            description.matches("<a class=\"bead\"").count(),
+            1,
+            "{description}"
+        );
+        assert!(
+            description.contains("smt-4kd3p.1</span></a>"),
+            "{description}"
+        );
+        assert!(
+            description.ends_with("before smt-4kd3p.6.</p></div>"),
+            "{description}"
+        );
+    }
+
+    /// HTML a description holds reaches the page as the text it is.
+    #[test]
+    fn html_in_a_description_reaches_the_page_as_text() {
+        let prose = prose_of(
+            "<script>alert(1)</script>\n\nA <img src=x onerror=alert(2)> lamp.",
+            "",
+        );
+        let [description] = prose.as_slice() else {
+            panic!("one element of prose: {prose:#?}");
+        };
+        assert!(!description.contains("<script"), "{description}");
+        assert!(!description.contains("<img"), "{description}");
+        assert_eq!(
+            text_of(description),
+            "<script>alert(1)</script>A <img src=x onerror=alert(2)> lamp."
+        );
     }
 
     /// A code span in the bead view's prose is marked as code, so a phone can
@@ -4731,7 +5687,7 @@ mod tests {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         assert!(html.contains(&palette::page_colours()), "{html}");
         assert!(
-            STYLE.contains("body{margin:0;background:var(--surface);color:var(--fg);font:14px/1.45 var(--body)}"),
+            STYLE.contains("body{margin:0;background:var(--surface);color:var(--fg);font:var(--size-row)/1.45 var(--body)}"),
             "{STYLE}"
         );
         assert_eq!(
@@ -4747,23 +5703,379 @@ mod tests {
             "{STYLE}"
         );
         assert!(
-            STYLE.contains(".bead .id{font:500 12px var(--body);color:var(--muted);"),
+            STYLE.contains(".bead .id{font:500 var(--size-detail) var(--body);color:var(--muted);"),
             "{STYLE}"
         );
     }
 
-    /// The arrow a related bead is drawn after is apart from the reference,
-    /// so a phone can draw the reference alone under its section's name.
+    /// The elements one line of a list holds, and the words it says.
+    type ListedLine = (Vec<String>, String);
+
+    /// Each list of related beads on a bead's page: the words that head it,
+    /// then each of its lines.
+    fn tied_lists(html: &str) -> Vec<(String, Vec<ListedLine>)> {
+        html.match_indices("<section class=\"tied\">")
+            .map(|(open, _)| {
+                let section = &html[open..element_end(html, open)];
+                assert_eq!(parts(inside(section, "tied")).0, ["h3", "ul"], "{section}");
+                let heading = &section[..section.find("</h3>").expect("a heading")];
+                let lines = section
+                    .match_indices("<li>")
+                    .map(|(at, _)| {
+                        let line = &section[at..element_end(section, at)];
+                        let held = &line["<li>".len()..line.len() - "</li>".len()];
+                        (parts(held).0, words(&text_of(held)))
+                    })
+                    .collect();
+                (words(&text_of(heading)), lines)
+            })
+            .collect()
+    }
+
+    /// Each section of a bead's page that names beads is a list under its
+    /// name, with one reference to a bead on each line and nothing else. A
+    /// list says how many it names, except the parent, which a bead has one
+    /// of.
     #[test]
-    fn a_related_beads_arrow_is_apart_from_its_reference() {
+    fn a_beads_related_beads_are_lists_under_their_names_with_a_count() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row =
+                crate::model::types::Printed::saying("Read smt-4kd3p.8 and smt-4kd3p.7 first.", "");
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let lists = tied_lists(inside(&html, "page"));
+
+        let headings: Vec<&str> = lists.iter().map(|(heading, _)| heading.as_str()).collect();
+        assert_eq!(headings, ["Parent", "Depends on 1", "Mentions 2"]);
+        let named: Vec<Vec<&str>> = lists
+            .iter()
+            .map(|(_, lines)| {
+                lines
+                    .iter()
+                    .map(|(shape, said)| {
+                        assert_eq!(shape, &["a.bead"], "{said}");
+                        said.as_str()
+                    })
+                    .collect()
+            })
+            .collect();
+        let ends = |said: &str, ending: &str| said.ends_with(ending);
+        assert!(
+            ends(named[0][0], "lift the ground station smt-4kd3p"),
+            "{named:?}"
+        );
+        assert!(
+            ends(named[1][0], "wire the niri theme include smt-4kd3p.1"),
+            "{named:?}"
+        );
+        assert!(
+            ends(named[2][0], "read the wedge log smt-4kd3p.8"),
+            "{named:?}"
+        );
+        assert!(
+            ends(named[2][1], "confirm the wedges are gone smt-4kd3p.7"),
+            "{named:?}"
+        );
+    }
+
+    /// A list of related beads says it is a list to a reader who hears the
+    /// page, though it draws no bullets. Safari takes the list's role away
+    /// from a list styled without them.
+    #[test]
+    fn a_list_of_related_beads_keeps_its_role_without_bullets() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
-        let view = inside(&html, "page");
-        let parent = view
-            .find("<span class=\"arrow\">")
-            .expect("the parent is drawn after its arrow");
-        let (shape, _) = parts(&view[parent..element_end(view, parent)]);
-        assert_eq!(shape, ["span.arrow"]);
-        assert_eq!(words(&text_of(inside(&view[parent..], "arrow"))), "↑");
+        let page = inside(&html, "page");
+        let lists = page.matches("<section class=\"tied\">").count();
+        assert!(lists > 0, "{page}");
+        assert_eq!(page.matches("<ul role=\"list\">").count(), lists, "{page}");
+    }
+
+    /// A bead with no description or notes still has its grid, once, and
+    /// above its lists.
+    #[test]
+    fn a_bead_with_nothing_to_say_has_its_grid_above_its_lists() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying("", "");
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let page = inside(&html, "page");
+        let grid = page.find("<dl class=\"fields\">").expect("the grid");
+        let lists = page.find("<section class=\"tied\">").expect("the lists");
+        assert!(grid < lists, "{page}");
+        assert_eq!(page.matches("<dl class=\"fields\">").count(), 1, "{page}");
+        assert!(!page.contains("DESCRIPTION"), "{page}");
+    }
+
+    /// What waits on a bead is a list headed in sentence case, as `bd show`
+    /// names it.
+    #[test]
+    fn what_waits_on_a_bead_is_listed_as_what_it_blocks() {
+        let html = page_at(&address(&key("smt-4kd3p.1"))).html;
+        let headings: Vec<String> = tied_lists(inside(&html, "page"))
+            .into_iter()
+            .map(|(heading, _)| heading)
+            .collect();
+        assert_eq!(headings, ["Parent", "Blocks 1"]);
+    }
+
+    /// Every section of a bead's page is headed alike, the description's and
+    /// the notes' as much as each list's of related beads: a heading in
+    /// sentence case over what the section holds.
+    #[test]
+    fn every_section_of_a_beads_page_is_headed_alike() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.row = crate::model::types::Printed::saying("Trim the wick.", "Checked at dusk.");
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let page = inside(&html, "page");
+        let sections: Vec<(String, Vec<String>)> = page
+            .match_indices("<section class=")
+            .map(|(open, _)| {
+                let section = &page[open..element_end(page, open)];
+                let held = &section[section.find('>').expect("the tag ends") + 1
+                    ..section.len() - "</section>".len()];
+                let heading = &held[..held.find("</h3>").expect("a heading")];
+                (words(&text_of(heading)), parts(held).0)
+            })
+            .collect();
+        let shape = |parts: &[&str]| parts.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            sections,
+            [
+                ("Description".to_string(), shape(&["h3", "div.prose"])),
+                ("Notes".to_string(), shape(&["h3", "div.prose"])),
+                ("Parent".to_string(), shape(&["h3", "ul"])),
+                ("Depends on 1".to_string(), shape(&["h3", "ul"])),
+            ],
+            "{page}"
+        );
+        assert!(
+            !page.contains("DESCRIPTION") && !page.contains("NOTES"),
+            "{page}"
+        );
+        assert!(
+            STYLE.contains(
+                ".page section>h3{display:flex;gap:8px;margin:0 0 6px;color:var(--muted)}"
+            ),
+            "{STYLE}"
+        );
+    }
+
+    /// The declarations of `property` the stylesheet makes, each as its value.
+    fn declared(property: &str) -> Vec<&'static str> {
+        let opened = format!("{property}:");
+        STYLE
+            .match_indices(&opened)
+            .filter(|(at, _)| STYLE[..*at].ends_with(['{', ';']))
+            .map(|(at, _)| {
+                let value = &STYLE[at + opened.len()..];
+                &value[..value.find([';', '}']).expect("the declaration ends")]
+            })
+            .collect()
+    }
+
+    /// The page's text is set in the review's five sizes, named once at the
+    /// head of the stylesheet, with a phone's rows a little larger, and
+    /// every size of text the stylesheet sets names one of them. A search
+    /// field is the one exception, since iOS zooms into a smaller one.
+    #[test]
+    fn the_pages_text_is_set_in_five_named_sizes() {
+        assert!(
+            STYLE.starts_with(
+                ":root{--size-title:22px;--size-heading:15px;--size-row:14px;--size-detail:12.5px;\
+                 --size-label:11.5px;--size-row-phone:15.5px;--size-field:16px;"
+            ),
+            "{STYLE}"
+        );
+        let named = |size: &str| {
+            [
+                "title",
+                "heading",
+                "row",
+                "detail",
+                "label",
+                "row-phone",
+                "field",
+            ]
+            .iter()
+            .any(|name| size == format!("var(--size-{name})"))
+        };
+        for size in declared("font-size") {
+            assert!(
+                named(size) || ["0", "inherit"].contains(&size),
+                "font-size:{size}"
+            );
+        }
+        for font in declared("font")
+            .into_iter()
+            .filter(|font| *font != "inherit")
+        {
+            let size = font
+                .split_whitespace()
+                .find(|part| part.starts_with("var(--size-") || part.contains("px"))
+                .map(|part| part.split('/').next().expect("a size"));
+            assert!(size.is_some_and(named), "font:{font}");
+        }
+        assert_eq!(
+            STYLE.matches("--size-field)").count(),
+            1,
+            "only the search field: {STYLE}"
+        );
+    }
+
+    /// Every small capitals label on the page is set by one rule at the
+    /// label size: a section's heading on a bead's page, a field's name in
+    /// its grid, what a bead waits on, a heading in the menu of lists, and
+    /// the heading over each of a list's sections.
+    #[test]
+    fn every_small_capitals_label_is_set_alike() {
+        assert_eq!(
+            STYLE.matches("text-transform:uppercase").count(),
+            1,
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(
+                ".waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2\
+                 {font:600 var(--size-label) var(--body);letter-spacing:.07em;text-transform:uppercase}"
+            ),
+            "{STYLE}"
+        );
+    }
+
+    /// Every small capitals label is drawn in the muted grey, which reads as
+    /// small text on every ground, the menu's included.
+    #[test]
+    fn every_small_capitals_label_is_drawn_in_the_muted_grey() {
+        for label in [
+            ".waits>p",
+            ".page section>h3",
+            ".fields dt",
+            ".lists .hd",
+            ".line.section>h2",
+        ] {
+            let rule = STYLE
+                .split('}')
+                .find_map(|rule| {
+                    let mut parts = rule.rsplit('{');
+                    let body = parts.next()?;
+                    (parts.next()? == label).then_some(body)
+                })
+                .unwrap_or_else(|| panic!("{label} has a rule of its own"));
+            assert!(rule.contains("color:var(--muted)"), "{label}{{{rule}}}");
+        }
+    }
+
+    /// The ready list heads its in progress and ready sections with the
+    /// small capitals label, saying what the terminal says there, and draws
+    /// them in none of the terminal's heading style.
+    #[test]
+    fn the_ready_lists_sections_are_headed_by_a_label() {
+        let ready = page_at("/?ready=1").html;
+        let headings: Vec<_> = lines_html(&ready)
+            .into_iter()
+            .filter(|line| line.starts_with(" section"))
+            .collect();
+
+        let said: Vec<_> = headings
+            .iter()
+            .map(|line| text_of(&line[line.find('>').expect("the tag ends") + 1..]))
+            .collect();
+        assert_eq!(said.len(), 2, "{ready}");
+        assert!(said[0].starts_with("In progress · "), "{said:?}");
+        assert!(said[1].starts_with("Ready · "), "{said:?}");
+        for heading in headings {
+            assert!(heading.starts_with(" section\"><h2>"), "{heading}");
+            assert!(!heading.contains("style="), "{heading}");
+        }
+    }
+
+    /// A parent's page lists its children, as `bd show` does, with a count
+    /// and one reference to each child on a line.
+    #[test]
+    fn a_parents_children_are_listed_with_a_count() {
+        let html = page_at(&address(&key("smt-4kd3p"))).html;
+        let lists = tied_lists(inside(&html, "page"));
+
+        let (heading, lines) = lists
+            .iter()
+            .find(|(heading, _)| heading.starts_with("Children"))
+            .expect("a list of children");
+        assert_eq!(heading, "Children 8");
+        let first = &lines[0];
+        assert_eq!(first.0, ["a.bead"], "{lines:?}");
+        assert!(
+            first.1.ends_with("wire the niri theme include smt-4kd3p.1"),
+            "{lines:?}"
+        );
+    }
+
+    /// A bead nothing hangs under has no list of children.
+    #[test]
+    fn a_bead_with_no_children_has_no_list_of_them() {
+        let html = page_at(&address(&key("smt-4kd3p.6"))).html;
+        assert!(
+            !tied_lists(inside(&html, "page"))
+                .iter()
+                .any(|(heading, _)| heading.starts_with("Children")),
+            "{html}"
+        );
+    }
+
+    /// A bead the tracker's answer does not hold is still a line of its
+    /// list, naming it by its id and saying it was not found.
+    #[test]
+    fn a_related_bead_the_answer_does_not_hold_is_named_by_its_id() {
+        let snapshot = with_the_bead_changed(|bead| {
+            bead.depends_on.push(Related {
+                id: "smt-9zz".to_string(),
+                project: None,
+                edge: Edge::Blocks,
+                status: None,
+                title: None,
+            });
+        });
+        let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
+        let lists = tied_lists(inside(&html, "page"));
+        assert_eq!(lists[1].0, "Depends on 2");
+        assert_eq!(
+            lists[1].1[1],
+            (
+                vec!["span.id".to_string()],
+                format!("smt-9zz {}", phrase::not_in_the_answer())
+            )
+        );
+    }
+
+    /// A related bead's status mark sits beside the first line of its title
+    /// however many lines the title wraps to: the mark keeps to the top of
+    /// its line, as far down as centres it on a title line's height.
+    #[test]
+    fn a_related_beads_mark_lines_up_with_the_first_line_of_its_title() {
+        assert!(
+            STYLE.contains(".page .tied .bead .g{grid-area:1/1;align-self:start;margin-top:4px}"),
+            "{STYLE}"
+        );
+        assert!(
+            STYLE.contains(".page .tied .bead .title{grid-area:1/2;line-height:20px;"),
+            "{STYLE}"
+        );
+    }
+
+    /// A phone stacks a blocker's id under its title, so the blocker's mark
+    /// keeps to its title's first line as a related bead's does. A mark has
+    /// no text, so lined up by baseline it would hang below the title.
+    #[test]
+    fn a_blockers_mark_lines_up_with_the_first_line_of_its_title_on_a_phone() {
+        let phone = rules_under("(max-width:720px)");
+        assert!(
+            phone.contains(".waits>.bead>.g{align-self:start;margin-top:4px}"),
+            "{phone}"
+        );
+        assert!(
+            phone.contains(".waits>.bead>.title{line-height:20px}"),
+            "{phone}"
+        );
     }
 
     /// The references on a page, each whole, and the page with them taken
@@ -4783,16 +6095,18 @@ mod tests {
         (references, rest)
     }
 
-    /// Where the element opening at `open` ends, past its closing tag.
+    /// Where the element opening at `open` ends, past its closing tag. A
+    /// line break or a rule is an element with no closing tag.
     fn element_end(html: &str, open: usize) -> usize {
         let mut depth = 0;
         let mut at = open;
         while let Some(tag) = html[at..].find('<') {
             let start = at + tag;
             let close = start + html[start..].find('>').expect("the tag ends") + 1;
-            if html[start..close].starts_with("</") {
+            let tag = &html[start..close];
+            if tag.starts_with("</") {
                 depth -= 1;
-            } else {
+            } else if !["<br>", "<hr>"].contains(&tag) {
                 depth += 1;
             }
             at = close;
@@ -5013,6 +6327,72 @@ mod tests {
             !forest.contains("auto") && !forest.contains("scroll"),
             "{forest}"
         );
+    }
+
+    /// A project's band is one line on any phone, so it keeps its height
+    /// while its mark and its read time change width. The read time takes
+    /// only the room left over, so it gives way first, cut short with an
+    /// ellipsis, while its mark keeps its width. The name gives way next, down
+    /// to a few letters, and the counts never do. Only counts that cannot fit
+    /// beside those few letters wrap to a line of their own, as a failed
+    /// tracker's error does, so nothing is clipped at any zoom and the name
+    /// stays. A name that shrank while the band had room would take a sliver
+    /// of a pixel and lose its last letters to an ellipsis, which the read
+    /// time's zero basis prevents.
+    #[test]
+    fn a_projects_band_is_one_line_that_cuts_its_read_time_and_then_its_name_short() {
+        let rule = |selector: &str| {
+            let at = STYLE.find(&format!("{selector}{{")).expect(selector);
+            &STYLE[at..at + STYLE[at..].find('}').expect("a rule ends")]
+        };
+        let state = rule(".heading .state");
+        for said in ["flex:none", "max-width:100%", "flex-wrap:wrap"] {
+            assert!(state.contains(said), "{state}");
+        }
+        let band = rule(".line.heading");
+        for said in ["flex-wrap:wrap", "min-height:40px", "padding-block:0"] {
+            assert!(band.contains(said), "{band}");
+        }
+        assert!(STYLE.contains(".line.heading a.fold{align-self:center;height:38px}"));
+        assert!(rule(".heading .read").contains("flex:1 1 0"));
+        assert!(!rule(".heading .read").contains("overflow"));
+        let left = rule(".heading .left");
+        for said in ["flex:1000 1 5em", "min-width:0", "max-width:max-content"] {
+            assert!(left.contains(said), "{left}");
+        }
+        for gives_way in [".heading h2", ".heading .read>[data-shown-once-older-than]"] {
+            let cut = rule(gives_way);
+            for said in ["overflow:hidden", "text-overflow:ellipsis"] {
+                assert!(cut.contains(said), "{cut}");
+            }
+        }
+        assert!(!STYLE.contains(".heading h2{white-space:normal"));
+    }
+
+    /// A phone has no room in a project's band for a bar beside the count it
+    /// draws, or for the words after the count of beads to check. The link
+    /// keeps its whole phrase as its name and its title.
+    #[test]
+    fn a_phone_draws_a_projects_band_without_its_bar_and_with_a_short_link_to_check() {
+        let phone = &STYLE[STYLE
+            .find("@media (max-width:720px){")
+            .expect("a phone's rules")..];
+        assert!(phone.contains(".heading .prog .bar{display:none}"));
+        assert!(phone.contains(".heading a.flag{font-size:0}"));
+        assert!(phone.contains(".heading a.flag::before{content:attr(data-briefly);"));
+        let html = checked_at("/");
+        let heading = line_html(&html, 0);
+        let said = escaped(&format!("{WARNING} {}", phrase::anomalies_beneath(1)));
+        let briefly = escaped(&phrase::anomalies_beneath_briefly(1));
+        let flag = &heading[heading.find("<a class=\"flag\"").expect("a link to check")..];
+        let flag = &flag[..flag.find("</a>").expect("the link ends")];
+        for attribute in [
+            format!("title=\"{said}\""),
+            format!("aria-label=\"{said}\""),
+            format!("data-briefly=\"{briefly}\""),
+        ] {
+            assert!(flag.contains(&attribute), "{flag}");
+        }
     }
 
     /// A project's heading and the lines under it are one section, which is

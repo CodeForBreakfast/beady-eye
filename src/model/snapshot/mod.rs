@@ -352,6 +352,8 @@ pub struct Node {
     #[serde(skip)]
     pub depends_on: Vec<Related>,
     #[serde(skip)]
+    pub children: Vec<Related>,
+    #[serde(skip)]
     pub blocks: Vec<Related>,
 }
 

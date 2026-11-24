@@ -4,19 +4,19 @@ use super::*;
 use crate::view::show;
 use pretty_assertions::assert_eq;
 
-/// Dunwich's epic, whose description names beads in prose. `dun-9` is in no
-/// tree, and `hbr-3` belongs to another project.
+/// Dunwich's epic, whose description names beads in prose, none of them its
+/// children. `dun-9` is in no tree, and `hbr-3` belongs to another project.
 const NAMING: &str = r#"[
   {"id":"dun-1","title":"lift the station","status":"open","issue_type":"epic",
    "description":"Filed as dun-2. Follows dun-2.1, then dun-2 again, (dun-3), and not read-ci-verdict, dun-9, hbr-3, Dun-3, dun-3.md or dun-1 itself."},
   {"id":"dun-2","title":"true the mount","status":"open",
-   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]},
+   "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"}]},
   {"id":"dun-2.1","title":"seal the horn","status":"open",
    "description":"Part of dun-2, which waits on dun-3, and so does dun-4.",
    "dependencies":[{"depends_on_id":"dun-2","type":"parent-child"},
                    {"depends_on_id":"dun-3","type":"blocks"}]},
   {"id":"dun-3","title":"pour the pad","status":"open",
-   "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]},
+   "dependencies":[{"depends_on_id":"dun-4","type":"parent-child"}]},
   {"id":"dun-4","title":"cut the verge","status":"open",
    "dependencies":[{"depends_on_id":"dun-1","type":"parent-child"}]}
 ]"#;
@@ -60,6 +60,22 @@ fn a_bead_the_window_already_lists_is_not_listed_again() {
     let node = show::selected(&forest).expect("a bead is selected");
 
     assert_eq!(ids(&show::mentioned(&forest, node)), ["dun-4"]);
+}
+
+/// A child the description names is listed once, under the children.
+#[test]
+fn a_child_the_description_names_is_not_listed_again() {
+    let forest = window_on("dun-1");
+    let mut node = show::selected(&forest).expect("a bead is selected").clone();
+    node.children.push(crate::model::edges::Related {
+        id: "dun-3".to_string(),
+        project: None,
+        edge: crate::model::types::Edge::ParentChild,
+        status: Some(crate::model::types::Status::Open),
+        title: Some("pour the pad".to_string()),
+    });
+
+    assert_eq!(ids(&show::mentioned(&forest, &node)), ["dun-2", "dun-2.1"]);
 }
 
 /// The ring steps through the beads a description names, after the ones the

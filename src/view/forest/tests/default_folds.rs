@@ -26,7 +26,8 @@ fn a_snapshot_flattens_to_the_lines_the_design_draws() {
             "      └── - Loose(LoosePane { pane: PaneKey { session: \"default\", id: \"w:p9\" }, project: \"ferry\", cwd: \"/srv/work/ferry\", pane_status: Blocked, display_agent: None, title: None, claim_refused: false })",
             "▾ harbour",
             "  └─▸ [HiddenTrees harbour] 1",
-            "▸ [FailedProjects] 1",
+            "▾ [FailedProjects] 1",
+            "  └── - Failed(FailedProject { project: \"lunar\", tracker: Unstartable })",
             "▾ [Unconfigured] 1",
             "  └── - Unconfigured(UnconfiguredPane { pane: PaneKey { session: \"default\", id: \"w:pF\" }, cwd: \"/srv/spike\", pane_status: Idle })",
             "▾ [Conflicts] 1",
@@ -298,12 +299,13 @@ fn dropping_the_filter_leaves_the_default_fold_state_alone() {
 
 /// A group over live panes is a fold `bdi` chose, and a count is not a
 /// view of what it holds: it says they exist and nothing about which they
-/// are. What collection and the filter did is a report, and rests shut.
-/// In the order the groups are drawn: dunwich's and ferry's loose panes,
-/// harbour's hidden tree, then the failed project, the unconfigured pane
-/// and the conflict below the trees.
+/// are. A project whose tracker could not be read is the one thing a reader
+/// must not miss, so it rests open too. What the filter held back is a
+/// report, and rests shut. In the order the groups are drawn: dunwich's and
+/// ferry's loose panes, harbour's hidden tree, then the failed project, the
+/// unconfigured pane and the conflict below the trees.
 #[test]
-fn a_group_rests_open_when_what_it_holds_is_live() {
+fn only_the_trees_the_filter_holds_back_rest_shut() {
     let forest = flatten(snapshot());
     let markers: Vec<&str> = forest
         .lines()
@@ -314,7 +316,7 @@ fn a_group_rests_open_when_what_it_holds_is_live() {
         })
         .collect();
 
-    assert_eq!(markers, vec![OPEN, OPEN, SHUT, SHUT, OPEN, OPEN]);
+    assert_eq!(markers, vec![OPEN, OPEN, SHUT, OPEN, OPEN, OPEN]);
 }
 
 /// The count is the only account the screen gives of the beads it stands

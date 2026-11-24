@@ -870,7 +870,7 @@ impl Shown {
         let related = show::related(node, &mentioned);
         let from = self.show.on().and_then(|id| show::at(node, &mentioned, id));
         let to = show::stepped(from, related.len(), |at| {
-            show::followable(&self.forest, related[at])
+            show::first_naming(&related, at) && show::followable(&self.forest, related[at])
         });
         let Some(to) = to else {
             return false;
@@ -1695,6 +1695,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
         };
 
@@ -2761,6 +2762,50 @@ mod tests {
             shown.related_key(),
             Some(bead("grove", "grv-1.2")),
             "the ring landed on the bead in the middle, which goes nowhere"
+        );
+    }
+
+    /// A bead named in two sections, such as a child that also waits on this
+    /// one, is one stop of the ring. The ring stands on a bead rather than a
+    /// row, so a second stop on the same bead would read back as the first,
+    /// and `Tab` would never reach the beads named after it.
+    #[test]
+    fn the_ring_stops_once_on_a_bead_named_in_two_sections() {
+        let mut snapshot = a_grove_that_names_its_beads();
+        for tree in &mut snapshot.collected {
+            let tree = Arc::make_mut(tree);
+            for node in &mut tree.beads {
+                if node.id != "grv-1.1" {
+                    continue;
+                }
+                let named = |id: &str, edge: Edge| Related {
+                    id: id.to_string(),
+                    project: None,
+                    edge,
+                    status: Some(Status::Open),
+                    title: Some("a bead in the grove".to_string()),
+                };
+                node.children = vec![named("grv-1.2", Edge::ParentChild)];
+                node.blocks = vec![
+                    named("grv-1.2", Edge::Blocks),
+                    named("grv-1.3", Edge::Blocks),
+                ];
+            }
+        }
+        snapshot.trees = snapshot.collected.clone();
+        let mut shown = shown(snapshot);
+        shown.apply(Action::ExpandOrChild);
+        assert!(shown.apply(Action::ShowBead));
+
+        let mut stops = Vec::new();
+        for _ in 0..4 {
+            assert!(shown.apply(Action::NextRelated));
+            stops.push(shown.show.on().map(str::to_string));
+        }
+
+        assert_eq!(
+            stops,
+            ["grv-1", "grv-1.2", "grv-1.3", "grv-1"].map(|id| Some(id.to_string()))
         );
     }
 

@@ -2,6 +2,7 @@
 //! window over the forest.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -20,7 +21,7 @@ use crate::view::draw::{done, key_rows, Reference};
 use crate::view::fitted::{self, cover, indent, Fitted, Mark};
 use crate::view::forest::Forest;
 use crate::view::lines::{Content, Waiting};
-use crate::view::markdown::{self, Flow};
+use crate::view::markdown;
 use crate::view::palette;
 use crate::view::phrase;
 use crate::view::row::{self, Progress};
@@ -32,6 +33,7 @@ const DESCRIPTION: &str = "DESCRIPTION";
 const NOTES: &str = "NOTES";
 const PARENT: &str = "PARENT";
 const DEPENDS_ON: &str = "DEPENDS ON";
+const CHILDREN: &str = "CHILDREN";
 const BLOCKS: &str = "BLOCKS";
 
 /// The section for the beads the description names. Neither `bd show` nor
@@ -55,9 +57,10 @@ const DATE: &str = "%Y-%m-%d";
 const BETWEEN_LABELS: &str = ", ";
 
 /// `bd show`'s own arrows: up to the parent, out to what a bead waits on,
-/// back from what waits on it.
+/// down to its children, back from what waits on it.
 const UP: char = '↑';
 const OUT: char = '→';
+const DOWN: char = '↳';
 const BACK: char = '←';
 
 /// What stands in the place of an arrow for a bead only the prose names:
@@ -230,14 +233,22 @@ pub fn at(node: &Node, mentioned: &[Related], id: &str) -> Option<usize> {
         .position(|named| named.id == id)
 }
 
+/// Whether `at` is the first place `related` names its bead. A bead can be
+/// named in two sections, such as an epic that depends on its own child, and
+/// the ring stands on a bead by its id, so it stops only at the first.
+pub fn first_naming(related: &[&Related], at: usize) -> bool {
+    related.iter().position(|named| named.id == related[at].id) == Some(at)
+}
+
 /// Every bead this one names, in the order the window draws them: its
-/// parent, then what it waits on, then what waits on it, which is `bd
-/// show`'s own order and the order `said` builds its sections in, and last
-/// the beads its description names.
+/// parent, then what it waits on, then its children, then what waits on
+/// it, which is `bd show`'s own order and the order `said` builds its
+/// sections in, and last the beads its description names.
 pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related> {
     node.parent
         .iter()
         .chain(&node.depends_on)
+        .chain(&node.children)
         .chain(&node.blocks)
         .chain(mentioned)
         .collect()
@@ -246,10 +257,8 @@ pub fn related<'a>(node: &'a Node, mentioned: &'a [Related]) -> Vec<&'a Related>
 /// The beads the description names that the window does not already list, in
 /// the order it first names them.
 ///
-/// A candidate is a whole token shaped like an id: a lower-case prefix, one
-/// hyphen, a base, and an optional dotted tail of digits. What decides is
-/// existence, so a candidate gets a row only where the forest draws a bead
-/// of that id in the selection's own project.
+/// A candidate is a whole token `ids_in` finds. What decides is existence,
+/// so a candidate gets a row only where `named_in` finds its bead.
 ///
 /// The ring names a bead by its id alone, so an id the window lists already,
 /// whichever project's bead that row is, is left out rather than made two
@@ -258,32 +267,55 @@ pub fn mentioned(forest: &Forest, node: &Node) -> Vec<Related> {
     let description = node.description().unwrap_or_default();
     let listed = related(node, &[]);
     let mut named: Vec<Related> = Vec::new();
-    for token in description.split(|c: char| !(c.is_ascii_alphanumeric() || "-._".contains(c))) {
-        let id = token.trim_end_matches('.');
-        if id == node.id
-            || !shaped_like_an_id(id)
-            || listed.iter().any(|related| related.id == id)
+    for (_, id) in ids_in(&description) {
+        if listed.iter().any(|related| related.id == id)
             || named.iter().any(|related| related.id == id)
         {
             continue;
         }
-        let key = BeadKey {
-            project: node.project.clone(),
-            id: id.to_string(),
-        };
-        if let Some(bead) = forest.snapshot().node(&key).filter(|_| forest.draws(&key)) {
-            named.push(Related {
-                id: bead.id.clone(),
-                project: None,
-                // A mention is no edge, and `Blocks` is the kind that
-                // `related_row` says nothing of.
-                edge: Edge::Blocks,
-                status: Some(bead.status.clone()),
-                title: Some(bead.title.clone()),
-            });
-        }
+        named.extend(named_in(forest, node, id));
     }
     named
+}
+
+/// The bead `id` stands for where `node`'s prose names it: the bead of that
+/// id in `node`'s own project, where the forest draws one. A bead's prose
+/// never names the bead itself.
+pub fn named_in(forest: &Forest, node: &Node, id: &str) -> Option<Related> {
+    if id == node.id {
+        return None;
+    }
+    let key = BeadKey {
+        project: node.project.clone(),
+        id: id.to_string(),
+    };
+    let bead = forest
+        .snapshot()
+        .node(&key)
+        .filter(|_| forest.draws(&key))?;
+    Some(Related {
+        id: bead.id.clone(),
+        project: None,
+        // A mention is no edge, and `Blocks` is the kind that
+        // `related_row` says nothing of.
+        edge: Edge::Blocks,
+        status: Some(bead.status.clone()),
+        title: Some(bead.title.clone()),
+    })
+}
+
+/// Each whole token of `text` shaped like an id, with the byte it starts
+/// at: a lower-case prefix, one hyphen, a base, and an optional dotted tail
+/// of digits. A full stop after it ends a sentence and is no part of it.
+pub fn ids_in(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || "-._".contains(c)))
+        .map(move |token| {
+            (
+                token.as_ptr() as usize - text.as_ptr() as usize,
+                token.trim_end_matches('.'),
+            )
+        })
+        .filter(|(_, id)| shaped_like_an_id(id))
 }
 
 fn shaped_like_an_id(token: &str) -> bool {
@@ -336,18 +368,57 @@ pub fn followable(forest: &Forest, related: &Related) -> bool {
 /// is drawn on.
 pub struct Page {
     pub rows: Vec<Vec<Span<'static>>>,
-    /// How many of the first rows the bead's own glyph, id and title take.
-    pub head: usize,
     /// The row that names the beads this one is blocked by, where it is.
     pub blocked_by: Option<usize>,
+    /// The row holding the bead's badges, where it has any.
+    pub badges: Option<usize>,
+    /// The row the first section under the head starts on, which is the
+    /// last row where the bead has no section.
+    pub sections: usize,
     /// The row each of `related`'s beads was drawn on, in that order.
     pub related: Vec<usize>,
-    /// How each row of the description and the notes stands to the line
-    /// of text it is a row of.
-    pub(crate) prose: HashMap<usize, Flow>,
+    /// The sections that name beads, in the order they are drawn.
+    pub tied: Vec<Tied>,
+    /// The rows the description's and the notes' sections each take, from
+    /// the blank over the heading, with which of the two each is.
+    pub prose: Vec<(Range<usize>, Prose)>,
     /// Which spans of which rows are marked, and as what, for
     /// the rows that hold a mark at all.
     pub(crate) marks: HashMap<usize, Vec<Mark>>,
+}
+
+/// Which of a bead's two pieces of prose a run of the page's rows draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prose {
+    Description,
+    Notes,
+}
+
+/// What a section of the page holds: prose, or the beads it names.
+enum Holds {
+    Prose(Prose),
+    Beads(Ties),
+}
+
+/// What ties the beads a section of the page names to the bead it shows,
+/// which is what heads the section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ties {
+    Parent,
+    DependsOn,
+    Children,
+    Blocks,
+    Mentions,
+}
+
+/// A section of the page that names beads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tied {
+    pub ties: Ties,
+    /// The first row the section takes, which is the blank over its heading.
+    pub from: usize,
+    /// The rows its beads are drawn on.
+    pub beads: Range<usize>,
 }
 
 /// How much of what the selected line stands for is done, where the forest
@@ -537,7 +608,6 @@ pub fn said(
         row.extend(line);
         rows.push(row);
     }
-    let head = rows.len();
     if !node.labels.is_empty() {
         rows.push(indented(vec![Span::styled(
             node.labels.join(BETWEEN_LABELS),
@@ -570,10 +640,12 @@ pub fn said(
         rows.push(indented(vec![Span::styled(agent.clone(), palette::AGENT)]));
     }
     match &node.watching {
-        Watching::Unknown => rows.push(indented(vec![Span::styled(
-            phrase::watches_unknown(),
-            palette::QUIET,
-        )])),
+        Watching::Unknown => {
+            rows.push(indented(vec![Span::styled(
+                phrase::watches_unknown(),
+                palette::QUIET,
+            )]));
+        }
         Watching::Known { agents, unreported } => {
             let unreported = (*unreported > 0).then(|| phrase::watched_unreported(*unreported));
             for watched in agents.iter().map(phrase::watched_by).chain(unreported) {
@@ -603,7 +675,9 @@ pub fn said(
             badge_style(badge, &cells.status),
         ));
     }
+    let mut badged = None;
     if badges.len() > 1 {
+        badged = Some(rows.len());
         marks.insert(rows.len(), marked);
         rows.push(badges);
     }
@@ -613,12 +687,13 @@ pub fn said(
             progress.total,
         ))]));
     }
+    let sections = rows.len();
 
     let room = width.saturating_sub(indent().len());
     let prose = |text: &str| {
-        markdown::flowing_rows(text, room)
+        markdown::rows(text, room)
             .into_iter()
-            .map(|(row, flow)| (indented(row), Some(flow)))
+            .map(indented)
             .collect::<Vec<_>>()
     };
     let tied = |arrow: char, related: &[Related]| {
@@ -627,47 +702,76 @@ pub fn said(
             .map(|related| {
                 let mut row = vec![Span::styled(format!("{arrow} "), palette::STRUCTURE)];
                 row.extend(related_row(related, followable(related)));
-                (indented(row), None)
+                indented(row)
             })
             .collect::<Vec<_>>()
     };
 
     let mut related = Vec::new();
-    let mut flows = HashMap::new();
-    for (heading, body, names_beads) in [
+    let mut lists = Vec::new();
+    let mut written = Vec::new();
+    for (heading, body, holds) in [
         (
             DESCRIPTION,
             prose(&node.description().unwrap_or_default()),
-            false,
+            Holds::Prose(Prose::Description),
         ),
-        (NOTES, prose(&node.notes().unwrap_or_default()), false),
-        (PARENT, tied(UP, node.parent.as_slice()), true),
-        (DEPENDS_ON, tied(OUT, &node.depends_on), true),
-        (BLOCKS, tied(BACK, &node.blocks), true),
-        (MENTIONS, tied(NAMED, mentioned), true),
+        (
+            NOTES,
+            prose(&node.notes().unwrap_or_default()),
+            Holds::Prose(Prose::Notes),
+        ),
+        (
+            PARENT,
+            tied(UP, node.parent.as_slice()),
+            Holds::Beads(Ties::Parent),
+        ),
+        (
+            DEPENDS_ON,
+            tied(OUT, &node.depends_on),
+            Holds::Beads(Ties::DependsOn),
+        ),
+        (
+            CHILDREN,
+            tied(DOWN, &node.children),
+            Holds::Beads(Ties::Children),
+        ),
+        (BLOCKS, tied(BACK, &node.blocks), Holds::Beads(Ties::Blocks)),
+        (
+            MENTIONS,
+            tied(NAMED, mentioned),
+            Holds::Beads(Ties::Mentions),
+        ),
     ] {
         if body.is_empty() {
             continue;
         }
+        let from = rows.len();
         rows.push(Vec::new());
         rows.push(vec![Span::styled(heading, palette::SECTION)]);
-        if names_beads {
-            related.extend(rows.len()..rows.len() + body.len());
-        }
-        for (row, flow) in body {
-            if let Some(flow) = flow {
-                flows.insert(rows.len(), flow);
+        let drawn = rows.len()..rows.len() + body.len();
+        match holds {
+            Holds::Prose(prose) => written.push((from..drawn.end, prose)),
+            Holds::Beads(ties) => {
+                related.extend(drawn.clone());
+                lists.push(Tied {
+                    ties,
+                    from,
+                    beads: drawn,
+                });
             }
-            rows.push(row);
         }
+        rows.extend(body);
     }
 
     Page {
         rows,
-        head,
         blocked_by,
+        badges: badged,
+        sections,
         related,
-        prose: flows,
+        tied: lists,
+        prose: written,
         marks,
     }
 }
@@ -997,6 +1101,12 @@ mod tests {
                 Status::Closed,
                 "lay the feeder cable",
             )],
+            children: vec![related(
+                "dun-7.1.1",
+                Edge::ParentChild,
+                Status::Open,
+                "align the feed horn",
+            )],
             blocks: vec![related(
                 "dun-7.4",
                 Edge::Blocks,
@@ -1047,7 +1157,7 @@ mod tests {
     #[test]
     fn the_bead_is_shown_as_bd_show_shows_it() {
         assert_eq!(
-            drawn(&a_bead(), &mut Show::default(), 44, 24),
+            drawn(&a_bead(), &mut Show::default(), 44, 27),
             vec![
                 "┌dun-7.1───────────────────────────────────┐",
                 "│                                          │",
@@ -1068,6 +1178,9 @@ mod tests {
                 "│                                          │",
                 "│ DEPENDS ON                               │",
                 "│   → ✓ dun-7.3  lay the feeder cable      │",
+                "│                                          │",
+                "│ CHILDREN                                 │",
+                "│   ↳ ○ dun-7.1.1  align the feed horn     │",
                 "│                                          │",
                 "│ BLOCKS                                   │",
                 "│   ← ○ dun-7.4  file the licence          │",
@@ -1093,6 +1206,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -1335,7 +1449,7 @@ mod tests {
         assert_eq!(
             drawn(&a_bead_with_a_long_title(), &mut Show::default(), 44, 7),
             vec![
-                "┌dun-7.1 · 1–3 of 20───────────────────────┐",
+                "┌dun-7.1 · 1–3 of 23───────────────────────┐",
                 "│                                          │",
                 "│ ◐ dun-7.1  Thirty-three of thirty-four … │",
                 "│   in_progress · P2 · task · kim          │",
@@ -1379,6 +1493,7 @@ mod tests {
             agent: None,
             row: Printed::saying("", ""),
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -1406,7 +1521,7 @@ mod tests {
     fn a_window_too_short_for_the_bead_scrolls_by_motion() {
         let mut view = Show::default();
         let top = drawn(&a_bead(), &mut view, 44, 6);
-        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 20───────────────────────┐");
+        assert_eq!(top[0], "┌dun-7.1 · 1–2 of 23───────────────────────┐");
         assert_eq!(top[2], "│ ◐ dun-7.1  re-point the dish             │");
 
         assert!(!view.scroll(Motion::PreviousRow), "already at the top");
@@ -1444,7 +1559,7 @@ mod tests {
     #[test]
     fn a_bead_that_fits_the_window_neither_scrolls_nor_says_it_does() {
         let mut view = Show::default();
-        drawn(&a_bead(), &mut view, 44, 24);
+        drawn(&a_bead(), &mut view, 44, 27);
 
         assert!(!view.scroll(Motion::NextRow));
         assert!(!view.scroll(Motion::LastRow));
@@ -1644,7 +1759,7 @@ mod tests {
                 under_the_blank_row,
                 &nothing_followable,
             ),
-            Drawn::Related("dun-7.3"),
+            Drawn::Related("dun-7.1.1"),
             "no reference is drawn there, so this says nothing: {rows:#?}"
         );
         assert_eq!(
@@ -1665,7 +1780,7 @@ mod tests {
     /// Wide enough for the bead's own rows to be drawn whole, and tall enough
     /// for every section of it.
     const WIDE: u16 = 44;
-    const TALL: u16 = 24;
+    const TALL: u16 = 27;
 
     /// The whole of a screen of that size.
     fn over(width: u16, height: u16) -> Rect {
@@ -1875,6 +1990,7 @@ mod tests {
             row: Printed::saying(SAID, ""),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
             ..a_bead()
         };
@@ -2084,7 +2200,7 @@ mod tests {
     /// the colour the forest gives it.
     #[test]
     fn the_agent_marker_is_painted_live_as_the_forest_paints_it() {
-        let marker = painted(&a_bead(), 44, 24).row(4);
+        let marker = painted(&a_bead(), 44, 27).row(4);
 
         assert_eq!(
             run_saying(&marker, "◍ lifting the mast · working").style.fg,
@@ -2097,7 +2213,7 @@ mod tests {
     /// is always this blue, whatever the status.
     #[test]
     fn the_id_is_painted_the_blue_bd_show_paints_it() {
-        let top = painted(&a_bead(), 44, 24).row(2);
+        let top = painted(&a_bead(), 44, 27).row(2);
 
         assert_eq!(
             run_saying(&top, "dun-7.1").style.fg,
@@ -2141,9 +2257,9 @@ mod tests {
     /// the brightness of the row it sits on, which on the page is the page's.
     #[test]
     fn a_related_beads_glyph_is_painted_the_colour_of_its_status() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
         let depends_on = painted.row(18);
-        let blocks = painted.row(21);
+        let blocks = painted.row(24);
 
         assert_eq!(
             run_saying(&depends_on, "✓").style.fg,
@@ -2162,9 +2278,9 @@ mod tests {
     /// the page's, as a row nobody is on is the forest's middle rung.
     #[test]
     fn a_closed_related_bead_is_dimmed_as_bd_show_dims_one() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
         let depends_on = painted.row(18);
-        let blocks = painted.row(21);
+        let blocks = painted.row(24);
 
         assert_eq!(
             run_saying(&depends_on, "dun-7.3  lay the feeder cable")
@@ -2189,7 +2305,7 @@ mod tests {
     /// window draws it as `bd show` does.
     #[test]
     fn a_heading_is_bold_and_no_colour_as_bd_show_prints_one() {
-        let heading = run_saying(&painted(&a_bead(), 44, 24).row(6), DESCRIPTION);
+        let heading = run_saying(&painted(&a_bead(), 44, 27).row(6), DESCRIPTION);
 
         assert!(
             heading.style.add_modifier.contains(Modifier::BOLD),
@@ -2240,7 +2356,7 @@ mod tests {
     #[test]
     fn what_the_window_draws_at_a_weight_is_its_title_and_its_section_names() {
         let bead = a_bead();
-        let painted = painted(&bead, 44, 24);
+        let painted = painted(&bead, 44, 27);
 
         let own: Vec<String> = said_where(&painted, |run| {
             run.style.add_modifier.contains(Modifier::BOLD)
@@ -2254,6 +2370,7 @@ mod tests {
                 NOTES.to_string(),
                 PARENT.to_string(),
                 DEPENDS_ON.to_string(),
+                CHILDREN.to_string(),
                 BLOCKS.to_string(),
             ],
             "{painted:?}"
@@ -2268,7 +2385,7 @@ mod tests {
     /// takes a tone of its own again this list is where it turns up.
     #[test]
     fn the_only_tones_the_window_draws_are_the_ones_it_quotes() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
 
         let toned: Vec<String> = said_where(&painted, |run| run.style.fg != Some(Color::Reset));
 
@@ -2294,7 +2411,7 @@ mod tests {
     /// dim.
     #[test]
     fn the_page_is_drawn_at_the_terminals_own_foreground_as_the_head_is() {
-        let painted = painted(&a_bead(), 44, 24);
+        let painted = painted(&a_bead(), 44, 27);
 
         for (y, said) in [
             (7, "Point it at the new bird."),
@@ -2311,7 +2428,7 @@ mod tests {
     /// reader sees which rows `Tab` will stop on before they press it.
     #[test]
     fn a_related_beads_id_is_blue_only_where_the_forest_can_be_gone_to_it() {
-        let painted = painted_where(&a_bead(), 44, 24, &only("dun-7"));
+        let painted = painted_where(&a_bead(), 44, 27, &only("dun-7"));
 
         let drawn = painted.row(15);
         assert_eq!(
@@ -2325,7 +2442,7 @@ mod tests {
             "the title beside it: {drawn:?}"
         );
 
-        let undrawn = painted.row(21);
+        let undrawn = painted.row(24);
         assert_eq!(
             run_saying(&undrawn, "dun-7.4").style.fg,
             palette::PAGE.fg,
@@ -2338,7 +2455,7 @@ mod tests {
     /// forest has, and the blue on its id.
     #[test]
     fn a_closed_bead_the_forest_draws_is_finished_toned_with_a_blue_id() {
-        let drawn = painted_where(&a_bead(), 44, 24, &only("dun-7.3")).row(18);
+        let drawn = painted_where(&a_bead(), 44, 27, &only("dun-7.3")).row(18);
 
         assert_eq!(
             run_saying(&drawn, "dun-7.3").style.fg,
@@ -2406,7 +2523,7 @@ mod tests {
     }
 
     /// The order the window draws them in, which is `bd show`'s: the parent,
-    /// then what it waits on, then what waits on it.
+    /// then what it waits on, then its children, then what waits on it.
     #[test]
     fn the_beads_a_bead_names_are_listed_in_the_order_the_window_draws_them() {
         assert_eq!(
@@ -2414,7 +2531,7 @@ mod tests {
                 .iter()
                 .map(|it| it.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["dun-7", "dun-7.3", "dun-7.4"]
+            vec!["dun-7", "dun-7.3", "dun-7.1.1", "dun-7.4"]
         );
     }
 
@@ -2499,7 +2616,7 @@ mod tests {
         // Found by what the row says rather than by its number: the window is
         // centred, so a page row and a screen row are not the same count.
         let reversed = |said: &str, view: &mut Show| {
-            Painted::drawn_by(60, 24, |frame| {
+            Painted::drawn_by(60, 27, |frame| {
                 show(
                     frame,
                     frame.area(),
@@ -2516,7 +2633,7 @@ mod tests {
             .find(|(_, row)| row.contains(said))
             .map(|(at, _)| at)
             .map(|at| {
-                Painted::drawn_by(60, 24, |frame| {
+                Painted::drawn_by(60, 27, |frame| {
                     show(
                         frame,
                         frame.area(),
@@ -2541,6 +2658,76 @@ mod tests {
         assert!(
             !reversed("file the licence", &mut view),
             "a bead the window is not on is drawn as selected"
+        );
+    }
+
+    /// Each section that names beads says what ties them to the bead, where
+    /// the section starts, and the rows its beads are drawn on, which
+    /// together are every row a bead named is drawn on.
+    #[test]
+    fn a_section_naming_beads_says_what_ties_them_and_where_they_are_drawn() {
+        let bead = a_bead();
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+
+        let ties: Vec<Ties> = page.tied.iter().map(|tied| tied.ties).collect();
+        assert_eq!(
+            ties,
+            [Ties::Parent, Ties::DependsOn, Ties::Children, Ties::Blocks]
+        );
+        for tied in &page.tied {
+            assert!(page.rows[tied.from].is_empty(), "{tied:?}");
+            assert_eq!(tied.from + 2, tied.beads.start, "{tied:?}");
+        }
+        let rows: Vec<usize> = page
+            .tied
+            .iter()
+            .flat_map(|tied| tied.beads.clone())
+            .collect();
+        assert_eq!(rows, page.related);
+    }
+
+    /// Each child is a row under `bd show`'s heading and behind its arrow.
+    #[test]
+    fn a_beads_children_are_listed_under_bd_shows_heading() {
+        let bead = a_bead();
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+        let said: Vec<String> = page
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|span| span.content.as_ref()).collect())
+            .collect();
+
+        let heading = said
+            .iter()
+            .position(|row| row.trim() == CHILDREN)
+            .expect("a heading over the children");
+        assert!(
+            said[heading + 1].contains("↳ ○ dun-7.1.1  align the feed horn"),
+            "{said:?}"
+        );
+    }
+
+    /// A bead nothing hangs under has no section for its children, rather
+    /// than a heading over nothing.
+    #[test]
+    fn a_bead_with_no_children_has_no_section_for_them() {
+        let bead = Node {
+            children: Vec::new(),
+            ..a_bead()
+        };
+        let page = said(&bead, &[], None, 58, 60, &nothing_followable);
+
+        assert!(
+            !page.tied.iter().any(|tied| tied.ties == Ties::Children),
+            "{:?}",
+            page.tied
+        );
+        assert!(
+            !page
+                .rows
+                .iter()
+                .any(|row| row.iter().any(|span| span.content.trim() == CHILDREN)),
+            "a heading over nothing"
         );
     }
 

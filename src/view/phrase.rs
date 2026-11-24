@@ -25,6 +25,8 @@ use crate::model::types::{PaneKey, PaneStatus, Status};
 use crate::model::watching::WatchingAgent;
 use crate::view::forest::Spine;
 use crate::view::lines::Section;
+use crate::view::row::WARNING;
+use crate::view::show::{Prose, Ties};
 use crate::view::{Freshness, Mark, Notice, Said};
 
 /// The oldest bd whose command line `bdi` runs, as README states it. A
@@ -230,6 +232,18 @@ pub fn mark(freshness: Freshness, now: DateTime<Utc>) -> &'static str {
 /// is no read to date the rows to, and no rows either.
 pub fn last_read(freshness: Freshness, now: DateTime<Utc>) -> Option<String> {
     freshness.read_at.map(|at| format!("{} ago", age(now - at)))
+}
+
+/// What a page's mark for a project being read says to a reader who hears
+/// the page rather than sees it.
+pub fn being_read() -> &'static str {
+    "being read"
+}
+
+/// What a page's mark for a project whose read has gone unanswered says to
+/// a reader who hears the page rather than sees it.
+pub fn not_answering() -> &'static str {
+    "not answering"
 }
 
 /// What a page says before when a project's rows were read.
@@ -618,6 +632,11 @@ pub fn anomalies_beneath(count: usize) -> String {
     format!("{count} {bead} to check")
 }
 
+/// The beads to check where a narrow window has room only for their count.
+pub fn anomalies_beneath_briefly(count: usize) -> String {
+    format!("{WARNING} {count}")
+}
+
 /// The beads with an anomaly that the ready list covers, whose rows saying
 /// what is wrong are the forest's.
 pub fn to_check_in_the_forest(count: usize) -> String {
@@ -635,8 +654,8 @@ pub fn left_of(left: usize, total: usize) -> String {
     format!("{left} left of {total}")
 }
 
-/// The projects with no read gone badly, counted on the one line a web
-/// page's list across projects folds their headings into.
+/// The projects counted on the one line a web page's list across projects
+/// folds their headings into.
 pub fn projects(count: usize) -> String {
     let project = if count == 1 { "project" } else { "projects" };
     format!("{count} {project}")
@@ -746,9 +765,25 @@ pub fn pane_report(display_agent: Option<&str>, caption: Option<&str>) -> Option
 /// An agent watching a bead, named by what herdr reports of its pane, or by
 /// herdr's name for the agent where the pane reports nothing.
 pub fn watched_by(agent: &WatchingAgent) -> String {
-    let named = pane_report(agent.display_agent.as_deref(), agent.caption.as_deref())
-        .unwrap_or_else(|| agent.agent.clone());
-    format!("watched by {named}")
+    format!("watched by {}", watcher(agent))
+}
+
+/// An agent watching a bead as [`watched_by`] names it, for a page that
+/// says who watches under a label of its own.
+pub fn watcher(agent: &WatchingAgent) -> String {
+    pane_report(agent.display_agent.as_deref(), agent.caption.as_deref())
+        .unwrap_or_else(|| agent.agent.clone())
+}
+
+/// The agents watching a bead that a web page cannot name, after those it
+/// names, or alone where it names none.
+pub fn unnamed_watchers(count: usize, after_named: bool) -> String {
+    if after_named {
+        let agent = if count == 1 { "agent" } else { "agents" };
+        format!("{count} more {agent}")
+    } else {
+        agents(count)
+    }
 }
 
 /// The agents watching a bead whose agent sessions herdr reports in no live
@@ -1027,12 +1062,39 @@ pub fn waiting_on(count: usize) -> String {
     format!("Waiting on {count} {bead}")
 }
 
+/// What heads the section of a bead's web page that holds `prose`:
+/// `bd show`'s own section name, in sentence case.
+pub fn prose(prose: Prose) -> &'static str {
+    match prose {
+        Prose::Description => "Description",
+        Prose::Notes => "Notes",
+    }
+}
+
+/// What heads a list on a bead's web page of the beads tied to it by
+/// `ties`: `bd show`'s own section names, in sentence case, and the coined
+/// name for the beads its description names.
+pub fn tied(ties: Ties) -> &'static str {
+    match ties {
+        Ties::Parent => "Parent",
+        Ties::DependsOn => "Depends on",
+        Ties::Children => "Children",
+        Ties::Blocks => "Blocks",
+        Ties::Mentions => "Mentions",
+    }
+}
+
+/// What a ready bead is said to be.
+pub fn ready() -> &'static str {
+    "ready"
+}
+
 /// Whether a bead is ready, or what it is blocked by, in the words `bd ready`
 /// and `bd list` use. A bead that is neither, such as a deferred one or a
 /// closed one, has nothing said of it.
 pub fn readiness(ready: bool, blocked_by: &[String]) -> Option<String> {
     if ready {
-        Some("ready".to_string())
+        Some(self::ready().to_string())
     } else if blocked_by.is_empty() {
         None
     } else {
@@ -1136,6 +1198,38 @@ pub fn copy_id() -> &'static str {
 /// What the copy button says once it has copied the id.
 pub fn copied() -> &'static str {
     "Copied"
+}
+
+/// The name each cell of a web bead page's grid of fields goes by: `bd
+/// show`'s own word for the field, and beads' word for progress.
+pub mod field {
+    pub const PRIORITY: &str = "Priority";
+    pub const TYPE: &str = "Type";
+    pub const ASSIGNEE: &str = "Assignee";
+    pub const AGENT: &str = "Agent";
+    pub const WATCHED_BY: &str = "Watched by";
+    pub const PROGRESS: &str = "Progress";
+    pub const CREATED: &str = "Created";
+    pub const UPDATED: &str = "Updated";
+    pub const CREATED_BY: &str = "Created by";
+    pub const STARTED: &str = "Started";
+    pub const CLOSED: &str = "Closed";
+    pub const DEFERRED_UNTIL: &str = "Deferred until";
+}
+
+/// A bead's priority as `bd` writes it.
+pub fn priority(priority: u8) -> String {
+    format!("P{priority}")
+}
+
+/// The day an instant falls on at `offset`, as a reader writes a date.
+pub fn day(at: DateTime<Utc>, offset: FixedOffset) -> String {
+    at.with_timezone(&offset).format("%-d %b %Y").to_string()
+}
+
+/// How far through a bead's tree is, in words.
+pub fn done_of(finished: usize, total: usize) -> String {
+    format!("{finished} of {total} done")
 }
 
 /// What the band over a web page drawn with one bead as its only root says
@@ -1362,6 +1456,7 @@ mod tests {
             said.push(unfinished_beneath(count));
             said.push(agents_beneath(count));
             said.push(anomalies_beneath(count));
+            said.push(anomalies_beneath_briefly(count));
             said.push(failed_projects(count));
             said.push(conflicts(count));
             for with_findings in [0, 1, count] {

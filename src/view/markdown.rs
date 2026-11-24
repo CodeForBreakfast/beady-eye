@@ -9,50 +9,10 @@ use crate::view::palette;
 
 /// `text` laid out in `width` columns: one row per screen row, styled where
 /// the markdown says so.
-#[cfg(test)]
 pub(crate) fn rows(text: &str, width: usize) -> Vec<Vec<Span<'static>>> {
-    flowing_rows(text, width)
-        .into_iter()
-        .map(|(row, _)| row)
-        .collect()
-}
-
-/// How a row stands to the line of text it is a row of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Flow {
-    /// The first row of a line that flows, such as a paragraph or an item.
-    /// Its first span is what the line starts with: the indent, and any
-    /// marker.
-    Opens,
-    /// A row broken from the line above only to fit, with what joins it
-    /// back on: a space where the break fell between words, nothing where
-    /// it fell inside one. Its first span is what it hangs under.
-    Joins(&'static str),
-    /// A row of a line laid out by its author, as code is, which never
-    /// flows.
-    Kept,
-}
-
-/// `text` in the rows `rows` lays it out in, each with how it stands to the
-/// line of text it is a row of.
-pub(crate) fn flowing_rows(text: &str, width: usize) -> Vec<(Vec<Span<'static>>, Flow)> {
     lines(text, width)
         .into_iter()
-        .flat_map(|line| {
-            let verbatim = line.verbatim;
-            line.wrap_at_words(width)
-                .into_iter()
-                .enumerate()
-                .map(move |(nth, (row, at_word))| {
-                    let flow = match (verbatim, nth, at_word) {
-                        (true, _, _) => Flow::Kept,
-                        (false, 0, _) => Flow::Opens,
-                        (false, _, true) => Flow::Joins(" "),
-                        (false, _, false) => Flow::Joins(""),
-                    };
-                    (row, flow)
-                })
-        })
+        .flat_map(|line| line.wrap(width))
         .collect()
 }
 
@@ -88,18 +48,9 @@ impl Line {
     /// The line in rows of `width` columns, wrapped at the spaces. A word too
     /// wide for a row is broken between glyphs rather than lost.
     fn wrap(self, width: usize) -> Vec<Vec<Span<'static>>> {
-        self.wrap_at_words(width)
-            .into_iter()
-            .map(|(row, _)| row)
-            .collect()
-    }
-
-    /// The rows `wrap` gives, each with whether it starts on a word of its
-    /// own rather than partway through one broken to fit.
-    fn wrap_at_words(self, width: usize) -> Vec<(Vec<Span<'static>>, bool)> {
-        let mut rows: Vec<(Vec<Span<'static>>, bool)> = Vec::new();
+        let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
         let mut row: Vec<Span<'static>> = Vec::new();
-        let room = |rows: &Vec<(Vec<Span<'static>>, bool)>| {
+        let room = |rows: &Vec<Vec<Span<'static>>>| {
             let prefix = if rows.is_empty() {
                 &self.lead
             } else {
@@ -107,24 +58,22 @@ impl Line {
             };
             width.saturating_sub(columns_of(prefix)).max(1)
         };
-        let flush =
-            |rows: &mut Vec<(Vec<Span<'static>>, bool)>, row: Vec<Span<'static>>, at_word: bool| {
-                let prefix = if rows.is_empty() {
-                    &self.lead
-                } else {
-                    &self.hang
-                };
-                let mut prefixed = vec![Span::raw(prefix.clone())];
-                prefixed.extend(row);
-                rows.push((prefixed, at_word));
+        let flush = |rows: &mut Vec<Vec<Span<'static>>>, row: Vec<Span<'static>>| {
+            let prefix = if rows.is_empty() {
+                &self.lead
+            } else {
+                &self.hang
             };
+            let mut prefixed = vec![Span::raw(prefix.clone())];
+            prefixed.extend(row);
+            rows.push(prefixed);
+        };
 
         let words = if self.verbatim {
             vec![self.spans.clone()]
         } else {
             words(&self.spans)
         };
-        let mut at_word = true;
         for word in words {
             let mut word = if row.is_empty() {
                 word
@@ -133,19 +82,17 @@ impl Line {
                 row.extend(word);
                 continue;
             } else {
-                flush(&mut rows, std::mem::take(&mut row), at_word);
-                at_word = true;
+                flush(&mut rows, std::mem::take(&mut row));
                 word
             };
             while columns(&word) > room(&rows) {
                 let (head, rest) = split_at_columns(word, room(&rows));
-                flush(&mut rows, head, at_word);
-                at_word = false;
+                flush(&mut rows, head);
                 word = rest;
             }
             row = word;
         }
-        flush(&mut rows, row, at_word);
+        flush(&mut rows, row);
         rows
     }
 }
@@ -182,7 +129,7 @@ fn columns(spans: &[Span<'static>]) -> usize {
 }
 
 /// What a piece of text takes up on screen, in columns.
-fn columns_of(text: &str) -> usize {
+pub fn columns_of(text: &str) -> usize {
     Span::raw(text).width()
 }
 
@@ -547,51 +494,6 @@ mod tests {
         assert_eq!(
             words(&rows("one two\nthree four\nfive", 14)),
             ["one two three", "four five"]
-        );
-    }
-
-    /// Only a row the layout broke to fit joins the line above it: not the
-    /// first row of a paragraph or an item, not a row after a break the
-    /// author asked for, and not a row of code broken to fit. A word broken
-    /// to fit joins with no space, and every row of code is kept as laid
-    /// out, as a rule is.
-    #[test]
-    fn only_a_row_broken_to_fit_carries_on_the_line_above_it() {
-        let flows = |text: &str, width: usize| -> Vec<(String, Flow)> {
-            flowing_rows(text, width)
-                .into_iter()
-                .map(|(row, flow)| (words(&[row]).remove(0).trim().to_string(), flow))
-                .collect()
-        };
-        assert_eq!(
-            flows("one two three\n\nfour  \nfive", 9),
-            [
-                ("one two".to_string(), Flow::Opens),
-                ("three".to_string(), Flow::Joins(" ")),
-                (String::new(), Flow::Opens),
-                ("four".to_string(), Flow::Opens),
-                ("five".to_string(), Flow::Opens),
-            ]
-        );
-        assert_eq!(
-            flows("- one two three", 10),
-            [
-                ("• one two".to_string(), Flow::Opens),
-                ("three".to_string(), Flow::Joins(" "))
-            ]
-        );
-        assert!(flows("```\nabcdefghijkl\n```", 6)
-            .iter()
-            .all(|(_, flow)| *flow == Flow::Kept));
-        assert!(flows("```\nabcdefghijkl\n```", 6).len() > 1);
-        assert_eq!(flows("---", 6), [("──────".to_string(), Flow::Kept)]);
-        assert_eq!(
-            flows("go abcdefghijkl on", 8),
-            [
-                ("go".to_string(), Flow::Opens),
-                ("abcdefgh".to_string(), Flow::Joins(" ")),
-                ("ijkl on".to_string(), Flow::Joins("")),
-            ]
         );
     }
 

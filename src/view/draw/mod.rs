@@ -25,6 +25,7 @@ use ratatui::text::Span;
 use ratatui::Frame;
 
 use crate::app::Awaited;
+use crate::model::snapshot::FailedProject;
 use crate::model::types::{PaneStatus, Status};
 use crate::view::fitted::{indent, Fitted, GAP};
 use crate::view::forest::Forest;
@@ -94,16 +95,26 @@ impl<'a> Reads<'a> {
     /// twice over. The reader's question is how long this project's rows have
     /// been on their way, so the answer is the earliest of them.
     fn of(&self, project: &ProjectLine) -> Option<Freshness> {
+        self.of_project(&project.project, project.every_root_read)
+    }
+
+    /// How fresh a project whose tracker could not be read is: as fresh as
+    /// a project whose roots were refused, since none of them was read.
+    pub(super) fn of_failed(&self, failed: &FailedProject) -> Option<Freshness> {
+        self.of_project(&failed.project, false)
+    }
+
+    fn of_project(&self, project: &str, every_root_read: bool) -> Option<Freshness> {
         let fresh = Freshness::of(
-            self.read_at.get(&project.project).copied(),
+            self.read_at.get(project).copied(),
             self.collecting
                 .iter()
-                .filter(|awaited| awaited.wanted.names(&project.project))
+                .filter(|awaited| awaited.wanted.names(project))
                 .min_by_key(|awaited| awaited.asked_at),
-            project.every_root_read,
+            every_root_read,
             self.now,
         );
-        if self.lapsed.contains(&project.project) {
+        if self.lapsed.iter().any(|lapsed| lapsed == project) {
             fresh.map(Freshness::lapsed)
         } else {
             fresh
@@ -432,6 +443,7 @@ mod tests {
             metadata: Default::default(),
             parent: None,
             depends_on: Vec::new(),
+            children: Vec::new(),
             blocks: Vec::new(),
         }
     }
