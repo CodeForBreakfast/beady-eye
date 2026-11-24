@@ -13,8 +13,8 @@ use clap::builder::Resettable;
 use clap::{Args, Parser, Subcommand};
 
 use crate::app::{
-    allocate_from_one_arena, armed_unread, hold, serve, Armed, Arming, Hold, Outstanding,
-    ReadingTrackers, Reads,
+    allocate_from_one_arena, armed_unread, hold, serve, Armed, Arming, Hold, Outstanding, Parses,
+    ReadingTrackers, Reads, Reload, CHECKED_EVERY,
 };
 use crate::app::{Asked, Wanted};
 use crate::collect::agents::{Agents, Unasked};
@@ -30,7 +30,7 @@ use crate::collect::watched::Through;
 use crate::config::{Config, Delivery, Poll};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{DependencyListing, Filter, Listing, Only, ReadyListing, Snapshot};
-use crate::tui::{Hearing, Reload, CHECKED_EVERY};
+use crate::tui::Hearing;
 use crate::view::forest::ready_list;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -546,25 +546,15 @@ pub fn run() -> anyhow::Result<ExitCode> {
     // goes behind the collector's seam — `drive::looked_at` is where that
     // split is decided and why.
     let reload = read_from.map(|path| {
-        let cwd = cwd.clone();
-        let reading = Reading::asked_for(&cli.view);
-        let roots = cli.view.beads.clone();
         Reload::watching(
             path,
             CHECKED_EVERY,
             cfg.clone(),
-            Box::new(move |text| {
-                config_for_this_run(
-                    text,
-                    &RealRunner,
-                    &Launch {
-                        cwd: &cwd,
-                        reading: reading.clone(),
-                        roots: &roots,
-                    },
-                    environment::trackers_kept_here().as_deref(),
-                )
-            }),
+            parses_as_launched(
+                cwd.clone(),
+                Reading::asked_for(&cli.view),
+                cli.view.beads.clone(),
+            ),
             Utc::now(),
         )
     });
@@ -967,6 +957,24 @@ fn config_for_this_run(
     let cfg = Config::from_toml(text)?.keeping_trackers_in(trackers_kept_in)?;
     let cfg = scoped(cfg, runner, launch)?.with_roots_named_on_the_command_line(launch.roots)?;
     Ok(discovery::with_the_working_trees_git_lists(cfg, runner))
+}
+
+/// A config file's text as the config this run reads, read as the one it
+/// started on was: from `cwd`, scoped as `reading` says, and holding the
+/// `roots` its command line names.
+fn parses_as_launched(cwd: PathBuf, reading: Reading, roots: Vec<String>) -> Parses {
+    Box::new(move |text| {
+        config_for_this_run(
+            text,
+            &RealRunner,
+            &Launch {
+                cwd: &cwd,
+                reading: reading.clone(),
+                roots: &roots,
+            },
+            environment::trackers_kept_here().as_deref(),
+        )
+    })
 }
 
 /// The config scoped as the command line said, or as the directory says

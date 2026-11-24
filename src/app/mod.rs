@@ -18,6 +18,7 @@ pub mod gates;
 mod outstanding;
 mod reading;
 mod reading_trackers;
+mod reload;
 mod tracker;
 mod watcher;
 mod watching;
@@ -28,6 +29,7 @@ pub use due::due_after;
 pub use outstanding::Outstanding;
 pub use reading::Reading;
 pub use reading_trackers::{ReadingTrackers, Reads, Refreshing};
+pub use reload::{reads_under, Parses, Reload, Reloaded, CHECKED_EVERY};
 pub use watcher::{allocate_from_one_arena, hold, serve, Hold};
 
 /// The fake trackers and panes both halves read in their tests.

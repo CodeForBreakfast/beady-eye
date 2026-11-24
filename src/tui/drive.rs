@@ -14,7 +14,9 @@ use chrono::{DateTime, Utc};
 
 use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::{armed_unread, Arming, Asked, Awaited, Outstanding, Reading, Wanted};
+use crate::app::{
+    reads_under, Arming, Asked, Awaited, Outstanding, Reading, Reload, Reloaded, Wanted,
+};
 use crate::collect::changes::Heard;
 use crate::collect::panes::Answer;
 use crate::model::join::BeadKey;
@@ -22,7 +24,6 @@ use crate::model::snapshot::Snapshot;
 use crate::view::{Action, Motion, Notch, Typing};
 
 use super::keys::{action, typing};
-use super::reload::{Reload, Reloaded};
 
 /// Everything that reaches the loop.
 ///
@@ -478,8 +479,7 @@ fn looked_at(
     let Reloaded::Fresh(written) = reloaded else {
         return noticed;
     };
-    reading.now_reading(arms(written), armed_unread(arms, written));
-    outstanding.waits_out(written.tui.unanswered_after());
+    reads_under(written, arms, reading, outstanding);
     if ask
         .send(Asked::Reloaded(Box::new(written.clone())))
         .is_err()

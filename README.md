@@ -363,7 +363,7 @@ that knows a bead can link to it.
 It reads every configured project as the view does, through the watcher where
 one runs. It keeps each one current as the view does too: it polls as `poll`,
 `--poll` and `--no-poll` say, and hears producers on the socket `[changes]` or
-`--socket` names. It asks no agent provider, so it shows no agents and no pane. An
+`--socket` names. It takes up an edit to the config as the view does. It asks no agent provider, so it shows no agents and no pane. An
 open page changes as the trees do, without a reload, and keeps its place and
 its folds. The server sends each change down one connection the page holds
 open, as Server-Sent Events. A browser without scripts gets the same page,

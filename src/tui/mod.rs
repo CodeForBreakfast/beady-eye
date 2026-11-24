@@ -12,7 +12,7 @@ use chrono::Utc;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
-use crate::app::{armed_unread, Arming, Asked, Outstanding, Reading, Wanted};
+use crate::app::{armed_unread, Arming, Asked, Outstanding, Reading, Reload, Wanted};
 use crate::collect::agents::Agents;
 use crate::collect::changes::{Heard, Reported};
 use crate::config::Config;
@@ -26,11 +26,8 @@ mod clipboard;
 mod drive;
 mod keys;
 mod leaving;
-mod reload;
 mod screen;
 mod wire;
-
-pub(crate) use reload::{Reload, CHECKED_EVERY};
 
 /// What the collector thread does with each thing it is asked for.
 ///
