@@ -11,16 +11,18 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use chrono::{DateTime, FixedOffset, Utc};
+use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::app::Awaited;
+use crate::config::Colour;
 use crate::model::edges::Related;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
 use crate::view::address::{line_name, Asked, Root, FIND, SHOWN};
-use crate::view::fitted::{indent, Block, Mark, Marked};
+use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::row::{agent_doing, Cell, Layout, Progress, WARNING};
@@ -180,7 +182,9 @@ fn head(title: &str, version: Option<&str>) -> String {
     let (named, script) = match version {
         Some(version) => (
             format!("{VERSION}{version}\""),
-            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"),
+            format!(
+                "<script>{IN_READERS_ZONE}{SHORTENS}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"
+            ),
         ),
         None => (String::new(), String::new()),
     };
@@ -339,6 +343,7 @@ impl Drawing<'_> {
                     show::named(node, vec![Span::raw(phrase::this_tree())]),
                     Some(self.opening(root)),
                     None,
+                    Shown::WHOLE,
                 );
             }
             None => html.push_str(&format!("<p class=\"missing\">{}", not_in_any_tree(root))),
@@ -597,7 +602,7 @@ impl Drawing<'_> {
             ),
             _ => (None, None, fitted(line, widths, self.layout, reads)),
         };
-        let column = reference.is_some() && self.layout.cells().any(|cell| *cell == Cell::Progress);
+        let column = reference.is_some() && self.layout.draws(&Cell::Progress);
         let whole = drawn.whole();
         self.open_line(html, at, line, "", palette::css(whole.under));
         let (mut identity, mut from) = (whole.identity, 0);
@@ -640,7 +645,23 @@ impl Drawing<'_> {
                 Content::Bead(_) => self.asked.opening_at(place),
                 _ => self.opening(place.key()),
             });
-            self.reference(html, reference, href, self.named_project(line));
+            // An open bead's id takes the colour `[row] open_id` gives it,
+            // as the terminal's row draws it, and a colour written as such is
+            // drawn as written, as a badge's is.
+            let id = reference
+                .id
+                .first()
+                .filter(|_| reference.status == Status::Open)
+                .map_or(Style::new(), |id| id.style);
+            let id = match self.layout.open_id {
+                Colour::Absolute(_) => palette::css_as_written(id),
+                _ => palette::css(id),
+            };
+            let drawn = Shown {
+                mark: self.layout.draws(&Cell::Glyph),
+                id: self.layout.draws(&Cell::Id).then_some(id),
+            };
+            self.reference(html, reference, href, self.named_project(line), drawn);
         }
         if more {
             html.push_str("<span class=\"more\">");
@@ -648,10 +669,24 @@ impl Drawing<'_> {
         if bead && !identity.is_empty() {
             html.push_str(&indent());
         }
-        spans(html, identity, Block::Identity, whole.marks, from);
+        spans(
+            html,
+            identity,
+            Block::Identity,
+            whole.marks,
+            whole.shorter,
+            from,
+        );
         if !whole.title.is_empty() {
             html.push_str(&indent());
-            spans(html, whole.title, Block::Title, whole.marks, 0);
+            spans(
+                html,
+                whole.title,
+                Block::Title,
+                whole.marks,
+                whole.shorter,
+                0,
+            );
         }
         if !bead {
             html.push_str("</span></span>");
@@ -660,7 +695,14 @@ impl Drawing<'_> {
             html.push_str("</span>");
         }
         html.push_str("<span class=\"state\">");
-        spans(html, whole.state, Block::State, whole.marks, 0);
+        spans(
+            html,
+            whole.state,
+            Block::State,
+            whole.marks,
+            whole.shorter,
+            0,
+        );
         if column && !whole.state.is_empty() {
             html.push_str(&indent());
         }
@@ -738,15 +780,16 @@ impl Drawing<'_> {
     /// mark, its title, then its id set quietly, and a link to `href` where
     /// the page can open the bead. The mark is labelled with `bd`'s word for
     /// the status. The id takes no colour from the place drawing it, because
-    /// a status colour or a finished row's tone would make it fainter still.
-    /// Where the reference names its `project`, a quiet tag after the id
-    /// says it.
+    /// a status colour or a finished row's tone would make it fainter still,
+    /// and is drawn as `drawn` says. Where the reference names its `project`,
+    /// a quiet tag after the id says it.
     fn reference(
         &self,
         html: &mut String,
         reference: Reference,
         href: Option<String>,
         project: Option<&str>,
+        drawn: Shown,
     ) {
         let linked = href.is_some();
         match href {
@@ -759,24 +802,30 @@ impl Drawing<'_> {
                 &[Span::styled(gap.to_string(), reference.between)],
                 Block::Identity,
                 &[],
+                &[],
                 0,
             )
         };
-        mark(html, &reference.status, &reference.glyph(), true);
-        between(html, " ");
+        if drawn.mark {
+            mark(html, &reference.status, &reference.glyph(), true);
+            between(html, " ");
+        }
         html.push_str("<span class=\"title\">");
-        spans(html, &reference.title, Block::Identity, &[], 0);
+        spans(html, &reference.title, Block::Identity, &[], &[], 0);
         html.push_str("</span>");
-        between(html, &indent());
-        let id: String = reference
-            .id
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
-        html.push_str(&format!(
-            "<span class=\"id\">{}</span>",
-            escaped(id.trim_end())
-        ));
+        if let Some(id) = drawn.id {
+            between(html, &indent());
+            let said: String = reference
+                .id
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            html.push_str(&format!(
+                "<span class=\"id\"{}>{}</span>",
+                styled(id),
+                escaped(said.trim_end())
+            ));
+        }
         if let Some(project) = project {
             html.push_str(&format!(
                 "<span class=\"project\">{}</span>",
@@ -839,7 +888,7 @@ impl Drawing<'_> {
             if !std::mem::take(&mut on_a_fresh_line) {
                 html.push('\n');
             }
-            spans(html, row, Block::Identity, marks, 0);
+            spans(html, row, Block::Identity, marks, &[], 0);
         }
         if page.sections == listed_from {
             self.fields(html, node, offset);
@@ -1008,7 +1057,7 @@ impl Drawing<'_> {
         }
         if let Some(at) = page.badges {
             let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
-            spans(html, &page.rows[at], Block::Identity, marks, 0);
+            spans(html, &page.rows[at], Block::Identity, marks, &[], 0);
         }
         html.push_str(&format!("</p><h2>{}</h2>", escaped(&node.title)));
         if page.blocked_by.is_some() {
@@ -1061,7 +1110,13 @@ impl Drawing<'_> {
             return false;
         };
         let key = show::key_of(self.forest, related).filter(|_| followable);
-        self.reference(html, reference, key.map(|key| self.opening(&key)), None);
+        self.reference(
+            html,
+            reference,
+            key.map(|key| self.opening(&key)),
+            None,
+            Shown::WHOLE,
+        );
         true
     }
 
@@ -1276,8 +1331,18 @@ fn linked(said: &str, href: Option<&str>) -> String {
 /// line's state, drawn in the attention style, holds its words apart from
 /// its icon, and is titled with them, so a page short of room can draw the
 /// icon alone.
-fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
+fn spans(
+    html: &mut String,
+    spans: &[Span<'static>],
+    block: Block,
+    marks: &[Mark],
+    shorter: &[Shorter],
+    from: usize,
+) {
     for (at, span) in spans.iter().enumerate() {
+        let short = shorter
+            .iter()
+            .find(|short| short.block == block && short.at == from + at);
         let mut marked = marks
             .iter()
             .filter(|mark| mark.block == block && mark.at == from + at);
@@ -1285,10 +1350,18 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
         let flagged = (!badge && block == Block::State && span.style == palette::ATTENTION)
             .then(|| span.content.strip_prefix(WARNING))
             .flatten();
+        let (shortens, saving) = match short {
+            Some(short) => (
+                " shortens",
+                format!(" data-saving=\"{}\"", short.saving(span)),
+            ),
+            None => ("", String::new()),
+        };
         let class = match flagged {
             Some(words) => format!(" class=\"flag\" title=\"{}\"", escaped(words.trim())),
-            None if badge => " class=\"pill\"".to_string(),
-            None if span.style.fg == palette::CODE.fg => " class=\"code\"".to_string(),
+            None if badge => format!(" class=\"pill{shortens}\""),
+            None if span.style.fg == palette::CODE.fg => format!(" class=\"code{shortens}\""),
+            None if short.is_some() => " class=\"shortens\"".to_string(),
             None => String::new(),
         };
         let css = if marked
@@ -1301,10 +1374,15 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
         } else {
             palette::css_without_status(span.style)
         };
-        let style = format!("{class}{}", styled(css));
-        let text = match flagged {
-            Some(words) => format!("{WARNING}<span>{}</span>", escaped(words)),
-            None => escaped(&span.content),
+        let style = format!("{class}{saving}{}", styled(css));
+        let text = match (flagged, short) {
+            (Some(words), _) => format!("{WARNING}<span>{}</span>", escaped(words)),
+            (None, Some(short)) => format!(
+                "<span>{}</span><span>{}</span>",
+                escaped(&span.content),
+                escaped(&short.said)
+            ),
+            (None, None) => escaped(&span.content),
         };
         let to = marked
             .find_map(Mark::link)
@@ -1368,8 +1446,21 @@ fn railed(prefix: &str, listed: bool) -> Option<String> {
     Some(html)
 }
 
-/// The class of the mark the page draws for `status` in place of its glyph,
-/// where it draws one. Any other status keeps its glyph.
+/// Which of a reference's status mark and id the page draws, and the CSS it
+/// draws the id in.
+struct Shown {
+    mark: bool,
+    id: Option<String>,
+}
+
+impl Shown {
+    /// The mark, and the id in no colour of its own.
+    const WHOLE: Shown = Shown {
+        mark: true,
+        id: Some(String::new()),
+    };
+}
+
 /// A bead's status mark: the shape the stylesheet draws for a status it has
 /// one for, or else `glyph`, the status's glyph. Where nothing beside it
 /// says the status, the mark says it, as an image named for the status in
@@ -1392,6 +1483,8 @@ fn mark(html: &mut String, status: &Status, glyph: &Span, says_the_status: bool)
     ));
 }
 
+/// The class of the mark the page draws for `status` in place of its glyph,
+/// where it draws one. Any other status keeps its glyph.
 fn drawn_mark(status: &Status) -> Option<&'static str> {
     match status {
         Status::Open => Some("open"),
@@ -1478,6 +1571,7 @@ position:relative}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 var(--size-label)/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
+.shortens>:last-child,.shortens[data-short]>:first-child{display:none}.shortens[data-short]>:last-child{display:inline}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 #shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
@@ -1830,6 +1924,43 @@ setInterval(() => document.hidden || inReadersZone(document), 15000);
 document.addEventListener("visibilitychange", () => document.hidden || inReadersZone(document));
 "##;
 
+/// The part of the page's script that draws a span's short form where its
+/// whole form would be cut, as the terminal's row does. It shows every whole
+/// form, then shortens in passes. Each pass takes every line that overflows,
+/// or holds a span that overflows its own box, and shortens the one span on
+/// it that saves the most, the later of two that save the same. A badge in
+/// the state is cut by its line rather than by its own box, because the
+/// state never shrinks. A pass measures every line before it changes any, so
+/// the page is laid out once a pass rather than once a span. It runs on load, whenever
+/// the page's size changes, and after each redraw, which puts every whole
+/// form back. A shortened span is marked with `data-short` rather than a
+/// class, because the page finds a focused link again after a redraw by its
+/// class.
+const SHORTENS: &str = r##"const shorten = () => {
+  const lines = new Map();
+  for (const said of [...document.querySelectorAll(".shortens")].reverse()) {
+    delete said.dataset.short;
+    const line = said.closest(".line") ?? said;
+    lines.set(line, [...(lines.get(line) ?? []), said]);
+  }
+  while (lines.size) {
+    const cut = [];
+    for (const [line, whole] of lines) {
+      if (line.scrollWidth <= line.clientWidth && whole.every((said) => said.scrollWidth <= said.clientWidth)) {
+        lines.delete(line);
+        continue;
+      }
+      const most = whole.reduce((most, said) => (+said.dataset.saving > +most.dataset.saving ? said : most));
+      cut.push(most);
+      whole.splice(whole.indexOf(most), 1);
+      if (!whole.length) lines.delete(line);
+    }
+    for (const said of cut) said.dataset.short = "";
+  }
+};
+addEventListener("DOMContentLoaded", () => new ResizeObserver(shorten).observe(document.body));
+"##;
+
 /// The page's one script, which keeps it current. It takes the page as it
 /// came from the browser's cache, never the network, so that it holds the
 /// page's lines without asking for them again. It asks the page's own
@@ -1966,6 +2097,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     inReadersZone(drawn);
     document.title = drawn.title;
     reconcile(document.body, drawn.body);
+    shorten();
     const again = kept && (kept[0].isConnected ? kept[0] : document.getElementById(kept[1]));
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[2]);
     if (focused) {
@@ -2940,7 +3072,7 @@ mod tests {
     fn a_badge_worded_like_a_flag_keeps_its_words() {
         let mut html = String::new();
         let badge = Span::raw(format!("{WARNING} Needs review"));
-        spans(&mut html, &[badge], Block::State, &[], 0);
+        spans(&mut html, &[badge], Block::State, &[], &[], 0);
         assert!(!html.contains("flag"), "{html}");
     }
 
@@ -4740,9 +4872,57 @@ mod tests {
         }
     }
 
-    /// A status's colour is drawn on the bead's status mark and nowhere
-    /// else: not on an id, a count, a rail or a word beside it. Colour alone
-    /// then says the status, because nothing else on the page is that colour.
+    /// An open bead's id on a row of the forest is drawn in the colour
+    /// `[row] open_id` names, as the terminal draws it, and an id of any
+    /// other status stays neutral.
+    #[test]
+    fn an_open_beads_id_takes_the_colour_open_id_names() {
+        let layout = Layout {
+            open_id: crate::config::Colour::Slot(crate::config::Slot::Identity),
+            ..Layout::default()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &layout, &asked, drawing()).html;
+        let rows = bead_lines(&html);
+        let id_of = |title: &str| {
+            let row = rows
+                .iter()
+                .find(|row| row.contains(&format!(">{title}</span>")))
+                .unwrap_or_else(|| panic!("{title} has a row: {html}"));
+            let at = row.find("<span class=\"id\"").expect("the row draws an id");
+            row[at..at + row[at..].find('>').expect("the tag ends")].to_string()
+        };
+        assert_eq!(
+            id_of("wire the niri theme include"),
+            "<span class=\"id\" style=\"color:var(--accent)\""
+        );
+        assert_eq!(id_of("lift the ground station"), "<span class=\"id\"");
+    }
+
+    /// A colour `open_id` writes as such is drawn as written, even where it
+    /// is one the page's theme has a name for.
+    #[test]
+    fn an_open_id_colour_written_as_such_is_drawn_as_written() {
+        let layout = Layout {
+            open_id: Colour::Absolute(ratatui::style::Color::Rgb(89, 194, 255)),
+            ..Layout::default()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &layout, &asked, drawing()).html;
+        let row = bead_lines(&html)
+            .into_iter()
+            .find(|row| row.contains(">wire the niri theme include</span>"))
+            .expect("the open bead has a row");
+        assert!(
+            row.contains("<span class=\"id\" style=\"color:#59c2ff\">"),
+            "{row}"
+        );
+    }
+
+    /// Under a layout that names no colour for an open id, a status's colour
+    /// is drawn on the bead's status mark and nowhere else: not on an id, a
+    /// count, a rail or a word beside it. Colour alone then says the status,
+    /// because nothing else on the page is that colour.
     #[test]
     fn only_a_status_mark_carries_a_status_colour() {
         let mut snapshot = ground();
@@ -4806,6 +4986,52 @@ mod tests {
         );
         assert_eq!(words(&text_of(more)), "⇢ #12");
         assert_eq!(parts(more).0, ["a.pill"], "{more}");
+    }
+
+    /// A badge with a short form carries both, its whole form first, and how
+    /// many columns the short form saves. The page's script draws the short
+    /// form where the whole would be cut: where a line or a badge on it
+    /// overflows, it shortens the badge on that line that saves the most,
+    /// on load, on every redraw and whenever the page's size changes.
+    #[test]
+    fn a_badge_with_a_short_form_carries_both_and_the_page_shows_the_one_that_fits() {
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        tree.beads[1].badges = vec![crate::model::badges::Badged {
+            key: "pr".to_string(),
+            text: "⇢ dunwich #12".to_string(),
+            short: Some("⇢ #12".to_string()),
+            link: Some("https://example.invalid/dunwich/12".to_string()),
+            colour: None,
+            drawn_on: crate::config::DrawnOn::Own,
+        }];
+        let html = page_of(snapshot, "/");
+        let more = inside(line_html(&html, 2), "more");
+        assert_eq!(
+            more.trim_start(),
+            "<a href=\"https://example.invalid/dunwich/12\" class=\"pill shortens\" \
+             data-saving=\"8\" style=\"text-decoration:underline\"><span>⇢ dunwich #12</span><span>⇢ #12</span></a>"
+        );
+        assert!(
+            STYLE.contains(
+                ".shortens>:last-child,.shortens[data-short]>:first-child{display:none}\
+                 .shortens[data-short]>:last-child{display:inline}"
+            ),
+            "{STYLE}"
+        );
+        for said in [
+            "for (const said of [...document.querySelectorAll(\".shortens\")].reverse()) {",
+            "delete said.dataset.short;",
+            "if (line.scrollWidth <= line.clientWidth && \
+             whole.every((said) => said.scrollWidth <= said.clientWidth)) {",
+            "+said.dataset.saving > +most.dataset.saving ? said : most",
+            "for (const said of cut) said.dataset.short = \"\";",
+            "new ResizeObserver(shorten).observe(document.body)",
+        ] {
+            assert!(SHORTENS.contains(said), "{SHORTENS}");
+        }
+        assert!(KEPT_CURRENT.contains("reconcile(document.body, drawn.body);\n    shorten();"));
+        assert!(html.contains(&format!("{SHORTENS}{KEPT_CURRENT}")));
     }
 
     /// The ground beside a second project, whose one tree is a bead ready
@@ -5212,6 +5438,57 @@ mod tests {
             leaf.ends_with("<span class=\"prog\"></span></span>"),
             "{leaf}"
         );
+    }
+
+    /// A row's reference draws the status mark and the id only where the
+    /// layout draws them, and keeps its title whatever the layout says,
+    /// because a bead is never named on the page by its id alone.
+    #[test]
+    fn a_rows_reference_draws_the_glyph_and_id_only_where_the_layout_does() {
+        let drawn = |layout: Layout| {
+            let asked = Asked::of("/").expect("the forest");
+            let html = page(ground(), &layout, &asked, drawing()).html;
+            bead_lines(&html)
+                .into_iter()
+                .map(|row| {
+                    parts(inside(row, "bead"))
+                        .0
+                        .into_iter()
+                        .map(|part| part.split(' ').next().expect("a part").to_string())
+                        .filter(|part| ["span.g", "span.title", "span.id"].contains(&part.as_str()))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        for (layout, said) in [
+            (
+                Layout {
+                    identity: vec![Cell::Id],
+                    ..Layout::default()
+                },
+                ["span.title", "span.id"].as_slice(),
+            ),
+            (
+                Layout {
+                    identity: vec![Cell::Glyph],
+                    ..Layout::default()
+                },
+                ["span.g", "span.title"].as_slice(),
+            ),
+            (
+                Layout {
+                    title: vec![Cell::Badges],
+                    ..Layout::default()
+                },
+                ["span.g", "span.title", "span.id"].as_slice(),
+            ),
+        ] {
+            let rows = drawn(layout);
+            assert!(!rows.is_empty());
+            for row in rows {
+                assert_eq!(row, said);
+            }
+        }
     }
 
     /// Progress is drawn last on the row whichever block or place the

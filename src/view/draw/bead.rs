@@ -149,9 +149,7 @@ pub(super) fn referenced_line(
         state: without(&layout.state),
         open_id: layout.open_id,
     };
-    let progress = row
-        .progress
-        .filter(|_| layout.cells().any(|cell| *cell == Cell::Progress));
+    let progress = row.progress.filter(|_| layout.draws(&Cell::Progress));
     (
         reference,
         progress,

@@ -396,6 +396,9 @@ short  = "⇢ #{number}"
 ```
 
 A shortened badge is one the row kept whole, so it still opens the page.
+`bdi web` draws the `short` wherever the `render` would be cut on that line,
+in a narrow window or on a phone. That takes the page's script, so a browser
+running none draws the `render`, cut short.
 
 **A `short` naming something this value did not supply is no short form at
 all**, by the rule `link` follows and for the same reason: `⇢ #{number}` with no
@@ -989,6 +992,27 @@ badge's `colour` takes. `bd` sends no colour for open, so the default,
 open then reads as rows of one tone, and `open_id = "identity"` draws those
 ids in `bd show`'s blue instead. Every other status keeps `bd`'s colour on its
 id whatever this says.
+
+`bdi web` draws a row as `[row]` says, with three exceptions:
+
+- **The glyph, the title and the id are one link, drawn first and in that
+  order.** The page draws every bead it names with that one link, in the bead
+  view's lists as well as in the trees. On a phone the link places its parts
+  on two lines by position, so a different order would not show.
+- **The title stays when `[row]` leaves it out**, because the page never names
+  a bead by its id alone. The glyph and the id go where `[row]` leaves them
+  out.
+- **Progress is drawn last, as a bar of fixed width.** The page sets its text
+  in a proportional font, so a column of bars lines up only at the row's end.
+
+The page draws every other cell after the link, in the order `[row]` gives.
+It draws an open id in the colour `open_id` names, and every other id in its
+own neutral colour, because on the page only the glyph carries a status's
+colour.
+
+`[row]` shapes the rows of the trees and lists, on the page as in the
+terminal. The bead view names its parent, its dependencies and the beads it
+blocks in full, with their glyph and id, whatever `[row]` says.
 
 ## Telling `bdi` a project changed
 
