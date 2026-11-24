@@ -493,12 +493,15 @@ impl Asked {
     /// so its answer keeps them and counts from the copy, as the terminal's
     /// search counts from the selection.
     pub fn carried(&self, place: Option<&Place>) -> Vec<(&'static str, String)> {
-        let list = self.list.as_ref();
+        // The start's own list is left to the start, so a page reached from
+        // it still gives way where the list would leave its bead out.
+        let started = self.list_from_start && self.list == self.start.list;
+        let list = self.list.as_ref().filter(|_| !started);
         let folds = self.folds.iter().map(|fold| {
             let key = if fold.open { OPEN } else { SHUT };
             (key, fold.name.clone())
         });
-        let trees_over_a_start = list.is_none() && self.start.list.is_some();
+        let trees_over_a_start = !started && list.is_none() && self.start.list.is_some();
         let root = match &self.root {
             Root::At(root) => Some(placed(root)),
             Root::Whole if !self.start.roots.is_empty() => Some(String::new()),

@@ -6550,6 +6550,36 @@ mod tests {
         assert!(!page_at(&said).found);
     }
 
+    /// The links on a page drawn from its start leave the start to the
+    /// start, so a bead followed from it is still shown once it leaves the
+    /// list, as its bare address shows it.
+    #[test]
+    fn links_from_a_page_drawn_from_its_start_do_not_name_what_it_started_on() {
+        let start = Start {
+            list: listed(None, true),
+            ..Start::default()
+        };
+        let ready = started_page_at(&start, "/");
+        let to_beads: Vec<&str> = ready
+            .split(&format!("href=\"/{PROJECT}/"))
+            .skip(1)
+            .map(|link| &link[..link.find('"').expect("the address ends")])
+            .collect();
+        for link in &to_beads {
+            assert!(!link.contains("ready="), "{link}");
+        }
+        let ready_bead = to_beads
+            .iter()
+            .find(|link| link.starts_with("smt-4kd3p.4?"))
+            .expect("the ready bead's row links it");
+        let ready_bead = ready_bead.split('#').next().unwrap_or_default();
+        let followed = started_page_at(
+            &start,
+            &format!("/{PROJECT}/{}", ready_bead.replace("&amp;", "&")),
+        );
+        assert!(followed.contains("<a class=\"ready on\""), "{followed}");
+    }
+
     /// Started on a bead and on one in its tree, the forest is drawn with the
     /// outer one as its only root, as the terminal draws it, and the band
     /// names only that root.
