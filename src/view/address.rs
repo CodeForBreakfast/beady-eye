@@ -14,7 +14,7 @@
 //! for. Each is put on the forest by the forest's own action, before the
 //! folds, so the page draws what the terminal draws after the same keys.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::iter;
 
 use crate::model::join::BeadKey;
@@ -544,11 +544,11 @@ impl Asked {
     }
 
     /// The beads the forest is asked to be drawn with as its only roots.
-    pub fn roots(&self) -> Vec<BeadKey> {
+    pub fn roots(&self) -> BTreeSet<BeadKey> {
         match &self.root {
-            Root::AsStarted => self.start.roots.clone(),
-            Root::Whole => Vec::new(),
-            Root::At(place) => vec![place.key().clone()],
+            Root::AsStarted => self.start.roots.iter().cloned().collect(),
+            Root::Whole => BTreeSet::new(),
+            Root::At(place) => BTreeSet::from([place.key().clone()]),
         }
     }
 

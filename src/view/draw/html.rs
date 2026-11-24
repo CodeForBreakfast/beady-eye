@@ -6638,17 +6638,22 @@ mod tests {
     /// names only that root.
     #[test]
     fn the_band_names_only_the_roots_the_forest_is_drawn_with() {
-        let start = Start {
-            roots: vec![key("smt-4kd3p"), key("smt-4kd3p.6")],
-            ..Start::default()
-        };
-        let rooted = started_page_at(&start, "/");
-        assert_eq!(
-            rooted.matches("<p class=\"rooted\">").count(),
-            1,
-            "{rooted}"
-        );
-        assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
+        for roots in [
+            vec![key("smt-4kd3p"), key("smt-4kd3p.6")],
+            vec![key("smt-4kd3p.6"), key("smt-4kd3p.6")],
+        ] {
+            let start = Start {
+                roots,
+                ..Start::default()
+            };
+            let rooted = started_page_at(&start, "/");
+            assert_eq!(
+                rooted.matches("<p class=\"rooted\">").count(),
+                1,
+                "{rooted}"
+            );
+            assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
+        }
     }
 
     /// A bead the page starts on whose tracker has not answered with it is
@@ -7420,7 +7425,7 @@ mod tests {
         let all = link_saying(&html, phrase::show_all());
         assert_eq!(
             Asked::of(&all).map(|asked| asked.roots()),
-            Some(Vec::new()),
+            Some(std::collections::BTreeSet::new()),
             "{all}"
         );
     }
