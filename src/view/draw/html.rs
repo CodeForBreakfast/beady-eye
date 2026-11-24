@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use chrono::{DateTime, FixedOffset, Utc};
+use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::app::Awaited;
@@ -334,6 +335,7 @@ impl Drawing<'_> {
                     show::named(node, vec![Span::raw(phrase::this_tree())]),
                     Some(self.opening(root.key())),
                     None,
+                    Style::new(),
                 );
             }
             None => html.push_str(&format!(
@@ -638,7 +640,14 @@ impl Drawing<'_> {
                 Content::Bead(_) => self.asked.opening_at(place),
                 _ => self.opening(place.key()),
             });
-            self.reference(html, reference, href, self.named_project(line));
+            // An open bead's id takes the colour `[row] open_id` gives it,
+            // as the terminal's row draws it.
+            let id = reference
+                .id
+                .first()
+                .filter(|_| reference.status == Status::Open)
+                .map_or(Style::new(), |id| id.style);
+            self.reference(html, reference, href, self.named_project(line), id);
         }
         if more {
             html.push_str("<span class=\"more\">");
@@ -736,15 +745,16 @@ impl Drawing<'_> {
     /// mark, its title, then its id set quietly, and a link to `href` where
     /// the page can open the bead. The mark is labelled with `bd`'s word for
     /// the status. The id takes no colour from the place drawing it, because
-    /// a status colour or a finished row's tone would make it fainter still.
-    /// Where the reference names its `project`, a quiet tag after the id
-    /// says it.
+    /// a status colour or a finished row's tone would make it fainter still,
+    /// and is drawn in `id` alone. Where the reference names its `project`, a
+    /// quiet tag after the id says it.
     fn reference(
         &self,
         html: &mut String,
         reference: Reference,
         href: Option<String>,
         project: Option<&str>,
+        id: Style,
     ) {
         let linked = href.is_some();
         match href {
@@ -766,14 +776,15 @@ impl Drawing<'_> {
         spans(html, &reference.title, Block::Identity, &[], 0);
         html.push_str("</span>");
         between(html, &indent());
-        let id: String = reference
+        let said: String = reference
             .id
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
         html.push_str(&format!(
-            "<span class=\"id\">{}</span>",
-            escaped(id.trim_end())
+            "<span class=\"id\"{}>{}</span>",
+            styled(palette::css(id)),
+            escaped(said.trim_end())
         ));
         if let Some(project) = project {
             html.push_str(&format!(
@@ -1059,7 +1070,13 @@ impl Drawing<'_> {
             return false;
         };
         let key = show::key_of(self.forest, related).filter(|_| followable);
-        self.reference(html, reference, key.map(|key| self.opening(&key)), None);
+        self.reference(
+            html,
+            reference,
+            key.map(|key| self.opening(&key)),
+            None,
+            Style::new(),
+        );
         true
     }
 
@@ -4738,9 +4755,37 @@ mod tests {
         }
     }
 
-    /// A status's colour is drawn on the bead's status mark and nowhere
-    /// else: not on an id, a count, a rail or a word beside it. Colour alone
-    /// then says the status, because nothing else on the page is that colour.
+    /// An open bead's id on a row of the forest is drawn in the colour
+    /// `[row] open_id` names, as the terminal draws it, and an id of any
+    /// other status stays neutral.
+    #[test]
+    fn an_open_beads_id_takes_the_colour_open_id_names() {
+        let layout = Layout {
+            open_id: crate::config::Colour::Slot(crate::config::Slot::Identity),
+            ..Layout::default()
+        };
+        let asked = Asked::of("/").expect("the forest");
+        let html = page(ground(), &layout, &asked, drawing()).html;
+        let rows = bead_lines(&html);
+        let id_of = |title: &str| {
+            let row = rows
+                .iter()
+                .find(|row| row.contains(&format!(">{title}</span>")))
+                .unwrap_or_else(|| panic!("{title} has a row: {html}"));
+            let at = row.find("<span class=\"id\"").expect("the row draws an id");
+            row[at..at + row[at..].find('>').expect("the tag ends")].to_string()
+        };
+        assert_eq!(
+            id_of("wire the niri theme include"),
+            "<span class=\"id\" style=\"color:var(--accent)\""
+        );
+        assert_eq!(id_of("lift the ground station"), "<span class=\"id\"");
+    }
+
+    /// Under a layout that names no colour for an open id, a status's colour
+    /// is drawn on the bead's status mark and nowhere else: not on an id, a
+    /// count, a rail or a word beside it. Colour alone then says the status,
+    /// because nothing else on the page is that colour.
     #[test]
     fn only_a_status_mark_carries_a_status_colour() {
         let mut snapshot = ground();
