@@ -1,5 +1,5 @@
-//! `bdi web`: every configured project's forest as a read-only web page, and
-//! each bead at an address of its own, answered over HTTP.
+//! `bdi web`: the forest of the projects it reads as a read-only web page,
+//! and each bead at an address of its own, answered over HTTP.
 //!
 //! One thread keeps the latest snapshot, reading the trackers as a view does,
 //! through the watcher where one answers. Each request is drawn afresh from
@@ -29,8 +29,9 @@ use crate::collect::tracker::Trackers;
 use crate::collect::watched::{self, Through};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
-use crate::view::address::{self, Asked};
+use crate::view::address::{self, Asked, Start};
 use crate::view::draw::html;
+use crate::view::forest::listed;
 use crate::view::{phrase, Notice};
 
 use super::{
@@ -55,6 +56,11 @@ const HTML: &str = "text/html; charset=utf-8";
 const TEXT: &str = "text/plain; charset=utf-8";
 
 const UNAVAILABLE: &str = "503 Service Unavailable";
+
+/// Which trees a page draws: every one, since `bdi web` asks no agent
+/// provider and so cannot tell a tree with a live agent from one without.
+/// It is what `--all` asks of the view, so `--all` changes nothing here.
+pub(super) const EVERY_TREE: Filter = Filter::All;
 const NOT_FOUND: &str = "404 Not Found";
 
 /// What the reading thread holds for the pages to be drawn from, and word
@@ -218,25 +224,27 @@ fn name_of(host: &str) -> Option<&str> {
 }
 
 /// Why `bdi web` will not take each of the view's arguments it was given,
-/// each named as `--help` names it. The refusals of `--json`, `--beads` and
-/// the options that narrow `--beads` are for good. The rest stand until
-/// `bdi web` honours the option.
+/// each named as `--help` names it: `--json`, `--beads` and the options that
+/// narrow `--beads`, since `bdi web` prints nothing.
 pub(super) fn refusals(view: &ViewOptions) -> Vec<String> {
     const BEADS_PRINTS: &str =
         "it narrows what --beads prints, and bdi web serves a page rather than printing";
     [
-        (!view.beads.is_empty(), "BEAD-ID", "bdi web cannot yet root its page at a bead named on its command line"),
-        (!view.projects.is_empty(), "--project", "bdi web reads every configured project, and cannot yet read only the ones named"),
-        (view.all_projects, "--all-projects", "bdi web reads every configured project already, and does not yet take the option that asks for it"),
-        (view.json, "--json", "bdi web serves a page rather than printing the snapshot"),
-        (view.each_bead, "--beads", "bdi web serves a page rather than printing each bead"),
+        (
+            view.json,
+            "--json",
+            "bdi web serves a page rather than printing the snapshot",
+        ),
+        (
+            view.each_bead,
+            "--beads",
+            "bdi web serves a page rather than printing each bead",
+        ),
         (!view.labels.is_empty(), "--label", BEADS_PRINTS),
         (view.issue_type.is_some(), "--type", BEADS_PRINTS),
         (view.assignee.is_some(), "--assignee", BEADS_PRINTS),
         (view.parent.is_some(), "--parent", BEADS_PRINTS),
         (view.brief, "--brief", BEADS_PRINTS),
-        (view.all, "--all", "bdi web asks no agent provider yet, so it cannot tell a tree with a live agent from one without"),
-        (view.ready, "--ready", "bdi web opens on the forest, and cannot yet open on the ready list"),
     ]
     .into_iter()
     .filter(|(given, _, _)| *given)
@@ -244,10 +252,20 @@ pub(super) fn refusals(view: &ViewOptions) -> Vec<String> {
     .collect()
 }
 
+/// Which projects `bdi web` reads: the ones `view` names, as the view reads
+/// them, and every configured project where it names none, since a page has
+/// no directory it was started in.
+pub(super) fn reading(view: &ViewOptions) -> Reading {
+    match Reading::asked_for(view) {
+        Reading::WhereBdiWasStarted => Reading::EveryProject,
+        named => named,
+    }
+}
+
 /// Answer requests on `listen` until a signal ends the process, drawing each
-/// from the latest read of every project `config` names, for requests sent to
-/// a name `hosts` allows. Each project is polled, and heard from, as `view`
-/// says.
+/// from the latest read of the projects `config` and `view` name, for
+/// requests sent to a name `hosts` allows. Each project is polled, and heard
+/// from, as `view` says.
 ///
 /// The config is read again as the terminal view reads it, and an edit is
 /// taken up a couple of seconds after it is saved.
@@ -264,17 +282,21 @@ pub(super) fn web(
             config,
             &Launch {
                 cwd: &cwd,
-                reading: Reading::EveryProject,
-                roots: &[],
+                reading: reading(view),
+                roots: &view.beads,
             },
         )?
         .config,
     )?;
+    let start = Start {
+        list: listed(None, view.ready),
+        roots: cfg.roots.named_beads(),
+    };
     let reload = Reload::watching(
         config.to_path_buf(),
         CHECKED_EVERY,
         cfg.clone(),
-        each_addressable(parses_as_launched(cwd, Reading::EveryProject, Vec::new())),
+        each_addressable(parses_as_launched(cwd, reading(view), view.beads.clone())),
         Utc::now(),
     );
     let listener = TcpListener::bind(listen).with_context(|| format!("listening on {listen}"))?;
@@ -310,6 +332,7 @@ pub(super) fn web(
     let answering = Arc::new(Answering {
         latest: Arc::clone(&latest),
         hosts,
+        start,
         live: live::Streams::default(),
     });
     http::accept(
@@ -344,6 +367,8 @@ fn each_addressable(parses: Parses) -> Parses {
 struct Answering {
     latest: Arc<Latest>,
     hosts: Hosts,
+    /// What a page shows where its address does not say.
+    start: Start,
     live: live::Streams,
 }
 
@@ -471,7 +496,7 @@ fn read_what_is_due(
             patience: cfg.tui.unanswered_after(),
         });
     });
-    let snapshot = collection.collect(&cfg, &Unasked, trackers, &wanted, Filter::All, now);
+    let snapshot = collection.collect(&cfg, &Unasked, trackers, &wanted, EVERY_TREE, now);
     refreshing.came_back(
         &snapshot.projects,
         &snapshot.speaks_until,
@@ -497,12 +522,15 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
     let encoding = read.as_ref().map_or(Encoding::Identity, Head::encoding);
     if let Ok(head) = &read {
         let kept_current = answering.hosts.allow(head.only("Host")) && live::asks_for_changes(head);
-        if let Some(asked) = kept_current.then(|| Asked::of(&head.target)).flatten() {
+        let asked = kept_current.then(|| Asked::started_on(&head.target, &answering.start));
+        if let Some(asked) = asked.flatten() {
             live::keep_current(answering, stream.stream, head, asked);
             return;
         }
     }
-    let Some((status, kind, body)) = said(read, &answering.latest, &answering.hosts) else {
+    let Some((status, kind, body)) =
+        said(read, &answering.latest, &answering.hosts, &answering.start)
+    else {
         return;
     };
     answering.live.remember(&body);
@@ -518,14 +546,16 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
 }
 
 /// What a request whose head was `read` comes to, or nothing where it never
-/// arrived in full or is not HTTP.
+/// arrived in full or is not HTTP. A page shows what `start` says where its
+/// address does not say.
 fn said(
     read: Result<Head, Unread>,
     latest: &Latest,
     hosts: &Hosts,
+    start: &Start,
 ) -> Option<(&'static str, &'static str, String)> {
     match read {
-        Ok(head) => Some(answered(&head, latest, hosts)),
+        Ok(head) => Some(answered(&head, latest, hosts, start)),
         Err(Unread::TooLong) => Some((
             "414 URI Too Long",
             HTML,
@@ -536,7 +566,12 @@ fn said(
 }
 
 /// What a request comes to: its status, the kind of body, and the body.
-fn answered(head: &Head, latest: &Latest, hosts: &Hosts) -> (&'static str, &'static str, String) {
+fn answered(
+    head: &Head,
+    latest: &Latest,
+    hosts: &Hosts,
+    start: &Start,
+) -> (&'static str, &'static str, String) {
     if !hosts.allow(head.only("Host")) {
         return (
             "421 Misdirected Request",
@@ -554,7 +589,7 @@ fn answered(head: &Head, latest: &Latest, hosts: &Hosts) -> (&'static str, &'sta
             None => (UNAVAILABLE, TEXT, "reading\n".to_string()),
         };
     }
-    let Some(asked) = Asked::of(&head.target) else {
+    let Some(asked) = Asked::started_on(&head.target, start) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here()));
     };
     let (status, page) = drawn(&asked, &held);
@@ -583,7 +618,7 @@ fn drawn(asked: &Asked, held: &Held) -> (&'static str, String) {
             cfg.projects_named_without_git(),
             Unasked.name(),
             cfg.scope.clone(),
-            Filter::All,
+            EVERY_TREE,
             drawn.at,
         );
         return (
@@ -647,6 +682,7 @@ mod tests {
             head(&mut sent.as_bytes(), &mut Vec::new()),
             latest,
             &allowed(),
+            &Start::default(),
         )
         .expect("an answer");
         (status, body)
@@ -729,6 +765,7 @@ mod tests {
             head(&mut arriving, &mut Vec::new()),
             &read(),
             &Hosts::default(),
+            &Start::default(),
         )
         .expect("an answer");
         assert_eq!(status, "414 URI Too Long");
@@ -1196,7 +1233,7 @@ mod tests {
         });
         let sent = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
-        let (status, _, body) = answered(&head, &latest, &Hosts::default());
+        let (status, _, body) = answered(&head, &latest, &Hosts::default(), &Start::default());
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];

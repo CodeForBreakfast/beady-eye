@@ -1250,6 +1250,13 @@ pub fn show_all() -> &'static str {
     "Show all"
 }
 
+/// What the band over a web page says of a bead it was started on that no
+/// read has drawn yet, which it will be drawn with as its only root once one
+/// does. The bead is named as the command line names it, with its project.
+pub fn waiting_to_show_only(project: &str, id: &str) -> String {
+    format!("Showing only {project}:{id}'s tree once it is read")
+}
+
 /// The web page's links to the match before and the match after, as `N`
 /// and `n` step, each drawn as its mark and said as its words.
 pub const MATCH_BEFORE: (&str, &str) = ("‹", "previous match");

@@ -21,7 +21,7 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
-use crate::view::address::{line_name, Asked, FIND, SHOWN};
+use crate::view::address::{line_name, Asked, Root, FIND, SHOWN};
 use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
@@ -126,6 +126,16 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         found: asked.bead.is_none() || node.is_some(),
         html: kept_current(&title, &html),
     }
+}
+
+/// What the band over a page says of one root the page asks to be drawn with.
+enum RootBand<'a> {
+    /// The forest is drawn with it as an only root.
+    Drawn(&'a Node),
+    /// No read has drawn it yet, so the forest waits for it.
+    Awaited,
+    /// No tree the forest draws holds it.
+    Missing,
 }
 
 /// The warning for a bead an address names that no tree the forest draws
@@ -318,19 +328,27 @@ impl Drawing<'_> {
             escaped(phrase::find())
         ));
         html.push_str("</nav>\n");
-        let Some(root) = self.asked.root.as_ref() else {
-            return;
-        };
-        // An address can name a root the forest no longer draws, and the
-        // page then draws every tree, so it says so rather than drop it.
-        match self
-            .forest
-            .snapshot()
-            .node(root.key())
-            .filter(|_| self.forest.is_focused())
-        {
+        let focused = self.forest.focused_on();
+        for root in self.asked.roots() {
+            let band = match self.forest.snapshot().node(&root) {
+                Some(node) if focused.contains(&root) => RootBand::Drawn(node),
+                // The tree of another root draws it as one of its rows.
+                Some(_) if self.forest.is_focused() => continue,
+                // Waited for until its tracker answers, as the terminal
+                // waits, and its project's line says how that read went.
+                None if focused.contains(&root) => RootBand::Awaited,
+                _ => RootBand::Missing,
+            };
+            self.rooted_band(html, &root, band);
+        }
+    }
+
+    /// The band saying what the forest is drawn with as an only root, and
+    /// offering every tree back.
+    fn rooted_band(&self, html: &mut String, root: &BeadKey, band: RootBand<'_>) {
+        match band {
             // The list drawn can leave the root out, so the band links it.
-            Some(node) => {
+            RootBand::Drawn(node) => {
                 html.push_str(&format!(
                     "<p class=\"rooted\"><span class=\"said\">{}</span> ",
                     escaped(phrase::showing_only())
@@ -338,15 +356,20 @@ impl Drawing<'_> {
                 self.reference(
                     html,
                     show::named(node, vec![Span::raw(phrase::this_tree())]),
-                    Some(self.opening(root.key())),
+                    Some(self.opening(root)),
                     None,
                     Shown::WHOLE,
                 );
             }
-            None => html.push_str(&format!(
-                "<p class=\"missing\">{}",
-                not_in_any_tree(root.key())
+            RootBand::Awaited => html.push_str(&format!(
+                "<p class=\"rooted awaited\"><span class=\"said\">{}</span>",
+                escaped(&phrase::waiting_to_show_only(&root.project, &root.id))
             )),
+            // An address can name a root the forest no longer draws, and the
+            // page then draws every tree, so it says so rather than drop it.
+            RootBand::Missing => {
+                html.push_str(&format!("<p class=\"missing\">{}", not_in_any_tree(root)));
+            }
         }
         html.push_str(&format!(
             " <a class=\"all\" href=\"{}\">{}</a></p>\n",
@@ -1130,7 +1153,7 @@ impl Drawing<'_> {
             Some(place) if self.forest.list().is_some() => self.asked.opening_at(&place),
             Some(_) => self.asked.opening(key),
             None => Asked {
-                root: None,
+                root: Root::Whole,
                 list: None,
                 ..self.asked.clone()
             }
@@ -1766,6 +1789,7 @@ border-bottom:1px solid var(--line);font-size:var(--size-row)}\
 aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
 .rooted .said{color:var(--muted)}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
 .rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.rooted.awaited{flex-wrap:wrap;white-space:normal}\
 .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
 .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 a.step:hover{text-decoration:underline}\
@@ -2159,7 +2183,7 @@ mod tests {
     use crate::model::snapshot::{ProviderState, Tree};
     use crate::model::tree::Link;
     use crate::model::types::{Edge, Status};
-    use crate::view::address::{address, addressable};
+    use crate::view::address::{address, addressable, Start};
     use crate::view::draw::tests::{counts, drawn_at, frame_of, node, snapshot, tree};
     use crate::view::forest::{flatten, List};
     use crate::view::Action;
@@ -6525,6 +6549,224 @@ mod tests {
         assert_eq!(page_lines(&back), terminal_lines(&pressed(&[])));
     }
 
+    /// The page at `target` of a `bdi web` started on `start`.
+    fn started_page_at(start: &Start, target: &str) -> String {
+        started_answer(start, target).html
+    }
+
+    fn started_answer(start: &Start, target: &str) -> Answer {
+        let asked = Asked::started_on(target, start).expect("a page is at the address");
+        page(ground(), &Layout::default(), &asked, drawing())
+    }
+
+    /// A bead's address with nothing else in it is how anything that knows a
+    /// bead links to it, so a start that would leave the bead out gives way
+    /// to every tree. A list or a root the address names does not.
+    #[test]
+    fn a_beads_bare_address_shows_it_whatever_the_page_starts_on() {
+        let ready = Start {
+            list: listed(None, true),
+            ..Start::default()
+        };
+        let rooted = Start {
+            roots: vec![key("smt-4kd3p.6")],
+            ..Start::default()
+        };
+        for (start, left_out) in [(&ready, "smt-4kd3p.8"), (&rooted, "smt-4kd3p.4")] {
+            let bare = address(&key(left_out));
+            let answer = started_answer(start, &bare);
+            assert!(answer.found, "{start:?}");
+            assert_eq!(
+                page_lines(&answer.html),
+                page_lines(&page_at(&bare).html),
+                "{start:?}"
+            );
+        }
+        let said = format!("{}?ready=1", address(&key("smt-4kd3p.8")));
+        assert!(!started_answer(&ready, &said).found);
+        assert!(!page_at(&said).found);
+
+        // Where the list alone leaves the bead out, the roots stay.
+        let both = Start {
+            list: listed(None, true),
+            ..rooted.clone()
+        };
+        let in_the_root = address(&key("smt-4kd3p.8"));
+        let answer = started_answer(&both, &in_the_root);
+        assert!(answer.found);
+        assert_eq!(
+            page_lines(&answer.html),
+            page_lines(&started_page_at(&rooted, &in_the_root))
+        );
+        assert!(
+            answer.html.contains("<p class=\"rooted\">"),
+            "{}",
+            answer.html
+        );
+
+        // A bead no tree holds is not found however wide the page is drawn,
+        // so the page stays as the start draws it.
+        let gone = started_answer(&both, &address(&key("smt-4kd3p.99")));
+        assert!(!gone.found);
+        assert_eq!(
+            page_lines(&gone.html),
+            page_lines(&started_page_at(&both, "/"))
+        );
+
+        // Where the roots alone leave the bead out, the list stays.
+        let outside_the_root = address(&key("smt-4kd3p.4"));
+        let answer = started_answer(&both, &outside_the_root);
+        assert!(answer.found);
+        assert_eq!(
+            page_lines(&answer.html),
+            page_lines(&started_page_at(&ready, &outside_the_root))
+        );
+    }
+
+    /// The links on a page drawn from its start leave the start to the
+    /// start, so a bead followed from it is still shown once it leaves the
+    /// list, as its bare address shows it.
+    #[test]
+    fn links_from_a_page_drawn_from_its_start_do_not_name_what_it_started_on() {
+        let start = Start {
+            list: listed(None, true),
+            ..Start::default()
+        };
+        let ready = started_page_at(&start, "/");
+        let to_beads: Vec<&str> = ready
+            .split(&format!("href=\"/{PROJECT}/"))
+            .skip(1)
+            .map(|link| &link[..link.find('"').expect("the address ends")])
+            .collect();
+        for link in &to_beads {
+            assert!(!link.contains("ready="), "{link}");
+        }
+        let ready_bead = to_beads
+            .iter()
+            .find(|link| link.starts_with("smt-4kd3p.4?"))
+            .expect("the ready bead's row links it");
+        let ready_bead = ready_bead.split('#').next().unwrap_or_default();
+        let followed = started_page_at(
+            &start,
+            &format!("/{PROJECT}/{}", ready_bead.replace("&amp;", "&")),
+        );
+        assert!(followed.contains("<a class=\"ready on\""), "{followed}");
+    }
+
+    /// Started on a bead and on one in its tree, the forest is drawn with the
+    /// outer one as its only root, as the terminal draws it, and the band
+    /// names only that root.
+    #[test]
+    fn the_band_names_only_the_roots_the_forest_is_drawn_with() {
+        for roots in [
+            vec![key("smt-4kd3p"), key("smt-4kd3p.6")],
+            vec![key("smt-4kd3p.6"), key("smt-4kd3p.6")],
+        ] {
+            let start = Start {
+                roots,
+                ..Start::default()
+            };
+            let rooted = started_page_at(&start, "/");
+            assert_eq!(
+                rooted.matches("<p class=\"rooted\">").count(),
+                1,
+                "{rooted}"
+            );
+            assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
+        }
+    }
+
+    /// A bead the page starts on whose tracker has not answered with it is
+    /// waited for, as the terminal waits for it, and is not said to be
+    /// missing. Its project's line says whether its tracker was read, and
+    /// the band offers every tree back before the wait is over.
+    #[test]
+    fn a_bead_started_on_that_no_read_has_drawn_is_waited_for() {
+        let unread = BeadKey {
+            project: "kadath".to_string(),
+            id: "kad-1".to_string(),
+        };
+        let waiting = escaped(&phrase::waiting_to_show_only(&unread.project, &unread.id));
+        let start = Start {
+            roots: vec![key("smt-4kd3p.6"), unread.clone()],
+            ..Start::default()
+        };
+        let rooted = started_page_at(&start, "/");
+        assert_eq!(
+            rooted.matches("<p class=\"rooted\">").count(),
+            1,
+            "{rooted}"
+        );
+        assert!(rooted.contains(&waiting), "{rooted}");
+        assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
+
+        let start = Start {
+            roots: vec![unread],
+            ..Start::default()
+        };
+        let waited = started_page_at(&start, "/");
+        assert!(waited.contains(&waiting), "{waited}");
+        let whole = started_page_at(&start, &link_saying(&waited, phrase::show_all()));
+        assert!(!whole.contains(&waiting), "{whole}");
+        assert_eq!(page_lines(&whole), page_lines(&waited));
+    }
+
+    /// Started in the ready list, an address naming no list draws it, as the
+    /// terminal started with `--ready` does. The switch still puts the trees
+    /// back, and a list the address names still wins.
+    #[test]
+    fn a_page_started_in_the_ready_list_draws_it_where_its_address_names_no_list() {
+        let start = Start {
+            list: listed(None, true),
+            ..Start::default()
+        };
+        let ready = started_page_at(&start, "/");
+        assert_eq!(
+            page_lines(&ready),
+            terminal_lines(&pressed(&[Action::ToggleReadyList]))
+        );
+        let trees = started_page_at(&start, &link_saying(&ready, phrase::ready_only()));
+        assert_eq!(page_lines(&trees), terminal_lines(&pressed(&[])));
+        let again = started_page_at(&start, &link_saying(&trees, phrase::ready_only()));
+        assert_eq!(page_lines(&again), page_lines(&ready));
+        for named in ["/?check=1", &format!("/?view={}", VIEWS[0].0)] {
+            assert_eq!(
+                page_lines(&started_page_at(&start, named)),
+                page_lines(&page_at(named).html),
+                "{named}"
+            );
+        }
+    }
+
+    /// Started on a bead, an address naming no root draws the forest focused
+    /// on it, as the terminal started on it is. Show all puts every tree
+    /// back, and a root the address names still wins.
+    #[test]
+    fn a_page_started_on_a_bead_draws_its_tree_where_its_address_names_no_root() {
+        let bead = key("smt-4kd3p.6");
+        let start = Start {
+            roots: vec![bead.clone()],
+            ..Start::default()
+        };
+        let mut terminal = flatten(ground());
+        terminal.focus_when_drawn(vec![bead.clone()]);
+        let rooted = started_page_at(&start, "/");
+        assert_eq!(page_lines(&rooted), terminal_lines(&terminal));
+        assert_ne!(page_lines(&rooted), terminal_lines(&pressed(&[])));
+        assert!(rooted.contains("<p class=\"rooted\">"), "{rooted}");
+
+        let whole = started_page_at(&start, &link_saying(&rooted, phrase::show_all()));
+        assert_eq!(page_lines(&whole), terminal_lines(&pressed(&[])));
+        let elsewhere = link_saying(
+            &page_at(&address(&key("smt-4kd3p.1"))).html,
+            phrase::only_this_tree(),
+        );
+        assert_eq!(
+            page_lines(&started_page_at(&start, &elsewhere)),
+            page_lines(&page_at(&elsewhere).html)
+        );
+    }
+
     /// Each view the config names is an entry of the menu, in the config's
     /// order, and picking it lists what `v` lists on reaching it. Picked
     /// with only ready beads listed, it keeps to them, as `v` keeps `r`.
@@ -7201,7 +7443,11 @@ mod tests {
         assert!(!html.contains("<p class=\"rooted\">"), "{html}");
         assert!(html.contains(&not_in_any_tree(&gone)), "{html}");
         let all = link_saying(&html, phrase::show_all());
-        assert_eq!(Asked::of(&all).and_then(|asked| asked.root), None, "{all}");
+        assert_eq!(
+            Asked::of(&all).map(|asked| asked.roots()),
+            Some(std::collections::BTreeSet::new()),
+            "{all}"
+        );
     }
 
     /// A search's form goes to the match, as its steps do.
@@ -7300,11 +7546,11 @@ mod tests {
         );
         let named = named_by_the_bead_view(&rooted);
         assert!(
-            named["smt-4kd3p"].root.is_none(),
+            named["smt-4kd3p"].roots().is_empty(),
             "the parent is outside the tree"
         );
         assert!(
-            named["smt-4kd3p.7"].root.is_some(),
+            !named["smt-4kd3p.7"].roots().is_empty(),
             "a bead under the root is inside it"
         );
     }
@@ -7350,7 +7596,7 @@ mod tests {
                 name: VIEWS[1].0.to_string(),
                 ready: true,
             }),
-            root: Some(place("smt-4kd3p.6")),
+            root: Root::At(place("smt-4kd3p.6")),
             ..Asked::default()
         };
         for link in [
@@ -7358,7 +7604,7 @@ mod tests {
             asked.opening_at(&place("smt-4kd3p.7")),
             asked.closing(None, false),
             asked.listing(asked.list.clone()),
-            asked.rooting(asked.root.as_ref()),
+            asked.rooting(Some(&place("smt-4kd3p.6"))),
         ] {
             let read = Asked::of(link.split('#').next().unwrap_or_default())
                 .expect("the link is an address");

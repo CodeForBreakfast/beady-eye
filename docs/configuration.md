@@ -223,6 +223,10 @@ ends, and sends none of it. Where bd has pruned the journal past a record the
 watcher had not yet read, the watcher tells each consumer once that the
 journal is unreadable, and then sends the records bd kept.
 
+`bdi web` and the view do not use it. The journal gives the watcher the
+records it sends to consumers watching a bead, and a page or the view draws
+each bead as it now stands rather than the records of how it got there.
+
 **`serve`** is the address this project's `bd serve` listens on, written as
 `bd serve --addr` takes it: `serve = "127.0.0.1:8742"`. [The
 watcher](#running-the-watcher) then follows bd serve's event stream, which
@@ -239,6 +243,10 @@ from the journal's end. Nothing polls the project while its stream is down,
 so once nothing has vouched for it for `covered_for_seconds`, the watcher
 tells its consumers it has lapsed, and the beads already sent stand as the
 last known. A project naming no `serve` is polled as `poll` says.
+
+`bdi web` and the view do not follow the stream themselves. Each reads a
+project through the watcher where one runs, so a write the stream carries
+reaches them as soon as the watcher has read it.
 
 ### A project with no checkout
 
@@ -807,6 +815,9 @@ agent working the bead, as herdr reports it for the agent's pane. It defaults
 to `agent_session`. Where a bead names one, `bdi` draws it against the pane
 herdr finds that session in, whichever pane `pane_key` names.
 
+`bdi web` does not use either key. It asks no agent provider, so it has no
+panes or sessions to tie a bead to.
+
 ## `[delivery]`
 
 How your setup marks the beads that deliver work through a pull request.
@@ -825,6 +836,9 @@ the gates the step waits on, and is delivered once the step closes. Unset, no
 step is an outcome step, and a bead waiting on one waits on it as on any
 other bead. A formula whose outcome step is the `gh:pr` gate itself needs no
 label.
+
+`bdi web` does not use either key, because it serves a page and does not
+print what `--beads` prints.
 
 ## `[changes]`
 
@@ -879,6 +893,8 @@ not here. They are given on the command line and in the environment, as
 [Taking GitHub's deliveries](#taking-githubs-deliveries) says, so the secret
 never sits in a config file.
 
+`bdi web` and the view do not use `[gates]`, because they settle no gate.
+
 ## `[anomalies]`
 
 `stale_claim_days` is how long a claim may go untouched before `bdi` flags it.
@@ -902,11 +918,19 @@ scroll multiplier cannot help here — a terminal neutralises it while a program
 is reading the mouse, so `bdi` sees one report per notch whatever you set it
 to.
 
+`bdi web` uses `refresh_seconds` and `unanswered_after_seconds` as the view
+does. It does not use `tail_refresh_millis`, because a page has no tail and
+asks herdr for no pane. It does not use `wheel_notch_lines`, because the
+browser scrolls the page by its own setting.
+
 ## `[theme]`
 
 `background` is `dark` or `light`. `bdi` cannot see your terminal's background
 and assumes `dark`; on a light one the tail band becomes hard to read until you
 say so.
+
+`bdi web` does not use it. The browser says whether its background is light
+or dark, and the page follows it.
 
 ## `[tail.crop]`
 
@@ -927,6 +951,8 @@ claude = "claude-code"
 A pane whose agent has no entry is tailed uncropped. A screen the crop finds
 nowhere to cut, such as one with a dialog drawn where the box would be, is
 tailed uncropped too. The file is refused for a crop `bdi` does not ship.
+
+`bdi web` does not use it, because a page has no tail.
 
 ## `[row]`
 
