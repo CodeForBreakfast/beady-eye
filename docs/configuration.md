@@ -388,6 +388,9 @@ short  = "⇢ #{number}"
 ```
 
 A shortened badge is one the row kept whole, so it still opens the page.
+`bdi web` draws the `short` wherever the `render` would be cut on that line,
+in a narrow window or on a phone. That takes the page's script, so a browser
+running none draws the `render`, cut short.
 
 **A `short` naming something this value did not supply is no short form at
 all**, by the rule `link` follows and for the same reason: `⇢ #{number}` with no

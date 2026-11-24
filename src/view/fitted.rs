@@ -291,8 +291,8 @@ impl Fitted {
     }
 
     /// The row at its whole width, for a page that is not cut to a terminal's:
-    /// each block's spans, the style drawn under all of them, and what each
-    /// marked span is.
+    /// each block's spans, the style drawn under all of them, what each
+    /// marked span is, and what each span with a short form says shortly.
     pub(crate) fn whole(&self) -> Whole<'_> {
         Whole {
             identity: &self.identity,
@@ -300,6 +300,7 @@ impl Fitted {
             state: &self.state,
             under: self.whole,
             marks: &self.marks,
+            shorter: &self.shorter,
         }
     }
 }
@@ -311,6 +312,7 @@ pub(crate) struct Whole<'a> {
     pub(crate) state: &'a [Span<'static>],
     pub(crate) under: Style,
     pub(crate) marks: &'a [Mark],
+    pub(crate) shorter: &'a [Shorter],
 }
 
 impl Widget for Fitted {

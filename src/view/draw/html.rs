@@ -21,7 +21,7 @@ use crate::model::snapshot::{Node, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
 use crate::view::address::{line_name, Asked, FIND, SHOWN};
-use crate::view::fitted::{indent, Block, Mark, Marked};
+use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::row::{agent_doing, Cell, Layout, Progress, WARNING};
@@ -181,7 +181,9 @@ fn head(title: &str, version: Option<&str>) -> String {
     let (named, script) = match version {
         Some(version) => (
             format!("{VERSION}{version}\""),
-            format!("<script>{IN_READERS_ZONE}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"),
+            format!(
+                "<script>{IN_READERS_ZONE}{SHORTENS}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"
+            ),
         ),
         None => (String::new(), String::new()),
     };
@@ -659,10 +661,24 @@ impl Drawing<'_> {
         if bead && !identity.is_empty() {
             html.push_str(&indent());
         }
-        spans(html, identity, Block::Identity, whole.marks, from);
+        spans(
+            html,
+            identity,
+            Block::Identity,
+            whole.marks,
+            whole.shorter,
+            from,
+        );
         if !whole.title.is_empty() {
             html.push_str(&indent());
-            spans(html, whole.title, Block::Title, whole.marks, 0);
+            spans(
+                html,
+                whole.title,
+                Block::Title,
+                whole.marks,
+                whole.shorter,
+                0,
+            );
         }
         if !bead {
             html.push_str("</span></span>");
@@ -671,7 +687,14 @@ impl Drawing<'_> {
             html.push_str("</span>");
         }
         html.push_str("<span class=\"state\">");
-        spans(html, whole.state, Block::State, whole.marks, 0);
+        spans(
+            html,
+            whole.state,
+            Block::State,
+            whole.marks,
+            whole.shorter,
+            0,
+        );
         if column && !whole.state.is_empty() {
             html.push_str(&indent());
         }
@@ -771,6 +794,7 @@ impl Drawing<'_> {
                 &[Span::styled(gap.to_string(), reference.between)],
                 Block::Identity,
                 &[],
+                &[],
                 0,
             )
         };
@@ -779,7 +803,7 @@ impl Drawing<'_> {
             between(html, " ");
         }
         html.push_str("<span class=\"title\">");
-        spans(html, &reference.title, Block::Identity, &[], 0);
+        spans(html, &reference.title, Block::Identity, &[], &[], 0);
         html.push_str("</span>");
         if let Some(id) = drawn.id {
             between(html, &indent());
@@ -856,7 +880,7 @@ impl Drawing<'_> {
             if !std::mem::take(&mut on_a_fresh_line) {
                 html.push('\n');
             }
-            spans(html, row, Block::Identity, marks, 0);
+            spans(html, row, Block::Identity, marks, &[], 0);
         }
         if page.sections == listed_from {
             self.fields(html, node, offset);
@@ -1025,7 +1049,7 @@ impl Drawing<'_> {
         }
         if let Some(at) = page.badges {
             let marks = page.marks.get(&at).map_or(&[][..], Vec::as_slice);
-            spans(html, &page.rows[at], Block::Identity, marks, 0);
+            spans(html, &page.rows[at], Block::Identity, marks, &[], 0);
         }
         html.push_str(&format!("</p><h2>{}</h2>", escaped(&node.title)));
         if page.blocked_by.is_some() {
@@ -1299,8 +1323,18 @@ fn linked(said: &str, href: Option<&str>) -> String {
 /// line's state, drawn in the attention style, holds its words apart from
 /// its icon, and is titled with them, so a page short of room can draw the
 /// icon alone.
-fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark], from: usize) {
+fn spans(
+    html: &mut String,
+    spans: &[Span<'static>],
+    block: Block,
+    marks: &[Mark],
+    shorter: &[Shorter],
+    from: usize,
+) {
     for (at, span) in spans.iter().enumerate() {
+        let short = shorter
+            .iter()
+            .find(|short| short.block == block && short.at == from + at);
         let mut marked = marks
             .iter()
             .filter(|mark| mark.block == block && mark.at == from + at);
@@ -1308,9 +1342,10 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
         let flagged = (!badge && block == Block::State && span.style == palette::ATTENTION)
             .then(|| span.content.strip_prefix(WARNING))
             .flatten();
+        let shortens = if short.is_some() { " shortens" } else { "" };
         let class = match flagged {
             Some(words) => format!(" class=\"flag\" title=\"{}\"", escaped(words.trim())),
-            None if badge => " class=\"pill\"".to_string(),
+            None if badge => format!(" class=\"pill{shortens}\""),
             None if span.style.fg == palette::CODE.fg => " class=\"code\"".to_string(),
             None => String::new(),
         };
@@ -1325,9 +1360,14 @@ fn spans(html: &mut String, spans: &[Span<'static>], block: Block, marks: &[Mark
             palette::css_without_status(span.style)
         };
         let style = format!("{class}{}", styled(css));
-        let text = match flagged {
-            Some(words) => format!("{WARNING}<span>{}</span>", escaped(words)),
-            None => escaped(&span.content),
+        let text = match (flagged, short) {
+            (Some(words), _) => format!("{WARNING}<span>{}</span>", escaped(words)),
+            (None, Some(short)) => format!(
+                "<span>{}</span><span>{}</span>",
+                escaped(&span.content),
+                escaped(&short.said)
+            ),
+            (None, None) => escaped(&span.content),
         };
         let to = marked
             .find_map(Mark::link)
@@ -1516,6 +1556,7 @@ position:relative}\
 .line>.bead~.state{margin-left:0}.line>.bead~.state>.prog{width:104px}}\
 .pill{display:inline-block;padding:0 8px;border-radius:999px;font:500 var(--size-label)/18px var(--body);\
 border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:color-mix(in srgb,currentColor 8%,transparent)}\
+.shortens>:last-child,.shortens.short>:first-child{display:none}.shortens.short>:last-child{display:inline}\
 .line.shown{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}\
 #shown{position:absolute;top:0}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;align-self:stretch;font-size:0}\
@@ -1890,6 +1931,19 @@ document.addEventListener("visibilitychange", () => document.hidden || inReaders
 /// the server is too busy to keep current asks again after as long as a
 /// quiet connection waits for a comment. Without it the page is the same
 /// page, drawn once.
+/// The part of the page's script that draws a span's short form where its
+/// whole form would be cut, as the terminal's row does. It measures each span
+/// with its whole form shown, on load, whenever the page's size changes, and
+/// after each redraw, which puts every whole form back.
+const SHORTENS: &str = r##"const shorten = () => {
+  for (const said of document.querySelectorAll(".shortens")) {
+    said.classList.remove("short");
+    if (said.scrollWidth > said.clientWidth) said.classList.add("short");
+  }
+};
+addEventListener("DOMContentLoaded", () => new ResizeObserver(shorten).observe(document.body));
+"##;
+
 const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   if (!window.EventSource) return;
   const drawn = document.documentElement.dataset.version;
@@ -2004,6 +2058,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     inReadersZone(drawn);
     document.title = drawn.title;
     reconcile(document.body, drawn.body);
+    shorten();
     const again = kept && (kept[0].isConnected ? kept[0] : document.getElementById(kept[1]));
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[2]);
     if (focused) {
@@ -2978,7 +3033,7 @@ mod tests {
     fn a_badge_worded_like_a_flag_keeps_its_words() {
         let mut html = String::new();
         let badge = Span::raw(format!("{WARNING} Needs review"));
-        spans(&mut html, &[badge], Block::State, &[], 0);
+        spans(&mut html, &[badge], Block::State, &[], &[], 0);
         assert!(!html.contains("flag"), "{html}");
     }
 
@@ -4872,6 +4927,48 @@ mod tests {
         );
         assert_eq!(words(&text_of(more)), "⇢ #12");
         assert_eq!(parts(more).0, ["a.pill"], "{more}");
+    }
+
+    /// A badge with a short form carries both, its whole form first, and
+    /// the page's script draws the short one where the whole would be cut:
+    /// it measures the badge with the whole form shown and swaps where that
+    /// overflows, on load, on every redraw and whenever the page's size
+    /// changes.
+    #[test]
+    fn a_badge_with_a_short_form_carries_both_and_the_page_shows_the_one_that_fits() {
+        let mut snapshot = ground();
+        let tree = std::sync::Arc::make_mut(&mut snapshot.trees[0]);
+        tree.beads[1].badges = vec![crate::model::badges::Badged {
+            key: "pr".to_string(),
+            text: "⇢ dunwich #12".to_string(),
+            short: Some("⇢ #12".to_string()),
+            link: Some("https://example.invalid/dunwich/12".to_string()),
+            colour: None,
+            drawn_on: crate::config::DrawnOn::Own,
+        }];
+        let html = page_of(snapshot, "/");
+        let more = inside(line_html(&html, 2), "more");
+        assert_eq!(
+            more.trim_start(),
+            "<a href=\"https://example.invalid/dunwich/12\" class=\"pill shortens\" \
+             style=\"text-decoration:underline\"><span>⇢ dunwich #12</span><span>⇢ #12</span></a>"
+        );
+        assert!(
+            STYLE.contains(
+                ".shortens>:last-child,.shortens.short>:first-child{display:none}\
+                 .shortens.short>:last-child{display:inline}"
+            ),
+            "{STYLE}"
+        );
+        for said in [
+            "said.classList.remove(\"short\");",
+            "if (said.scrollWidth > said.clientWidth) said.classList.add(\"short\");",
+            "new ResizeObserver(shorten).observe(document.body)",
+        ] {
+            assert!(SHORTENS.contains(said), "{SHORTENS}");
+        }
+        assert!(KEPT_CURRENT.contains("reconcile(document.body, drawn.body);\n    shorten();"));
+        assert!(html.contains(&format!("{SHORTENS}{KEPT_CURRENT}")));
     }
 
     /// The ground beside a second project, whose one tree is a bead ready

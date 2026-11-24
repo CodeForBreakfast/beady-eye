@@ -4475,8 +4475,10 @@ its parent, what it depends on, what it blocks, what it mentions, and what it
 is blocked by. Graeme called a bare *blocks: ark-5* "not useful to humans", so
 no bead appears on the page by its id alone. The terminal's bead view still
 says what a bead is blocked by as ids. A forest row starts with its reference
-wherever `[row]` puts the glyph, the id and the title, and the rest of the row
-keeps its layout.
+wherever `[row]` puts the glyph, the id and the title. The reference leaves
+out the glyph or the id where `[row]` does, but keeps its title. The rest of
+the row follows `[row]`'s order, with progress last. `docs/configuration.md`
+gives the reader the reasons.
 
 **A key is a link, and the state a key would change rides in the address.** A
 line that folds links to the page with that fold pointed the other way,
