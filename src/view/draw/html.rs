@@ -1688,7 +1688,7 @@ aside>p.missing{margin:4px 16px}\
 .line{width:auto;min-height:0;align-items:stretch;white-space:pre-wrap;--arm:9px}\
 .line:has(>.bead){display:grid;grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr);\
 align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px solid var(--line)}\
-.line>:has(+.bead){grid-area:1/1/3/2;align-self:stretch;margin-block:-6px;--arm:16px}\
+.line>:has(+.bead){grid-area:1/1/4/2;align-self:stretch;margin-block:-6px;--arm:16px}\
 .line>:has(+.bead),.line>.left>.rails{display:inline-flex;vertical-align:top;font-size:0;white-space:pre}\
 .line>.left:has(>.rails){display:inline-flex;align-items:flex-start;max-width:100%}\
 .line>.left>.rails+span{min-width:0}\
@@ -1708,9 +1708,13 @@ align-items:baseline;white-space:normal;padding-block:6px;border-bottom:1px soli
 .line .title{grid-area:1/2/2/-1;min-width:10em;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
 .line>.bead>.id,.line>.more,.line>.bead~.state{grid-row:2;font-size:var(--size-detail)}\
 .line>.bead>.id{grid-column:2}.line>.bead>:not(.title){font-family:var(--body)}\
-.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}\
-.line>.more{grid-column:5;padding-left:2ch;overflow-wrap:anywhere}\
-.line>.bead~.state{grid-column:6;margin-left:0;overflow-wrap:anywhere}\
+.line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;max-width:calc(100% - 8px)}\
+.line>.more{grid-column:5;padding-left:2ch}\
+.line>.bead~.state{grid-column:6;min-width:0;margin-left:0;overflow-wrap:anywhere}\
+.line .pill,.line>.bead>.project{white-space:nowrap;box-sizing:border-box;overflow:clip;text-overflow:ellipsis}\
+.line .pill{max-width:100%}\
+.line>.bead>.project,.line>.more{min-width:0}\
+.line:has(>.more)>.bead~.state{grid-area:3/3/4/-1}\
 .line>.bead~.state>.flag{display:inline-block;vertical-align:top}.line .prog:empty{display:none}\
 nav{order:1;position:sticky;bottom:0;z-index:3;min-height:0;gap:6px;\
 padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-bottom:0;border-top:1px solid var(--line);\
@@ -4832,7 +4836,7 @@ mod tests {
     /// A row's project is quiet, and makes room beside an open bead on a
     /// desktop as a flag's words do. A phone draws it on the row's second
     /// line, in a column of its own between the id and the row's other
-    /// cells, and breaks a long name there rather than push them aside.
+    /// cells.
     #[test]
     fn a_rows_project_is_drawn_after_its_id_and_gives_way_to_an_open_bead() {
         assert!(STYLE.contains(".bead .project{padding:0 8px;border:1px solid var(--line);"));
@@ -4842,7 +4846,7 @@ mod tests {
         let phone = rules_under("(max-width:720px)");
         for rule in [
             "grid-template-columns:auto 1.6em repeat(4,auto) minmax(0,1fr)",
-            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;overflow-wrap:anywhere}",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;",
             ".line>.more{grid-column:5;",
             ".line>.bead~.state{grid-column:6;",
         ] {
@@ -5249,18 +5253,36 @@ mod tests {
         assert!(bar > header, "the bar at {bar}, a header at {header}");
     }
 
-    /// A pill leaves wrapping to its row, so a long badge wraps on a phone
-    /// rather than push the row wider than the screen.
+    /// On a phone a row's pills and its project tag each stay whole on one
+    /// line. Pills wrap between each other in their cell and never inside
+    /// one. A row carrying pills draws its state on a line of its own under
+    /// them, with what it hangs under drawn down beside that line too, so a
+    /// flag's words are never squeezed into what the pills leave. A label
+    /// longer than the row has room for ends in an ellipsis rather than
+    /// push the row past the screen's edge.
     #[test]
-    fn a_pill_wraps_where_its_row_does() {
-        let pill = STYLE
-            .split(".pill{")
-            .nth(1)
-            .and_then(|rest| rest.split('}').next());
-        assert!(
-            pill.is_some_and(|rule| !rule.contains("white-space")),
-            "{STYLE}"
-        );
+    fn a_phone_rows_pills_never_break_inside_a_word() {
+        let phone = rules_under("(max-width:720px)");
+        for rule in [
+            ".line .pill,.line>.bead>.project{white-space:nowrap;box-sizing:border-box;overflow:clip;text-overflow:ellipsis}",
+            ".line .pill{max-width:100%}",
+            ".line>.bead>.project{grid-area:2/3;justify-self:start;margin-left:8px;max-width:calc(100% - 8px)}",
+            ".line>.bead>.project,.line>.more{min-width:0}",
+            ".line:has(>.more)>.bead~.state{grid-area:3/3/4/-1}",
+            ".line>:has(+.bead){grid-area:1/1/4/2;",
+        ] {
+            assert!(phone.contains(rule), "{rule}");
+        }
+        for cell in [".line>.bead>.project{", ".line>.more{"] {
+            let rule = phone
+                .split(cell)
+                .nth(1)
+                .and_then(|rest| rest.split('}').next());
+            assert!(
+                rule.is_some_and(|rule| !rule.contains("overflow-wrap")),
+                "{cell}"
+            );
+        }
     }
 
     /// A badge a config gave a literal colour is drawn in that colour on the
