@@ -99,6 +99,8 @@ pub struct Asked {
     pub place: Option<Place>,
     /// The list drawn in place of the trees, where one is.
     pub list: Option<List>,
+    /// Whether `list` is the start's, the address naming none.
+    pub list_from_start: bool,
     /// What the forest is drawn with as its only roots.
     pub root: Root,
     /// What was searched for, where a page asks for a search's answer
@@ -252,6 +254,7 @@ impl Asked {
                 (false, true, Some(project)) => Some(List::LeftToDo { project }),
                 _ => listed(view, ready.unwrap_or_default()),
             },
+            list_from_start: !list_named && start.list.is_some(),
             root,
             find: find.map(|text| Find { text, step }),
             start: start.clone(),
@@ -265,7 +268,39 @@ impl Asked {
     /// A fold naming a line the forest no longer draws is passed over, as a
     /// refresh passes over a fold on a line that has gone, and is still
     /// carried on.
+    ///
+    /// A bead's address is how anything that knows the bead links to it, so
+    /// where what this took from the start leaves the bead out, the bead is
+    /// shown in every tree instead.
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
+        let unstarted = self.without_the_start();
+        if self.bead.is_none() || unstarted == *self {
+            return self.drawn(snapshot, layout);
+        }
+        let shown = self.drawn(snapshot.clone(), layout);
+        match shown.bead {
+            Some(false) => unstarted.drawn(snapshot, layout),
+            _ => shown,
+        }
+    }
+
+    /// This with the list and the roots it took from the start put back to
+    /// every tree, drawn whole.
+    fn without_the_start(&self) -> Self {
+        let root = match &self.root {
+            Root::AsStarted if !self.start.roots.is_empty() => Root::Whole,
+            root => root.clone(),
+        };
+        Self {
+            list: self.list.clone().filter(|_| !self.list_from_start),
+            list_from_start: false,
+            root,
+            ..self.clone()
+        }
+    }
+
+    /// [`Asked::forest`], with nothing taken from the start given way.
+    fn drawn(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
         let mut forest = flatten(snapshot);
         forest.laid_out_to(layout.clone());
         match &self.root {

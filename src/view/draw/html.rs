@@ -316,22 +316,24 @@ impl Drawing<'_> {
             escaped(phrase::find())
         ));
         html.push_str("</nav>\n");
+        let focused = self.forest.focused_on();
         for root in self.asked.roots() {
-            self.rooted_band(html, &root);
+            match self.forest.snapshot().node(&root) {
+                Some(node) if focused.contains(&root) => self.rooted_band(html, &root, Some(node)),
+                // The tree of another root draws it as one of its rows.
+                Some(_) if self.forest.is_focused() => {}
+                _ => self.rooted_band(html, &root, None),
+            }
         }
     }
 
     /// The band saying the forest is drawn with `root` as an only root, and
-    /// offering every tree back.
-    fn rooted_band(&self, html: &mut String, root: &BeadKey) {
+    /// offering every tree back. `node` is the root, or nothing where the
+    /// forest does not draw it.
+    fn rooted_band(&self, html: &mut String, root: &BeadKey, node: Option<&Node>) {
         // An address can name a root the forest no longer draws, and the
         // page then draws every tree, so it says so rather than drop it.
-        match self
-            .forest
-            .snapshot()
-            .node(root)
-            .filter(|_| self.forest.is_focused())
-        {
+        match node {
             // The list drawn can leave the root out, so the band links it.
             Some(node) => {
                 html.push_str(&format!(
@@ -6509,8 +6511,58 @@ mod tests {
 
     /// The page at `target` of a `bdi web` started on `start`.
     fn started_page_at(start: &Start, target: &str) -> String {
+        started_answer(start, target).html
+    }
+
+    fn started_answer(start: &Start, target: &str) -> Answer {
         let asked = Asked::started_on(target, start).expect("a page is at the address");
-        page(ground(), &Layout::default(), &asked, drawing()).html
+        page(ground(), &Layout::default(), &asked, drawing())
+    }
+
+    /// A bead's address with nothing else in it is how anything that knows a
+    /// bead links to it, so a start that would leave the bead out gives way
+    /// to every tree. A list or a root the address names does not.
+    #[test]
+    fn a_beads_bare_address_shows_it_whatever_the_page_starts_on() {
+        let ready = Start {
+            list: listed(None, true),
+            ..Start::default()
+        };
+        let rooted = Start {
+            roots: vec![key("smt-4kd3p.6")],
+            ..Start::default()
+        };
+        for (start, left_out) in [(&ready, "smt-4kd3p.8"), (&rooted, "smt-4kd3p.4")] {
+            let bare = address(&key(left_out));
+            let answer = started_answer(start, &bare);
+            assert!(answer.found, "{start:?}");
+            assert_eq!(
+                page_lines(&answer.html),
+                page_lines(&page_at(&bare).html),
+                "{start:?}"
+            );
+        }
+        let said = format!("{}?ready=1", address(&key("smt-4kd3p.8")));
+        assert!(!started_answer(&ready, &said).found);
+        assert!(!page_at(&said).found);
+    }
+
+    /// Started on a bead and on one in its tree, the forest is drawn with the
+    /// outer one as its only root, as the terminal draws it, and the band
+    /// names only that root.
+    #[test]
+    fn the_band_names_only_the_roots_the_forest_is_drawn_with() {
+        let start = Start {
+            roots: vec![key("smt-4kd3p"), key("smt-4kd3p.6")],
+            ..Start::default()
+        };
+        let rooted = started_page_at(&start, "/");
+        assert_eq!(
+            rooted.matches("<p class=\"rooted\">").count(),
+            1,
+            "{rooted}"
+        );
+        assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
     }
 
     /// Started in the ready list, an address naming no list draws it, as the
