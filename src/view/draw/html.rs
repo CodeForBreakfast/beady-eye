@@ -126,6 +126,16 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     }
 }
 
+/// What the band over a page says of one root the page asks to be drawn with.
+enum RootBand<'a> {
+    /// The forest is drawn with it as an only root.
+    Drawn(&'a Node),
+    /// No read has drawn it yet, so the forest waits for it.
+    Awaited,
+    /// No tree the forest draws holds it.
+    Missing,
+}
+
 /// The warning for a bead an address names that no tree the forest draws
 /// holds, with the bead's id and project set quietly after it.
 fn not_in_any_tree(key: &BeadKey) -> String {
@@ -318,27 +328,25 @@ impl Drawing<'_> {
         html.push_str("</nav>\n");
         let focused = self.forest.focused_on();
         for root in self.asked.roots() {
-            match self.forest.snapshot().node(&root) {
-                Some(node) if focused.contains(&root) => self.rooted_band(html, &root, Some(node)),
+            let band = match self.forest.snapshot().node(&root) {
+                Some(node) if focused.contains(&root) => RootBand::Drawn(node),
                 // The tree of another root draws it as one of its rows.
-                Some(_) if self.forest.is_focused() => {}
+                Some(_) if self.forest.is_focused() => continue,
                 // Waited for until its tracker answers, as the terminal
                 // waits, and its project's line says how that read went.
-                None if focused.contains(&root) => {}
-                _ => self.rooted_band(html, &root, None),
-            }
+                None if focused.contains(&root) => RootBand::Awaited,
+                _ => RootBand::Missing,
+            };
+            self.rooted_band(html, &root, band);
         }
     }
 
-    /// The band saying the forest is drawn with `root` as an only root, and
-    /// offering every tree back. `node` is the root, or nothing where the
-    /// forest does not draw it.
-    fn rooted_band(&self, html: &mut String, root: &BeadKey, node: Option<&Node>) {
-        // An address can name a root the forest no longer draws, and the
-        // page then draws every tree, so it says so rather than drop it.
-        match node {
+    /// The band saying what the forest is drawn with as an only root, and
+    /// offering every tree back.
+    fn rooted_band(&self, html: &mut String, root: &BeadKey, band: RootBand<'_>) {
+        match band {
             // The list drawn can leave the root out, so the band links it.
-            Some(node) => {
+            RootBand::Drawn(node) => {
                 html.push_str(&format!(
                     "<p class=\"rooted\"><span class=\"said\">{}</span> ",
                     escaped(phrase::showing_only())
@@ -351,7 +359,15 @@ impl Drawing<'_> {
                     Shown::WHOLE,
                 );
             }
-            None => html.push_str(&format!("<p class=\"missing\">{}", not_in_any_tree(root))),
+            RootBand::Awaited => html.push_str(&format!(
+                "<p class=\"rooted awaited\"><span class=\"said\">{}</span>",
+                escaped(&phrase::waiting_to_show_only(&root.id))
+            )),
+            // An address can name a root the forest no longer draws, and the
+            // page then draws every tree, so it says so rather than drop it.
+            RootBand::Missing => {
+                html.push_str(&format!("<p class=\"missing\">{}", not_in_any_tree(root)));
+            }
         }
         html.push_str(&format!(
             " <a class=\"all\" href=\"{}\">{}</a></p>\n",
@@ -1771,6 +1787,7 @@ border-bottom:1px solid var(--line);font-size:var(--size-row)}\
 aside>p.missing{margin:18px 24px;padding:10px 12px;border-radius:10px}\
 .rooted .said{color:var(--muted)}.rooted .title{font-weight:600}.rooted .bead .id{display:none}\
 .rooted .bead{min-width:0;overflow:hidden;text-overflow:ellipsis}\
+.rooted.awaited{flex-wrap:wrap;white-space:normal}\
 .all{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}\
 .all::before{content:\"\\2715  \"}a.all:hover{text-decoration:underline}\
 a.step:hover{text-decoration:underline}\
@@ -6600,15 +6617,17 @@ mod tests {
 
     /// A bead the page starts on whose tracker has not answered with it is
     /// waited for, as the terminal waits for it, and is not said to be
-    /// missing. Its project's line says whether its tracker was read.
+    /// missing. Its project's line says whether its tracker was read, and
+    /// the band offers every tree back before the wait is over.
     #[test]
-    fn a_bead_started_on_that_no_read_has_drawn_is_not_called_missing() {
+    fn a_bead_started_on_that_no_read_has_drawn_is_waited_for() {
         let unread = BeadKey {
             project: "kadath".to_string(),
             id: "kad-1".to_string(),
         };
+        let waiting = escaped(&phrase::waiting_to_show_only(&unread.id));
         let start = Start {
-            roots: vec![key("smt-4kd3p.6"), unread],
+            roots: vec![key("smt-4kd3p.6"), unread.clone()],
             ..Start::default()
         };
         let rooted = started_page_at(&start, "/");
@@ -6617,7 +6636,18 @@ mod tests {
             1,
             "{rooted}"
         );
+        assert!(rooted.contains(&waiting), "{rooted}");
         assert!(!rooted.contains("<p class=\"missing\">"), "{rooted}");
+
+        let start = Start {
+            roots: vec![unread],
+            ..Start::default()
+        };
+        let waited = started_page_at(&start, "/");
+        assert!(waited.contains(&waiting), "{waited}");
+        let whole = started_page_at(&start, &link_saying(&waited, phrase::show_all()));
+        assert!(!whole.contains(&waiting), "{whole}");
+        assert_eq!(page_lines(&whole), page_lines(&waited));
     }
 
     /// Started in the ready list, an address naming no list draws it, as the
