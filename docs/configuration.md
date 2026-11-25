@@ -845,9 +845,14 @@ app. Its state is the one the program last reported. The app has no way to be
 asked to bring a terminal to the front, so focusing one says so rather than
 moving anything.
 
-The app's terminals sit in a session of their own called `hc`, beside
-herdr's sessions. A machine with the app and without herdr reads the app
-alone.
+A terminal belongs to the project whose `path` holds its working directory,
+as for a herdr pane. A terminal on a machine the app has added is placed by
+that machine's directory, so it joins a bead only where its checkout sits at
+the `path` this config names.
+
+The app's terminals sit in a session of their own called `herdr app`,
+beside herdr's sessions. A machine with the app and without herdr reads the
+app alone.
 
 ## `[delivery]`
 

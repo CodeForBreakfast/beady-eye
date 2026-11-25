@@ -54,7 +54,9 @@ hc label "$HC_TERMINAL_ID" <session_label>="$CLAUDE_CODE_SESSION_ID"
 
 `$HC_TERMINAL_ID` is your terminal's address on its own machine, so on a
 machine the reader's app has added it lacks the machine's name. The session
-is the join that does not need it.
+is the join that does not need it. On such a machine, work in a checkout at
+the same path as the reader's, because `bdi` places your terminal in a
+project by its directory.
 
 The app has no `display_agent`. Your terminal is drawn once your program has
 reported a status to the app, in the state it last reported.

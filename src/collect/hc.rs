@@ -23,8 +23,9 @@ use crate::model::types::{AgentSession, Pane, PaneKey, PaneStatus};
 
 /// The session `bdi` holds the app's terminals in. The app has sessions of
 /// its own, and its default is called `default` as herdr's is, so `bdi`
-/// names the one it reads after the program rather than after the session.
-pub const SESSION: &str = "hc";
+/// names the one it reads after the app. herdr refuses a session name with a
+/// space in it, so no herdr session is ever routed to the app.
+pub const SESSION: &str = "herdr app";
 
 /// The one request `bdi` makes of the core's API.
 const TERMINAL_LIST: &str = r#"{"jsonrpc":"2.0","id":1,"method":"terminal.list","params":{}}"#;
@@ -215,9 +216,6 @@ impl<A: Agents> Agents for WithHc<'_, A> {
 
     /// The other provider's sessions, then the app's. A machine without the
     /// other provider installed is one where the app is read alone.
-    ///
-    /// ponytail: a herdr session that is itself called `hc` is read from the
-    /// app instead. Name the app's session apart from herdr's if one ever is.
     fn sessions(&self) -> Result<Vec<String>, RunFailure> {
         let mut sessions = match self.others.sessions() {
             Ok(sessions) => sessions,
@@ -473,6 +471,15 @@ mod tests {
         let both = WithHc::new(Fake::holding(Vec::new()), Hc::new(&runner, None));
 
         assert_eq!(both.sessions().unwrap(), [A_SESSION, SESSION]);
+    }
+
+    /// herdr names a session with ASCII letters, digits, `.`, `_` and `-`
+    /// alone, so a herdr session called `hc` stays herdr's.
+    #[test]
+    fn the_apps_session_is_one_herdr_cannot_name() {
+        assert!(!SESSION
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')));
     }
 
     /// A machine running the app and not herdr is one where the app is read
