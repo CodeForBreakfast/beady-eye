@@ -43,7 +43,7 @@ trees under the goal they serve, and each agent is named beside the bead it
 works by what it is doing. As the agents move on, the trees redraw. The band
 under the trees is what the selected bead's pane is saying.
 
-![STILL-ALT](docs/images/bdi-web.png)
+![A still of bdi web in a dark browser page, over the same two projects, arkham and dunwich. On the left, each project's beads are drawn as trees under the goal they serve, each bead with its status glyph, its title and its id, and each goal with a bar of how much of its work is done. The refund bead is selected, and its page is open on the right: its status, title, priority, type and dates, its description as prose, and its parent.](docs/images/bdi-web.png)
 
 Here are the same two projects in a browser, with the refund bead open beside
 the trees. The page shows what the trackers hold, and leaves the agents and

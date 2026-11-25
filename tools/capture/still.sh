@@ -12,7 +12,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 out="$repo/docs/images/bdi-web.png"
 address=127.0.0.1:47380
-page="/arkham/ark-1.1?at=arkham%3Aark-1%2Farkham%3Aark-1.1#shown"
+page="/arkham/ark-1.1?at=arkham%3Aark-1%2Farkham%3Aark-1.1&open=b%3Adunwich%3Adun-1#shown"
 
 ground=$(mktemp -d /tmp/bdi-ground.XXXX)
 runtime=$(mktemp -d /tmp/bdi-rt.XXXX)
