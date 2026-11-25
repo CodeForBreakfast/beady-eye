@@ -19,7 +19,7 @@ page="/arkham/ark-1.1?at=arkham%3Aark-1%2Farkham%3Aark-1.1&open=b%3Adunwich%3Adu
 ground=$(mktemp -d /tmp/bdi-ground.XXXX)
 runtime=$(mktemp -d /tmp/bdi-rt.XXXX)
 web=
-trap '[ -n "$web" ] && kill "$web"; rm -rf "$ground" "$runtime"' EXIT
+trap '[ -z "$web" ] || kill "$web" 2>/dev/null || true; rm -rf "$ground" "$runtime"' EXIT
 
 "$repo/tools/capture/ground.sh" "$ground"
 # The ground's clock moves arkham's work on for the animation, and the still
@@ -40,11 +40,11 @@ web=$!
 url=
 for _ in $(seq 300); do
   url=$(sed -n 's/^bdi web is answering on //p' "$ground/web.out")
-  [ -n "$url" ] && curl -sf "$url/healthz" >/dev/null && break
+  [ -n "$url" ] && curl -sf --noproxy "*" "$url/healthz" >/dev/null && break
   url=
   sleep 0.1
 done
-if [ -z "$url" ] || ! curl -sf "$url$page" >"$ground/page.html" ||
+if [ -z "$url" ] || ! curl -sf --noproxy "*" "$url$page" >"$ground/page.html" ||
   ! grep -q 'dunwich/dun-1.1' "$ground/page.html"; then
   echo "bdi web never drew both projects, so the still is left as it was" >&2
   exit 1
