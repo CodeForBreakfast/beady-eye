@@ -28,13 +28,13 @@ kill "$(cat "$ground/clock.pid")"
 # shellcheck source=/dev/null
 . "$ground/isolate"
 export XDG_RUNTIME_DIR="$runtime"
-export PATH="$ground/bin:$repo/target/release:$PATH"
+export PATH="$ground/bin:$PATH"
 
 # --poll reads dunwich as well, which the ground's config leaves unpolled.
 # HOME stays the caller's for Chromium, which hangs in headless mode on a
 # profile it has to make new. Port 0 and the address bdi web says it took
 # keep the shot off any other server already listening here.
-(cd "$ground" && HOME="$ground" exec bdi web --listen 127.0.0.1:0 --poll) \
+(cd "$ground" && HOME="$ground" exec "$repo/target/release/bdi" web --listen 127.0.0.1:0 --poll) \
   >"$ground/web.out" &
 web=$!
 url=
@@ -44,8 +44,9 @@ for _ in $(seq 300); do
   url=
   sleep 0.1
 done
-if [ -z "$url" ] || ! curl -sf "$url$page" >/dev/null; then
-  echo "bdi web never drew ark-1.1's page, so the still is left as it was" >&2
+if [ -z "$url" ] || ! curl -sf "$url$page" >"$ground/page.html" ||
+  ! grep -q 'dunwich/dun-1.1' "$ground/page.html"; then
+  echo "bdi web never drew both projects, so the still is left as it was" >&2
   exit 1
 fi
 
