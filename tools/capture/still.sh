@@ -50,11 +50,11 @@ if [ -z "$url" ] || ! curl -sf --noproxy "*" "$url$page" >"$ground/page.html" ||
   exit 1
 fi
 
-chromium --headless=new --disable-gpu --hide-scrollbars \
+timeout -k 5 60 chromium --headless=new --disable-gpu --hide-scrollbars \
   --blink-settings=preferredColorScheme=0 --force-device-scale-factor=2 \
-  --window-size=1440,640 --screenshot="$ground/still.png" "$url$page" 2>/dev/null
+  --window-size=1440,640 --screenshot="$ground/still.png" "$url$page" 2>/dev/null || true
 if [ ! -s "$ground/still.png" ]; then
-  echo "Chromium took no screenshot, so the still is left as it was" >&2
+  echo "Chromium took no screenshot within a minute, so the still is left as it was" >&2
   exit 1
 fi
 mv "$ground/still.png" "$out"
