@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# The invented ground the README's animation is recorded in: beads trackers
+# The invented ground beady-eye's recordings are made in: beads trackers
 # for the arkham and dunwich projects, and a herdr that answers for them and
-# nothing else. Once bdi first shows what an agent is saying, arkham's work
-# moves on under it: a new agent takes a bead, and the search index's agent
-# finishes a bead and takes the next.
+# nothing else. It lays the beads and starts nothing, so each recording
+# moves them as its own story needs.
 #
 # Everything here is invented, and has to be — CONTRIBUTING.md's *Only
 # invented examples go in this repository*.
 #
-# Run by record.sh, which hands it an empty directory.
+# Run by record.sh and web-demo.sh, each handing it an empty directory.
 set -euo pipefail
 
 ground=${1:?an empty directory to lay the ground in}
@@ -114,23 +113,3 @@ cat >"$ground/herdr/visible.wG:p4" <<'PANE'
 
   Reading the gateway's docs on key rotation.
 PANE
-
-# Each step waits for herdr to take it, so the tracker bdi reads next agrees
-# with the agents herdr lists. The steps start soon after bdi first shows a
-# pane's tail.
-step() { # commands
-  printf '%s\n' "$1" >"$ground/herdr/next" && mv "$ground/herdr/next" "$ground/herdr/due"
-  for _ in $(seq 600); do [ -e "$ground/herdr/taken" ] && break; sleep 0.1; done
-  rm -f "$ground/herdr/taken"
-}
-(
-  for _ in $(seq 1200); do [ -e "$ground/herdr/read" ] && break; sleep 0.1; done
-  sleep 0.5
-  step ". '$ground/isolate' && cd '$arkham' && bd update ark-1.2 --status in_progress --set-metadata agent_pane=wG:p4 >/dev/null &&
-    cp '$ground/herdr/keys.json' '$ground/herdr/default.json'"
-  sleep 1.5
-  step ". '$ground/isolate' && cd '$arkham' && bd update ark-2.1 --unset-metadata agent_pane >/dev/null &&
-    bd close ark-2.1 >/dev/null &&
-    bd update ark-2.2 --status in_progress --set-metadata agent_pane=wG:p3 >/dev/null"
-) </dev/null >"$ground/arkham.log" 2>&1 &
-disown
