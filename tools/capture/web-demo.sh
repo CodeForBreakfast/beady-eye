@@ -35,8 +35,6 @@ done
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ground=$(mktemp -d /tmp/bdi-ground.XXXX)
-# Short and fresh, for the reason record.sh gives.
-runtime=$(mktemp -d /tmp/bdi-rt.XXXX)
 web=
 # bdi web's own bd reads write under the ground, so they are stopped and
 # waited for before it is removed.
@@ -45,7 +43,7 @@ stop() {
     kill -- -"$web" 2>/dev/null || true
     wait "$web" 2>/dev/null || true
   fi
-  rm -rf "$ground" "$runtime"
+  rm -rf "$ground"
 }
 trap stop EXIT
 trap 'exit 130' INT
@@ -58,12 +56,10 @@ echo "Laying the invented ground..."
 cd "$ground/arkham"
 bd dep add ark-1.2 ark-1.1 >/dev/null
 
-# Every config bdi could read is the ground's, whatever the caller's
-# XDG_CONFIG_HOME says. Job control puts it in a process group of its own,
-# which stop() ends whole.
+# Job control puts bdi web in a process group of its own, which stop() ends
+# whole.
 set -m
-HOME=$ground XDG_CONFIG_HOME=$ground/.config XDG_RUNTIME_DIR=$runtime \
-  bdi web --listen "$listen" &
+"$ground/web" --listen "$listen" &
 web=$!
 set +m
 echo "Open http://$listen/?open=b%3Aarkham%3Aark-1&open=b%3Aarkham%3Aark-2&open=b%3Adunwich%3Adun-1"
