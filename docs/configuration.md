@@ -12,6 +12,9 @@ listening on the `[changes] socket` it opened and reading through the
 `[watcher] socket` it found. A project added while it runs is still asked of
 that watcher, and read directly only where the watcher does not answer for it.
 
+The view also keeps the agent providers it started with, so adding or
+removing an `[hc]` table takes effect at the next start.
+
 A key `bdi` does not read is refused, and the refusal names the key and the
 table it was written in:
 
@@ -817,6 +820,39 @@ herdr finds that session in, whichever pane `pane_key` names.
 
 `bdi web` does not use either key. It asks no agent provider, so it has no
 panes or sessions to tie a bead to.
+
+## `[hc]`
+
+The table reads the herdr app's terminals beside herdr's panes, through the
+app's `hc` command. Without it, `bdi` asks `hc` nothing, because every `hc`
+command starts the app's core where none is running.
+
+```toml
+[hc]
+session_label = "claude.session"
+```
+
+`session_label` names the label on a terminal that holds the agent session
+running in it. A bead naming that session under `[join]`'s
+`agent_session_key` is drawn against the terminal carrying it. Without
+`session_label`, the table still reads the app, and a terminal is tied to a
+bead only by the address the bead names under `pane_key`. An address is the
+one `hc` prints, such as `t7`, or `vps/t7` for a terminal on a machine the
+app has added.
+
+A terminal is drawn as a pane once its program has reported a status to the
+app. Its state is the one the program last reported. The app has no way to be
+asked to bring a terminal to the front, so focusing one says so rather than
+moving anything.
+
+A terminal belongs to the project whose `path` holds its working directory,
+as for a herdr pane. A terminal on a machine the app has added is placed by
+that machine's directory, so it joins a bead only where its checkout sits at
+the `path` this config names.
+
+The app's terminals sit in a session of their own called `herdr app`,
+beside herdr's sessions. A machine with the app and without herdr reads the
+app alone.
 
 ## `[delivery]`
 

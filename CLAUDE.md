@@ -19,7 +19,7 @@ measurements.
 ## What beady-eye owns
 
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
-- The reading side: which `bd`, `herdr` and `gh` command lines it spells, and
+- The reading side: which `bd`, `herdr`, `hc` and `gh` command lines it spells, and
   how it parses what they print.
 - `bdi bd`, which carries a person's reply to the right tracker: their answer
   to the bead that asked, the date they chose to defer a bead until, or their
@@ -43,7 +43,8 @@ measurements.
   project. `bdi` reads from it, and a change to what `bd` prints is asked of
   beads.
 - **herdr.** Panes, agent detection and agent status belong to the herdr
-  project. `bdi` draws what herdr reports.
+  project, and the herdr app's terminals and their status to its `hc`. `bdi`
+  draws what each reports.
 - **Every other write to a tracker.** `bdi` never creates a bead, and it
   writes only through `bdi bd` and by settling gates. `bdi bd`'s
   `human respond` records a person's answer and closes the bead that asked, its `defer` puts a bead
@@ -81,8 +82,8 @@ binary. Each top-level file there is a binary of its own and costs a link, so
 a test that never starts `bdi` and sets no environment variable is a module of
 `tests/never_start_bdi/` instead. A test that reaches a module no test has reached before needs that
 module opening up in `src/lib.rs`, which says why. Fixtures under
-`tests/fixtures/` are faithful captures of what `bd list`, `bd query` and
-`herdr agent list` put on the wire.
+`tests/fixtures/` are faithful captures of what `bd list`, `bd query`,
+`herdr agent list` and `hc connect` put on the wire.
 
 A pty test drives `bdi` through `tests/terminal/driver.rs`, which drains the
 terminal on a thread of its own from the moment `bdi` starts. So never read the
@@ -143,7 +144,7 @@ you open the pull request.
 
 `src/` is five layers:
 
-- `collect/` runs `bd` and `herdr` and parses what they say.
+- `collect/` runs `bd`, `herdr` and `hc` and parses what they say.
 - `app/` decides what each tracker is asked for and keeps what came back
   between asks — `tracker.rs` is one project's read, `collection.rs` the
   standing set of them.

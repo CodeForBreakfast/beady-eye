@@ -1122,6 +1122,81 @@ mod tests {
         assert_eq!(pane_of(&joined, "proj", "p-1").pane, pane_key("w:p2"));
     }
 
+    /// herdr's panes and the herdr app's terminals on one machine, as a run
+    /// reading both lists them, with the app's terminals read for the session
+    /// label the reader named.
+    fn herdr_and_the_app() -> Vec<Pane> {
+        let mut live = panes(&an_agent("w:p1", "sess-herdr"));
+        live.extend(
+            crate::collect::hc::parse_terminal_list(
+                include_str!("../../tests/fixtures/hc_0.1.21_terminal_list.json"),
+                Some("claude.session"),
+            )
+            .unwrap(),
+        );
+        live
+    }
+
+    /// `bead`'s `metadata`, in a project at the directory the app's seat works
+    /// in, joined against herdr's panes and the app's terminals together.
+    fn join_beside_the_app(metadata: &str) -> Joined {
+        let beads = rows(&format!(
+            r#"[{{"id":"dun-1","title":"root","status":"in_progress","metadata":{metadata}}}]"#
+        ));
+        resolve(
+            &[ProjectRows {
+                project: "dunwich",
+                rows: &beads,
+            }],
+            Listed::all(&herdr_and_the_app()),
+            &Config::naming(vec![project("dunwich", "/tmp/bdi-ground/dunwich")]),
+        )
+    }
+
+    /// The bead: a seat under the app is drawn against the bead its session
+    /// and its terminal's address are written on.
+    #[test]
+    fn a_seat_under_the_app_is_joined_by_the_session_its_label_holds() {
+        let joined = join_beside_the_app(
+            r#"{"agent_session":"4c1f0a2e-7d3b-4e8a-9f61-2b5c8d0e7a13","agent_pane":"t4"}"#,
+        );
+
+        let a = pane_of(&joined, "dunwich", "dun-1");
+        assert_eq!(a.pane.session, crate::collect::hc::SESSION);
+        assert_eq!(a.pane.id, "t4");
+        assert_eq!(a.source, JoinSource::AgentSession);
+    }
+
+    /// A seat whose terminal carries no label is joined by the address alone.
+    #[test]
+    fn a_seat_under_the_app_is_joined_by_the_address_it_wrote() {
+        let joined = join_beside_the_app(r#"{"agent_pane":"t4"}"#);
+
+        let a = pane_of(&joined, "dunwich", "dun-1");
+        assert_eq!(a.pane.id, "t4");
+        assert_eq!(a.source, JoinSource::AgentPane);
+    }
+
+    /// Reading the app beside herdr changes nothing for herdr's seats.
+    #[test]
+    fn a_seat_under_herdr_is_joined_as_before_beside_the_app() {
+        let beads = rows(
+            r#"[{"id":"p-1","title":"root","status":"in_progress",
+                 "metadata":{"agent_session":"sess-herdr"}}]"#,
+        );
+
+        let joined = resolve(
+            &[ProjectRows {
+                project: "proj",
+                rows: &beads,
+            }],
+            Listed::all(&herdr_and_the_app()),
+            &Config::naming(vec![project("proj", "/home/user/proj")]),
+        );
+
+        assert_eq!(pane_of(&joined, "proj", "p-1").pane, pane_key("w:p1"));
+    }
+
     /// An agent resumed in another pane keeps its bead, and the pane it left
     /// is no longer its.
     #[test]

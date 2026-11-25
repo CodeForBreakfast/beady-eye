@@ -3,8 +3,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io::Write;
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Output, Stdio};
 
 use crate::collect::environment::NEVER_INHERITED;
 use crate::model::types::Unreadable;
@@ -567,6 +568,20 @@ pub trait Runner: Sync {
     ) -> Result<String, Box<Printed>> {
         self.run(program, args, cwd, env).map_err(Printed::nothing)
     }
+
+    /// As [`run`](Runner::run) with nothing laid over the environment, and
+    /// `input` written to the program's stdin, which is then closed.
+    ///
+    /// A runner that answers by command line alone has nothing to do with the
+    /// input, which is what the default is for.
+    fn run_feeding(
+        &self,
+        program: &str,
+        args: &[&str],
+        _input: &str,
+    ) -> Result<String, RunFailure> {
+        self.run(program, args, None, &Env::new())
+    }
 }
 
 /// A command that failed, and what it wrote to stdout first: empty where it
@@ -628,18 +643,45 @@ impl Runner for RealRunner {
         let out = told(program, args, cwd, env)
             .output()
             .map_err(|e| Printed::nothing(RunFailure::could_not_start(program, cwd, env, &e)))?;
-        if !out.status.success() {
-            return Err(Box::new(Printed {
-                failure: RunFailure::from_exit(
-                    program,
-                    out.status.code(),
-                    &String::from_utf8_lossy(&out.stderr),
-                ),
-                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            }));
-        }
-        String::from_utf8(out.stdout).map_err(|e| Printed::nothing(RunFailure::parse(program, e)))
+        answered(program, out)
     }
+
+    fn run_feeding(&self, program: &str, args: &[&str], input: &str) -> Result<String, RunFailure> {
+        let env = Env::new();
+        let mut child = told(program, args, None, &env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RunFailure::could_not_start(program, None, &env, &e))?;
+        // A program that exits without reading its input refuses the write.
+        // What it answered is still what says how the run went.
+        let _ = child
+            .stdin
+            .take()
+            .expect("stdin was piped")
+            .write_all(input.as_bytes());
+        let out = child
+            .wait_with_output()
+            .map_err(|e| RunFailure::could_not_start(program, None, &env, &e))?;
+        answered(program, out).map_err(|printed| printed.failure)
+    }
+}
+
+/// What a finished run hands back: its stdout where it succeeded, and why it
+/// did not where it failed, beside whatever it printed first.
+fn answered(program: &str, out: Output) -> Result<String, Box<Printed>> {
+    if !out.status.success() {
+        return Err(Box::new(Printed {
+            failure: RunFailure::from_exit(
+                program,
+                out.status.code(),
+                &String::from_utf8_lossy(&out.stderr),
+            ),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        }));
+    }
+    String::from_utf8(out.stdout).map_err(|e| Printed::nothing(RunFailure::parse(program, e)))
 }
 
 /// Runs one command on `bdi`'s own stdin, stdout and stderr, and hands back
@@ -747,6 +789,8 @@ pub mod testing {
         pub argv: String,
         pub cwd: Option<PathBuf>,
         pub env: Env,
+        /// What was written to its stdin, where anything was.
+        pub input: Option<String>,
     }
 
     /// A Runner that replays canned output keyed by the joined argv.
@@ -857,12 +901,34 @@ pub mod testing {
             cwd: Option<&Path>,
             env: &Env,
         ) -> Result<String, Box<Printed>> {
-            let argv = format!("{program} {}", args.join(" "));
-            self.calls.lock().unwrap().push(Call {
-                argv: argv.clone(),
+            self.answer(Call {
+                argv: format!("{program} {}", args.join(" ")),
                 cwd: cwd.map(Path::to_path_buf),
                 env: env.clone(),
-            });
+                input: None,
+            })
+        }
+
+        fn run_feeding(
+            &self,
+            program: &str,
+            args: &[&str],
+            input: &str,
+        ) -> Result<String, RunFailure> {
+            self.answer(Call {
+                argv: format!("{program} {}", args.join(" ")),
+                cwd: None,
+                env: Env::new(),
+                input: Some(input.to_string()),
+            })
+            .map_err(|printed| printed.failure)
+        }
+    }
+
+    impl FakeRunner {
+        fn answer(&self, call: Call) -> Result<String, Box<Printed>> {
+            let argv = call.argv.clone();
+            self.calls.lock().unwrap().push(call);
             self.meeting.arrive(&argv);
             match self.responses.get(&argv) {
                 Some(Ok(out)) => Ok(out.clone()),
@@ -1030,6 +1096,30 @@ mod tests {
             .expect("sh runs");
 
         assert_eq!(out, "/nowhere-in-particular|set");
+    }
+
+    /// The input is written whole and then closed, so a program that reads
+    /// to the end of its stdin, as `hc connect` does, finishes.
+    #[test]
+    fn a_command_fed_input_reads_it_to_the_end() {
+        let out = RealRunner
+            .run_feeding("sh", &["-c", "cat; printf 'done'"], "one\ntwo\n")
+            .expect("sh runs");
+
+        assert_eq!(out, "one\ntwo\ndone");
+    }
+
+    #[test]
+    fn a_command_fed_input_that_fails_is_a_failure() {
+        let failure = RealRunner
+            .run_feeding(
+                "sh",
+                &["-c", "cat >/dev/null; echo 'gh: refused' >&2; exit 1"],
+                "x",
+            )
+            .expect_err("sh exits 1");
+
+        assert_eq!(failure, failing_command("gh: refused"));
     }
 
     #[test]
