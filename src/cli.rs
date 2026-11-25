@@ -22,6 +22,7 @@ use crate::collect::bd;
 use crate::collect::changes;
 use crate::collect::discovery;
 use crate::collect::environment::{self, EnvironmentCache};
+use crate::collect::hc;
 use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::stream;
@@ -487,7 +488,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     if cli.view.json {
         let mut snapshot = crate::app::run(
             &cfg,
-            &herdr::Herdr::new(&RealRunner as &dyn Runner),
+            &*agents_for(&cfg, &RealRunner),
             &through_the_watcher(
                 &cfg,
                 where_this_machine_watches(&cfg).as_deref(),
@@ -578,7 +579,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let mut started = false;
     // One provider for the run, asked by the collection on its thread and by
     // the tail on another. Which one it is is chosen here and nowhere below.
-    let agents: Arc<dyn Agents> = Arc::new(herdr::Herdr::new(&RealRunner as &dyn Runner));
+    let agents: Arc<dyn Agents> = Arc::from(agents_for(&cfg, &RealRunner));
     let listing = Arc::clone(&agents);
     crate::tui::run(
         &started_on,
@@ -621,6 +622,20 @@ pub fn run() -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// The agent provider a run reads: herdr, with the herdr app's terminals
+/// beside its panes where the config has an `[hc]` table. Chosen once, when
+/// the run starts.
+fn agents_for<'r>(cfg: &Config, runner: &'r dyn Runner) -> Box<dyn Agents + 'r> {
+    let herdr = herdr::Herdr::new(runner);
+    match &cfg.hc {
+        None => Box::new(herdr),
+        Some(read) => Box::new(hc::WithHc::new(
+            herdr,
+            hc::Hc::new(runner, read.session_label.clone()),
+        )),
+    }
+}
+
 /// What `bdi --beads` lists each unfinished bead from: every tree, read
 /// without the free text of finished beads, which the listing never shows.
 /// The watcher is looked for at `watcher_at`, and nowhere where it is `None`.
@@ -633,7 +648,7 @@ fn read_for_each_bead(
 ) -> Snapshot {
     crate::app::run(
         cfg,
-        &herdr::Herdr::new(runner),
+        &*agents_for(cfg, runner),
         &through_the_watcher(
             cfg,
             watcher_at,
@@ -2146,6 +2161,30 @@ kadath = ["kad-11"]
             }
         }
         trees
+    }
+
+    /// Asking the herdr app anything starts its core, so a run reads it only
+    /// where the config has an `[hc]` table, and then with the label it names.
+    #[test]
+    fn the_herdr_app_is_read_beside_herdr_only_where_the_config_asks() {
+        let runner = FakeRunner::default().with(
+            "hc connect",
+            include_str!("../tests/fixtures/hc_0.1.21_terminal_list.json"),
+        );
+        let without = Config::from_toml(KADATH).unwrap();
+        let with = Config::from_toml(&format!(
+            "{KADATH}\n[hc]\nsession_label = \"claude.session\"\n"
+        ))
+        .unwrap();
+
+        assert_eq!(agents_for(&without, &runner).name(), "herdr");
+        let both = agents_for(&with, &runner);
+        assert_eq!(both.name(), "herdr and hc");
+        let terminals = both.list(hc::SESSION).unwrap();
+        assert_eq!(
+            terminals[0].live_agent_session(),
+            Some("4c1f0a2e-7d3b-4e8a-9f61-2b5c8d0e7a13")
+        );
     }
 
     /// `--beads` reads every bead, but a finished one without its free text.

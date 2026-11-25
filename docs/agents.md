@@ -38,6 +38,27 @@ fallback matches nothing.
 whose `bdi` config sets `agent_session_key` or `pane_key` under `[join]` uses
 that name instead, and it is the one to write.
 
+## Under the herdr app
+
+Where the reader's `bdi` config has an [`[hc]`](configuration.md#hc) table,
+`bdi` also draws the herdr app's terminals. Your pane is then your terminal's
+address as `hc ls` prints it: `t7` for a terminal on the machine the reader's
+app runs on, and `vps/t7` for one on a machine it has added. Your agent session
+goes on your terminal as the label the reader's `session_label` names:
+
+```bash
+bd update <id> --set-metadata agent_session="$CLAUDE_CODE_SESSION_ID" \
+               --set-metadata agent_pane=<your address>
+hc label "$HC_TERMINAL_ID" <session_label>="$CLAUDE_CODE_SESSION_ID"
+```
+
+`$HC_TERMINAL_ID` is your terminal's address on its own machine, so on a
+machine the reader's app has added it lacks the machine's name. The session
+is the join that does not need it.
+
+The app has no `display_agent`. Your terminal is drawn once your program has
+reported a status to the app, in the state it last reported.
+
 ## One pane joins one bead
 
 Where two beads name one pane, `bdi` awards the key's claim to neither. The

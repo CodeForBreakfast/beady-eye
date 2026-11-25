@@ -53,6 +53,11 @@ pub struct Config {
     pub row: Layout,
     #[serde(default)]
     pub dolt: Dolt,
+    /// The herdr app's terminals, read through `hc` beside herdr's panes.
+    /// Read only where this table is written, because every `hc` command
+    /// starts the app's core where none is running.
+    #[serde(default)]
+    pub hc: Option<Hc>,
     /// Which of `projects` this run reads, and what chose them. The rest stay
     /// here rather than being dropped: a pane is placed by which configured
     /// project holds its directory, whether or not that project is read.
@@ -332,6 +337,15 @@ pub struct Reach {
     pub environment_command: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<Server>,
+}
+
+/// How `bdi` reads the herdr app's terminals.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Hc {
+    /// The label on a terminal that holds the agent session running in it.
+    /// Without it, a terminal is joined by its address alone.
+    pub session_label: Option<String>,
 }
 
 /// The Dolt server that every project naming a `database` sits on, named as
@@ -1034,6 +1048,7 @@ impl Config {
             tail: Tail::default(),
             row: Layout::default(),
             dolt: Dolt::default(),
+            hc: None,
             scope: Scope::default(),
             named_without_git: false,
         }
@@ -1879,6 +1894,46 @@ title = ["title", "badge.metadata.jira", "badges"]
             .to_string();
 
         assert!(err.contains("pane_keys"), "got: {err}");
+    }
+
+    /// Asking the app anything starts its core, so nothing that was not
+    /// written asks it.
+    #[test]
+    fn the_herdr_app_is_not_read_unless_the_config_says_to() {
+        let cfg = Config::from_toml(ONE_PROJECT).unwrap();
+
+        assert_eq!(cfg.hc, None);
+    }
+
+    #[test]
+    fn an_hc_table_reads_the_app_with_the_session_label_it_names() {
+        let cfg = Config::from_toml(&format!(
+            "{ONE_PROJECT}\n[hc]\nsession_label = \"claude.session\"\n"
+        ))
+        .unwrap();
+
+        assert_eq!(
+            cfg.hc,
+            Some(Hc {
+                session_label: Some("claude.session".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn an_empty_hc_table_reads_the_app_with_no_session_label() {
+        let cfg = Config::from_toml(&format!("{ONE_PROJECT}\n[hc]\n")).unwrap();
+
+        assert_eq!(cfg.hc, Some(Hc::default()));
+    }
+
+    #[test]
+    fn an_hc_key_bdi_does_not_read_refuses_the_config() {
+        let err = Config::from_toml(&format!("{ONE_PROJECT}\n[hc]\nsession_key = \"x\"\n"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("session_key"), "got: {err}");
     }
 
     #[test]
