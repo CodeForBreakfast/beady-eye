@@ -136,4 +136,5 @@ step() { # commands
     bd close ark-2.1 >/dev/null &&
     bd update ark-2.2 --status in_progress --set-metadata agent_pane=wG:p3 >/dev/null"
 ) </dev/null >"$ground/arkham.log" 2>&1 &
+echo $! >"$ground/clock.pid"
 disown
