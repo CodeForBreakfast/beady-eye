@@ -1176,6 +1176,47 @@ mod tests {
         std::fs::remove_file(&path).expect("the config is ours to remove");
     }
 
+    /// The page asks no agent provider, so a claimed bead's page says its
+    /// agent is unknown rather than that no agent is on it.
+    #[test]
+    fn a_claimed_beads_page_says_its_agent_is_unknown_rather_than_absent() {
+        let cfg =
+            Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/home/user/arkham\"\n")
+                .expect("a config");
+        let claimed = bd::parse_beads(
+            r#"[{"id":"ark-1","title":"open the gate","status":"in_progress",
+                 "priority":2,"issue_type":"task","metadata":{"agent_pane":"wG:p2"}}]"#,
+        )
+        .expect("the rows parse");
+        let trackers = Fakes::default().with("arkham", Fake::holding(claimed));
+        let snapshot = Collection::default().collect(
+            &cfg,
+            &Unasked,
+            &trackers,
+            &Wanted::Everything,
+            Filter::All,
+            Utc::now(),
+        );
+        let latest = Latest::holding(Held {
+            cfg: Arc::new(cfg),
+            snapshot: Some(snapshot),
+            collecting: None,
+            lapsed: Vec::new(),
+            change: 0,
+        });
+        let (status, page) = answered_to("GET", "/arkham/ark-1", &latest);
+        assert_eq!(status, "200 OK");
+        assert!(!page.contains("no agent on it"), "{page}");
+        assert!(
+            page.contains(&format!(
+                "<dt>{}</dt><dd>{}</dd>",
+                phrase::field::AGENT,
+                phrase::agent_unknown()
+            )),
+            "{page}"
+        );
+    }
+
     /// A page started on the roots the command line named takes those
     /// roots from the config in force, so a page opened before an edit
     /// moved them is drawn at where they are now.

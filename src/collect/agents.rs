@@ -37,8 +37,9 @@ pub trait Agents: Send + Sync {
     fn focus(&self, pane: &PaneKey) -> Result<(), RunFailure>;
 }
 
-/// No provider, for a run that reports nothing from a pane: every session
-/// list it is asked for is empty, and nothing is run to find that out.
+/// No provider, for a run that reports nothing from a pane. It says it is
+/// not installed, which is what lets the run say it read beads alone rather
+/// than that every claim has nobody on it. Nothing is run to find that out.
 pub struct Unasked;
 
 impl Agents for Unasked {
@@ -47,7 +48,10 @@ impl Agents for Unasked {
     }
 
     fn sessions(&self) -> Result<Vec<String>, RunFailure> {
-        Ok(Vec::new())
+        Err(RunFailure::not_installed(
+            self.name(),
+            "no provider is asked",
+        ))
     }
 
     fn list(&self, _session: &str) -> Result<Vec<Pane>, RunFailure> {

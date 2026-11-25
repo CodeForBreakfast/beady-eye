@@ -884,6 +884,13 @@ pub fn no_provider_to_tail() -> &'static str {
     "no agents to show · reading beads only"
 }
 
+/// A claimed bead's agent, on a bead's page that nothing provides agents
+/// for. The bead may well have one, so this says what the page did not look
+/// at rather than that nobody is there.
+pub fn agent_unknown() -> &'static str {
+    "unknown · reading beads only"
+}
+
 /// That the pane the selection points at is being read and has not answered
 /// yet. The rule above the band names the pane already, so what is left to
 /// say is that `bdi` is waiting rather than that the pane is quiet.
