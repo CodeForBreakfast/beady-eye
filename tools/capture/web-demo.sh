@@ -19,8 +19,9 @@ One cycle runs 24 seconds and repeats until Ctrl-C:
   12s  an agent takes cutting the live keys over
   18s  invalidating the index on write closes
 
-Each step is printed as it happens. The address it prints holds every tree
-open, so no tree folds away while its beads move.
+Each step is printed as it happens, and the page shows it within a few
+seconds. The address it prints holds every tree open, so no tree folds away
+while its beads move.
 USAGE
 }
 
@@ -53,19 +54,29 @@ echo "Laying the invented ground..."
 "$here/ground.sh" "$ground"
 # shellcheck source=/dev/null
 . "$ground/isolate"
+# Every bd the cycle runs reads the ground's config, as ground.sh's did.
+export HOME="$ground" XDG_CONFIG_HOME="$ground/.config"
 cd "$ground/arkham"
 bd dep add ark-1.2 ark-1.1 >/dev/null
 
 # Job control puts bdi web in a process group of its own, which stop() ends
-# whole.
+# whole. --poll reads dunwich too, which the page would otherwise say has
+# lapsed a minute in.
 set -m
-"$ground/web" --listen "$listen" &
+"$ground/web" --listen "$listen" --poll >"$ground/web.out" &
 web=$!
 set +m
-echo "Open http://$listen/?open=b%3Aarkham%3Aark-1&open=b%3Aarkham%3Aark-2&open=b%3Adunwich%3Adun-1"
+# The cycle starts once the page has read both trackers, so it opens on the
+# beads as they start.
+url=
+until [ -n "$url" ] && curl -sf --noproxy "*" "$url/healthz" >/dev/null; do
+  kill -0 "$web" 2>/dev/null || exit 1
+  sleep 0.1
+  url=$(sed -n 's/^bdi web is answering on //p' "$ground/web.out")
+done
+echo "Open $url/?open=b%3Aarkham%3Aark-1&open=b%3Aarkham%3Aark-2&open=b%3Adunwich%3Adun-1"
 
-# The bd actor of the agent that takes the live keys. A claim makes it the
-# bead's assignee.
+# The bd actor of the agent that takes the live keys.
 agent=live-keys
 
 at() { # seconds into the cycle, then what happens then

@@ -175,7 +175,7 @@
 
         webDemo = pkgs.writeShellApplication {
           name = "web-demo";
-          runtimeInputs = [ beady-eye bd pkgs.git pkgs.coreutils pkgs.gnugrep ];
+          runtimeInputs = [ beady-eye bd pkgs.bash pkgs.git pkgs.coreutils pkgs.curl pkgs.gnugrep pkgs.gnused ];
           text = ''exec ${./tools/capture}/web-demo.sh "$@"'';
         };
 

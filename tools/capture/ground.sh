@@ -23,6 +23,9 @@ fi
 mkdir -p "$arkham" "$dunwich" "$ground/bin" "$ground/herdr" \
   "$ground/.config/beady-eye"
 cp "$here"/bin/* "$ground/bin/"
+# The trackers are laid under the ground's own home, so no setting in the
+# caller's bd or git config shapes them.
+export HOME="$ground" XDG_CONFIG_HOME="$ground/.config"
 
 # Every `bd` here must reach the trackers laid here and nothing else, both
 # below and in the steps herdr takes later. A maintainer's shell points
@@ -32,7 +35,7 @@ cat >"$ground/isolate" <<'SH'
 for var in $(env | grep -E '^(BEADS|BD)_' | cut -d= -f1); do
   unset "$var"
 done
-export BEADS_ACTOR=wilbur
+export BEADS_ACTOR=wilbur BD_DISABLE_METRICS=1
 SH
 # shellcheck source=/dev/null
 . "$ground/isolate"
@@ -67,7 +70,6 @@ chmod +x "$ground/web"
 
 tracker() { # prefix
   git init -q
-  bd metrics off >/dev/null 2>&1 || true
   bd init --prefix "$1" --stealth >/dev/null
 }
 new() { bd create --silent "$@" >/dev/null; }
