@@ -25,9 +25,9 @@ trap '[ -n "$web" ] && kill "$web"; rm -rf "$ground" "$runtime"' EXIT
 export XDG_RUNTIME_DIR="$runtime"
 export PATH="$ground/bin:$repo/target/release:$PATH"
 
-# The ground polls only arkham, which suits the animation. The still has no
-# moment to wait for, so every project is read fresh. HOME stays the caller's
-# for Chromium, which hangs in headless mode on a profile it has to make new.
+# --poll reads dunwich as well, which the ground's config leaves unpolled.
+# HOME stays the caller's for Chromium, which hangs in headless mode on a
+# profile it has to make new.
 (cd "$ground" && HOME="$ground" exec bdi web --listen "$address" --poll) &
 web=$!
 for _ in $(seq 100); do
