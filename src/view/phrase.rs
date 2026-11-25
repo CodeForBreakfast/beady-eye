@@ -918,6 +918,12 @@ pub fn pane_unreadable(kind: FailureKind) -> &'static str {
     }
 }
 
+/// Why the pane the selection points at was not brought to the front: its
+/// provider has no way to be asked to.
+pub fn pane_unfocusable() -> &'static str {
+    "that pane cannot be brought to the front"
+}
+
 /// What an agent was resolved by, where that is worth saying: an agent the
 /// bead named is confirmed, one a pane's free text named is not.
 pub fn join_caveat(source: JoinSource) -> Option<&'static str> {

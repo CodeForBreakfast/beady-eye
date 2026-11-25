@@ -3,7 +3,7 @@
 use ratatui::text::Line;
 
 use crate::collect::panes::Panes;
-use crate::collect::run::RunFailure;
+use crate::collect::run::{FailureKind, RunFailure};
 use crate::config::Crop;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::snapshot::{ProviderState, Snapshot};
@@ -240,6 +240,9 @@ pub fn focus(forest: &Forest, panes: &dyn Panes) {
 pub fn focused(focused: Result<(), RunFailure>) -> Option<Tail> {
     match focused {
         Ok(()) => None,
+        Err(failure) if failure.kind == FailureKind::Unsupported => {
+            Some(Tail::Silent(phrase::pane_unfocusable()))
+        }
         Err(failure) => Some(Tail::Silent(phrase::pane_unreadable(failure.kind))),
     }
 }
@@ -619,6 +622,16 @@ mod tests {
         assert_eq!(
             focused(Err(failure(FailureKind::Gone))),
             Some(Tail::Silent(phrase::pane_unreadable(FailureKind::Gone)))
+        );
+    }
+
+    /// A provider that cannot bring any pane to the front says so, rather
+    /// than leave the reader thinking the pane could not be read.
+    #[test]
+    fn a_provider_that_cannot_focus_says_that_rather_than_unreadable() {
+        assert_eq!(
+            focused(Err(failure(FailureKind::Unsupported))),
+            Some(Tail::Silent("that pane cannot be brought to the front"))
         );
     }
 
