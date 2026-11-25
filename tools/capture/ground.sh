@@ -66,7 +66,10 @@ cd "$arkham"
 tracker ark
 new --id ark-1 --type epic --title "Payments move to the new gateway"
 new --parent ark-1 --type task --status in_progress \
-  --title "The refund path calls the gateway" --metadata '{"agent_pane":"wG:p2"}'
+  --title "The refund path calls the gateway" --metadata '{"agent_pane":"wG:p2"}' \
+  --description "A refund goes through the new gateway's refund call, rather than the old processor's.
+
+The gateway refuses a refund larger than the original charge, so a partial refund needs a call of its own."
 new --parent ark-1 --type task --title "Cut the live keys over"
 new --parent ark-1 --type task --title "Pin the gateway client version"
 bd close ark-1.3 >/dev/null
@@ -133,4 +136,5 @@ step() { # commands
     bd close ark-2.1 >/dev/null &&
     bd update ark-2.2 --status in_progress --set-metadata agent_pane=wG:p3 >/dev/null"
 ) </dev/null >"$ground/arkham.log" 2>&1 &
+echo $! >"$ground/clock.pid"
 disown

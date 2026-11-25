@@ -3,12 +3,13 @@
 ![A screen-printed cosmic-horror poster: a colossal eye with a red pupil hangs in a green-black sky, tentacles trailing away behind it, while a line of small robots below hauls a chain of glowing beads under its gaze.](docs/images/beady-eye-hero.png)
 
 `bdi` is one unblinking eye over every [beads](https://github.com/gastownhall/beads)
-tracker you point it at. It draws your work as trees, so the goals stay in view
-however many agents are at work on the pieces. Beside each bead it shows what
-the agent working it is actually doing. It also tells agents and scripts when
-the beads they wait on change, and settles the beads that wait on GitHub.
-`bd` is all it needs. It will also look at whatever else you leave lying
-about, and each thing you let it see gives it more to do.
+tracker you point it at. It draws your work as trees, in a terminal or in a
+browser, so the goals stay in view however many agents are at work on the
+pieces. In the terminal, beside each bead it shows what the agent working it
+is actually doing. It also tells agents and scripts when the beads they wait
+on change, and settles the beads that wait on GitHub. `bd` is all it needs. It
+will also look at whatever else you leave lying about, and each thing you let
+it see gives it more to do.
 
 - **It keeps the goals in view.** Each tracker's work is drawn as a tree, with
   a goal at the root and the work it waits on beneath it. With a lot of agents
@@ -19,6 +20,10 @@ about, and each thing you let it see gives it more to do.
 - **It shows you what the agents are doing.** Add [herdr](https://herdr.dev),
   and beside every bead an agent has claimed sits the live pane that agent is
   in. Under the trees is the tail of what the selected bead's pane is saying.
+- **It reaches any screen.** `bdi web` draws the same trees as a web page, for
+  a second monitor, a phone or a wall display. The page changes as the beads
+  do, without a reload. Each bead has a page of its own, at a link that anyone
+  on your network or behind your proxy can open.
 - **It tells whoever is watching.** `bdi watch` keeps watch over every tracker
   at once, and tells anything connected to it the moment a bead it watches
   changes. Add Claude Code with the beady-eye plugin, and a session is told
@@ -37,6 +42,12 @@ This is arkham and dunwich with herdr running. Each project's beads sit in
 trees under the goal they serve, and each agent is named beside the bead it
 works by what it is doing. As the agents move on, the trees redraw. The band
 under the trees is what the selected bead's pane is saying.
+
+![A still of bdi web in a dark browser page, over the same two projects, arkham and dunwich. On the left, each project's beads are drawn as trees under the goal they serve, each bead with its status glyph, its title and its id, and each goal with a bar of how much of its work is done. The refund bead is selected, and its page is open on the right: its status, title, priority, type and dates, its description as prose, and its parent.](docs/images/bdi-web.png)
+
+Here are the same two projects in a browser, with the refund bead open beside
+the trees. The page shows what the trackers hold, and leaves the agents and
+their panes to the terminal.
 
 All of this happens while you are looking elsewhere. Anything that can write to
 a bead can reach whoever watches that bead, and neither side needs to know the
@@ -186,6 +197,79 @@ any project, without following parent links. It lists the `ready` beads, the
 A bead held by an open pull request's gate is listed `in_delivery` instead,
 and a ready bead whose pull request has merged is listed `delivered`, to close
 rather than start. Each names its `pull_requests`.
+
+## In a browser
+
+`bdi web` draws the same trees as a web page, for whoever can reach the
+address it answers on:
+
+```console
+$ bdi web --listen 0.0.0.0:8080
+bdi web is answering on http://0.0.0.0:8080
+```
+
+Each line of the page is the line the view draws. A line's box-drawing opens
+or shuts it. A bead's glyph, id and title open the bead beside the trees, and
+so does every bead that bead names. Each bead has a page of its own at
+`/<project>/<bead-id>`, with the project as the config names it, so anything
+that knows a bead can link to it.
+
+It reads every configured project, through the watcher where one runs.
+Watching, below, has the watcher. `--project <name>`, given once for each, reads only the projects named, as it
+does for the view, so a page can show one tracker without a second config
+file. `--all-projects` reads every project, as no flag does here. It keeps
+each project current as the view does: it polls as `poll`, `--poll` and
+`--no-poll` say, and hears producers on the socket `[changes]` or `--socket`
+names. It takes up an edit to the config as the view does. It asks no agent
+provider, so it shows no agents and no pane, and it draws every tree. That is what `--all` asks of the view, so `--all` is taken
+and changes nothing.
+
+```console
+$ bdi web --listen 127.0.0.1:8080 --project arkham
+```
+
+`--ready` opens the ready list on a page whose address names no list. Beads
+named on the command line, written `<project>:<bead-id>`, root a page whose
+address names no root at those beads' trees, as they start the view focused on
+them. A list or a root the address names still wins, so the page's own links
+to every tree keep working.
+
+An open page changes as the trees do, without a reload, and keeps its place and
+its folds. The server sends each change down one connection the page holds
+open, as Server-Sent Events. A browser without scripts gets the same page,
+drawn once. Each project's line says the time its beads were read, which
+stays true on a page that has stopped changing. `/healthz` answers once every
+project has been asked, even where its tracker failed, since the page shows
+the failure.
+
+A proxy in front of `bdi web` must pass that connection through as it
+arrives. It must not buffer or compress the response, which holds each
+change back until the buffer fills. It must not close the connection for
+being idle in under 15 seconds, because `bdi web` sends a comment down it
+every 15 seconds that nothing else is sent. A page whose connection is
+refused asks again 15 seconds later, and stays as it was drawn until one is
+taken.
+
+The page is read-only and asks nobody to sign in. Anyone who can reach the
+address can read every tracker it reads, so listen only where everyone who
+can reach it may read them all.
+
+It answers only a request sent to `localhost`, to an address, or to a name
+given with `--allow-host`. So a page elsewhere cannot point a name of its own
+at it and read the trackers through a visitor's browser. Behind a proxy or an
+ingress that routes by name, give that name, once for each name it answers to:
+
+```console
+$ bdi web --listen 0.0.0.0:8080 --allow-host beads.example.invalid
+```
+
+Any other request is refused with `421 Misdirected Request`, `/healthz`
+included. A probe that asks by the pod's or the machine's address is answered.
+
+`bdi web` sees the Host the proxy sends, not the one the browser sent. So the
+proxy must pass the browser's Host through unchanged. A proxy that rewrites it
+to an address turns the check off, and one that rewrites it to another name is
+refused unless that name is allowed.
 
 ## Being seen
 
@@ -343,79 +427,6 @@ never told of a change:
 ```console
 $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
 ```
-
-## In a browser
-
-`bdi web` draws the same trees as a web page, for whoever can reach the
-address it answers on:
-
-```console
-$ bdi web --listen 0.0.0.0:8080
-bdi web is answering on http://0.0.0.0:8080
-```
-
-Each line of the page is the line the view draws. A line's box-drawing opens
-or shuts it. A bead's glyph, id and title open the bead beside the trees, and
-so does every bead that bead names. Each bead has a page of its own at
-`/<project>/<bead-id>`, with the project as the config names it, so anything
-that knows a bead can link to it.
-
-It reads every configured project, through the watcher where one runs.
-`--project <name>`, given once for each, reads only the projects named, as it
-does for the view, so a page can show one tracker without a second config
-file. `--all-projects` reads every project, as no flag does here. It keeps
-each project current as the view does: it polls as `poll`, `--poll` and
-`--no-poll` say, and hears producers on the socket `[changes]` or `--socket`
-names. It takes up an edit to the config as the view does. It asks no agent
-provider, so it shows no agents and no pane, and it draws every tree. That is what `--all` asks of the view, so `--all` is taken
-and changes nothing.
-
-```console
-$ bdi web --listen 127.0.0.1:8080 --project arkham
-```
-
-`--ready` opens the ready list on a page whose address names no list. Beads
-named on the command line, written `<project>:<bead-id>`, root a page whose
-address names no root at those beads' trees, as they start the view focused on
-them. A list or a root the address names still wins, so the page's own links
-to every tree keep working.
-
-An open page changes as the trees do, without a reload, and keeps its place and
-its folds. The server sends each change down one connection the page holds
-open, as Server-Sent Events. A browser without scripts gets the same page,
-drawn once. Each project's line says the time its beads were read, which
-stays true on a page that has stopped changing. `/healthz` answers once every
-project has been asked, even where its tracker failed, since the page shows
-the failure.
-
-A proxy in front of `bdi web` must pass that connection through as it
-arrives. It must not buffer or compress the response, which holds each
-change back until the buffer fills. It must not close the connection for
-being idle in under 15 seconds, because `bdi web` sends a comment down it
-every 15 seconds that nothing else is sent. A page whose connection is
-refused asks again 15 seconds later, and stays as it was drawn until one is
-taken.
-
-The page is read-only and asks nobody to sign in. Anyone who can reach the
-address can read every tracker it reads, so listen only where everyone who
-can reach it may read them all.
-
-It answers only a request sent to `localhost`, to an address, or to a name
-given with `--allow-host`. So a page elsewhere cannot point a name of its own
-at it and read the trackers through a visitor's browser. Behind a proxy or an
-ingress that routes by name, give that name, once for each name it answers to:
-
-```console
-$ bdi web --listen 0.0.0.0:8080 --allow-host beads.example.invalid
-```
-
-Any other request is refused with `421 Misdirected Request`, `/healthz`
-included. A probe that asks by the pod's or the machine's address is answered.
-
-`bdi web` sees the Host the proxy sends, not the one the browser sent. So the
-proxy must pass the browser's Host through unchanged. A proxy that rewrites it
-to an address turns the check off, and one that rewrites it to another name is
-refused unless that name is allowed.
 
 ## Writing back
 
