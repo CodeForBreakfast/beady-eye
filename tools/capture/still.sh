@@ -3,7 +3,10 @@
 # ground record.sh records the animation in.
 #
 #   nix develop -c cargo build --release
-#   nix develop -c tools/capture/still.sh
+#   nix develop .#maintainer -c tools/capture/still.sh
+#
+# The maintainer shell brings the bd the ground is laid with, and Chromium on
+# Linux. curl comes from the system.
 #
 # Run it after a change to what the page draws, because nothing else in this
 # repository checks the still against the binary.
@@ -41,8 +44,8 @@ for _ in $(seq 300); do
   url=
   sleep 0.1
 done
-if [ -z "$url" ]; then
-  echo "bdi web never answered, so the still is left as it was" >&2
+if [ -z "$url" ] || ! curl -sf "$url$page" >/dev/null; then
+  echo "bdi web never drew ark-1.1's page, so the still is left as it was" >&2
   exit 1
 fi
 
