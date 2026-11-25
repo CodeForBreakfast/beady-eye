@@ -51,5 +51,10 @@ fi
 
 chromium --headless=new --disable-gpu --hide-scrollbars \
   --blink-settings=preferredColorScheme=0 --force-device-scale-factor=2 \
-  --window-size=1440,640 --screenshot="$out" "$url$page" 2>/dev/null
+  --window-size=1440,640 --screenshot="$ground/still.png" "$url$page" 2>/dev/null
+if [ ! -s "$ground/still.png" ]; then
+  echo "Chromium took no screenshot, so the still is left as it was" >&2
+  exit 1
+fi
+mv "$ground/still.png" "$out"
 echo "wrote docs/images/bdi-web.png, $(wc -c <"$out") bytes"
