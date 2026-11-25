@@ -18,7 +18,7 @@ use crate::app::Awaited;
 use crate::config::Colour;
 use crate::model::edges::Related;
 use crate::model::join::BeadKey;
-use crate::model::snapshot::{Node, Snapshot};
+use crate::model::snapshot::{Node, ProviderState, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
 use crate::view::address::{line_name, Asked, Root, FIND, SHOWN};
@@ -1008,6 +1008,10 @@ impl Drawing<'_> {
         }
         if let Some(agent) = &node.agent {
             cell(html, field::AGENT, &agent_doing(agent));
+        } else if node.status == Status::InProgress
+            && self.forest.snapshot().agents.state == ProviderState::Absent
+        {
+            cell(html, field::AGENT, phrase::agent_unknown());
         }
         if let Watching::Known { agents, unreported } = &node.watching {
             let mut watchers: Vec<String> = agents.iter().map(phrase::watcher).collect();
