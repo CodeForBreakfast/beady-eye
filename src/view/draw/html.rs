@@ -21,9 +21,7 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, ProviderState, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
-use crate::view::address::{
-    line_name, writing, Asked, Root, COMMENT, FIND, LONGEST_COMMENT, SHOWN, TEXT,
-};
+use crate::view::address::{line_name, Asked, Root, COMMENT, FIND, LONGEST_COMMENT, SHOWN, TEXT};
 use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
@@ -134,13 +132,14 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     }
 }
 
-/// The form on a writable page's bead view that adds a comment to `key`.
-fn commenting(html: &mut String, key: &BeadKey) {
+/// The form on a writable page's bead view that adds a comment, posting it
+/// to `action`.
+fn commenting(html: &mut String, action: &str) {
     html.push_str(&format!(
         "<form class=\"write\" action=\"{}\" method=\"post\"><label>{}\
          <textarea name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\" required></textarea></label>\
          <button>{}</button></form>",
-        escaped(&writing(key, COMMENT)),
+        escaped(action),
         escaped(phrase::comment()),
         escaped(phrase::add_comment())
     ));
@@ -941,7 +940,7 @@ impl Drawing<'_> {
             self.tied(html, tied, &named);
         }
         if self.writable {
-            commenting(html, &node.key());
+            commenting(html, &self.asked.writing(&node.key(), COMMENT));
         }
         html.push_str("</div>");
     }
@@ -4158,7 +4157,8 @@ mod tests {
     /// that takes none draws no form that posts.
     #[test]
     fn only_a_writable_page_offers_a_comment_on_the_bead() {
-        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("a bead's page");
+        let asked = Asked::of(&format!("{}?shut=gate", address(&key("smt-4kd3p.6"))))
+            .expect("a bead's page");
         let writable = Drawn {
             writable: true,
             ..drawing()
@@ -4168,7 +4168,7 @@ mod tests {
         let form = &bead[bead.find("<form").expect("a comment form")..];
         assert!(
             form.starts_with(
-                "<form class=\"write\" action=\"/summit-works/smt-4kd3p.6/comment\" method=\"post\">"
+                "<form class=\"write\" action=\"/summit-works/smt-4kd3p.6/comment?shut=gate\" method=\"post\">"
             ),
             "{form}"
         );

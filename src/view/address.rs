@@ -185,6 +185,15 @@ pub fn written(path: &str) -> Option<(BeadKey, &str)> {
     }
 }
 
+/// The page a write to `key` posted to `target` sends the reader back to:
+/// the bead's, carrying what the form's address carried.
+pub fn written_back(key: &BeadKey, target: &str) -> String {
+    let query = target
+        .split_once('?')
+        .map_or(String::new(), |(_, query)| format!("?{query}"));
+    format!("{}{query}#{SHOWN}", address(key))
+}
+
 /// The value of the field `name` in a form's body as a browser posts it,
 /// or nothing where the body does not hold the field or it will not decode.
 pub fn field(body: &str, name: &str) -> Option<String> {
@@ -500,6 +509,12 @@ impl Asked {
             address(place.key()),
             self.query(Some(place))
         )
+    }
+
+    /// The address a write to `key` posts to from this page, carrying what
+    /// the page's own links carry.
+    pub fn writing(&self, key: &BeadKey, write: &str) -> String {
+        format!("{}{}", writing(key, write), self.query(self.place.as_ref()))
     }
 
     /// The address of the forest with no bead shown, with the folds this

@@ -741,7 +741,7 @@ fn taken(head: &Head, form: &[u8], cfg: &Config, runner: &dyn Runner) -> Reply {
             status: "303 See Other",
             kind: TEXT,
             body: String::new(),
-            sent_to: Some(address::address(&bead)),
+            sent_to: Some(address::written_back(&bead, &head.target)),
         },
         Err(why) => (
             "502 Bad Gateway",
@@ -1621,10 +1621,30 @@ mod tests {
             Some(&runner),
         );
         assert_eq!(reply.status, "303 See Other", "{}", reply.body);
-        assert_eq!(reply.sent_to.as_deref(), Some("/arkham/ark-1"));
+        assert_eq!(reply.sent_to.as_deref(), Some("/arkham/ark-1#shown"));
         assert_eq!(
             runner.call(COMMENTED).cwd.as_deref(),
             Some(Path::new("/nowhere/arkham"))
+        );
+    }
+
+    /// The reader is sent back to the page as they left it: the folds, the
+    /// list and the copy the form's address carried.
+    #[test]
+    fn a_write_sends_the_reader_back_to_the_page_as_they_left_it() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted(
+                "/arkham/ark-1/comment?shut=gate",
+                "text=the+gate+is+shut%2C+again",
+            ),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(
+            reply.sent_to.as_deref(),
+            Some("/arkham/ark-1?shut=gate#shown")
         );
     }
 
