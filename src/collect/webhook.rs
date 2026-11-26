@@ -17,7 +17,7 @@ use serde::Deserialize;
 use sha2::Sha256;
 
 use crate::collect::gates::PullRequest;
-use crate::collect::http::{self, close, head, Patient};
+use crate::collect::http::{self, body, close, head, Patient, Unbodied};
 
 /// The path a readiness probe asks, answered whatever the secret, and
 /// answered as failing while the settling reads nothing from GitHub.
@@ -659,22 +659,12 @@ fn read(from: &mut impl Read, secret: &Secret) -> Option<Heard> {
         ("POST", _) => {}
         _ => return Some(Heard::Unknown),
     }
-    let length = head
-        .header("Content-Length")
-        .and_then(|length| length.trim().parse::<usize>().ok());
-    let length = match length {
-        _ if head.header("Transfer-Encoding").is_some() => return Some(Heard::Unmeasured),
-        None => return Some(Heard::Unmeasured),
-        Some(length) if length > LARGEST_DELIVERY => return Some(Heard::TooLarge),
-        Some(length) => length,
+    let body = match body(from, held, &head, LARGEST_DELIVERY) {
+        Ok(body) => body,
+        Err(Unbodied::Unmeasured) => return Some(Heard::Unmeasured),
+        Err(Unbodied::TooLarge) => return Some(Heard::TooLarge),
+        Err(Unbodied::Unreadable) => return None,
     };
-    let mut body = held.split_off(head.end);
-    if body.len() < length {
-        let mut rest = vec![0; length - body.len()];
-        from.read_exact(&mut rest).ok()?;
-        body.extend_from_slice(&rest);
-    }
-    body.truncate(length);
     Some(delivery(
         secret,
         head.header("X-GitHub-Event"),

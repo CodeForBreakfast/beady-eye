@@ -153,6 +153,56 @@ pub fn address(key: &BeadKey) -> String {
     format!("/{}/{}", encoded(&key.project), encoded(&key.id))
 }
 
+/// The last segment of the address a bead's comment form posts to, and the
+/// field the comment's text is posted in.
+pub const COMMENT: &str = "comment";
+pub const TEXT: &str = "text";
+
+/// The longest comment the form takes, in the UTF-16 units a browser counts.
+pub const LONGEST_COMMENT: usize = 7000;
+
+/// The most bytes a browser posts a comment's form as. One UTF-16 unit is at
+/// most three bytes of UTF-8, and a form sends each of those as `%XX`.
+pub const LARGEST_COMMENT_FORM: usize = TEXT.len() + "=".len() + LONGEST_COMMENT * 9;
+
+/// Where a form on `key`'s page posts the write named `write`.
+pub fn writing(key: &BeadKey, write: &str) -> String {
+    format!("{}/{write}", address(key))
+}
+
+/// The bead and the write's name a post to `path` asks for, as [`writing`]
+/// composes it, or nothing where `path` is not such an address.
+pub fn written(path: &str) -> Option<(BeadKey, &str)> {
+    match path.strip_prefix('/')?.split('/').collect::<Vec<_>>()[..] {
+        [project, id, write] if !project.is_empty() && !id.is_empty() => Some((
+            BeadKey {
+                project: decoded(project)?,
+                id: decoded(id)?,
+            },
+            write,
+        )),
+        _ => None,
+    }
+}
+
+/// The page a write to `key` posted to `target` sends the reader back to:
+/// the bead's, carrying what the form's address carried.
+pub fn written_back(key: &BeadKey, target: &str) -> String {
+    let query = target
+        .split_once('?')
+        .map_or(String::new(), |(_, query)| format!("?{query}"));
+    format!("{}{query}#{SHOWN}", address(key))
+}
+
+/// The value of the field `name` in a form's body as a browser posts it,
+/// or nothing where the body does not hold the field or it will not decode.
+pub fn field(body: &str, name: &str) -> Option<String> {
+    body.split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == name)
+        .and_then(|(_, value)| form_decoded(value))
+}
+
 /// Whether a bead of `project` has an address a browser keeps as it is
 /// written. A browser drops a `.` or `..` segment from a path before asking,
 /// and an empty first segment makes the address name a host.
@@ -461,6 +511,12 @@ impl Asked {
         )
     }
 
+    /// The address a write to `key` posts to from this page, carrying what
+    /// the page's own links carry.
+    pub fn writing(&self, key: &BeadKey, write: &str) -> String {
+        format!("{}{}", writing(key, write), self.query(self.place.as_ref()))
+    }
+
     /// The address of the forest with no bead shown, with the folds this
     /// page has, landing on the row of the bead at `shown` where there is
     /// one. `listed` is whether the rows are a list's.
@@ -758,4 +814,35 @@ fn decoded(text: &str) -> Option<String> {
         }
     }
     String::from_utf8(bytes).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A post to the address a bead's form posts a write to names that bead
+    /// and that write, whatever its project and id are spelled with.
+    #[test]
+    fn a_write_posted_where_a_form_posts_it_names_its_bead_and_write() {
+        let key = BeadKey {
+            project: "summit works/2".to_string(),
+            id: "smt-4kd3p.6~".to_string(),
+        };
+        assert_eq!(
+            written(&writing(&key, COMMENT)),
+            Some((key.clone(), COMMENT))
+        );
+        assert_eq!(written(&address(&key)), None);
+        assert_eq!(written("/summit-works//comment"), None);
+    }
+
+    /// A form's field is read as a browser posts it, and a field it does not
+    /// hold, or cannot decode, is nothing.
+    #[test]
+    fn a_forms_field_is_read_as_a_browser_posts_it() {
+        let form = "said=no&text=lift+the+gate%2C+then+%2B1&text=again";
+        assert_eq!(field(form, TEXT).as_deref(), Some("lift the gate, then +1"));
+        assert_eq!(field(form, "reason"), None);
+        assert_eq!(field("text=%zz", TEXT), None);
+    }
 }

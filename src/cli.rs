@@ -263,6 +263,11 @@ enum Passing {
         /// request is refused with 421 Misdirected Request.
         #[arg(long = "allow-host", value_name = "NAME")]
         allow_hosts: Vec<String>,
+        /// Take writes from the page, each made through bdi bd. bdi web asks
+        /// nobody to log in, so whoever reaches the page can write. Without
+        /// this the page offers no write and refuses every one.
+        #[arg(long)]
+        writes: bool,
         /// Read the configuration from this file, rather than
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
@@ -433,6 +438,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Some(Passing::Web {
             listen,
             allow_hosts,
+            writes,
             config,
             view,
         }) => {
@@ -444,7 +450,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 );
             }
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return web::web(&config, listen, web::Hosts(allow_hosts.clone()), view);
+            return web::web(
+                &config,
+                listen,
+                web::Hosts(allow_hosts.clone()),
+                *writes,
+                view,
+            );
         }
         Some(Passing::Gates {
             config,
@@ -1793,6 +1805,17 @@ detached
             read(&["--project", "ferry", "--project", "dunwich"]),
             ["dunwich", "ferry"]
         );
+    }
+
+    /// `bdi web` takes writes only where `--writes` turns them on.
+    #[test]
+    fn bdi_web_takes_writes_only_when_told_to() {
+        let writes = |args: &[&str]| match bdi_web(args).passing {
+            Some(Passing::Web { writes, .. }) => writes,
+            _ => panic!("bdi web parsed as something else"),
+        };
+        assert!(!writes(&[]));
+        assert!(writes(&["--writes"]));
     }
 
     #[test]

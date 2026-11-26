@@ -5,11 +5,12 @@
 //! through the watcher where one answers. Each request is drawn afresh from
 //! that snapshot, so what a request costs is the drawing and never a read.
 
+use std::io::Read;
 use std::net::{IpAddr, Ipv6Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -22,14 +23,14 @@ use crate::app::{
 use crate::collect::agents::{Agents, Unasked};
 use crate::collect::bd;
 use crate::collect::changes::{self, Heard, Report, Reported, Socket};
-use crate::collect::environment::EnvironmentCache;
-use crate::collect::http::{self, close, head, Encoding, Head, Patient, Unread};
-use crate::collect::run::RealRunner;
+use crate::collect::environment::{self, EnvironmentCache};
+use crate::collect::http::{self, close, head, Encoding, Head, Patient, Unbodied, Unread};
+use crate::collect::run::{RealRunner, Runner};
 use crate::collect::tracker::Trackers;
 use crate::collect::watched::{self, Through};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
-use crate::view::address::{self, Asked, Start};
+use crate::view::address::{self, Asked, Start, COMMENT, TEXT as COMMENT_TEXT};
 use crate::view::draw::html;
 use crate::view::forest::listed;
 use crate::view::{phrase, Notice};
@@ -57,6 +58,9 @@ const TEXT: &str = "text/plain; charset=utf-8";
 
 const UNAVAILABLE: &str = "503 Service Unavailable";
 
+/// The most of a write's form read: whatever the comment form lets through.
+const LARGEST_WRITE: usize = address::LARGEST_COMMENT_FORM;
+
 /// Which trees a page draws: every one, since `bdi web` asks no agent
 /// provider and so cannot tell a tree with a live agent from one without.
 /// It is what `--all` asks of the view, so `--all` changes nothing here.
@@ -77,6 +81,10 @@ struct Held {
     cfg: Arc<Config>,
     /// The latest snapshot, where the trackers have been read at all.
     snapshot: Option<Snapshot>,
+    /// The config the snapshot was read under, which a write to one of its
+    /// beads goes by, since a config taken up since may name another
+    /// tracker for the same project.
+    read_under: Arc<Config>,
     /// The read being made, so a page drawn while it is out says so, and
     /// says a tracker has stopped answering once it has been out too long.
     collecting: Option<Awaited>,
@@ -92,8 +100,10 @@ type DrawnFrom = (u64, bool);
 
 impl Latest {
     fn new(cfg: Config) -> Self {
+        let cfg = Arc::new(cfg);
         Self::holding(Held {
-            cfg: Arc::new(cfg),
+            read_under: Arc::clone(&cfg),
+            cfg,
             snapshot: None,
             collecting: None,
             lapsed: Vec::new(),
@@ -265,7 +275,8 @@ pub(super) fn reading(view: &ViewOptions) -> Reading {
 /// Answer requests on `listen` until a signal ends the process, drawing each
 /// from the latest read of the projects `config` and `view` name, for
 /// requests sent to a name `hosts` allows. Each project is polled, and heard
-/// from, as `view` says.
+/// from, as `view` says. A write is taken only where `writable`, and every
+/// other run refuses it.
 ///
 /// The config is read again as the terminal view reads it, and an edit is
 /// taken up a couple of seconds after it is saved.
@@ -273,8 +284,14 @@ pub(super) fn web(
     config: &Path,
     listen: &str,
     hosts: Hosts,
+    writable: bool,
     view: &ViewOptions,
 ) -> anyhow::Result<ExitCode> {
+    if writable {
+        // Before any thread starts, so a write reaches the project's own
+        // tracker as one through `bdi bd` does.
+        environment::forget_the_callers_tracker();
+    }
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = addressable(
         read_config(
@@ -333,6 +350,7 @@ pub(super) fn web(
         latest: Arc::clone(&latest),
         hosts,
         start,
+        writes: writable.then(|| Writer::through(&RealRunner)),
         live: live::Streams::default(),
     });
     http::accept(
@@ -369,7 +387,25 @@ struct Answering {
     hosts: Hosts,
     /// What a page shows where its address does not say.
     start: Start,
+    /// What makes a write, where this run takes writes.
+    writes: Option<Writer<'static>>,
     live: live::Streams,
+}
+
+/// What makes a write: the runner bd is run through, one write at a time, so
+/// a tracker that stalls holds one of the request slots and not all of them.
+struct Writer<'a> {
+    runner: &'a dyn Runner,
+    one_at_a_time: Mutex<()>,
+}
+
+impl<'a> Writer<'a> {
+    fn through(runner: &'a dyn Runner) -> Self {
+        Self {
+            runner,
+            one_at_a_time: Mutex::new(()),
+        }
+    }
 }
 
 /// The reads `bdi web` makes of `cfg`, as the terminal view makes them: each
@@ -518,6 +554,7 @@ fn read_what_is_due(
     );
     latest.change(|held| {
         held.snapshot = Some(snapshot);
+        held.read_under = cfg;
         held.collecting = None;
     });
     true
@@ -531,7 +568,8 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
         stream,
         deadline: Instant::now() + PATIENCE,
     };
-    let read = head(&mut stream, &mut Vec::new());
+    let mut held = Vec::new();
+    let read = head(&mut stream, &mut held);
     let encoding = read.as_ref().map_or(Encoding::Identity, Head::encoding);
     if let Ok(head) = &read {
         let kept_current = answering.hosts.allow(head.only("Host")) && live::asks_for_changes(head);
@@ -541,40 +579,199 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
             return;
         }
     }
-    let Some((status, kind, body)) =
-        said(read, &answering.latest, &answering.hosts, &answering.start)
-    else {
+    let Some(reply) = said(
+        read,
+        &mut stream,
+        held,
+        &answering.latest,
+        &answering.hosts,
+        &answering.start,
+        answering.writes.as_ref(),
+    ) else {
         return;
     };
-    answering.live.remember(&body);
+    answering.live.remember(&reply.body);
+    let sent_on = reply
+        .sent_to
+        .map(|to| format!("Location: {to}\r\n"))
+        .unwrap_or_default();
     http::reply_in(
         &stream.stream,
-        status,
-        kind,
-        body.as_bytes(),
+        reply.status,
+        reply.kind,
+        reply.body.as_bytes(),
         encoding,
+        &sent_on,
         PATIENCE,
     );
     close(stream.stream, stream.deadline);
 }
 
-/// What a request whose head was `read` comes to, or nothing where it never
-/// arrived in full or is not HTTP. A page shows what `start` says where its
-/// address does not say.
+/// What a request is answered: its status, the kind of body and the body,
+/// and the address the reader is sent on to, where they are sent on.
+struct Reply {
+    status: &'static str,
+    kind: &'static str,
+    body: String,
+    sent_to: Option<String>,
+}
+
+impl From<(&'static str, &'static str, String)> for Reply {
+    fn from((status, kind, body): (&'static str, &'static str, String)) -> Self {
+        Self {
+            status,
+            kind,
+            body,
+            sent_to: None,
+        }
+    }
+}
+
+/// What a request whose head was `read` into `held` comes to, or nothing
+/// where it never arrived in full or is not HTTP. A page shows what `start`
+/// says where its address does not say. A post sent to an allowed name is a
+/// write, whose form is read on from `rest`, and only a run with a writer in
+/// `writes` takes one.
 fn said(
     read: Result<Head, Unread>,
+    rest: &mut impl Read,
+    held: Vec<u8>,
     latest: &Latest,
     hosts: &Hosts,
     start: &Start,
-) -> Option<(&'static str, &'static str, String)> {
-    match read {
-        Ok(head) => Some(answered(&head, latest, hosts, start)),
-        Err(Unread::TooLong) => Some((
-            "414 URI Too Long",
+    writes: Option<&Writer>,
+) -> Option<Reply> {
+    let head = match read {
+        Ok(head) => head,
+        Err(Unread::TooLong) => {
+            return Some(
+                (
+                    "414 URI Too Long",
+                    HTML,
+                    html::saying(phrase::address_too_long()),
+                )
+                    .into(),
+            )
+        }
+        Err(Unread::Unreadable) => return None,
+    };
+    match writes {
+        Some(writer) if head.method == "POST" && hosts.allow(head.only("Host")) => {
+            let form = match http::body(rest, held, &head, LARGEST_WRITE) {
+                Ok(form) => form,
+                Err(Unbodied::Unmeasured) => {
+                    return Some(
+                        ("411 Length Required", TEXT, "length required\n".to_string()).into(),
+                    )
+                }
+                Err(Unbodied::TooLarge) => {
+                    return Some(("413 Content Too Large", TEXT, "too large\n".to_string()).into())
+                }
+                Err(Unbodied::Unreadable) => return None,
+            };
+            let _making = match writer.one_at_a_time.try_lock() {
+                Ok(making) => making,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => {
+                    return Some(
+                        (
+                            UNAVAILABLE,
+                            TEXT,
+                            "another write is being made\n".to_string(),
+                        )
+                            .into(),
+                    )
+                }
+            };
+            let held = latest.now();
+            Some(taken(&head, &form, &held, writer.runner))
+        }
+        _ => Some(answered(&head, latest, hosts, start, writes.is_some()).into()),
+    }
+}
+
+/// A write a post asks of a bead's tracker.
+enum Write {
+    /// Add the text to the bead as a comment.
+    Comment(String),
+}
+
+impl Write {
+    /// The write a post to an address ending in `named` asks for with the
+    /// form `form`, or nothing where it asks for none.
+    fn asked(named: &str, form: &str) -> Option<Self> {
+        match named {
+            COMMENT => address::field(form, COMMENT_TEXT)
+                .filter(|text| !text.trim().is_empty())
+                .map(Self::Comment),
+            _ => None,
+        }
+    }
+
+    /// What `bdi bd` is asked for to make this write to `bead`.
+    fn words(self, bead: &str) -> Vec<String> {
+        match self {
+            Self::Comment(text) => ["comments", "add", bead, "--", &text]
+                .map(String::from)
+                .to_vec(),
+        }
+    }
+}
+
+/// What a post whose head is `head` and whose form is `form` comes to: the
+/// write it asks for made through `bdi bd` to a bead `held` draws, run by
+/// `runner`, and the reader sent back to the bead's page. Otherwise, why the
+/// write was not made.
+fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
+    let Some((bead, named)) = address::written(head.path()) else {
+        return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
+    };
+    let Some(snapshot) = &held.snapshot else {
+        return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet())).into();
+    };
+    // Any project the config names, since a scope widens to read a blocker
+    // and the bead is drawn either way.
+    let Some(project) = held
+        .read_under
+        .projects
+        .iter()
+        .find(|project| project.name == bead.project)
+    else {
+        return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
+    };
+    // bd takes the start of an id, and routes an id it does not hold to
+    // another tracker, so only an id the page draws names the bead exactly.
+    if snapshot.node(&bead).is_none() {
+        return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
+    }
+    let Some(write) = std::str::from_utf8(form)
+        .ok()
+        .and_then(|form| Write::asked(named, form))
+    else {
+        return (
+            "400 Bad Request",
+            TEXT,
+            "no write in the form\n".to_string(),
+        )
+            .into();
+    };
+    let made = bd::writing(runner, project, &write.words(&bead.id)).and_then(|(argv, env)| {
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        Ok(runner.run("bd", &argv, Some(&project.path), &env)?)
+    });
+    match made {
+        Ok(_) => Reply {
+            status: "303 See Other",
+            kind: TEXT,
+            body: String::new(),
+            sent_to: Some(address::written_back(&bead, &head.target)),
+        },
+        Err(why) => (
+            "502 Bad Gateway",
             HTML,
-            html::saying(phrase::address_too_long()),
-        )),
-        Err(Unread::Unreadable) => None,
+            html::saying(&phrase::not_written(&format!("{why:#}"))),
+        )
+            .into(),
     }
 }
 
@@ -584,6 +781,7 @@ fn answered(
     latest: &Latest,
     hosts: &Hosts,
     start: &Start,
+    writable: bool,
 ) -> (&'static str, &'static str, String) {
     if !hosts.allow(head.only("Host")) {
         return (
@@ -605,14 +803,15 @@ fn answered(
     let Some(asked) = Asked::started_on(&head.target, start) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here()));
     };
-    let (status, page) = drawn(&asked, &held);
+    let (status, page) = drawn(&asked, &held, writable);
     (status, HTML, page)
 }
 
-/// The page `asked` names, drawn from `held`, and its status. A page
-/// started on the command line's roots is drawn at them as the held config
-/// places them, since an edit can move them after the page was asked for.
-fn drawn(asked: &Asked, held: &Held) -> (&'static str, String) {
+/// The page `asked` names, drawn from `held`, and its status, offering
+/// writes where `writable`. A page started on the command line's roots is
+/// drawn at them as the held config places them, since an edit can move them
+/// after the page was asked for.
+fn drawn(asked: &Asked, held: &Held, writable: bool) -> (&'static str, String) {
     let cfg = &held.cfg;
     let asked = &Asked {
         start: Start {
@@ -626,6 +825,7 @@ fn drawn(asked: &Asked, held: &Held) -> (&'static str, String) {
         offset: Local::now().offset().fix(),
         collecting: Vec::from_iter(held.collecting.clone()),
         lapsed: held.lapsed.clone(),
+        writable,
     };
     let Some(snapshot) = held.snapshot.clone() else {
         // Until the first read answers, the forest is each project's line
@@ -667,6 +867,8 @@ mod tests {
 
     use super::*;
     use crate::app::Wanted;
+    use crate::collect::run::testing::FakeRunner;
+    use crate::collect::run::RunFailure;
     use crate::collect::tracker::testing::{Fake, Fakes};
     use crate::model::join::BeadKey;
 
@@ -701,14 +903,31 @@ mod tests {
         latest: &Latest,
     ) -> (&'static str, String) {
         let sent = format!("{method} {target} HTTP/1.1\r\n{headers}\r\n\r\n");
-        let (status, _, body) = said(
-            head(&mut sent.as_bytes(), &mut Vec::new()),
+        let reply = replied(&sent, latest, None);
+        (reply.status, reply.body)
+    }
+
+    /// What the request `sent` is answered, with `latest` held, by a run
+    /// whose writes `writes` runs, where it takes them.
+    fn replied(sent: &str, latest: &Latest, writes: Option<&dyn Runner>) -> Reply {
+        replied_by(sent, latest, writes.map(Writer::through).as_ref())
+    }
+
+    /// The same, by a run whose writes `writer` makes.
+    fn replied_by(sent: &str, latest: &Latest, writes: Option<&Writer>) -> Reply {
+        let mut arriving = sent.as_bytes();
+        let mut held = Vec::new();
+        let read = head(&mut arriving, &mut held);
+        said(
+            read,
+            &mut arriving,
+            held,
             latest,
             &allowed(),
             &Start::default(),
+            writes,
         )
-        .expect("an answer");
-        (status, body)
+        .expect("an answer")
     }
 
     /// A page elsewhere that points its own name at this listener sends its
@@ -784,14 +1003,17 @@ mod tests {
         assert!(sent.len() > http::LONGEST_HEAD && sent.len() < http::LONGEST_HEAD + 4096);
         let (first, rest) = sent.as_bytes().split_at(100);
         let mut arriving = first.chain(rest);
-        let (status, _, _) = said(
+        let reply = said(
             head(&mut arriving, &mut Vec::new()),
+            &mut std::io::empty(),
+            Vec::new(),
             &read(),
             &Hosts::default(),
             &Start::default(),
+            None,
         )
         .expect("an answer");
-        assert_eq!(status, "414 URI Too Long");
+        assert_eq!(reply.status, "414 URI Too Long");
     }
 
     /// A refresh interval too long to end is one that never ends, and what
@@ -1029,7 +1251,7 @@ mod tests {
         assert!(latest.now().lapsed.is_empty(), "not yet");
         at(62);
         assert_eq!(latest.now().lapsed, ["arkham"]);
-        let page = drawn(&Asked::of("/").expect("the forest"), &latest.now()).1;
+        let page = drawn(&Asked::of("/").expect("the forest"), &latest.now(), false).1;
         assert!(
             page.contains("<span class=\"mark warn\">?</span>"),
             "{page}"
@@ -1159,7 +1381,7 @@ mod tests {
         };
         let first = held_once(&latest, None, reads("arkham"));
         let forest = Asked::of("/").expect("the forest");
-        assert!(!drawn(&forest, &latest.now()).1.contains(">dunwich"));
+        assert!(!drawn(&forest, &latest.now(), false).1.contains(">dunwich"));
 
         std::fs::write(
             &path,
@@ -1168,7 +1390,7 @@ mod tests {
         .expect("the config is ours to write");
 
         held_once(&latest, Some(first), reads("dunwich"));
-        let page = drawn(&forest, &latest.now()).1;
+        let page = drawn(&forest, &latest.now(), false).1;
         assert!(page.contains(">dunwich"), "{page}");
         assert!(page.contains("lay the feeder cable"), "{page}");
         drop(told);
@@ -1198,6 +1420,7 @@ mod tests {
             Utc::now(),
         );
         let latest = Latest::holding(Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1244,6 +1467,7 @@ mod tests {
             Utc::now(),
         );
         let held = Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1258,7 +1482,7 @@ mod tests {
             }],
         };
         let asked = Asked::started_on("/", &as_launched).expect("the forest");
-        let page = drawn(&asked, &held).1;
+        let page = drawn(&asked, &held, false).1;
         assert!(page.contains("lay the feeder cable"), "{page}");
         assert!(!page.contains("open the gate"), "{page}");
     }
@@ -1318,6 +1542,7 @@ mod tests {
             Utc::now(),
         );
         Latest::holding(Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1346,6 +1571,7 @@ mod tests {
         let asked_at = Utc::now() - chrono::TimeDelta::seconds(600);
         let latest = Latest::holding(Held {
             cfg: Arc::new(cfg.clone()),
+            read_under: Arc::new(cfg.clone()),
             snapshot: None,
             collecting: Some(Awaited {
                 wanted: Wanted::Everything,
@@ -1357,7 +1583,8 @@ mod tests {
         });
         let sent = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
-        let (status, _, body) = answered(&head, &latest, &Hosts::default(), &Start::default());
+        let (status, _, body) =
+            answered(&head, &latest, &Hosts::default(), &Start::default(), false);
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];
@@ -1377,6 +1604,315 @@ mod tests {
         assert_eq!(status, "200 OK");
         assert!(body.starts_with("<!doctype html>"), "{body}");
         assert_eq!(answered_to("GET", HEALTH, &latest).0, "200 OK");
+    }
+
+    /// A tracker of arkham's, read from a directory nothing enters, so a
+    /// write reaches bd with nothing run before it.
+    fn arkham_held() -> Latest {
+        let cfg =
+            Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/nowhere/arkham\"\n")
+                .expect("a config");
+        let snapshot = Collection::default().collect(
+            &cfg,
+            &Unasked,
+            &arkhams_tracker(),
+            &Wanted::Everything,
+            Filter::All,
+            Utc::now(),
+        );
+        Latest::holding(Held {
+            read_under: Arc::new(cfg.clone()),
+            cfg: Arc::new(cfg),
+            snapshot: Some(snapshot),
+            collecting: None,
+            lapsed: Vec::new(),
+            change: 0,
+        })
+    }
+
+    /// A post of the comment form `form` to `target`, as a browser sends it.
+    fn posted(target: &str, form: &str) -> String {
+        format!(
+            "POST {target} HTTP/1.1\r\nHost: {BEADS}\r\n\
+             Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
+            form.len()
+        )
+    }
+
+    const COMMENTED: &str = "bd -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
+
+    /// A bead the page draws from a project its scope took in to read a
+    /// blocker takes the comment its page offers.
+    #[test]
+    fn a_write_to_a_bead_drawn_from_beyond_the_scope_is_made() {
+        let mut held = arkham_held().now();
+        held.read_under = Arc::new(
+            Config::from_toml(
+                "[[projects]]\nname = \"arkham\"\npath = \"/nowhere/arkham\"\n\
+                 [[projects]]\nname = \"dunwich\"\npath = \"/nowhere/dunwich\"\n",
+            )
+            .expect("a config")
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured"),
+        );
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &Latest::holding(held),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other");
+        assert_eq!(runner.calls().len(), 1);
+    }
+
+    /// A write goes to the tracker its bead was read from, so a config that
+    /// has since pointed the project elsewhere does not send it there.
+    #[test]
+    fn a_write_goes_to_the_tracker_its_bead_was_read_from() {
+        let mut held = arkham_held().now();
+        held.cfg = Arc::new(
+            Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/elsewhere/arkham\"\n")
+                .expect("a config"),
+        );
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &Latest::holding(held),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other");
+        assert_eq!(runner.calls().len(), 1);
+    }
+
+    #[test]
+    fn a_run_that_takes_no_writes_refuses_a_write() {
+        let latest = arkham_held();
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut"),
+            &latest,
+            None,
+        );
+        assert_eq!(reply.status, "405 Method Not Allowed");
+        assert_eq!(reply.sent_to, None);
+    }
+
+    #[test]
+    fn a_run_that_takes_writes_makes_a_comment_through_bdi_bd_and_sends_the_reader_back() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other", "{}", reply.body);
+        assert_eq!(reply.sent_to.as_deref(), Some("/arkham/ark-1#shown"));
+        assert_eq!(
+            runner.call(COMMENTED).cwd.as_deref(),
+            Some(Path::new("/nowhere/arkham"))
+        );
+    }
+
+    /// The reader is sent back to the page as they left it: the folds, the
+    /// list and the copy the form's address carried.
+    #[test]
+    fn a_write_sends_the_reader_back_to_the_page_as_they_left_it() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted(
+                "/arkham/ark-1/comment?shut=gate",
+                "text=the+gate+is+shut%2C+again",
+            ),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(
+            reply.sent_to.as_deref(),
+            Some("/arkham/ark-1?shut=gate#shown")
+        );
+    }
+
+    /// A comment that starts with a dash is still the comment, since the
+    /// words go after `--`.
+    #[test]
+    fn a_comment_that_looks_like_a_flag_is_written_as_the_comment() {
+        let latest = arkham_held();
+        let flagged = "bd -C /nowhere/arkham comments add ark-1 -- --db=elsewhere";
+        let runner = FakeRunner::default().with(flagged, "");
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=--db%3Delsewhere"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other", "{}", reply.body);
+        runner.call(flagged);
+    }
+
+    #[test]
+    fn a_write_bd_refuses_says_why_and_sends_the_reader_nowhere() {
+        let latest = arkham_held();
+        let refusal = RunFailure::from_exit("bd", Some(1), "Error: connection refused");
+        let runner = FakeRunner::default().failing(COMMENTED, refusal.clone());
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "502 Bad Gateway");
+        assert_eq!(reply.sent_to, None);
+        assert_eq!(
+            reply.body,
+            html::saying(&phrase::not_written(&refusal.to_string()))
+        );
+    }
+
+    /// A post that names no write, no text, a project the run does not read
+    /// or a name with no form behind it runs nothing.
+    #[test]
+    fn a_post_that_asks_for_no_write_this_run_makes_runs_nothing() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        for (target, form, status) in [
+            ("/arkham/ark-1/comment", "", "400 Bad Request"),
+            ("/arkham/ark-1/comment", "text=+%0A", "400 Bad Request"),
+            ("/arkham/ark-1/comment", "said=hello", "400 Bad Request"),
+            ("/arkham/ark-1/burn", "text=hello", "400 Bad Request"),
+            ("/dunwich/dun-1/comment", "text=hello", "404 Not Found"),
+            ("/arkham/ark-1", "text=hello", "404 Not Found"),
+            ("/", "text=hello", "404 Not Found"),
+        ] {
+            let reply = replied(&posted(target, form), &latest, Some(&runner));
+            assert_eq!(reply.status, status, "{target} {form}");
+        }
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// A write's form names its length, and one too long to take is refused
+    /// before any of it is read.
+    #[test]
+    fn a_write_with_no_length_or_too_long_a_one_is_refused() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let unmeasured = format!("POST /arkham/ark-1/comment HTTP/1.1\r\nHost: {BEADS}\r\n\r\n");
+        assert_eq!(
+            replied(&unmeasured, &latest, Some(&runner)).status,
+            "411 Length Required"
+        );
+        let too_long = format!(
+            "POST /arkham/ark-1/comment HTTP/1.1\r\nHost: {BEADS}\r\nContent-Length: {}\r\n\r\n",
+            LARGEST_WRITE + 1
+        );
+        assert_eq!(
+            replied(&too_long, &latest, Some(&runner)).status,
+            "413 Content Too Large"
+        );
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// An address whose bead looks like a flag names no bead the page draws,
+    /// so bd is never run.
+    #[test]
+    fn a_write_to_a_bead_named_like_a_flag_runs_nothing() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted("/arkham/--db=elsewhere/comment", "text=hello"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, NOT_FOUND);
+        assert_eq!(reply.sent_to, None);
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// A write names the bead by the id its page drew, so an id that is only
+    /// the start of one, or that bd would route to another tracker, runs
+    /// nothing.
+    #[test]
+    fn a_write_to_a_bead_the_page_does_not_draw_runs_nothing() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted("/arkham/ark/comment", "text=hello"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, NOT_FOUND);
+        assert_eq!(reply.sent_to, None);
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// Until the first read answers, whether the bead is there cannot be
+    /// said, so a write waits for it.
+    #[test]
+    fn a_write_before_the_first_read_answers_runs_nothing() {
+        let cfg =
+            Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/nowhere/arkham\"\n")
+                .expect("a config");
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=hello"),
+            &Latest::new(cfg),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, UNAVAILABLE);
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// A tracker that stalls holds up one write and not every request, so a
+    /// write sent while another is being made is refused for now.
+    #[test]
+    fn a_write_sent_while_another_is_being_made_is_refused_for_now() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let writer = Writer::through(&runner);
+        let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
+        {
+            let _making = writer.one_at_a_time.lock().expect("nothing else holds it");
+            assert_eq!(
+                replied_by(&posting, &latest, Some(&writer)).status,
+                UNAVAILABLE
+            );
+            assert_eq!(runner.calls(), []);
+        }
+        assert_eq!(
+            replied_by(&posting, &latest, Some(&writer)).status,
+            "303 See Other"
+        );
+    }
+
+    /// The longest comment the form lets through is taken whatever it is
+    /// written in, so a draft is never lost to a refusal the form allowed.
+    #[test]
+    fn the_longest_comment_the_form_takes_is_not_too_long() {
+        let latest = arkham_held();
+        let commented = format!(
+            "bd -C /nowhere/arkham comments add ark-1 -- {}",
+            "€".repeat(address::LONGEST_COMMENT)
+        );
+        let runner = FakeRunner::default().with(&commented, "");
+        let euros = "%E2%82%AC".repeat(address::LONGEST_COMMENT);
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", &format!("text={euros}")),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other", "{}", reply.body);
+    }
+
+    /// A write sent to a name nobody allowed is refused as a read is.
+    #[test]
+    fn a_write_sent_to_a_name_nobody_allowed_is_refused() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let elsewhere =
+            posted("/arkham/ark-1/comment", "text=hello").replace(BEADS, "dunwich.invalid");
+        assert_eq!(
+            replied(&elsewhere, &latest, Some(&runner)).status,
+            "421 Misdirected Request"
+        );
+        assert_eq!(runner.calls(), []);
     }
 
     #[test]

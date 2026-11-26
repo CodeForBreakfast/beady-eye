@@ -1230,8 +1230,8 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
 }
 
 /// bd's argv for `asked` against `project`'s tracker, and the environment
-/// that tracker is written in. `bdi bd` and the terminal's writes both come
-/// through here, so a write reaches bd one way whichever of them made it.
+/// that tracker is written in. `bdi bd`, the terminal and a writable `bdi web`
+/// all write through here, so a write reaches bd one way whichever made it.
 pub fn writing(
     runner: &dyn Runner,
     project: &Project,
