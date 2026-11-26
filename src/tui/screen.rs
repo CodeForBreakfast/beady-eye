@@ -22,7 +22,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
-use crate::collect::writes::{Wrote, Writes};
+use crate::collect::writes::{Writes, Wrote};
 use crate::config::{self, Background, Config, Crop, Project};
 use crate::model::anomaly::Anomaly;
 use crate::model::join::BeadKey;
@@ -789,7 +789,10 @@ impl Shown {
     /// Hand a write to the tracker of the project its bead is in, or say why
     /// there is none to hand it to, reporting whether the foot now says so.
     fn make(&mut self, bead: BeadKey, write: Write, given: String) -> bool {
-        let Some(project) = self.projects.iter().find(|project| project.name == bead.project)
+        let Some(project) = self
+            .projects
+            .iter()
+            .find(|project| project.name == bead.project)
         else {
             let why = phrase::not_configured(&bead.project);
             self.said = Some(Said::NotWritten { bead, write, why });

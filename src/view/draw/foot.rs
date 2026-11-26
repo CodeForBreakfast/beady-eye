@@ -115,11 +115,7 @@ pub(super) fn status_bar(
     width: usize,
 ) -> Fitted {
     if let Some(prompted) = prompt {
-        return Fitted::new(
-            vec![Span::raw(prompted)],
-            Vec::new(),
-            Vec::new(),
-        );
+        return Fitted::new(vec![Span::raw(prompted)], Vec::new(), Vec::new());
     }
 
     let answer: Vec<Span<'static>> = said

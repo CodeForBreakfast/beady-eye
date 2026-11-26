@@ -205,7 +205,10 @@ fn a_close_reason_typed_at_the_foot_is_written_to_the_bead_shown() {
         "the reason being typed is not on the foot: {typing:#?}"
     );
     assert_eq!(window_over(&typing).as_deref(), Some(THE_TREE));
-    assert!(run.writing.made().is_empty(), "nothing is written before Enter");
+    assert!(
+        run.writing.made().is_empty(),
+        "nothing is written before Enter"
+    );
 
     let (written, _) = run.after([
         walked(),
@@ -254,7 +257,12 @@ fn a_reopen_is_written_at_the_press() {
 
     assert_eq!(
         run.writing.made(),
-        [("arkham".to_string(), the_tree(), Write::Reopen, String::new())]
+        [(
+            "arkham".to_string(),
+            the_tree(),
+            Write::Reopen,
+            String::new()
+        )]
     );
 }
 

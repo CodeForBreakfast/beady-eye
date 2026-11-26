@@ -188,7 +188,8 @@ pub fn draw(
         status_bar(
             &notices(forest.snapshot(), foot.standing),
             foot.said,
-            foot.prompt.map(|prompt| phrase::prompt(prompt.asks, prompt.query.typed())),
+            foot.prompt
+                .map(|prompt| phrase::prompt(prompt.asks, prompt.query.typed())),
             foot.keys,
             forest.spine(),
             forest.is_focused(),

@@ -1291,7 +1291,10 @@ impl Write {
     pub fn asked(self, id: &str, given: &str) -> Vec<String> {
         let (command, value): (&[&str], Option<String>) = match self {
             Write::Comment => (&["comments", "add"], None),
-            Write::Close => (&["close"], (!given.is_empty()).then(|| format!("--reason={given}"))),
+            Write::Close => (
+                &["close"],
+                (!given.is_empty()).then(|| format!("--reason={given}")),
+            ),
             Write::Reopen => (&["reopen"], None),
             Write::Respond => (&["human", "respond"], Some(format!("--response={given}"))),
             Write::Dismiss => (&["human", "dismiss"], None),

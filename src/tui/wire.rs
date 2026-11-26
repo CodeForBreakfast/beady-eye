@@ -147,7 +147,14 @@ pub(super) fn wire(
         );
     });
 
-    (events, ask, panes, writes, socket, refused.into_iter().collect())
+    (
+        events,
+        ask,
+        panes,
+        writes,
+        socket,
+        refused.into_iter().collect(),
+    )
 }
 
 /// What tells `bdi` that a project's work has moved on.
