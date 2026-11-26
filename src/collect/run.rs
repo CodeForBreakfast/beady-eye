@@ -684,6 +684,20 @@ fn answered(program: &str, out: Output) -> Result<String, Box<Printed>> {
     String::from_utf8(out.stdout).map_err(|e| Printed::nothing(RunFailure::parse(program, e)))
 }
 
+/// Runs one command and hands back all it printed, stderr included, for the
+/// one caller whose reader is owed the command's own words: a write the
+/// person made, refused.
+pub fn captured(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &Env,
+) -> Result<Output, RunFailure> {
+    told(program, args, cwd, env)
+        .output()
+        .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))
+}
+
 /// Runs one command on `bdi`'s own stdin, stdout and stderr, and hands back
 /// how it exited.
 pub fn handed_over(

@@ -56,7 +56,7 @@ pub struct Hearing {
     pub passing_on: PassingOn,
 }
 
-use drive::{drive, View};
+use drive::{drive, refused_while_leaving, View};
 use screen::{Drawing, Screen};
 use wire::wire;
 
@@ -136,7 +136,7 @@ pub fn run(
     let reported = Reported::watching(projects);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, from_the_wiring) =
+    let (events, ask, panes, writes, _socket, from_the_wiring) =
         wire(reported.clone(), agents, hearing, collect, asked_to_stop);
     // Only this process's own, and only the wiring's: what settling the config
     // could not do is on the snapshot, where both mouths read it.
@@ -154,14 +154,22 @@ pub fn run(
     let started = Utc::now();
     outstanding.ask(Wanted::Everything, started);
 
-    let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg), started)?;
+    let mut screen = Screen::showing(
+        awaiting,
+        panes,
+        writes,
+        cfg.projects.clone(),
+        at_startup,
+        Drawing::to(cfg),
+        started,
+    )?;
     screen.focus_when_drawn(cfg.roots.named_beads());
     if ready_list {
         screen.list_ready();
     }
     screen.collecting(outstanding.awaited());
 
-    drive(
+    let driven = drive(
         &mut screen,
         &events,
         &ask,
@@ -169,5 +177,12 @@ pub fn run(
         Reading::of(armed, reported).unread(armed_unread(&arms, cfg)),
         &arms,
         reload,
-    )
+    );
+    // The screen puts the terminal back and then makes the writes still
+    // queued, so what bd refused of them is said on the terminal it left.
+    drop(screen);
+    for refused in refused_while_leaving(&events) {
+        eprintln!("{refused}");
+    }
+    driven
 }

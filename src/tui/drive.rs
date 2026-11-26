@@ -19,9 +19,10 @@ use crate::app::{
 };
 use crate::collect::changes::Heard;
 use crate::collect::panes::Answer;
+use crate::collect::writes::Wrote;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
-use crate::view::{Action, Motion, Notch, Typing};
+use crate::view::{phrase, Action, Motion, Notch, Said, Typing};
 
 use super::keys::{action, typing};
 
@@ -51,6 +52,8 @@ pub(super) enum Event {
     Redrawn(Box<Snapshot>),
     /// The provider has said what is on a pane, or would not say.
     Tailed(Answer),
+    /// bd has answered a write made from the bead window.
+    Wrote(Wrote),
     /// Something outside has asked `bdi` to stop.
     ///
     /// Its own event rather than a keystroke standing in for one: the loop
@@ -80,6 +83,29 @@ impl From<Answer> for Event {
     }
 }
 
+impl From<Wrote> for Event {
+    fn from(wrote: Wrote) -> Self {
+        Event::Wrote(wrote)
+    }
+}
+
+/// What the foot would have said of each write bd refused after the loop
+/// stopped reading: a reader who quits straight after a write still hears
+/// that it was not made.
+pub(super) fn refused_while_leaving(events: &Receiver<Event>) -> Vec<String> {
+    events
+        .try_iter()
+        .filter_map(|event| match event {
+            Event::Wrote(Wrote {
+                bead,
+                write,
+                refused: Some(why),
+            }) => Some(phrase::said(&Said::NotWritten { bead, write, why })),
+            _ => None,
+        })
+        .collect()
+}
+
 /// What the screen has on it.
 ///
 /// The loop holds this rather than the view because it decides what a
@@ -99,6 +125,10 @@ pub(super) enum Showing {
     /// is a character of an id, and the bindings the same keys carry are not
     /// reachable at all.
     Searching,
+    /// The bead window, with the entry taking the words of a write at the
+    /// foot. Its keys are the search prompt's, for the reason that state
+    /// gives.
+    Writing,
 }
 
 /// What a click over the bead window came to.
@@ -226,8 +256,9 @@ pub(super) trait View {
     /// Apply one action, reporting whether the screen has changed.
     fn apply(&mut self, action: Action) -> bool;
 
-    /// Take one keystroke into the search prompt, reporting whether the
-    /// screen has changed.
+    /// Take one keystroke into the prompt that is up, the search prompt or
+    /// the entry taking a write's words, reporting whether the screen has
+    /// changed.
     ///
     /// The loop knows a prompt is up and the view holds what has been typed
     /// into it, which is the split `Showing::Bead` and the bead view already
@@ -235,8 +266,12 @@ pub(super) trait View {
     /// for it is the view's.
     fn typing(&mut self, typing: Typing) -> bool;
 
-    /// Put text the reader pasted into the search prompt, reporting whether
-    /// the screen has changed.
+    /// Take what bd answered to a write, reporting whether the screen has
+    /// changed.
+    fn wrote(&mut self, wrote: &Wrote) -> bool;
+
+    /// Put text the reader pasted into the prompt that is up, reporting
+    /// whether the screen has changed.
     ///
     /// All of it at once rather than a keystroke per character, because each
     /// keystroke is a search step and a paste is one thing to search for.
@@ -567,7 +602,11 @@ fn sleeps_for(
 /// moves no fold and no selection.
 fn keeps_what_is_open(event: &Event, showing: Showing) -> bool {
     match event {
-        Event::Key(_) | Event::Clicked(_) if showing == Showing::Searching => false,
+        Event::Key(_) | Event::Clicked(_)
+            if matches!(showing, Showing::Searching | Showing::Writing) =>
+        {
+            false
+        }
         Event::Key(key) => !matches!(
             action(*key),
             Some(Action::NextMatch | Action::PreviousMatch | Action::Search)
@@ -635,6 +674,15 @@ fn answered(
                 true
             }
             Some(Action::Refresh) => asked_for(view, outstanding, Wanted::Everything),
+            // A write given words opens the entry for them, where the view
+            // says the bead takes the write at all. Any other is made at once.
+            Some(Action::Write(write)) => {
+                let opened = view.apply(Action::Write(write));
+                if opened && write.is_typed() {
+                    *showing = Showing::Writing;
+                }
+                opened
+            }
             Some(
                 Action::CollapseOrParent
                 | Action::ExpandOrChild
@@ -676,6 +724,22 @@ fn answered(
                 _ => false,
             },
         },
+        // The entry takes the keys as the search prompt does, and Enter makes
+        // the write and Esc leaves it unmade, both back to the bead window.
+        // There are no matches to step through.
+        Event::Key(key) if *showing == Showing::Writing => match typing(key) {
+            Some(step @ (Typing::Sought | Typing::Abandoned)) => {
+                *showing = Showing::Bead;
+                view.typing(step);
+                true
+            }
+            Some(Typing::NextMatch | Typing::PreviousMatch) => false,
+            Some(step) => view.typing(step),
+            None => match action(key) {
+                Some(Action::Quit) => return None,
+                _ => false,
+            },
+        },
         Event::Key(key) => match action(key) {
             Some(Action::Quit) => return None,
             Some(Action::ShowBindings) => {
@@ -711,12 +775,17 @@ fn answered(
             // in each view is settled in the one place that knows which view
             // is up.
             Some(Action::NextRelated) => false,
+            // A write is made to the bead the window is showing, and no
+            // window is up.
+            Some(Action::Write(_)) => false,
             Some(action) => view.apply(action),
             None => false,
         },
         // Anywhere but the prompt a paste is dropped rather than read as a
         // run of keys, any of which could be a binding.
-        Event::Pasted(text) if *showing == Showing::Searching => view.pasted(&text),
+        Event::Pasted(text) if matches!(*showing, Showing::Searching | Showing::Writing) => {
+            view.pasted(&text)
+        }
         Event::Pasted(_) => false,
         // A click or a notch takes the bindings away and does no more,
         // for the same reason a key does: the window is over the forest,
@@ -730,6 +799,12 @@ fn answered(
         // Esc puts it back: what they typed was never confirmed.
         Event::Clicked(_) | Event::Scrolled(_) if *showing == Showing::Searching => {
             *showing = Showing::Forest;
+            view.typing(Typing::Abandoned);
+            true
+        }
+        // And it leaves the entry with the write unmade, as Esc does.
+        Event::Clicked(_) | Event::Scrolled(_) if *showing == Showing::Writing => {
+            *showing = Showing::Bead;
             view.typing(Typing::Abandoned);
             true
         }
@@ -783,6 +858,14 @@ fn answered(
             true
         }
         Event::Tailed(answer) => view.tailed(answer, Utc::now()),
+        // A write that landed has changed the bead, so its project is read
+        // again to draw the bead as it now stands.
+        Event::Wrote(wrote) => {
+            let said = view.wrote(&wrote);
+            let read = wrote.refused.is_none()
+                && asked_for(view, outstanding, Wanted::Project(wrote.bead.project));
+            said || read
+        }
         // The same `None` 'q' hands back, and for the same reason: it is
         // returning that drops the screen, and dropping the screen is
         // what hands the terminal back.
@@ -840,7 +923,10 @@ fn shows(view: &mut dyn View, showing: &mut Showing, snapshot: Snapshot) {
     // would show another bead, or nothing, under a title the reader did not
     // open, and a forest that looked ordinary would go on answering keys as
     // a bead.
-    if *showing == Showing::Bead && !view.bead_still_shown() {
+    if matches!(*showing, Showing::Bead | Showing::Writing) && !view.bead_still_shown() {
+        if *showing == Showing::Writing {
+            view.typing(Typing::Abandoned);
+        }
         *showing = Showing::Forest;
     }
 }
@@ -872,8 +958,7 @@ pub(super) mod tests {
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
-    use crate::view::phrase;
-    use crate::view::Edit;
+    use crate::view::{Edit, Write};
     use chrono::TimeDelta;
     use ratatui::crossterm::event::KeyCode;
     use std::cell::RefCell;
@@ -987,6 +1072,12 @@ pub(super) mod tests {
         /// round on the clock, so the pass that proves it was declined is the
         /// first one past its interval however many came before.
         went_round: Option<Sender<DateTime<Utc>>>,
+        /// What bd answered to each write, in the order the loop handed them
+        /// on.
+        wrote: Vec<Wrote>,
+        /// Whether the bead the window is on refuses a write, as a release
+        /// on a bead with no orphaned claim does.
+        refuses_writes: bool,
     }
 
     impl Recorder {
@@ -1083,6 +1174,11 @@ pub(super) mod tests {
             true
         }
 
+        fn wrote(&mut self, wrote: &Wrote) -> bool {
+            self.wrote.push(wrote.clone());
+            true
+        }
+
         fn pressed(&mut self) -> bool {
             self.pressed_after
                 .push(self.applied.len() + self.clicked.len() + self.notched.len());
@@ -1102,7 +1198,11 @@ pub(super) mod tests {
             } else if action == Action::FocusForest {
                 self.focused_on.clear();
             }
-            !(action == Action::ShowBead && self.not_a_bead)
+            match action {
+                Action::ShowBead => !self.not_a_bead,
+                Action::Write(_) => !self.refuses_writes,
+                _ => true,
+            }
         }
 
         fn scroll(&mut self, motion: Motion) -> bool {
@@ -1679,6 +1779,189 @@ pub(super) mod tests {
             view.applied,
             [Action::ShowBead, Action::Move(Motion::NextRow)],
             "j after Esc moved the selection, so the forest was back"
+        );
+    }
+
+    fn driven(view: &mut Recorder, events: Receiver<Event>) {
+        let (ask, _asked) = mpsc::channel();
+        drive(
+            view,
+            &events,
+            &ask,
+            at_once(),
+            a_run_reading(nothing_armed()),
+            &polling_every_interval(),
+            nothing_watched(),
+        )
+        .expect("the loop runs");
+    }
+
+    /// While the entry is up a key is a character of the comment, so `q` is
+    /// a letter of it rather than the way back out.
+    #[test]
+    fn a_write_given_words_takes_them_in_the_entry_and_enter_makes_it() {
+        let mut view = Recorder::default();
+        driven(
+            &mut view,
+            pressing([
+                key(KeyCode::Enter),
+                key(KeyCode::Char('m')),
+                key(KeyCode::Char('q')),
+                key(KeyCode::Enter),
+                key(KeyCode::Char('q')),
+                key(KeyCode::Char('q')),
+            ]),
+        );
+
+        assert_eq!(
+            view.showing,
+            [
+                Showing::Forest,
+                Showing::Bead,
+                Showing::Writing,
+                Showing::Writing,
+                Showing::Bead,
+                Showing::Forest,
+            ]
+        );
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::Write(Write::Comment)]
+        );
+        assert_eq!(
+            view.typed,
+            [Typing::Edit(Edit::Character('q')), Typing::Sought]
+        );
+    }
+
+    #[test]
+    fn esc_leaves_the_entry_for_the_bead_window() {
+        let mut view = Recorder::default();
+        driven(
+            &mut view,
+            pressing([
+                key(KeyCode::Enter),
+                key(KeyCode::Char('x')),
+                key(KeyCode::Esc),
+                key(KeyCode::Char('j')),
+                key(KeyCode::Char('q')),
+                key(KeyCode::Char('q')),
+            ]),
+        );
+
+        assert_eq!(view.typed, [Typing::Abandoned]);
+        assert_eq!(
+            view.scrolled,
+            [Motion::NextRow],
+            "j after Esc scrolled the bead, so the window was back"
+        );
+    }
+
+    /// A write given no words has nothing to wait for, so it is made at the
+    /// press and the window stays as it was.
+    #[test]
+    fn a_write_given_no_words_is_made_at_the_press() {
+        let mut view = Recorder::default();
+        driven(
+            &mut view,
+            pressing([
+                key(KeyCode::Enter),
+                key(KeyCode::Char('o')),
+                key(KeyCode::Char('j')),
+                key(KeyCode::Char('q')),
+                key(KeyCode::Char('q')),
+            ]),
+        );
+
+        assert_eq!(
+            view.applied,
+            [Action::ShowBead, Action::Write(Write::Reopen)]
+        );
+        assert!(view.typed.is_empty(), "{:?}", view.typed);
+        assert_eq!(view.scrolled, [Motion::NextRow]);
+    }
+
+    /// A release on a bead whose claim has its agent opens nothing, and the
+    /// key after it is the bead window's.
+    #[test]
+    fn a_write_the_bead_refuses_opens_no_entry() {
+        let mut view = Recorder {
+            refuses_writes: true,
+            ..Recorder::default()
+        };
+        driven(
+            &mut view,
+            pressing([
+                key(KeyCode::Enter),
+                key(KeyCode::Char('m')),
+                key(KeyCode::Char('j')),
+                key(KeyCode::Char('q')),
+                key(KeyCode::Char('q')),
+            ]),
+        );
+
+        assert!(!view.showing.contains(&Showing::Writing));
+        assert_eq!(view.scrolled, [Motion::NextRow]);
+    }
+
+    /// The write keys are the bead window's. In the forest no window is up,
+    /// so there is no bead they would be made to.
+    #[test]
+    fn a_write_key_in_the_forest_reaches_nothing() {
+        let mut view = Recorder::default();
+        driven(
+            &mut view,
+            pressing([key(KeyCode::Char('x')), key(KeyCode::Char('q'))]),
+        );
+
+        assert!(view.applied.is_empty(), "{:?}", view.applied);
+    }
+
+    fn wrote(refused: Option<&str>) -> Wrote {
+        Wrote {
+            bead: BeadKey {
+                project: "arkham".to_string(),
+                id: "ark-1".to_string(),
+            },
+            write: Write::Close,
+            refused: refused.map(String::from),
+        }
+    }
+
+    /// The bead is drawn as it now stands once its project has been read
+    /// again, so a write that landed asks for that read.
+    #[test]
+    fn a_write_that_landed_reads_its_project_again() {
+        let mut view = Recorder::default();
+        driven(&mut view, waiting(vec![Event::Wrote(wrote(None))]));
+
+        assert_eq!(view.wrote, [wrote(None)]);
+        assert_eq!(view.collecting(), [vec![arkham()]]);
+    }
+
+    #[test]
+    fn a_write_bd_refused_is_said_and_reads_nothing() {
+        let mut view = Recorder::default();
+        let refused = wrote(Some("ark-1 is already closed"));
+        driven(&mut view, waiting(vec![Event::Wrote(refused.clone())]));
+
+        assert_eq!(view.wrote, [refused]);
+        assert!(view.collecting().is_empty(), "{:?}", view.collecting());
+    }
+
+    /// A write bd answers once the loop has stopped reading is said as it
+    /// would have been at the foot, and one that landed is not mentioned.
+    #[test]
+    fn a_write_refused_once_the_loop_has_stopped_is_still_said() {
+        let (events, waiting) = mpsc::channel();
+        events.send(Event::Wrote(wrote(None))).expect("sent");
+        events
+            .send(Event::Wrote(wrote(Some("ark-1 is already closed"))))
+            .expect("sent");
+
+        assert_eq!(
+            refused_while_leaving(&waiting),
+            ["arkham · ark-1 · not closed: ark-1 is already closed"]
         );
     }
 

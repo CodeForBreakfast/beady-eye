@@ -1229,6 +1229,96 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
         .collect())
 }
 
+/// bd's argv for `asked` against `project`'s tracker, and the environment
+/// that tracker is written in. `bdi bd`, the terminal and a writable `bdi web`
+/// all write through here, so a write reaches bd one way whichever made it.
+pub fn writing(
+    runner: &dyn Runner,
+    project: &Project,
+    asked: &[String],
+) -> anyhow::Result<(Vec<String>, Env)> {
+    let argv = passed_through(&project.path, asked)?;
+    let env = environment::tracker_env(
+        runner,
+        project,
+        environment::ambient_credential().as_deref(),
+        environment::EnvironmentCache::here().as_ref(),
+    )
+    .map_err(|failure| match failure {
+        OpenFailure::NoEnvironment => {
+            anyhow::anyhow!("could not set up {}'s environment", project.name)
+        }
+        OpenFailure::NoCredential => {
+            anyhow::anyhow!("{}'s credential command failed", project.name)
+        }
+        OpenFailure::Refused(failure) => failure.into(),
+    })?;
+    Ok((argv, env))
+}
+
+/// One of the light-touch writes a person makes to a bead from the terminal,
+/// each spelled as `bdi bd` is asked for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Write {
+    Comment,
+    /// Close, with the reason typed, or with none where nothing was.
+    Close,
+    Reopen,
+    /// Respond to a human-needed bead.
+    Respond,
+    /// Dismiss a human-needed bead.
+    Dismiss,
+    /// Defer until the date typed.
+    Defer,
+    /// Release the claim of a seat that is gone, naming its holder.
+    Release,
+    /// Set the priority typed.
+    Priority,
+}
+
+impl Write {
+    /// Whether the write is given words the person types: a comment, a close
+    /// reason, a response, a date or a priority.
+    pub fn is_typed(self) -> bool {
+        !matches!(self, Write::Reopen | Write::Dismiss | Write::Release)
+    }
+
+    /// Whether the write is made only with words typed: every typed write but
+    /// a close, whose reason is the one bd does without.
+    pub fn needs_words(self) -> bool {
+        self.is_typed() && self != Write::Close
+    }
+
+    /// What `bdi bd` is asked for to make this write to `id`. `given` is what
+    /// the person typed, or the holder of the claim a release lets go.
+    ///
+    /// Each value is joined onto its flag and the bead comes after `--`, so
+    /// words typed that start with a dash are never read as a flag.
+    pub fn asked(self, id: &str, given: &str) -> Vec<String> {
+        let (command, value): (&[&str], Option<String>) = match self {
+            Write::Comment => (&["comments", "add"], None),
+            Write::Close => (
+                &["close"],
+                (!given.is_empty()).then(|| format!("--reason={given}")),
+            ),
+            Write::Reopen => (&["reopen"], None),
+            Write::Respond => (&["human", "respond"], Some(format!("--response={given}"))),
+            Write::Dismiss => (&["human", "dismiss"], None),
+            Write::Defer => (&["defer"], Some(format!("--until={given}"))),
+            Write::Release => (&["unclaim"], Some(format!("--if-assignee={given}"))),
+            Write::Priority => (&["update"], Some(format!("--priority={given}"))),
+        };
+        let text = (self == Write::Comment && !given.is_empty()).then(|| given.to_string());
+        command
+            .iter()
+            .map(|word| word.to_string())
+            .chain(value)
+            .chain(["--".to_string(), id.to_string()])
+            .chain(text)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3284,5 +3374,82 @@ mod tests {
         ] {
             assert!(passed(line).is_err(), "{line:?} was passed through");
         }
+    }
+
+    // ---- the writes the terminal spells --------------------------------------
+
+    const EVERY_WRITE: [Write; 8] = [
+        Write::Comment,
+        Write::Close,
+        Write::Reopen,
+        Write::Respond,
+        Write::Dismiss,
+        Write::Defer,
+        Write::Release,
+        Write::Priority,
+    ];
+
+    /// The terminal goes through `bdi bd`'s own check, so a write it spells
+    /// that the check refused would be a key that never writes.
+    #[test]
+    fn every_write_the_terminal_spells_is_passed_through() {
+        for write in EVERY_WRITE {
+            let asked = write.asked("dun-7", "nyarlathotep");
+
+            assert!(
+                passed_through(&project_dir(), &asked).is_ok(),
+                "{write:?} spelled {asked:?}"
+            );
+        }
+    }
+
+    /// Words a person typed that start with a dash are still their words,
+    /// and never a flag that could pick another tracker.
+    #[test]
+    fn words_typed_with_a_dash_stay_the_words_of_the_write() {
+        assert_eq!(
+            Write::Comment.asked("dun-7", "-C /srv/work/ferry"),
+            ["comments", "add", "--", "dun-7", "-C /srv/work/ferry"]
+        );
+        assert_eq!(
+            Write::Close.asked("dun-7", "--db ferry"),
+            ["close", "--reason=--db ferry", "--", "dun-7"]
+        );
+        for write in EVERY_WRITE {
+            let asked = write.asked("dun-7", "--global");
+            let passed = passed_through(&project_dir(), &asked).expect("passed through");
+            let flags = passed.split(|word| word == "--").next().unwrap_or_default();
+
+            assert!(!flags.contains(&"--global".to_string()), "{passed:?}");
+        }
+    }
+
+    #[test]
+    fn each_write_is_spelled_as_the_bd_command_it_is() {
+        for (write, given, spelled) in [
+            (
+                Write::Respond,
+                "use OAuth2",
+                "human respond --response=use OAuth2 -- dun-7",
+            ),
+            (Write::Dismiss, "", "human dismiss -- dun-7"),
+            (Write::Defer, "tomorrow", "defer --until=tomorrow -- dun-7"),
+            (
+                Write::Release,
+                "nyarlathotep",
+                "unclaim --if-assignee=nyarlathotep -- dun-7",
+            ),
+            (Write::Priority, "1", "update --priority=1 -- dun-7"),
+            (Write::Reopen, "", "reopen -- dun-7"),
+        ] {
+            assert_eq!(write.asked("dun-7", given).join(" "), spelled);
+        }
+    }
+
+    /// A close is the one write whose words may be left out: with none typed
+    /// it closes with no reason, rather than with an empty one.
+    #[test]
+    fn a_close_with_nothing_typed_names_no_reason() {
+        assert_eq!(Write::Close.asked("dun-7", ""), ["close", "--", "dun-7"]);
     }
 }
