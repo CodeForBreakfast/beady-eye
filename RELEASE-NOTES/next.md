@@ -18,7 +18,7 @@ Minor release, **0.45.0 → 0.46.0**.
 
 ## Upgrading
 
-**Nothing changes until you pass `--writes`.** The keys in the terminal are new, and `bdi web` stays read-only unless you start it with `--writes` and set `[web] actor`.
+**The terminal keys work as soon as you upgrade.** Only `bdi web` is opt-in, and it stays read-only unless you start it with `--writes` and set `[web] actor`.
 
 ## Maintenance
 
