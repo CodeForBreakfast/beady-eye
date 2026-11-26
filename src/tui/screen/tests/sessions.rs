@@ -48,6 +48,8 @@ fn seated_in_another_session(panes: &Keyed) -> Shown {
         snapshot,
         Box::new(panes.clone()),
         Box::new(io::sink()),
+        Box::new(Writing::default()),
+        Vec::new(),
         drawing(),
         nothing_said(),
         an_instant(),

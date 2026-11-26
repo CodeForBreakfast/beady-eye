@@ -7,7 +7,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::view::{Action, Edit, Motion, Typing};
+use crate::view::{Action, Edit, Motion, Typing, Write};
 
 /// One key a reader can press, and the word for it they can read.
 ///
@@ -164,6 +164,54 @@ pub(super) const BINDINGS: &[Binding] = &[
         keys: &[alone(KeyCode::Tab, "Tab")],
         action: Action::NextRelated,
         does: "move to the next bead the shown bead names; Enter follows it",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('m'), "m")],
+        action: Action::Write(Write::Comment),
+        does: "in the bead view, comment on the bead",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('x'), "x")],
+        action: Action::Write(Write::Close),
+        does: "in the bead view, close the bead, with a reason",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('o'), "o")],
+        action: Action::Write(Write::Reopen),
+        does: "in the bead view, reopen the bead",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('R'), "R")],
+        action: Action::Write(Write::Respond),
+        does: "in the bead view, respond to a bead that needs a human",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('X'), "X")],
+        action: Action::Write(Write::Dismiss),
+        does: "in the bead view, dismiss a bead that needs a human",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('z'), "z")],
+        action: Action::Write(Write::Defer),
+        does: "in the bead view, defer the bead until a date",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('u'), "u")],
+        action: Action::Write(Write::Release),
+        does: "in the bead view, release a claim whose agent is gone",
+        hint: None,
+    },
+    Binding {
+        keys: &[alone(KeyCode::Char('p'), "p")],
+        action: Action::Write(Write::Priority),
+        does: "in the bead view, set the bead's priority",
         hint: None,
     },
     Binding {
@@ -569,6 +617,14 @@ pub(super) mod tests {
             Action::Search,
             Action::NextMatch,
             Action::PreviousMatch,
+            Action::Write(Write::Comment),
+            Action::Write(Write::Close),
+            Action::Write(Write::Reopen),
+            Action::Write(Write::Respond),
+            Action::Write(Write::Dismiss),
+            Action::Write(Write::Defer),
+            Action::Write(Write::Release),
+            Action::Write(Write::Priority),
             Action::Refresh,
             Action::Quit,
         ];
@@ -610,6 +666,16 @@ pub(super) mod tests {
                 | Action::PreviousMatch
                 | Action::Refresh
                 | Action::Quit => (),
+                Action::Write(write) => match write {
+                    Write::Comment
+                    | Write::Close
+                    | Write::Reopen
+                    | Write::Respond
+                    | Write::Dismiss
+                    | Write::Defer
+                    | Write::Release
+                    | Write::Priority => (),
+                },
             }
         }
 
@@ -967,11 +1033,9 @@ pub(super) mod tests {
         );
     }
 
-    /// The letters that carry a binding only under control carry none on
-    /// their own, and a key nothing is bound to asks for nothing.
     #[test]
     fn a_key_bound_to_nothing_asks_for_nothing() {
-        for pressed in [key(KeyCode::Char('u')), key(KeyCode::Char('z'))] {
+        for pressed in [key(KeyCode::Char('b')), control('z')] {
             assert_eq!(action(pressed), None, "for {pressed:?}");
         }
     }

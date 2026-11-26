@@ -52,6 +52,8 @@ struct Run {
     panes: Vec<String>,
     cfg: Config,
     rows: u16,
+    /// Every write the screen handed on, which no frame shows.
+    writing: Writing,
 }
 
 impl Run {
@@ -61,6 +63,18 @@ impl Run {
             panes: Vec::new(),
             cfg: the_config_in_force(),
             rows: ROWS,
+            writing: Writing::default(),
+        }
+    }
+
+    /// The same run under a config that names the tracker's project, which
+    /// is where a write finds the tracker to go to.
+    fn naming_its_project(self) -> Self {
+        let arkham: Project =
+            toml::from_str("name = \"arkham\"\npath = \"/srv/work/arkham\"").expect("a project");
+        Self {
+            cfg: Config::naming(vec![arkham]),
+            ..self
         }
     }
 
@@ -109,6 +123,8 @@ impl Run {
                 awaiting,
                 Box::new(panes.clone()),
                 Box::new(io::sink()),
+                Box::new(self.writing.clone()),
+                self.cfg.projects.clone(),
                 Drawing::to(&self.cfg),
                 nothing_said(),
                 an_instant(),
@@ -164,6 +180,200 @@ fn window_over(screen: &[String]) -> Option<String> {
 
 fn says(screen: &[String], said: &str) -> bool {
     screen.iter().any(|row| row.contains(said))
+}
+
+// ---- the writes the bead window makes -------------------------------------
+
+fn the_tree() -> BeadKey {
+    BeadKey {
+        project: "arkham".to_string(),
+        id: THE_TREE.to_string(),
+    }
+}
+
+/// The reason a close is given is typed at the foot, where the reader can
+/// see it, and Enter hands the write on for the bead the window is over.
+#[test]
+fn a_close_reason_typed_at_the_foot_is_written_to_the_bead_shown() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    let (typing, _) = run.after([walked(), pressed([KeyCode::Enter]), typed("xdone ")]);
+    assert!(
+        typing
+            .last()
+            .is_some_and(|foot| foot.contains("close, with the reason: done")),
+        "the reason being typed is not on the foot: {typing:#?}"
+    );
+    assert_eq!(window_over(&typing).as_deref(), Some(THE_TREE));
+    assert!(
+        run.writing.made().is_empty(),
+        "nothing is written before Enter"
+    );
+
+    let (written, _) = run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("xdone"),
+        pressed([KeyCode::Enter]),
+    ]);
+    assert_eq!(
+        run.writing.made(),
+        [(
+            "arkham".to_string(),
+            the_tree(),
+            Write::Close,
+            "done".to_string()
+        )]
+    );
+    assert_eq!(
+        window_over(&written).as_deref(),
+        Some(THE_TREE),
+        "the window is still up over the bead once the entry has gone"
+    );
+}
+
+/// Esc takes the entry down and writes nothing.
+#[test]
+fn esc_at_the_foot_writes_nothing() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    let (left, _) = run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("mlater"),
+        pressed([KeyCode::Esc]),
+    ]);
+
+    assert!(run.writing.made().is_empty(), "{:?}", run.writing.made());
+    assert_eq!(window_over(&left).as_deref(), Some(THE_TREE));
+}
+
+/// A write given no words is handed on at the press.
+#[test]
+fn a_reopen_is_written_at_the_press() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    run.after([walked(), pressed([KeyCode::Enter]), typed("o")]);
+
+    assert_eq!(
+        run.writing.made(),
+        [(
+            "arkham".to_string(),
+            the_tree(),
+            Write::Reopen,
+            String::new()
+        )]
+    );
+}
+
+/// No seat holds this tree, so bdi flags no claim on it that has lost its
+/// agent, and there is nothing to release.
+#[test]
+fn a_release_on_a_bead_with_no_orphaned_claim_writes_nothing() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    run.after([walked(), pressed([KeyCode::Enter]), typed("u")]);
+
+    assert!(run.writing.made().is_empty(), "{:?}", run.writing.made());
+}
+
+/// What bd answered is said at the foot, its own words and all, and the
+/// reader's next key takes it off.
+#[test]
+fn a_write_bd_refused_says_why_at_the_foot() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+    let refused = Event::Wrote(Wrote {
+        bead: the_tree(),
+        write: Write::Defer,
+        refused: Some("invalid date \"someday\"".to_string()),
+    });
+
+    let (said, _) = run.after([walked(), pressed([KeyCode::Enter]), vec![refused]]);
+
+    assert!(
+        said.last().is_some_and(
+            |foot| foot.contains("arkham · dun-0tp · not deferred: invalid date \"someday\"")
+        ),
+        "{said:#?}"
+    );
+}
+
+/// A deferral with no date typed is not made, because bd takes a deferral
+/// without one as a deferral with no end; the foot says why.
+#[test]
+fn a_deferral_given_no_date_is_not_made() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    let (said, _) = run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("z  "),
+        pressed([KeyCode::Enter]),
+    ]);
+
+    assert!(run.writing.made().is_empty());
+    assert!(
+        said.last()
+            .is_some_and(|foot| foot.contains("arkham · dun-0tp · not deferred: nothing was typed")),
+        "{said:#?}"
+    );
+}
+
+/// A comment pasted over several lines keeps its words apart: the entry is
+/// one line, so each line break becomes a space, and the one a copied line
+/// ends in is left out.
+#[test]
+fn a_comment_pasted_over_lines_keeps_its_words_apart() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("m"),
+        vec![Event::Pasted("first line\nsecond\tline\n".to_string())],
+        pressed([KeyCode::Enter]),
+    ]);
+
+    assert_eq!(
+        run.writing.made(),
+        [(
+            "arkham".to_string(),
+            the_tree(),
+            Write::Comment,
+            "first line second line".to_string(),
+        )]
+    );
+}
+
+/// A close needs no reason, so one with nothing typed is made.
+#[test]
+fn a_close_given_no_reason_is_made() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("x"),
+        pressed([KeyCode::Enter]),
+    ]);
+
+    assert_eq!(run.writing.made().len(), 1);
+}
+
+/// A write to a bead in a project the config in force no longer names has no
+/// tracker to go to, and says so rather than going nowhere quietly.
+#[test]
+fn a_write_with_no_project_to_go_to_says_so() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE);
+
+    let (said, _) = run.after([walked(), pressed([KeyCode::Enter]), typed("o")]);
+
+    assert!(run.writing.made().is_empty());
+    assert!(
+        said.last()
+            .is_some_and(|foot| foot.contains("not reopened: the config names no project arkham")),
+        "{said:#?}"
+    );
 }
 
 /// `c`, which shuts the selected node and everything under it, so the search

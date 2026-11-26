@@ -4160,6 +4160,14 @@ The bindings are vim-like, with the arrows as aliases:
 | `q`, `^C` | quit |
 | `Esc` | go back to the forest from the bead view |
 | `Tab` | move to the next bead the shown bead names; Enter follows it |
+| `m` | in the bead view, comment on the bead |
+| `x` | in the bead view, close the bead, with a reason |
+| `o` | in the bead view, reopen the bead |
+| `R` | in the bead view, respond to a bead that needs a human |
+| `X` | in the bead view, dismiss a bead that needs a human |
+| `z` | in the bead view, defer the bead until a date |
+| `u` | in the bead view, release a claim whose agent is gone |
+| `p` | in the bead view, set the bead's priority |
 | `^R` | collect from the trackers again now |
 | `e` | expand the selected node and everything under it |
 | `E` | expand the whole forest |

@@ -6,6 +6,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::app::Awaited;
+pub use crate::collect::bd::Write;
 use crate::model::join::BeadKey;
 
 pub mod address;
@@ -129,6 +130,8 @@ pub enum Action {
     NextMatch,
     /// Go to the one before it.
     PreviousMatch,
+    /// Make a light-touch write to the bead the window is showing.
+    Write(Write),
     Refresh,
     Quit,
 }
@@ -213,6 +216,15 @@ pub enum Said {
     /// the whole answer and the foot only spoke up when a second tracker held
     /// the same id.
     Matched { key: BeadKey, at: usize, of: usize },
+    /// A write bd made to the bead.
+    Written { bead: BeadKey, write: Write },
+    /// A write that was not made, and why: bd's own words where bd refused
+    /// it.
+    NotWritten {
+        bead: BeadKey,
+        write: Write,
+        why: String,
+    },
 }
 
 /// What the foot says about where a search got to. The forest reports what
@@ -564,7 +576,19 @@ mod tests {
                 at: 1,
                 of: 2,
             }),
-            Said::Matched { .. } => None,
+            Said::Matched { .. } => Some(Said::Written {
+                bead: BeadKey {
+                    project: "dunwich".to_string(),
+                    id: "grv-1".to_string(),
+                },
+                write: Write::Close,
+            }),
+            Said::Written { bead, write } => Some(Said::NotWritten {
+                bead: bead.clone(),
+                write: *write,
+                why: "grv-1 is already closed".to_string(),
+            }),
+            Said::NotWritten { .. } => None,
         })
     }
 
