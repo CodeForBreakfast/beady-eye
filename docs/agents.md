@@ -103,6 +103,8 @@ draws it with a `[[badges]]` entry naming that key.
 
 ## Tell `bdi` you changed something
 
-`bdi` polls, and a poll can be half a minute away. After a write, name the
-project on `bdi`'s socket and it reads now:
+`bdi` polls, and a poll can be half a minute away. After a write with bd
+itself, name the project on `bdi`'s socket and it reads now:
 [Telling `bdi` a project changed](configuration.md#telling-bdi-a-project-changed).
+A write made through `bdi bd` tells the watcher itself once bd has taken it,
+so a view reading the project through a watcher needs nothing more.

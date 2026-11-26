@@ -1970,10 +1970,23 @@ kept the removed label.
 can say so, and the project it names is read then rather than at its next
 interval. `bdi` ships the socket and the protocol, and an interface fits every
 setup: a Dolt trigger, a git hook, a bd wrapper, a systemd path unit, a cron
-comparing a head hash, someone typing the line. The one producer `bdi` builds
-in is bd's own: `bdi watch` follows the event stream of each tracker whose
-project names its `bd serve`, since that stream is beads' interface for
+comparing a head hash, someone typing the line. `bdi` builds in two producers.
+The first is bd's own: `bdi watch` follows the event stream of each tracker
+whose project names its `bd serve`, since that stream is beads' interface for
 exactly this and carries every client's writes.
+
+**The second is `bdi`'s own light-touch writes.** Once bd has taken a write
+made through `bdi bd`, the terminal or a writable `bdi web`, `bdi` names the
+project on the watcher's own socket, as a producer does, and waits a few
+seconds at most to connect and for the watcher's answer. Whatever reads
+through the watcher then reads the write straight away, rather than at the
+project's next poll. A write bd refused tells the watcher nothing. Where no
+watcher answers, the write is made as it would be with none, and nothing is
+said of the watcher. The notice goes to the watcher's socket and not to the
+one views watch, because a view with no watcher already reads its project
+again after its own write. Settling a gate tells the watcher nothing, and
+neither does a write `bdi` did not make. All three ways of writing go through
+`collect/bd.rs`, which is where the notice is sent.
 
 **The socket.** A stream socket created mode `0600`, at
 `$XDG_RUNTIME_DIR/beady-eye/changes.sock` unless the run is told a path — by
@@ -2248,7 +2261,7 @@ sends each consumer the beads it watches. It does not ask the agent provider
 anything, because nothing it reports comes from a pane. Starting it and
 keeping it running is the setup's business, under whatever supervises a user's
 processes there: a systemd user unit, a launchd agent. `bdi` ships no unit, for
-the same reason it ships no producer.
+the same reason it ships no producer for writes it does not make itself.
 
 **Where its answers come from is a seam.** A change source hands the watcher
 three things for each project: every bead the tracker holds, wisps among them,

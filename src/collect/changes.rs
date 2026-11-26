@@ -1,10 +1,13 @@
 //! The inbound channel any process can poke to say a project's work changed.
 //!
-//! `bdi` ships the socket and the protocol and nothing that produces for it:
-//! what watches a tracker for changes — a Dolt trigger, a git hook, a `bd`
-//! wrapper, a systemd path unit, someone typing a command — is the setup's
-//! business, and building any one of them in would tie `bdi` to a setup it
-//! cannot know.
+//! `bdi` ships the socket and the protocol. It produces for them only what
+//! it knows itself: `bdi watch` follows bd's own event stream, and once bd
+//! takes a light-touch write made through `bdi bd`, the terminal or a
+//! writable `bdi web`, `bdi` tells the watcher on the watcher's own socket
+//! that the project changed. What watches a tracker for every other change —
+//! a Dolt trigger, a git hook, a `bd` wrapper, a systemd path unit, someone
+//! typing a command — is the setup's business, and building any one of them
+//! in would tie `bdi` to a setup it cannot know.
 //!
 //! Nothing in here is ever waited on by the loop that draws. The accept loop
 //! and each connection block on their own threads, so a writer that connects
@@ -872,10 +875,14 @@ pub fn answered(
     Some(answer.to_string())
 }
 
-/// Where a test puts a socket it binds.
+/// Where a test puts a socket it binds, and a stand-in for the watcher there.
 #[cfg(any(test, feature = "testing"))]
 pub mod testing {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
+    use std::sync::mpsc::{self, Receiver};
+    use std::thread;
 
     /// The directory a test makes its socket's home under, in place of
     /// `std::env::temp_dir()`.
@@ -910,6 +917,38 @@ pub mod testing {
     }
 
     const SOCKET_DIR: &str = "BDI_TEST_SOCKET_DIR";
+
+    /// A stand-in for the watcher, on a socket of its own named for `named`,
+    /// that hands the test each line a producer says and then answers it as
+    /// the watcher does. The line is handed over before the answer is sent,
+    /// so a producer that waits for its answer has been heard by the time it
+    /// returns.
+    pub fn a_watcher_hearing(named: &str) -> (PathBuf, Receiver<String>) {
+        let (at, watcher) = a_watcher_wedged(named);
+        let (hearing, heard) = mpsc::channel();
+        thread::spawn(move || {
+            for producer in watcher.incoming().map_while(Result::ok) {
+                let mut answering = producer.try_clone().expect("ours to write");
+                for line in BufReader::new(producer).lines().map_while(Result::ok) {
+                    let _ = hearing.send(line.clone());
+                    let _ = writeln!(answering, "ok {line}");
+                }
+            }
+        });
+        (at, heard)
+    }
+
+    /// A watcher's socket, named for `named`, that nothing ever answers on
+    /// for as long as the test holds the listener: a connection waits there
+    /// untaken, as one does on a watcher that has wedged.
+    pub fn a_watcher_wedged(named: &str) -> (PathBuf, UnixListener) {
+        let dir = socket_temp_dir().join(format!("bdi-{named}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory to put the socket in");
+        let at = dir.join("watcher.sock");
+        let watcher = UnixListener::bind(&at).expect("the socket is ours");
+        (at, watcher)
+    }
 }
 
 #[cfg(test)]

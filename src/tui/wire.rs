@@ -104,7 +104,7 @@ pub(super) fn wire(
     // The provider's own threads, whose answers come back here like everything
     // else's: the loop waits on one channel and never on the provider.
     let panes: Box<dyn Panes> = Box::new(Aside::new(agents, to_the_loop.clone()));
-    let writes: Box<dyn Writes> = Box::new(Writer::new(to_the_loop.clone()));
+    let writes: Box<dyn Writes> = Box::new(Writer::new(to_the_loop.clone(), watcher_at.clone()));
 
     let collecting = to_the_loop.clone();
     thread::spawn(move || collector(collect, &asked, &collecting));

@@ -24,6 +24,7 @@ use crate::collect::gates::{BeadGate, OpenGates, PrGate, TimerGate, Wait};
 use crate::collect::run::{together, Env, FailureKind, RunFailure, Runner};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
 use crate::collect::upstream::UpstreamGate;
+use crate::collect::watched;
 use crate::config::Project;
 use crate::model::gate;
 use crate::model::types::{Bead, Dependency, Edge, Printed, Status};
@@ -1229,15 +1230,41 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
         .collect())
 }
 
-/// bd's argv for `asked` against `project`'s tracker, and the environment
-/// that tracker is written in. `bdi bd`, the terminal and a writable `bdi web`
-/// all write through here, so a write reaches bd one way whichever made it.
+/// Make the write `asked` to `project`'s tracker, and once bd has taken it
+/// tell the watcher at `watcher` that the project changed. `bdi bd`, the
+/// terminal and a writable `bdi web` all write through here, so a write
+/// reaches bd one way whichever made it, and whatever reads through the
+/// watcher reads it next.
+///
+/// `run` runs bd with the argv and environment it is handed, as the caller
+/// needs bd run, and `took` says whether what it came to is bd taking the
+/// write. A write that was not taken tells the watcher nothing.
 ///
 /// The write is recorded under `actor` where one is given. bd takes the flag
 /// ahead of any actor the environment names, and the environment is whatever
 /// entering the project gives. Where none is given, bd records the actor the
 /// environment names.
-pub fn writing(
+pub fn make<T>(
+    runner: &dyn Runner,
+    project: &Project,
+    asked: &[String],
+    actor: Option<&str>,
+    watcher: Option<&Path>,
+    run: impl FnOnce(&[&str], &Env) -> anyhow::Result<T>,
+    took: impl FnOnce(&T) -> bool,
+) -> anyhow::Result<T> {
+    let (argv, env) = writing(runner, project, asked, actor)?;
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let made = run(&argv, &env)?;
+    if took(&made) {
+        watched::tell_of_a_change(watcher, &project.name);
+    }
+    Ok(made)
+}
+
+/// bd's argv for `asked` against `project`'s tracker, and the environment
+/// that tracker is written in.
+fn writing(
     runner: &dyn Runner,
     project: &Project,
     asked: &[String],
@@ -3461,5 +3488,115 @@ mod tests {
     #[test]
     fn a_close_with_nothing_typed_names_no_reason() {
         assert_eq!(Write::Close.asked("dun-7", ""), ["close", "--", "dun-7"]);
+    }
+
+    fn arkham() -> Project {
+        toml::from_str(&format!(
+            "name = \"arkham\"\npath = \"{}\"",
+            project_dir().display()
+        ))
+        .expect("a project")
+    }
+
+    fn commenting() -> Vec<String> {
+        Write::Comment.asked("ark-1", "one more thing")
+    }
+
+    #[test]
+    fn a_write_bd_takes_is_told_to_the_watcher_by_its_project() {
+        let (watcher, heard) = crate::collect::changes::testing::a_watcher_hearing("write-told");
+
+        let ran = make(
+            &FakeRunner::default(),
+            &arkham(),
+            &commenting(),
+            None,
+            Some(&watcher),
+            |argv, _| Ok(argv.join(" ")),
+            |_| true,
+        )
+        .expect("the write is made");
+
+        assert_eq!(heard.try_recv(), Ok("arkham".to_string()));
+        assert!(
+            ran.ends_with("comments add -- ark-1 one more thing"),
+            "{ran}"
+        );
+    }
+
+    /// bd answering with a failure and bd never answering at all are both a
+    /// write that was not made.
+    #[test]
+    fn a_write_bd_refuses_tells_the_watcher_nothing() {
+        let (watcher, heard) = crate::collect::changes::testing::a_watcher_hearing("write-refused");
+
+        let exited = make(
+            &FakeRunner::default(),
+            &arkham(),
+            &commenting(),
+            None,
+            Some(&watcher),
+            |_, _| Ok(1),
+            |exited| *exited == 0,
+        );
+        let unrun = make(
+            &FakeRunner::default(),
+            &arkham(),
+            &commenting(),
+            None,
+            Some(&watcher),
+            |_, _| -> anyhow::Result<()> { anyhow::bail!("bd is not on the path") },
+            |_| true,
+        );
+
+        assert_eq!(exited.ok(), Some(1));
+        assert!(unrun.is_err());
+        assert_eq!(heard.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    }
+
+    #[test]
+    fn a_write_with_no_watcher_answering_is_made_as_ever() {
+        let nobody = crate::collect::changes::testing::socket_temp_dir()
+            .join(format!("bdi-write-unwatched-{}.sock", std::process::id()));
+
+        for watcher in [Some(nobody.as_path()), None] {
+            let made = make(
+                &FakeRunner::default(),
+                &arkham(),
+                &commenting(),
+                None,
+                watcher,
+                |_, _| Ok("✓"),
+                |_| true,
+            );
+
+            assert_eq!(made.ok(), Some("✓"), "{watcher:?}");
+        }
+    }
+
+    /// A watcher that has wedged holds a write up for no longer than it
+    /// holds up a run asking whether it is there, and not for as long as a
+    /// view waits before calling it wedged.
+    #[test]
+    fn a_write_told_to_a_wedged_watcher_is_made_within_seconds() {
+        let (wedged, _held) = crate::collect::changes::testing::a_watcher_wedged("write-wedged");
+        let started = std::time::Instant::now();
+
+        let made = make(
+            &FakeRunner::default(),
+            &arkham(),
+            &commenting(),
+            None,
+            Some(&wedged),
+            |_, _| Ok("✓"),
+            |_| true,
+        );
+
+        assert_eq!(made.ok(), Some("✓"));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
     }
 }

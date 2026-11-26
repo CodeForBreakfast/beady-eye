@@ -56,6 +56,7 @@ fn bdi_exporting(
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DOLT_PASSWORD")
         .env_remove("BDI_PROJECT")
+        .env("XDG_RUNTIME_DIR", home)
         .envs(tracker.environment())
         .envs(exported.iter().copied())
         .output()

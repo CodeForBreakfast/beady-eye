@@ -154,7 +154,7 @@ impl<O: Trackers> Through<O> {
                 return;
             };
             for heard in heard {
-                if writeln!(to, "{}", heard.line()).is_err() || !answered(&mut from) {
+                if writeln!(to, "{}", heard.line()).is_err() || !answered(&mut from, WEDGED_AFTER) {
                     return;
                 }
             }
@@ -537,8 +537,21 @@ fn watch(
 }
 
 /// How long a watcher may take to answer a run asking only whether it is
-/// there, which is a run waiting to open its screen.
+/// there, which is a run waiting to open its screen, and a write waiting to
+/// be told to it.
 const ANSWERING_WITHIN: Duration = Duration::from_secs(2);
+
+/// Tell the watcher at `at` that `project` changed, as a producer does, and
+/// wait for its answer, which it gives once it has taken the report. Nothing
+/// where no watcher answers there in time.
+pub fn tell_of_a_change(at: Option<&Path>, project: &str) {
+    let Some((mut to, mut from)) = at.and_then(|at| connected_to(at, ANSWERING_WITHIN)) else {
+        return;
+    };
+    if writeln!(to, "{}", Heard::Changed(project.to_string()).line()).is_ok() {
+        answered(&mut from, ANSWERING_WITHIN);
+    }
+}
 
 /// Whether a watcher answers at `at`.
 pub fn answers(at: Option<&Path>) -> bool {
@@ -574,29 +587,31 @@ fn bounded(set: std::io::Result<()>) -> Option<()> {
     }
 }
 
-/// Whether the watcher answered the line a producer last said on `from`.
-/// It reads no line it cannot answer, so a producer that goes before the
-/// answer comes can lose every line after it. Alive lines on the way are
-/// passed over.
-fn answered(from: &mut BufReader<UnixStream>) -> bool {
-    if bounded(from.get_ref().set_read_timeout(Some(WEDGED_AFTER))).is_none() {
-        return false;
-    }
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match from.read_line(&mut line) {
-            Ok(0) | Err(_) => return false,
-            Ok(_) if line.starts_with('{') => {}
-            Ok(_) => return true,
+/// Whether the watcher answered the line a producer last said on `from`
+/// within `patience`. It reads no line it cannot answer, so a producer that
+/// goes before the answer comes can lose every line after it. Alive lines on
+/// the way are passed over, and count against the patience.
+fn answered(from: &mut BufReader<UnixStream>, patience: Duration) -> bool {
+    let giving_up = Instant::now() + patience;
+    while let Some(line) = finished_before(from, giving_up) {
+        if !line.starts_with(b"{") {
+            return true;
         }
     }
+    false
 }
 
 /// The next line the watcher finishes sending on `from` before
 /// `giving_up`. Nothing where it finished none, closed the connection, or
 /// sent something that is not a line about a watch.
 fn next(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Line> {
+    serde_json::from_slice(&finished_before(from, giving_up)?).ok()
+}
+
+/// The next line the watcher finishes sending on `from` before
+/// `giving_up`, without its newline. Nothing where it finished none or
+/// closed the connection.
+fn finished_before(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Vec<u8>> {
     let mut line = Vec::new();
     loop {
         let left = giving_up
@@ -616,7 +631,7 @@ fn next(from: &mut BufReader<UnixStream>, giving_up: Instant) -> Option<Line> {
             Some(end) => {
                 line.extend_from_slice(&arrived[..end]);
                 from.consume(end + 1);
-                return serde_json::from_slice(&line).ok();
+                return Some(line);
             }
             None => {
                 let taken = arrived.len();
@@ -1995,5 +2010,24 @@ path = "/srv/work/dunwich"
         let again = taking(&mut watcher, &[fresh("dunwich", json!("ok"))]);
 
         assert_ne!(fingerprint(&again), fingerprint(&before));
+    }
+
+    /// A watcher that says it is alive and never answers holds a write's
+    /// notice up no longer than one that says nothing.
+    #[test]
+    fn a_change_told_to_a_watcher_only_ever_alive_is_given_up_on_in_time() {
+        let at = a_socket("told-alive");
+        let watcher = UnixListener::bind(&at).expect("the socket is ours");
+        thread::spawn(move || {
+            let (mut connection, _) = watcher.accept().expect("the run connects");
+            while writeln!(connection, r#"{{"line":"alive"}}"#).is_ok() {
+                thread::sleep(Duration::from_millis(200));
+            }
+        });
+        let started = Instant::now();
+
+        tell_of_a_change(Some(&at), "arkham");
+
+        assert!(started.elapsed() < A_MOMENT, "{:?}", started.elapsed());
     }
 }
