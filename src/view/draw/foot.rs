@@ -80,7 +80,9 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 /// anything they cannot already see. It is the first thing the row gives up
 /// and it goes whole or not at all: half an id names nothing, and the keys
 /// were there before the reader pressed anything, so they are never the thing
-/// that moves to make room.
+/// that moves to make room. A write bd refused is the exception, because the
+/// reader has no other way to learn it was not made: where it does not fit
+/// beside the keys it takes their place, and is cut rather than dropped.
 ///
 /// `prompt` is what they have typed into the search prompt, while one is up,
 /// and it takes the row for as long as it is there. Nothing else is said
@@ -124,14 +126,27 @@ pub(super) fn status_bar(
         .map(Span::raw)
         .into_iter()
         .collect();
+    let refused = matches!(said, Some(Said::NotWritten { .. }));
+    let crowded =
+        |room: usize| columns(&answer) + GAP + columns(&[Span::raw(fullest(keys, room))]) > room;
 
     if notices.is_empty() {
+        if refused && crowded(width) {
+            return Fitted::new(answer, Vec::new(), Vec::new());
+        }
         return Fitted::new(vec![Span::raw(fullest(keys, width))], Vec::new(), answer)
             .state_or_nothing();
     }
 
     let warning = warnings(notices, width);
     let room = width.saturating_sub(columns(&[Span::raw(warning.clone())]) + GAP);
+    if refused && crowded(room) {
+        return Fitted::new(
+            vec![Span::styled(warning, palette::ATTENTION)],
+            answer,
+            Vec::new(),
+        );
+    }
     Fitted::new(
         vec![Span::styled(warning, palette::ATTENTION)],
         answer,
@@ -205,7 +220,9 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    use crate::collect::bd::Write;
     use crate::config::Scope;
+    use crate::model::join::BeadKey;
     use crate::model::snapshot::{a_provider, Filter, ProviderState as State, A_PROVIDER};
     use crate::view::draw::tests::*;
     use crate::view::Action;
@@ -548,6 +565,72 @@ mod tests {
         .rows();
 
         assert_eq!(drawn[0].trim_end(), A_KEY_ROW);
+    }
+
+    // ---- a write bd refused -----------------------------------------------
+
+    fn refused() -> Said {
+        Said::NotWritten {
+            bead: BeadKey {
+                project: "arkham".to_string(),
+                id: "ark-1".to_string(),
+            },
+            write: Write::Close,
+            why: "ark-1 is already closed".to_string(),
+        }
+    }
+
+    /// A refusal is the answer to a key the reader pressed, and the keys
+    /// were there before it, so where the two do not fit together the
+    /// refusal has the row.
+    #[test]
+    fn a_refusal_with_no_room_beside_the_keys_takes_the_foot() {
+        let drawn = Painted::of(
+            status_bar(
+                &[],
+                Some(&refused()),
+                None,
+                &a_key_row(),
+                Spine::default(),
+                false,
+                80,
+            ),
+            80,
+            1,
+        )
+        .rows();
+
+        assert_eq!(
+            drawn[0].trim_end(),
+            "arkham · ark-1 · not closed: ark-1 is already closed"
+        );
+    }
+
+    /// Beside a notice the refusal keeps what the notice leaves it, cut
+    /// rather than gone, since its head already names the bead and the write.
+    #[test]
+    fn a_refusal_beside_a_notice_is_cut_rather_than_dropped() {
+        let drawn = Painted::of(
+            status_bar(
+                &[Notice::AgentsUnknown],
+                Some(&refused()),
+                None,
+                &a_key_row(),
+                Spine::default(),
+                false,
+                80,
+            ),
+            80,
+            1,
+        )
+        .rows();
+
+        assert!(
+            drawn[0].starts_with(
+                "⚠ no herdr session · agents are not shown  arkham · ark-1 · not clos"
+            ),
+            "{drawn:?}"
+        );
     }
 
     // ---- how fresh the screen is ------------------------------------------
