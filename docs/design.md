@@ -150,8 +150,8 @@ Anything workflow-specific is expressed as configuration, not code. See
 person makes.** bd is built for agents to work on a person's behalf, so the
 bigger edits stay with agents: a title or a description, dependencies,
 labels, and filing a bead. A person asks an agent for one by commenting on the
-bead, and the plugin wakes a session holding the bead on a comment or a change
-of status. `bdi` presents bd's own features and builds nothing on top of them,
+bead, and the plugin wakes a session that holds or watches the bead on a
+comment or a change of status. `bdi` presents bd's own features and builds nothing on top of them,
 so anything layered on top is configuration. Nothing stops a person running bd
 themselves, so `bdi` puts no warning or guard in front of a write.
 
@@ -161,7 +161,7 @@ by being added to `PASSED_THROUGH`. Each light-touch write is one bd command:
 | write | bd runs | terminal key | web page |
 |---|---|---|---|
 | comment | `bd comments add` | `m` | yes |
-| close, with a reason | `bd close --reason` | `x` | yes |
+| close, with a reason or none | `bd close`, with `--reason` where one is typed | `x` | yes |
 | reopen | `bd reopen` | `o` | yes |
 | respond to a human-needed bead | `bd human respond --response` | `R` | yes |
 | dismiss a human-needed bead | `bd human dismiss` | `X` | yes |

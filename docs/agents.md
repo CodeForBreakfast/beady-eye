@@ -7,7 +7,8 @@ the work lives in, and `bd` is its command; a bead is one issue. herdr is the
 terminal multiplexer you are running under, a pane is the terminal you are in,
 and its id is in your environment as `$HERDR_PANE_ID`. `bdi` writes to a
 tracker only to carry a person's small decision, such as a comment or a close,
-so it can only draw what you have written. This page is addressed to you, the
+and, where `bdi gates` runs, to settle gates, so it can only draw what you have
+written. This page is addressed to you, the
 agent: fold its lines into whatever instructions you already follow.
 
 ## Name your pane on the bead, and the bead on your pane

@@ -14,7 +14,7 @@ measurements.
 - The reading side: which `bd`, `herdr`, `hc` and `gh` command lines it spells, and
   how it parses what they print.
 - The light-touch writes, which carry a person's small decision to the right
-  tracker: a comment, a close with a reason, a reopen, a response to a
+  tracker: a comment, a close, a reopen, a response to a
   human-needed bead or its dismissal, a deferral, releasing the claim of an
   agent that is gone, and a priority. `bdi bd` passes each one, the bead
   window offers each by a key, and a writable `bdi web` offers each but the

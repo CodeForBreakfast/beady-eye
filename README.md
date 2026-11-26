@@ -476,7 +476,7 @@ the `bd` command on:
 | write | `bdi bd <project> …` | key |
 |---|---|---|
 | comment | `comments add <bead> -- <text>` | `m` |
-| close, with a reason | `close <bead> --reason <reason>` | `x` |
+| close, with a reason or none | `close <bead> [--reason <reason>]` | `x` |
 | reopen | `reopen <bead>` | `o` |
 | respond to a bead that needs a human | `human respond <bead> <response>` | `R` |
 | dismiss a bead that needs a human | `human dismiss <bead>` | `X` |
