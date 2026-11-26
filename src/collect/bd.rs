@@ -1183,10 +1183,14 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
         );
     };
     let mut flag_given = false;
+    let mut bead_named = false;
     let mut words = asked[passed.command.len()..].iter();
     while let Some(word) = words.next() {
         match word.as_str() {
-            "--" => break,
+            "--" => {
+                bead_named |= words.any(|word| !word.is_empty());
+                break;
+            }
             flag if passed.flags.contains(&flag) => {
                 flag_given = true;
                 words.next();
@@ -1201,8 +1205,14 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
                     flags => format!("no flag but {}", flags.join(" and ")),
                 }
             ),
-            _ => {}
+            word => bead_named |= !word.is_empty(),
         }
+    }
+    if !bead_named {
+        anyhow::bail!(
+            "bdi bd passes `{}` only naming a bead",
+            passed.command.join(" ")
+        );
     }
     if passed.flag_required && !flag_given {
         anyhow::bail!(
@@ -3097,6 +3107,33 @@ mod tests {
             "comments add -C /srv/work/ferry dun-7 yes",
         ] {
             assert!(passed(line).is_err(), "{line:?} was passed through");
+        }
+    }
+
+    /// bd's `close` and `update` write to the bead it last touched where none
+    /// is named, which need not be the one the caller meant.
+    #[test]
+    fn a_write_naming_no_bead_is_refused() {
+        for asked in [
+            &["close"][..],
+            &["close", "-r", "done"],
+            &["close", ""],
+            &["update", "--priority", "1"],
+            &["update", "-p1", "--"],
+            &["reopen"],
+            &["human", "dismiss"],
+            &["unclaim", "--if-assignee", "nyarlathotep"],
+            &["defer", "--until", "tomorrow"],
+            &["human", "respond", "-r", "yes"],
+            &["comments", "add", "--", ""],
+        ] {
+            let asked: Vec<String> = asked.iter().copied().map(String::from).collect();
+            let refused = passed_through(&project_dir(), &asked).expect_err(&asked.join(" "));
+
+            assert!(
+                refused.to_string().contains("naming a bead"),
+                "{asked:?} got: {refused}"
+            );
         }
     }
 
