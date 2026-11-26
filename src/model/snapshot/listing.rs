@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::config::Delivery;
+use crate::model::anomaly::Anomaly;
 use crate::model::badges::Badged;
 use crate::model::edges::Related;
 use crate::model::gate;
@@ -45,6 +46,7 @@ struct Listed<'a> {
     blocked_by: &'a [String],
     orphaned_dependencies: &'a [OrphanedDependency],
     agent: Option<&'a AgentRef>,
+    anomalies: &'a [Anomaly],
     badges: &'a [Badged],
     labels: &'a [String],
     parent: Option<BeadKey>,
@@ -80,6 +82,7 @@ impl<'a> Listed<'a> {
             blocked_by: &node.blocked_by,
             orphaned_dependencies: &node.orphaned_dependencies,
             agent: node.agent.as_ref(),
+            anomalies: &node.anomalies,
             badges: &node.badges,
             labels: &node.labels,
             parent: node.parent_key(),
