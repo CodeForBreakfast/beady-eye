@@ -480,7 +480,7 @@ the `bd` command on:
 | reopen | `reopen <bead>` | `o` |
 | respond to a bead that needs a human | `human respond <bead> <response>` or `human respond <bead> --response <response>` | `R` |
 | dismiss a bead that needs a human | `human dismiss <bead> [<reason>]` | `X` |
-| defer until a date | `defer <bead> --until <date>` | `z` |
+| defer until a date, or with none until it is undeferred | `defer <bead> [--until <date>]` | `z`, with a date |
 | release the claim of an agent that is gone | `unclaim <bead> --if-assignee <holder>` | `u` |
 | set the priority | `update <bead> --priority <p>` | `p` |
 
