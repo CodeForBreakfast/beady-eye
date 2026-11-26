@@ -491,8 +491,9 @@ goes after `--`. `u` is offered only on a bead the eye flags as a claim with
 no live agent, and it names the holder, so `bd` refuses it if the bead's
 assignee has changed since. It needs bd 1.2.0 or newer, the first with
 `--if-assignee`. `bdi --beads` gives each bead deferred to a date
-its `defer_until`. `X` and the page's dismiss form close the bead at once,
-with no reason, so give one through `bdi bd` where it matters. Anything bigger, such as a new
+its `defer_until`. Responding and dismissing both close the bead, as
+`bd` does. `X` and the page's dismiss form give no reason, so give one through
+`bdi bd` where it matters. Anything bigger, such as a new
 title, a dependency or a new bead, is an agent's job: comment on the bead to
 ask for it.
 
