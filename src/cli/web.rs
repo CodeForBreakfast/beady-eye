@@ -36,7 +36,7 @@ use crate::view::forest::listed;
 use crate::view::{phrase, Notice};
 
 use super::{
-    arming, parses_as_launched, passing, read_config, where_producers_find_this_run,
+    arming, parses_as_launched, read_config, where_producers_find_this_run,
     where_this_machine_watches, Launch, Polling, Reading, ViewOptions,
 };
 
@@ -755,7 +755,7 @@ fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
         )
             .into();
     };
-    let made = passing(runner, project, &write.words(&bead.id)).and_then(|(argv, env)| {
+    let made = bd::writing(runner, project, &write.words(&bead.id)).and_then(|(argv, env)| {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         Ok(runner.run("bd", &argv, Some(&project.path), &env)?)
     });

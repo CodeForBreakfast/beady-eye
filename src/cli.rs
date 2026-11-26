@@ -26,9 +26,9 @@ use crate::collect::hc;
 use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::stream;
-use crate::collect::tracker::{OpenFailure, Trackers};
+use crate::collect::tracker::Trackers;
 use crate::collect::watched::Through;
-use crate::config::{Config, Delivery, Poll, Project};
+use crate::config::{Config, Delivery, Poll};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{DependencyListing, Filter, Listing, Only, ReadyListing, Snapshot};
 use crate::tui::Hearing;
@@ -919,40 +919,13 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
         );
     };
     environment::forget_the_callers_tracker();
-    let (argv, env) = passing(&RealRunner, project, asked)?;
+    let (argv, env) = bd::writing(&RealRunner, project, asked)?;
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
     Ok(exited
         .code()
         .and_then(|code| u8::try_from(code).ok())
         .map_or(ExitCode::FAILURE, ExitCode::from))
-}
-
-/// What `bdi bd` runs for `asked` against `project`: bd's argv, which names
-/// that project's tracker and no other, and the environment bd runs in. The
-/// command line and a writable `bdi web` each make a write through this.
-fn passing(
-    runner: &dyn Runner,
-    project: &Project,
-    asked: &[String],
-) -> anyhow::Result<(Vec<String>, run::Env)> {
-    let argv = bd::passed_through(&project.path, asked)?;
-    let env = environment::tracker_env(
-        runner,
-        project,
-        environment::ambient_credential().as_deref(),
-        EnvironmentCache::here().as_ref(),
-    )
-    .map_err(|failure| match failure {
-        OpenFailure::NoEnvironment => {
-            anyhow::anyhow!("could not set up {}'s environment", project.name)
-        }
-        OpenFailure::NoCredential => {
-            anyhow::anyhow!("{}'s credential command failed", project.name)
-        }
-        OpenFailure::Refused(failure) => failure.into(),
-    })?;
-    Ok((argv, env))
 }
 
 /// A path the user named is read as written: a config that is not there is an
