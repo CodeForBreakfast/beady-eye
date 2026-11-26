@@ -132,12 +132,20 @@ pub struct Foot<'a> {
     /// What the reader's last keystroke came to, until their next key or
     /// click.
     pub said: Option<&'a Said>,
-    /// What the reader has typed into the search prompt and where their
-    /// cursor stands in it, while one is up.
-    pub prompt: Option<&'a Query>,
+    /// The prompt up at the foot, the search prompt or the entry taking a
+    /// write's words, while one is.
+    pub prompt: Option<Prompt<'a>>,
     /// The row of keys and every shorter form of it the loop will stand
     /// behind, fullest first.
     pub keys: &'a [String],
+}
+
+/// A prompt at the foot: what it asks for, and what the reader has typed into
+/// it and where their cursor stands.
+#[derive(Clone, Copy)]
+pub struct Prompt<'a> {
+    pub asks: &'a str,
+    pub query: &'a Query,
 }
 
 /// Draw the forest and the foot into the bands `regions` gave them, leaving
@@ -180,7 +188,8 @@ pub fn draw(
         status_bar(
             &notices(forest.snapshot(), foot.standing),
             foot.said,
-            foot.prompt.map(Query::typed),
+            foot.prompt
+                .map(|prompt| phrase::prompt(prompt.asks, prompt.query.typed())),
             foot.keys,
             forest.spine(),
             forest.is_focused(),
@@ -188,15 +197,15 @@ pub fn draw(
         ),
         bands.keys,
     );
-    if let Some(query) = foot.prompt {
-        frame.set_cursor_position(prompt_cursor(query, bands.keys));
+    if let Some(prompt) = foot.prompt {
+        frame.set_cursor_position(prompt_cursor(prompt, bands.keys));
     }
 }
 
 /// Where the terminal's cursor goes while the prompt is up: in the query where
 /// the reader is typing, and never past the last column of the row.
-fn prompt_cursor(query: &Query, row: Rect) -> Position {
-    let into = phrase::prompt("").chars().count() + query.columns_before_cursor();
+fn prompt_cursor(prompt: Prompt<'_>, row: Rect) -> Position {
+    let into = prompt.asks.chars().count() + prompt.query.columns_before_cursor();
     let last = row.width.saturating_sub(1);
     Position {
         x: row.x + u16::try_from(into).unwrap_or(u16::MAX).min(last),
@@ -772,7 +781,10 @@ mod tests {
                     Foot {
                         standing: &[],
                         said: None,
-                        prompt: Some(query),
+                        prompt: Some(Prompt {
+                            asks: phrase::SEEKING,
+                            query,
+                        }),
                         keys: &a_key_row(),
                     },
                 );

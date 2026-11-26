@@ -665,6 +665,7 @@ impl Forest {
             | Action::Search
             | Action::NextMatch
             | Action::PreviousMatch
+            | Action::Write(_)
             | Action::Refresh
             | Action::Quit => return false,
         };
