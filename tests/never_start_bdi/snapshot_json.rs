@@ -478,12 +478,9 @@ fn an_agent_session_two_live_panes_hold_is_a_conflict_naming_the_panes() {
     );
 }
 
-/// The anomaly rules read the agent rather than the pane. A claim whose
-/// agent session no live pane holds has lost its agent even though the pane
-/// it names is alive, and a closed bead whose agent is still running in
-/// another pane has outlived it.
-#[test]
-fn the_anomaly_rules_follow_the_agent_session_rather_than_the_pane() {
+/// A claim whose pane now holds another agent's session, `sess-later`, and a
+/// closed bead whose agent is still running in another pane.
+fn a_claim_on_a_pane_another_agent_holds() -> (Canned, Fakes) {
     let herdr = Canned::default().herdr_holding(
         r#"{"id":"cli:agent:list","result":{"agents":[
           {"pane_id":"w:p1","cwd":"/srv/work/dunwich","agent_status":"idle","agent":"claude",
@@ -501,14 +498,40 @@ fn the_anomaly_rules_follow_the_agent_session_rather_than_the_pane() {
              "priority":2,"issue_type":"task","closed_at":"2026-08-28T09:00:00Z",
              "metadata":{"agent_pane":"w:p2","agent_session":"sess-mast"}}]"#,
     );
+    (herdr, dunwich_with(tracker))
+}
 
-    let emitted = emit(&herdr, &dunwich_with(tracker), Filter::LiveAgents);
+/// What took `dun-7`'s claim in `a_claim_on_a_pane_another_agent_holds`.
+fn its_pane_holds_another_agent_session() -> Value {
+    json!({
+        "conflict": "pane-holds-another-agent-session",
+        "bead": {"project": "dunwich", "id": "dun-7"},
+        "pane": {"session": "default", "id": "w:p1"},
+        "agent_session": "sess-dish",
+        "pane_agent_session": "sess-later",
+    })
+}
+
+/// The anomaly rules read the agent rather than the pane. A claim whose
+/// agent session no live pane holds has lost its agent even though the pane
+/// it names is alive, and the session the pane holds instead is the reason
+/// given. A closed bead whose agent is still running in another pane has
+/// outlived it.
+#[test]
+fn the_anomaly_rules_follow_the_agent_session_rather_than_the_pane() {
+    let (herdr, trackers) = a_claim_on_a_pane_another_agent_holds();
+
+    let emitted = emit(&herdr, &trackers, Filter::LiveAgents);
     let tree = &emitted["trees"][0];
 
     assert_eq!(node(tree, "dun-7")["agent"], Value::Null);
     assert_eq!(
+        emitted["conflicts"],
+        json!([its_pane_holds_another_agent_session()])
+    );
+    assert_eq!(
         node(tree, "dun-7")["anomalies"],
-        json!([{"rule": "orphan-claim"}])
+        json!([{"rule": "orphan-claim", "refused": its_pane_holds_another_agent_session()}])
     );
     assert_eq!(node(tree, "dun-7.2")["agent"]["pane"]["id"], "w:p4");
     assert_eq!(
@@ -523,6 +546,22 @@ fn the_anomaly_rules_follow_the_agent_session_rather_than_the_pane() {
             .map(|pane| pane["pane"]["id"].clone())
             .collect::<Vec<_>>(),
         vec![json!("w:p1")]
+    );
+    assert_eq!(emitted["unattributed"][0]["claim_refused"], true);
+}
+
+/// `--beads` says why a bead's claim has no agent, as its node does.
+#[test]
+fn a_listed_bead_says_which_agent_session_its_pane_holds_instead() {
+    let (herdr, trackers) = a_claim_on_a_pane_another_agent_holds();
+
+    let listed = listing_over(&cfg(), &herdr, &trackers);
+
+    let dun_7 = listed_once(&listed, "dunwich", "dun-7");
+    assert_eq!(dun_7["agent"], Value::Null);
+    assert_eq!(
+        dun_7["anomalies"],
+        json!([{"rule": "orphan-claim", "refused": its_pane_holds_another_agent_session()}])
     );
 }
 
