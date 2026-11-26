@@ -30,11 +30,14 @@ export HOME="$ground" XDG_CONFIG_HOME="$ground/.config"
 # Every `bd` here must reach the trackers laid here and nothing else, both
 # below and in the steps herdr takes later. A maintainer's shell points
 # BEADS_DIR at a real tracker, and bd prefers it to the directory it runs in,
-# so the ground's beads would land there.
+# so the ground's beads would land there. A caller's GIT_DIR would likewise
+# have each tracker's `git init` reach the caller's repository.
 cat >"$ground/isolate" <<'SH'
 for var in $(env | grep -E '^(BEADS|BD)_' | cut -d= -f1); do
   unset "$var"
 done
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
 export BEADS_ACTOR=wilbur BD_DISABLE_METRICS=1
 SH
 # shellcheck source=/dev/null

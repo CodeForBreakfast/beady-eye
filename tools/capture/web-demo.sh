@@ -66,15 +66,25 @@ set -m
 "$ground/web" --listen "$listen" --poll >"$ground/web.out" &
 web=$!
 set +m
-# The cycle starts once the page has read both trackers, so it opens on the
+# The cycle starts once the page has drawn both trackers, so it opens on the
 # beads as they start.
 url=
-until [ -n "$url" ] && curl -sf --noproxy "*" "$url/healthz" >/dev/null; do
-  kill -0 "$web" 2>/dev/null || exit 1
-  sleep 0.1
+deadline=$((SECONDS + 30))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  kill -0 "$web" 2>/dev/null || break
   url=$(sed -n 's/^bdi web is answering on //p' "$ground/web.out")
+  page="$url/?open=b%3Aarkham%3Aark-1&open=b%3Aarkham%3Aark-2&open=b%3Adunwich%3Adun-1"
+  [ -n "$url" ] && curl -sf -m 5 --noproxy "*" "$page" >"$ground/page.html" &&
+    grep -q 'arkham/ark-1.1' "$ground/page.html" &&
+    grep -q 'dunwich/dun-1.1' "$ground/page.html" && break
+  url=
+  sleep 0.1
 done
-echo "Open $url/?open=b%3Aarkham%3Aark-1&open=b%3Aarkham%3Aark-2&open=b%3Adunwich%3Adun-1"
+if [ -z "$url" ]; then
+  echo "bdi web never drew both projects" >&2
+  exit 1
+fi
+echo "Open $page"
 
 # The bd actor of the agent that takes the live keys.
 agent=live-keys
