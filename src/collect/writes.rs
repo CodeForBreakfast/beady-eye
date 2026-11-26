@@ -1,11 +1,12 @@
 //! The light-touch writes a person makes from the terminal, made in turn on a
 //! thread of their own so that a tracker slow to answer never holds the screen.
 
+use std::path::Path;
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::collect::bd::{self, Write};
-use crate::collect::run::{RealRunner, Runner};
+use crate::collect::run::{self, Env, RealRunner, RunFailure};
 use crate::config::Project;
 use crate::model::join::BeadKey;
 
@@ -106,9 +107,28 @@ impl Drop for Writer {
 /// the bead on the screen was read from.
 fn written(project: &Project, asked: &[String]) -> anyhow::Result<()> {
     let (argv, env) = bd::writing(&RealRunner, project, asked)?;
+    made("bd", &argv, Some(&project.path), &env)
+}
+
+/// Run a write, and where it is refused say why in the words it was refused
+/// in, on one line. Only the person who made the write reads them, on their
+/// own terminal, where `bdi bd` shows bd's stderr too.
+fn made(program: &str, argv: &[String], cwd: Option<&Path>, env: &Env) -> anyhow::Result<()> {
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-    RealRunner.run("bd", &argv, Some(&project.path), &env)?;
-    Ok(())
+    let out = run::captured(program, &argv, cwd, env)?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if said.is_empty() {
+        return Err(RunFailure::from_exit(program, out.status.code(), "").into());
+    }
+    anyhow::bail!("{}", said.strip_prefix("Error: ").unwrap_or(&said))
 }
 
 #[cfg(test)]
@@ -155,6 +175,45 @@ mod tests {
                 Write::Priority.asked("dun-0tp", "1"),
                 Write::Priority.asked("dun-0tp", "2"),
             ]
+        );
+    }
+
+    /// A refused write says why in bd's own words, on one line, because the
+    /// person who made it is the one reading them.
+    #[test]
+    fn a_refused_write_says_why_in_the_words_it_was_refused_in() {
+        let refused = made(
+            "sh",
+            &[
+                "-c".to_string(),
+                "printf 'Error: invalid --until format \"someday\"\\nHint: try tomorrow\\n' >&2; exit 1"
+                    .to_string(),
+            ],
+            None,
+            &Env::new(),
+        )
+        .expect_err("refused");
+
+        assert_eq!(
+            format!("{refused:#}"),
+            "invalid --until format \"someday\" Hint: try tomorrow"
+        );
+    }
+
+    /// A refusal bd gave no words for is still said, in bdi's own.
+    #[test]
+    fn a_write_refused_in_silence_says_how_it_ended() {
+        let refused = made(
+            "sh",
+            &["-c".to_string(), "exit 3".to_string()],
+            None,
+            &Env::new(),
+        )
+        .expect_err("refused");
+
+        assert_eq!(
+            format!("{refused:#}"),
+            "sh exited 3 for a reason bdi cannot place"
         );
     }
 
