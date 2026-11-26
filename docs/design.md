@@ -116,6 +116,7 @@ coin one — and say so.**
 | **reference** | *coined* | a bead named on the web page: its glyph, its id second to its title, and a link that opens it. One component draws every one, a row of the forest and a bead the bead view names alike. Neither project draws a bead anywhere a reader can follow it. |
 | **address** | *coined* | where the web page shows one bead, `/<project>/<id>`, each part percent-encoded, with the project as the config names it. A client composes it from the bead's project and id and nothing else. |
 | **cell** | *coined* | one named thing a bead's row draws, in whichever block the row's layout puts it: a built-in — `glyph`, `id`, `title`, `badges`, `progress`, `agent`, `anomalies` — or one badge as `badge.<key>`. Notes and the fold's counts are not cells; they trail the state whatever the layout says. Neither project names the parts of a drawn row. |
+| **light-touch write** | *coined* | a small decision a person makes on a bead, which `bdi` carries to the tracker as one bd command: a comment, a close, a reopen, a response or a dismissal, a deferral, a released claim or a priority (see *Light-touch writes*). Neither project names the set. |
 
 ### Three different things are called "blocked"
 
@@ -143,13 +144,62 @@ and draws the join.
 Anything workflow-specific is expressed as configuration, not code. See
 *Conventions are configuration* below.
 
+## Light-touch writes
+
+**`bdi` may make any write bd makes, and it carries the small decisions a
+person makes.** bd is built for agents to work on a person's behalf, so the
+bigger edits stay with agents: a title or a description, dependencies,
+labels, and filing a bead. A person asks an agent for one by commenting on the
+bead, and the plugin tells a session watching the bead of the comment.
+*Watching the work a session holds* says which beads a session watches
+without asking. `bdi` presents bd's own features and builds nothing on top of
+them, so anything layered on top is configuration. Nothing stops a person running bd
+themselves, so `bdi` puts no warning or guard in front of a write.
+
+That rule says what may be added, and no bd write is ruled out of `bdi` for
+being a write. The light-touch writes `bdi` makes today are the list below and
+nothing else, and a write joins them only by being added to `PASSED_THROUGH`.
+Settling a gate is a write of its own, which `bdi gates` makes. Each
+light-touch write is one bd command:
+
+| write | bd runs | terminal key | web page |
+|---|---|---|---|
+| comment | `bd comments add` | `m` | yes |
+| close, with a reason or none | `bd close`, with `--reason` where one is typed | `x` | yes |
+| reopen | `bd reopen` | `o` | yes |
+| respond to a human-needed bead | `bd human respond --response` | `R` | yes |
+| dismiss a human-needed bead | `bd human dismiss` | `X` | yes |
+| defer until a date | `bd defer --until` | `z` | yes |
+| release the claim of an agent that is gone | `bd unclaim --if-assignee` | `u` | no |
+| set the priority | `bd update --priority` | `p` | yes |
+
+Each write goes into `bdi bd` once, in `collect/bd.rs`, and the terminal's
+bead view and a writable `bdi web` call the same function `bdi bd` does. That
+function checks the command line and starts bd in the project's tracker,
+entered as it is read, so no flag or variable can point it at another. bd
+still routes an id that tracker does not hold to wherever its routes say, so
+a writable `bdi web` takes a write only to an id its last read drew, which bd
+then resolves as it resolves any id. Releasing a
+claim rests on the anomaly for a claim with no live agent, so only the
+terminal offers it, because `bdi web` reads no agents. It names the holder,
+so bd refuses it if the bead's assignee has changed since.
+
+The terminal and `bdi bd` name no actor, so bd records the one the project's
+environment gives it, as it would for the person's own bd. A writable web page
+names its actor instead, and is guarded, because whoever reaches it is not
+known:
+
+- it takes no write unless whoever starts `bdi web` turns writes on with
+  `--writes`;
+- it writes as the one actor `[web] actor` names, and does not start without
+  one;
+- it refuses a write posted from another site, by the request's `Origin` and
+  by a token in each form, as *The web page* says;
+- `bdi` builds no login, so whatever fronts the page in a deployment decides
+  who reaches it.
+
 ## Non-goals for v1
 
-- **No repairs to bd.** It surfaces drift; you act. A viewer that also repairs
-  state is a second writer racing whatever else manages these beads. Its
-  writes carry only what someone outside `bdi` has already decided: a
-  person's answer, the date a person chose to put a bead off until, the comment
-  a person wrote, and what GitHub says became of a pull request.
 - **No Noctalia widget.** The JSON contract is specified here; no widget ships
   until the TUI has proved the data model.
 - **No cross-machine view.** One box. `herdr --remote` is a later consumer of
@@ -1435,15 +1485,15 @@ environment_command = "nix develop -c"
   `.envrc` and runs nothing where there is none, so the pass-through is a
   property `bdi` no longer needs rather than one it relies on.
 - **Every command line `bdi` spells is a read except where `bdi bd`
-  carries a person's reply or gates settles a gate, and that is a property of
-  the subcommands `collect/` composes and of nothing beside them.** The first write is `bdi bd`'s `bd human respond`,
-  which records a person's answer in the tracker of the project it names,
-  without `--readonly`. The second is `bdi bd`'s `bd defer --until`, which
-  puts a bead off until the date a person chose, the same way. The third is
-  `bdi bd`'s `bd comments add`, which puts a comment a person wrote on a bead,
-  the same way. The fourth is settling a gate: `bd gate resolve` on a
-  merge, an issue closing or a release published, and `bd comments add` on the beads it holds back on a close without
-  one, on failing or passing checks, on a review, on a conflict or on a comment. That the rest are
+  carries a light-touch write or gates settles a gate, and that is a property
+  of the subcommands `collect/` composes and of nothing beside them.** `bdi bd`'s
+  one write path runs each light-touch write *Light-touch writes* lists,
+  whether it comes from the command line, the terminal's bead view or a
+  writable `bdi web`, in the tracker of the project it names and without
+  `--readonly`. Settling a gate runs `bd gate
+  resolve` on a merge, an issue closing or a release published, and `bd
+  comments add` on the beads it holds back on a close without one, on failing
+  or passing checks, on a review, on a conflict or on a comment. That the rest are
   reads is not a no-writes rule. bd writes on its own account on the way to
   answering, so no property of the command line can exclude it, and *Reading a tracker is not
   leaving it alone* below says what it does. `--readonly` still earns its place
@@ -4655,7 +4705,18 @@ first read answers, the forest is each project's line with that mark, as the
 terminal opens, and a bead's page says the trackers are still being read.
 `/healthz` passes once every project has been asked once, whether or not its
 tracker answered, because a tracker that fails is drawn as failing. No reader
-signs in, and it is read-only unless `--writes` starts it.
+signs in, and it takes no write unless `--writes` starts it.
+
+**A writable page offers a form on each bead's page for each light-touch write
+but releasing a claim.** It flags no claim with no live agent, because it reads
+no agents. Each write is made as the one actor `[web] actor` names, passed to
+bd as `--actor`, and a run started with `--writes` and no actor refuses to
+start. A write that lands sends the reader back to the bead's page with `303
+See Other`, and asks for the project to be read again without waiting for that
+read. So the page the reader lands on can still show the bead as it stood, and
+an open page redraws it once the read answers. A refused one says what bdi
+made of bd's failure, as a read's failure is said, and never shows bd's own
+stderr, which can name the tracker's credentials.
 
 **It answers only the names it was told it serves.** With no sign-in, a page
 elsewhere could point a name of its own at the listener and have a visitor's

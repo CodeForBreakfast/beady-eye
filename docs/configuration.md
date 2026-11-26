@@ -281,9 +281,9 @@ it in a directory of its own under `~/.cache/beady-eye/trackers/`, one per
 database, and makes that directory again whenever it is gone. The password
 comes from the entry's `credential_command` or the shell `bdi` was started in,
 as it does for a checkout. A user that only reads the database is enough for
-`bdi`'s view and the watcher. `bdi bd`'s `human respond`, `defer` and `comments add` and
-`bdi gates` write, and on a Dolt server bd's own commit of a write needs every privilege on the
-database.
+`bdi`'s view and the watcher. The light-touch writes, from `bdi bd`, the view
+or a writable `bdi web`, and `bdi gates` write, and on a Dolt server bd's own
+commit of a write needs every privilege on the database.
 
 Without a checkout there is no environment to enter, so the tracker is read
 with the `bd` on `bdi`'s own `PATH`, unless the entry names an
@@ -945,7 +945,8 @@ config. A `bdi web` started with `--writes` and no `actor` refuses to start.
 
 `bdi web` reads `actor` when it starts, so an edit to it waits for a restart.
 A `bdi web` without `--writes` does not use it, and neither do the view and
-`bdi bd`, which write as the person running them.
+`bdi bd`, which name no actor and leave bd to record the one the project's
+environment gives it.
 
 ## `[anomalies]`
 
@@ -1607,7 +1608,8 @@ hard: `bdi`'s read waits behind the writes, and a read taking longer than
 
 ## Each tracker read by its own bd
 
-`bdi` writes to a tracker only when `bdi bd` records a person's answer, but a
+`bdi` writes to a tracker only to make a person's light-touch write or to
+settle a gate, but a
 bd older than 1.3.0 also writes when it is asked to read: on finding
 itself newer than the bd that last opened a tracker, it rewrites
 `.beads/.local_version` and migrates the schema, before running whatever
