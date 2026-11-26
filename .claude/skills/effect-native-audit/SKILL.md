@@ -1,6 +1,6 @@
 ---
 name: effect-native-audit
-description: Use when asked to audit the Claude Code plugin under plugin/ for places it hand-rolled what Effect ships natively, or to run the Effect-native sweep. Triggers on "effect-native audit", "where are we reinventing Effect", "rolled our own instead of an Effect builtin", "sweep for native Effect helpers", "audit our FP/Effect modelling", "audit our concurrency/error handling". A workflow-driven substitution, structural, modelling and behaviour audit — not a substitute for the Effect language service or the plugin's Biome rules.
+description: Use when asked to audit the Claude Code plugin under plugin/ for places it hand-rolled what Effect ships natively, or to run the Effect-native sweep. A workflow-driven substitution, structural, modelling and behaviour audit — not a substitute for the Effect language service or the plugin's Biome rules.
 ---
 
 # Effect-native capability audit

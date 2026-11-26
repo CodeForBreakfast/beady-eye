@@ -1,6 +1,6 @@
 ---
 name: renovate
-description: Use when asked to triage, review, evaluate, drain or process beady-eye's Renovate pull requests — the minor, major and lock-file-maintenance bumps Renovate opens and holds rather than merging. Also use for a held bump of beads, the flake input that pins bd, at any update type, patch included. Triggers on "review the renovate PRs", "triage renovate", "drain the dependency queue", "the held bumps", "review the beads bump". Not for cutting a release, and not for the other patch and digest updates Renovate lands on its own.
+description: Use when asked to triage, review, evaluate, drain or process beady-eye's Renovate pull requests — the minor, major and lock-file-maintenance bumps Renovate opens and holds rather than merging. Also use for a held bump of beads, the flake input that pins bd, at any update type, patch included. Not for cutting a release, and not for the other patch and digest updates Renovate lands on its own.
 ---
 
 # Evaluate held Renovate pull requests

@@ -1,18 +1,9 @@
 # beady-eye — working notes
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
-root, annotated with the live agent on each node. It writes in two ways. `bdi bd`
-is the command that whatever showed a person a question calls to carry their
-reply to the right tracker: it passes `bd human respond` through to carry an
-answer, `bd defer --until` to put a bead off until a date the person chose,
-and `bd comments add` to put their words on a bead. Gates is a writer fed by
-GitHub, the clock and other trackers: `bdi gates` settles a gate once GitHub says its pull request
-has merged, closed, or left draft, its issue has closed, its workflow run has
-succeeded or been skipped, or its repository has published a release, closes a
-timer gate at its deadline, and closes a bead gate once the bead it awaits has
-closed. Every other bd
-command line `bdi`
-spells is a read, and `collect/` spells all of them.
+root, annotated with the live agent on each node. It writes to a tracker only
+through `bdi bd` and by settling gates, as the next two sections say. Every
+other bd command line `bdi` spells is a read, and `collect/` spells all of them.
 `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
 measurements.
 
@@ -21,9 +12,10 @@ measurements.
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
 - The reading side: which `bd`, `herdr`, `hc` and `gh` command lines it spells, and
   how it parses what they print.
-- `bdi bd`, which carries a person's reply to the right tracker: their answer
-  to the bead that asked, the date they chose to defer a bead until, or their
-  comment on a bead.
+- `bdi bd`, which carries a person's reply to the right tracker. It passes
+  through `bd human respond` for their answer, which closes the bead that
+  asked, `bd defer --until` for the date they chose, and `bd comments add` for
+  their comment.
 - Gates, which settles a gate:
   it re-reads the pull request from GitHub, closes the gate on a merge, and
   on a close without one tells the beads the gate holds back. A gate on an
@@ -45,13 +37,8 @@ measurements.
 - **herdr.** Panes, agent detection and agent status belong to the herdr
   project, and the herdr app's terminals and their status to its `hc`. `bdi`
   draws what each reports.
-- **Every other write to a tracker.** `bdi` never creates a bead, and it
-  writes only through `bdi bd` and by settling gates. `bdi bd`'s
-  `human respond` records a person's answer and closes the bead that asked, its `defer` puts a bead
-  off until a date, and its `comments add` puts a person's comment on a bead.
-  Settling a gate closes it or
-  comments on the beads it holds back. Whoever runs `bdi` does
-  everything else with `bd`, creating the gate included.
+- **Every other write to a tracker.** `bdi` never creates a bead. Whoever runs
+  `bdi` does everything else with `bd`, creating the gate included.
 - **How agents are organised.** `bdi` knows no roles, orchestration model or
   skill names. A convention a setup keeps in bead metadata is named in the
   user's config and drawn without interpretation.
@@ -60,12 +47,8 @@ measurements.
 
 ## Building and testing
 
-`nix develop` gives you the toolchain: `cargo`, `clippy`, `rustfmt` and
-`rust-analyzer`. `cargo build` and `cargo test` work as usual inside the shell.
-
-`nix flake check` is the whole of CI, and `check-before-push` is what to run
-before you push: it runs the check, and refuses a dirty tree rather than check a
-source nix cannot see all of.
+`CONTRIBUTING.md` covers the toolchain, the tests' layout and what to run
+before you push. These are the traps it does not.
 
 `plugin/` is the Claude Code plugin's TypeScript workspace, and the dev shell
 gives `bun`, `biome` and `tsc` for it. `nix flake check` runs its typecheck,
@@ -76,23 +59,16 @@ copy the hash the failed build reports.
 Once it is pushed, `read-ci-verdict [<commit>]` says whether CI passed for it,
 and `read-ci-verdict --help` says why an empty answer from `gh` is not one.
 
-Unit tests live in `#[cfg(test)]` modules inside the file they cover; `tests/`
-holds the integration tests, which either link the library or run the built
-binary. Each top-level file there is a binary of its own and costs a link, so
-a test that never starts `bdi` and sets no environment variable is a module of
-`tests/never_start_bdi/` instead. A test that reaches a module no test has reached before needs that
-module opening up in `src/lib.rs`, which says why. Fixtures under
-`tests/fixtures/` are faithful captures of what `bd list`, `bd query`,
-`herdr agent list` and `hc connect` put on the wire.
+Each top-level file in `tests/` is a binary of its own and costs a link, so a
+test that never starts `bdi` and sets no environment variable is a module of
+`tests/never_start_bdi/` instead. A test that reaches a module no test has
+reached before needs that module opening up in `src/lib.rs`, which says why.
 
 A pty test drives `bdi` through `tests/terminal/driver.rs`, which drains the
-terminal on a thread of its own from the moment `bdi` starts. So never read the
-master yourself, and never take a test's silence as a licence to stop draining.
-
-Stopping is a deadlock rather than a delay. A `bdi` blocked in `write` cannot
-finish exiting, and a process that cannot finish exiting is never reaped — so a
-wait for it that stops reading in order to wait is each side waiting for the
-other, and it does not end.
+terminal on a thread of its own from the moment `bdi` starts. Never read the
+master yourself, and never stop draining because a test has gone quiet. A `bdi`
+blocked in `write` cannot finish exiting, so a wait that stops reading
+deadlocks rather than delays. The driver's module comment has the measurements.
 
 An absence assertion has to name the thing whose absence it means, and on this
 screen that is rarely a bead's id. The bead window is drawn from the
@@ -106,39 +82,12 @@ back.
 
 ## PR policy
 
-Changes reach `main` through a pull request, squash-merged — nothing is pushed
-to `main` directly. The pull request is what puts CI in front of a change
-before the branch everyone else works from carries it.
-
-### The subject
-
-The pull request's **title** becomes the commit subject, because the merge is a
-squash — so it is the only line of the branch `main` keeps. The branch's own
-commit messages are squashed away, but they stay reachable on GitHub after the
-merge, so they are read as well. Write the title as a conventional commit:
-
-    type(scope): description
-
-- **type** is one of `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
-  `refactor`, `revert`, `style`, `test`. A `!` before the colon marks a breaking
-  change.
-- **scope** is optional and closed: `collect`, `app`, `model`, `view`, `tui` —
-  the five layers under *Where things are* — plus `ci`, `flake`, `docs`,
-  `tests`, `deps`. Leave it out rather than coin one; a new scope is a change to
-  the check.
-- **description** is lower case, in the imperative, and has no full stop at the
-  end. It has to finish the sentence *"If applied, this commit will …"* — so
-  `draw a bead id in its status colour`, never `draws`, `drew` or `drawing`. An
-  acronym or a name keeps its capitals: `GitHub`, `CI`, `NO_COLOR`.
-- **72 characters**.
-
-Say what changed in the subject and why in the body, in a sentence or two. A
-subject carrying the reason wraps in `git log --oneline`, in blame and in
-bisect — three places a reader meets it and none where they want the argument.
-
-The `conventional subject` job refuses a title that is none of this. Run
-`conventional-subject '<title>'` in the dev shell for the same verdict before
-you open the pull request.
+Changes reach `main` through a pull request, squash-merged, so the title becomes
+the commit subject and the body the commit message. `CONTRIBUTING.md`'s
+*Opening a pull request* has the conventional-commit rule for the title, and
+`conventional-subject '<title>'` gives CI's verdict before you open one. Say
+what changed in the subject and why in the body, in a sentence or two, because
+a subject carrying the reason wraps in `git log --oneline`, blame and bisect.
 
 ## Where things are
 
