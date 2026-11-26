@@ -748,6 +748,11 @@ enum Write {
 }
 
 impl Write {
+    /// Whether a page offers a write named `named`, with a form of its own.
+    fn offered(named: &str) -> bool {
+        named == COMMENT
+    }
+
     /// The write a post to an address ending in `named` asks for with the
     /// form `form`, or nothing where it asks for none.
     fn asked(named: &str, form: &str) -> Option<Self> {
@@ -772,9 +777,9 @@ impl Write {
 /// The refusal of a post to a write's address whose form carries no token
 /// `tokens` issued for that write, which links back to the bead's page for
 /// a fresh form. Nothing for a post whose form carries one, or for a post to
-/// an address that names no write.
+/// an address that names no write a page offers.
 fn not_issued(head: &Head, form: &[u8], tokens: &Tokens) -> Option<Reply> {
-    let (bead, named) = address::written(head.path())?;
+    let (bead, named) = address::written(head.path()).filter(|(_, named)| Write::offered(named))?;
     let issued = std::str::from_utf8(form)
         .ok()
         .and_then(|form| address::field(form, TOKEN))
@@ -2121,6 +2126,24 @@ mod tests {
             replied_by(&posting, &latest, Some(&writer)).status,
             "303 See Other"
         );
+    }
+
+    /// A post to a write no page offers says it asks for none, rather than
+    /// that its form is stale, since no page issues a form for it.
+    #[test]
+    fn a_post_to_a_write_no_page_offers_is_not_told_its_form_is_stale() {
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted_with(
+                "/arkham/ark-1/commnet",
+                &format!("Host: {BEADS}\r\nOrigin: http://{BEADS}\r\n"),
+                "text=hello",
+            ),
+            &arkham_held(),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "400 Bad Request", "{}", reply.body);
+        assert_eq!(runner.calls(), []);
     }
 
     /// A form this run did not issue is refused while another write is being
