@@ -21,7 +21,7 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, ProviderState, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
-use crate::view::address::{line_name, Asked, Root, FIND, SHOWN};
+use crate::view::address::{line_name, writing, Asked, Root, COMMENT, FIND, SHOWN, TEXT};
 use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
@@ -57,6 +57,9 @@ pub struct Drawn {
     pub collecting: Vec<Awaited>,
     /// The projects nothing has vouched for lately.
     pub lapsed: Vec<String>,
+    /// Whether the page offers writes, which only a `bdi web` started with
+    /// them turned on takes.
+    pub writable: bool,
 }
 
 /// The attribute of a kept-current page's root element that names its
@@ -80,6 +83,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         layout,
         asked,
         selected: (node.is_some() || matched).then(|| forest.selected_line()),
+        writable: drawn.writable,
     };
 
     let title = node.map_or_else(
@@ -126,6 +130,17 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         found: asked.bead.is_none() || node.is_some(),
         html: kept_current(&title, &html),
     }
+}
+
+/// The form on a writable page's bead view that adds a comment to `key`.
+fn commenting(html: &mut String, key: &BeadKey) {
+    html.push_str(&format!(
+        "<form class=\"write\" action=\"{}\" method=\"post\"><label>{}\
+         <textarea name=\"{TEXT}\" required></textarea></label><button>{}</button></form>",
+        escaped(&writing(key, COMMENT)),
+        escaped(phrase::comment()),
+        escaped(phrase::add_comment())
+    ));
 }
 
 /// What the band over a page says of one root the page asks to be drawn with.
@@ -216,6 +231,7 @@ struct Drawing<'a> {
     layout: &'a Layout,
     asked: &'a Asked,
     selected: Option<usize>,
+    writable: bool,
 }
 
 impl Drawing<'_> {
@@ -920,6 +936,9 @@ impl Drawing<'_> {
         }
         for tied in &page.tied {
             self.tied(html, tied, &named);
+        }
+        if self.writable {
+            commenting(html, &node.key());
         }
         html.push_str("</div>");
     }
@@ -1642,6 +1661,7 @@ border-radius:8px;background:none;color:var(--muted);font:500 var(--size-detail)
 .acts>:hover{background:var(--sunk);color:var(--fg)}\
 .acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
 aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
+.write label{display:block}.write textarea{display:block;box-sizing:border-box;width:100%;min-height:6em;margin:6px 0}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
 overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
 main.open .line .bead>.project{display:none}}\
@@ -2296,6 +2316,7 @@ mod tests {
             offset: FixedOffset::east_opt(3600).expect("an offset"),
             collecting: Vec::new(),
             lapsed: Vec::new(),
+            writable: false,
         }
     }
 
@@ -4127,6 +4148,36 @@ mod tests {
             )),
             "{bar}"
         );
+    }
+
+    /// A bead's page on a page that takes writes ends with the form that
+    /// comments on the bead, posted to the bead's own address for it. A page
+    /// that takes none draws no form that posts.
+    #[test]
+    fn only_a_writable_page_offers_a_comment_on_the_bead() {
+        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("a bead's page");
+        let writable = Drawn {
+            writable: true,
+            ..drawing()
+        };
+        let html = page(ground(), &Layout::default(), &asked, writable).html;
+        let bead = inside(aside_of(&html), "page");
+        let form = &bead[bead.find("<form").expect("a comment form")..];
+        assert!(
+            form.starts_with(
+                "<form class=\"write\" action=\"/summit-works/smt-4kd3p.6/comment\" method=\"post\">"
+            ),
+            "{form}"
+        );
+        assert!(form.contains("<textarea name=\"text\" required>"), "{form}");
+        assert_eq!(
+            text_of(form),
+            [phrase::comment(), phrase::add_comment()].concat()
+        );
+
+        let read_only = page(ground(), &Layout::default(), &asked, drawing()).html;
+        assert!(!read_only.contains("method=\"post\""), "{read_only}");
+        assert!(!read_only.contains("<textarea"), "{read_only}");
     }
 
     /// Drawn with one bead as its only root, the page's head puts every tree

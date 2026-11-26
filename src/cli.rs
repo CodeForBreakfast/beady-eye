@@ -28,7 +28,7 @@ use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::stream;
 use crate::collect::tracker::{OpenFailure, Trackers};
 use crate::collect::watched::Through;
-use crate::config::{Config, Delivery, Poll};
+use crate::config::{Config, Delivery, Poll, Project};
 use crate::model::join::BeadKey;
 use crate::model::snapshot::{DependencyListing, Filter, Listing, Only, ReadyListing, Snapshot};
 use crate::tui::Hearing;
@@ -259,6 +259,11 @@ enum Passing {
         /// request is refused with 421 Misdirected Request.
         #[arg(long = "allow-host", value_name = "NAME")]
         allow_hosts: Vec<String>,
+        /// Take writes from the page, each made through bdi bd. bdi web asks
+        /// nobody to log in, so whoever reaches the page can write. Without
+        /// this the page offers no write and refuses every one.
+        #[arg(long)]
+        writes: bool,
         /// Read the configuration from this file, rather than
         /// ~/.config/beady-eye/config.toml.
         #[arg(long)]
@@ -429,6 +434,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
         Some(Passing::Web {
             listen,
             allow_hosts,
+            writes,
             config,
             view,
         }) => {
@@ -440,7 +446,13 @@ pub fn run() -> anyhow::Result<ExitCode> {
                 );
             }
             let config = expand_tilde(config.as_deref().unwrap_or(DEFAULT_CONFIG), home);
-            return web::web(&config, listen, web::Hosts(allow_hosts.clone()), view);
+            return web::web(
+                &config,
+                listen,
+                web::Hosts(allow_hosts.clone()),
+                *writes,
+                view,
+            );
         }
         Some(Passing::Gates {
             config,
@@ -902,10 +914,27 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
             config.display()
         );
     };
-    let argv = bd::passed_through(&project.path, asked)?;
     environment::forget_the_callers_tracker();
+    let (argv, env) = passing(&RealRunner, project, asked)?;
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
+    Ok(exited
+        .code()
+        .and_then(|code| u8::try_from(code).ok())
+        .map_or(ExitCode::FAILURE, ExitCode::from))
+}
+
+/// What `bdi bd` runs for `asked` against `project`: bd's argv, which names
+/// that project's tracker and no other, and the environment bd runs in. The
+/// command line and a writable `bdi web` each make a write through this.
+fn passing(
+    runner: &dyn Runner,
+    project: &Project,
+    asked: &[String],
+) -> anyhow::Result<(Vec<String>, run::Env)> {
+    let argv = bd::passed_through(&project.path, asked)?;
     let env = environment::tracker_env(
-        &RealRunner,
+        runner,
         project,
         environment::ambient_credential().as_deref(),
         EnvironmentCache::here().as_ref(),
@@ -919,12 +948,7 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
         }
         OpenFailure::Refused(failure) => failure.into(),
     })?;
-    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
-    Ok(exited
-        .code()
-        .and_then(|code| u8::try_from(code).ok())
-        .map_or(ExitCode::FAILURE, ExitCode::from))
+    Ok((argv, env))
 }
 
 /// A path the user named is read as written: a config that is not there is an
@@ -1804,6 +1828,17 @@ detached
             read(&["--project", "ferry", "--project", "dunwich"]),
             ["dunwich", "ferry"]
         );
+    }
+
+    /// `bdi web` takes writes only where `--writes` turns them on.
+    #[test]
+    fn bdi_web_takes_writes_only_when_told_to() {
+        let writes = |args: &[&str]| match bdi_web(args).passing {
+            Some(Passing::Web { writes, .. }) => writes,
+            _ => panic!("bdi web parsed as something else"),
+        };
+        assert!(!writes(&[]));
+        assert!(writes(&["--writes"]));
     }
 
     #[test]

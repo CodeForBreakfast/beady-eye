@@ -55,6 +55,7 @@ fn bdi_web(
     tracker: &ShimmedTracker,
     args: &[&str],
     runtime_dir: Option<&Path>,
+    exported: &[(&str, &str)],
 ) -> (Web, String) {
     let spawned_by = std::process::id();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
@@ -69,6 +70,7 @@ fn bdi_web(
         .env_remove("XDG_RUNTIME_DIR")
         .envs(runtime_dir.map(|dir| ("XDG_RUNTIME_DIR", dir)))
         .envs(tracker.environment())
+        .envs(exported.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     // Dropping a `Child` leaves its process running, and a test binary that
@@ -153,7 +155,7 @@ fn a_web_over(home: &Path, beads: &str, args: &[&str]) -> (Web, String) {
 fn serving(home: &Path, beads: &str, args: &[&str]) -> (Web, String, ShimmedTracker) {
     let tracker = ShimmedTracker::beside(home);
     tracker.holds(beads);
-    let (web, address) = bdi_web(home, &tracker, args, Some(home));
+    let (web, address) = bdi_web(home, &tracker, args, Some(home), &[]);
     until_it_has_read(&address);
     (web, address, tracker)
 }
@@ -174,7 +176,7 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
     let home = a_home_naming_one_project("web-no-socket");
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
-    let (mut web, address) = bdi_web(&home, &tracker, &[], None);
+    let (mut web, address) = bdi_web(&home, &tracker, &[], None, &[]);
     until_it_has_read(&address);
     std::thread::sleep(Duration::from_millis(500));
     assert!(
@@ -675,4 +677,54 @@ fn each_view_picked_from_the_menu_lists_only_what_it_selects() {
             );
         }
     }
+}
+
+/// A comment, as the shim records the call past the `-C` naming the tracker.
+const COMMENTED: &str = "comments add dun-0tp -- the gate is shut";
+
+/// A database the shell that started `bdi web` exports never reaches bd, so
+/// a comment lands where the project's own config says. Only the project's
+/// tracker has an answer, so a redirected write is refused.
+#[test]
+fn a_database_the_caller_exports_does_not_redirect_a_write() {
+    let home = a_home_naming_one_project("web-write-ignores-exported-database");
+    let named = home
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a home has a name");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.answers_for(named, COMMENTED, "");
+    let (_web, address) = bdi_web(
+        &home,
+        &tracker,
+        &["--writes"],
+        Some(&home),
+        &[("BEADS_DOLT_SERVER_DATABASE", "kadath")],
+    );
+    until_it_has_read(&address);
+
+    let mut stream = TcpStream::connect(&address).expect("bdi web takes the connection");
+    stream
+        .set_read_timeout(Some(GIVING_UP))
+        .expect("a read timeout");
+    let form = "text=the+gate+is+shut";
+    write!(
+        stream,
+        "POST /arkham/dun-0tp/comment HTTP/1.1\r\nHost: {address}\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
+        form.len()
+    )
+    .expect("the request is sent");
+    let mut answer = String::new();
+    stream
+        .read_to_string(&mut answer)
+        .expect("bdi web answers and closes");
+
+    assert_eq!(
+        answer.lines().next(),
+        Some("HTTP/1.1 303 See Other"),
+        "{answer}"
+    );
+    assert_eq!(tracker.calls_for("kadath"), Vec::<String>::new());
 }
