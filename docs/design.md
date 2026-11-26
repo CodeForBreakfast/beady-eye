@@ -155,7 +155,8 @@ of status. `bdi` presents bd's own features and builds nothing on top of them,
 so anything layered on top is configuration. Nothing stops a person running bd
 themselves, so `bdi` puts no warning or guard in front of a write.
 
-Each light-touch write is one bd command:
+What `bdi` makes is the list below and nothing else, and a write joins it only
+by being added to `PASSED_THROUGH`. Each light-touch write is one bd command:
 
 | write | bd runs | terminal key | web page |
 |---|---|---|---|
@@ -168,9 +169,8 @@ Each light-touch write is one bd command:
 | release the claim of an agent that is gone | `bd unclaim --if-assignee` | `u` | no |
 | set the priority | `bd update --priority` | `p` | yes |
 
-Each write goes into `bdi bd` once, as `PASSED_THROUGH` in `collect/bd.rs`
-lists it, and the terminal's bead view and a writable `bdi web` call the same
-function `bdi bd` does. That function checks the command line and enters the
+Each write goes into `bdi bd` once, in `collect/bd.rs`, and the terminal's
+bead view and a writable `bdi web` call the same function `bdi bd` does. That function checks the command line and enters the
 tracker's environment, so a write reaches the tracker its bead was read from
 and no other. Releasing a claim rests on the anomaly for a claim with no live
 agent, so only the terminal offers it, because `bdi web` reads no agents. It
@@ -4702,8 +4702,10 @@ but releasing a claim.** It flags no claim with no live agent, because it reads
 no agents. Each write is made as the one actor `[web] actor` names, passed to
 bd as `--actor`, and a run started with `--writes` and no actor refuses to
 start. A write that lands sends the reader back to the bead's page with `303
-See Other`, and the project is read again, so the bead is drawn as it now
-stands. A refused one shows bd's own message.
+See Other`, and asks for the project to be read again without waiting for that
+read. So the page the reader lands on can still show the bead as it stood, and
+an open page redraws it once the read answers. A refused one shows bd's own
+message.
 
 **It answers only the names it was told it serves.** With no sign-in, a page
 elsewhere could point a name of its own at the listener and have a visitor's

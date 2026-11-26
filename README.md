@@ -485,9 +485,10 @@ the `bd` command on:
 | set the priority | `update <bead> --priority <p>` | `p` |
 
 No other `bd` command is passed, and no flag but the one each write takes.
-Words that start with a dash go after `--`. `u` is offered only on a bead the
-eye flags as a claim with no live agent, and it names the holder, so `bd`
-refuses it if someone has claimed the bead since. `bdi --beads` gives each
+A flag's value that starts with a dash is joined to it, as
+`--reason='-1, a duplicate'`, and a comment or response that starts with one
+goes after `--`. `u` is offered only on a bead the eye flags as a claim with
+no live agent, and it names the holder, so `bd` refuses it if someone has claimed the bead since. `bdi --beads` gives each
 bead deferred to a date its `defer_until`. Anything bigger, such as a new
 title, a dependency or a new bead, is an agent's job: comment on the bead to
 ask for it.
