@@ -701,6 +701,9 @@ fn said(
                 }
                 Err(Unbodied::Unreadable) => return None,
             };
+            if let Some(refused) = not_issued(&head, &form, &writer.tokens) {
+                return Some(refused);
+            }
             let _making = match writer.one_at_a_time.try_lock() {
                 Ok(making) => making,
                 Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -766,6 +769,23 @@ impl Write {
     }
 }
 
+/// The refusal of a post to a write's address whose form carries no token
+/// `tokens` issued for that write, which links back to the bead's page for
+/// a fresh form. Nothing for a post whose form carries one, or for a post to
+/// an address that names no write.
+fn not_issued(head: &Head, form: &[u8], tokens: &Tokens) -> Option<Reply> {
+    let (bead, named) = address::written(head.path())?;
+    let issued = std::str::from_utf8(form)
+        .ok()
+        .and_then(|form| address::field(form, TOKEN))
+        .is_some_and(|token| tokens.issued(&token, &bead, named));
+    (!issued).then(|| {
+        let back = address::written_back(&bead, &head.target);
+        let said = html::saying_back_to(phrase::form_not_issued(), &back);
+        (FORBIDDEN, HTML, said).into()
+    })
+}
+
 /// What a post whose head is `head` and whose form is `form` comes to: the
 /// write it asks for made through `bdi bd` by `writer` to a bead `held`
 /// draws, and the reader sent back to the bead's page. Otherwise, why the
@@ -775,14 +795,6 @@ fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     };
     let form = std::str::from_utf8(form).ok();
-    let issued = form
-        .and_then(|form| address::field(form, TOKEN))
-        .is_some_and(|token| writer.tokens.issued(&token, &bead, named));
-    if !issued {
-        let back = address::written_back(&bead, &head.target);
-        let said = html::saying_back_to(phrase::form_not_issued(), &back);
-        return (FORBIDDEN, HTML, said).into();
-    }
     let runner = writer.runner;
     let Some(snapshot) = &held.snapshot else {
         return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet())).into();
@@ -2108,6 +2120,25 @@ mod tests {
         assert_eq!(
             replied_by(&posting, &latest, Some(&writer)).status,
             "303 See Other"
+        );
+    }
+
+    /// A form this run did not issue is refused while another write is being
+    /// made too, since sending it again later would be refused the same.
+    #[test]
+    fn a_form_not_issued_is_refused_while_another_write_is_being_made() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let writer = Writer::through(&runner, tokens());
+        let posting = posted_with(
+            "/arkham/ark-1/comment",
+            &format!("Host: {BEADS}\r\nOrigin: http://{BEADS}\r\n"),
+            "text=hello&token=guessed",
+        );
+        let _making = writer.one_at_a_time.lock().expect("nothing else holds it");
+        assert_eq!(
+            replied_by(&posting, &latest, Some(&writer)).status,
+            FORBIDDEN
         );
     }
 
