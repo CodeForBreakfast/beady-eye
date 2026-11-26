@@ -169,7 +169,12 @@ fn send_changes(
         seen = Some(from);
         let (page, event) = {
             let _drawing = answering.live.drawing.lock();
-            let drawn = super::drawn(asked, &held, answering.writes.is_some()).1;
+            let drawn = super::drawn(
+                asked,
+                &held,
+                answering.writes.as_ref().map(|writer| writer.tokens),
+            )
+            .1;
             let version = html::version(&drawn).unwrap_or_default().to_string();
             if holding.as_ref() == Some(&version) {
                 sent.get_or_insert_with(|| lines(&drawn));

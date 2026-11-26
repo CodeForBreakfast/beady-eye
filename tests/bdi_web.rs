@@ -704,14 +704,22 @@ fn a_database_the_caller_exports_does_not_redirect_a_write() {
     );
     until_it_has_read(&address);
 
+    // As a browser posts the bead's form: from the page bdi web drew it on,
+    // with the token that page carries.
+    let (_, page) = get(&address, "/arkham/dun-0tp");
+    let token = page
+        .split_once("name=\"token\" value=\"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(token, _)| token)
+        .expect("the bead's page carries a token in its form");
     let mut stream = TcpStream::connect(&address).expect("bdi web takes the connection");
     stream
         .set_read_timeout(Some(GIVING_UP))
         .expect("a read timeout");
-    let form = "text=the+gate+is+shut";
+    let form = format!("token={token}&text=the+gate+is+shut");
     write!(
         stream,
-        "POST /arkham/dun-0tp/comment HTTP/1.1\r\nHost: {address}\r\n\
+        "POST /arkham/dun-0tp/comment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\n\
          Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
         form.len()
     )

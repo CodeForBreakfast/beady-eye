@@ -21,7 +21,9 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, ProviderState, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
-use crate::view::address::{line_name, Asked, Root, COMMENT, FIND, LONGEST_COMMENT, SHOWN, TEXT};
+use crate::view::address::{
+    line_name, Asked, Root, Tokens, COMMENT, FIND, LONGEST_COMMENT, SHOWN, TEXT, TOKEN,
+};
 use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
@@ -57,9 +59,9 @@ pub struct Drawn {
     pub collecting: Vec<Awaited>,
     /// The projects nothing has vouched for lately.
     pub lapsed: Vec<String>,
-    /// Whether the page offers writes, which only a `bdi web` started with
-    /// them turned on takes.
-    pub writable: bool,
+    /// The tokens each write's form carries, where the page offers writes,
+    /// which only a `bdi web` started with them turned on takes.
+    pub writes: Option<Tokens>,
 }
 
 /// The attribute of a kept-current page's root element that names its
@@ -83,7 +85,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
         layout,
         asked,
         selected: (node.is_some() || matched).then(|| forest.selected_line()),
-        writable: drawn.writable,
+        writes: drawn.writes,
     };
 
     let title = node.map_or_else(
@@ -133,13 +135,15 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
 }
 
 /// The form on a writable page's bead view that adds a comment, posting it
-/// to `action`.
-fn commenting(html: &mut String, action: &str) {
+/// to `action` with `token`.
+fn commenting(html: &mut String, action: &str, token: &str) {
     html.push_str(&format!(
-        "<form class=\"write\" action=\"{}\" method=\"post\"><label>{}\
+        "<form class=\"write\" action=\"{}\" method=\"post\">\
+         <input type=\"hidden\" name=\"{TOKEN}\" value=\"{}\"><label>{}\
          <textarea name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\" required></textarea></label>\
          <button>{}</button></form>",
         escaped(action),
+        escaped(token),
         escaped(phrase::comment()),
         escaped(phrase::add_comment())
     ));
@@ -233,7 +237,7 @@ struct Drawing<'a> {
     layout: &'a Layout,
     asked: &'a Asked,
     selected: Option<usize>,
-    writable: bool,
+    writes: Option<Tokens>,
 }
 
 impl Drawing<'_> {
@@ -939,8 +943,13 @@ impl Drawing<'_> {
         for tied in &page.tied {
             self.tied(html, tied, &named);
         }
-        if self.writable {
-            commenting(html, &self.asked.writing(&node.key(), COMMENT));
+        if let Some(tokens) = &self.writes {
+            let key = node.key();
+            commenting(
+                html,
+                &self.asked.writing(&key, COMMENT),
+                &tokens.issue(&key, COMMENT),
+            );
         }
         html.push_str("</div>");
     }
@@ -2318,7 +2327,7 @@ mod tests {
             offset: FixedOffset::east_opt(3600).expect("an offset"),
             collecting: Vec::new(),
             lapsed: Vec::new(),
-            writable: false,
+            writes: None,
         }
     }
 
@@ -4153,14 +4162,16 @@ mod tests {
     }
 
     /// A bead's page on a page that takes writes ends with the form that
-    /// comments on the bead, posted to the bead's own address for it. A page
-    /// that takes none draws no form that posts.
+    /// comments on the bead, posted to the bead's own address for it with
+    /// the token issued for that form. A page that takes none draws no form
+    /// that posts.
     #[test]
     fn only_a_writable_page_offers_a_comment_on_the_bead() {
         let asked = Asked::of(&format!("{}?shut=gate", address(&key("smt-4kd3p.6"))))
             .expect("a bead's page");
+        let tokens = Tokens::keyed([7; 32]);
         let writable = Drawn {
-            writable: true,
+            writes: Some(tokens),
             ..drawing()
         };
         let html = page(ground(), &Layout::default(), &asked, writable).html;
@@ -4174,6 +4185,13 @@ mod tests {
         );
         assert!(
             form.contains("<textarea name=\"text\" maxlength=\"7000\" required>"),
+            "{form}"
+        );
+        let token = tokens.issue(&key("smt-4kd3p.6"), COMMENT);
+        assert!(
+            form.contains(&format!(
+                "<input type=\"hidden\" name=\"token\" value=\"{token}\">"
+            )),
             "{form}"
         );
         assert_eq!(

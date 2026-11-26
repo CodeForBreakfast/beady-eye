@@ -30,7 +30,7 @@ use crate::collect::tracker::Trackers;
 use crate::collect::watched::{self, Through};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
-use crate::view::address::{self, Asked, Start, COMMENT, TEXT as COMMENT_TEXT};
+use crate::view::address::{self, Asked, Start, Tokens, COMMENT, TEXT as COMMENT_TEXT, TOKEN};
 use crate::view::draw::html;
 use crate::view::forest::listed;
 use crate::view::{phrase, Notice};
@@ -66,6 +66,8 @@ const LARGEST_WRITE: usize = address::LARGEST_COMMENT_FORM;
 /// It is what `--all` asks of the view, so `--all` changes nothing here.
 pub(super) const EVERY_TREE: Filter = Filter::All;
 const NOT_FOUND: &str = "404 Not Found";
+
+const FORBIDDEN: &str = "403 Forbidden";
 
 /// What the reading thread holds for the pages to be drawn from, and word
 /// of each change to it for the open pages waiting on one.
@@ -345,12 +347,18 @@ pub(super) fn web(
         move |heard| passing_on.passes_on(heard.clone()),
     );
 
+    let writes = if writable {
+        let tokens = Tokens::new().context("reading a key for the write forms' tokens")?;
+        Some(Writer::through(&RealRunner, tokens))
+    } else {
+        None
+    };
     let latest = Arc::new(Latest::new(cfg));
     let answering = Arc::new(Answering {
         latest: Arc::clone(&latest),
         hosts,
         start,
-        writes: writable.then(|| Writer::through(&RealRunner)),
+        writes,
         live: live::Streams::default(),
     });
     http::accept(
@@ -393,17 +401,20 @@ struct Answering {
 }
 
 /// What makes a write: the runner bd is run through, one write at a time, so
-/// a tracker that stalls holds one of the request slots and not all of them.
+/// a tracker that stalls holds one of the request slots and not all of them,
+/// and the tokens each write's form carries.
 struct Writer<'a> {
     runner: &'a dyn Runner,
     one_at_a_time: Mutex<()>,
+    tokens: Tokens,
 }
 
 impl<'a> Writer<'a> {
-    fn through(runner: &'a dyn Runner) -> Self {
+    fn through(runner: &'a dyn Runner, tokens: Tokens) -> Self {
         Self {
             runner,
             one_at_a_time: Mutex::new(()),
+            tokens,
         }
     }
 }
@@ -657,6 +668,13 @@ fn said(
     };
     match writes {
         Some(writer) if head.method == "POST" && hosts.allow(head.only("Host")) => {
+            if !from_its_own_page(&head) {
+                let said = phrase::posted_from_elsewhere(
+                    head.only("Origin"),
+                    head.only("Host").unwrap_or_default(),
+                );
+                return Some((FORBIDDEN, HTML, html::saying(&said)).into());
+            }
             let form = match http::body(rest, held, &head, LARGEST_WRITE) {
                 Ok(form) => form,
                 Err(Unbodied::Unmeasured) => {
@@ -684,9 +702,25 @@ fn said(
                 }
             };
             let held = latest.now();
-            Some(taken(&head, &form, &held, writer.runner))
+            Some(taken(&head, &form, &held, writer))
         }
-        _ => Some(answered(&head, latest, hosts, start, writes.is_some()).into()),
+        _ => {
+            let tokens = writes.map(|writer| writer.tokens);
+            Some(answered(&head, latest, hosts, start, tokens).into())
+        }
+    }
+}
+
+/// Whether a post whose head is `head` came from a page at the address it
+/// was sent to: its one Origin names the host and port its one Host does. A
+/// browser sends an Origin with every form it posts, and a page on another
+/// site cannot send this listener's.
+fn from_its_own_page(head: &Head) -> bool {
+    match (head.only("Origin"), head.only("Host")) {
+        (Some(origin), Some(host)) => origin
+            .split_once("://")
+            .is_some_and(|(_, at)| at.eq_ignore_ascii_case(host)),
+        _ => false,
     }
 }
 
@@ -719,13 +753,21 @@ impl Write {
 }
 
 /// What a post whose head is `head` and whose form is `form` comes to: the
-/// write it asks for made through `bdi bd` to a bead `held` draws, run by
-/// `runner`, and the reader sent back to the bead's page. Otherwise, why the
+/// write it asks for made through `bdi bd` by `writer` to a bead `held`
+/// draws, and the reader sent back to the bead's page. Otherwise, why the
 /// write was not made.
-fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
+fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
     let Some((bead, named)) = address::written(head.path()) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     };
+    let form = std::str::from_utf8(form).ok();
+    let issued = form
+        .and_then(|form| address::field(form, TOKEN))
+        .is_some_and(|token| writer.tokens.issued(&token, &bead, named));
+    if !issued {
+        return (FORBIDDEN, HTML, html::saying(phrase::form_not_issued())).into();
+    }
+    let runner = writer.runner;
     let Some(snapshot) = &held.snapshot else {
         return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet())).into();
     };
@@ -744,10 +786,7 @@ fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
     if snapshot.node(&bead).is_none() {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     }
-    let Some(write) = std::str::from_utf8(form)
-        .ok()
-        .and_then(|form| Write::asked(named, form))
-    else {
+    let Some(write) = form.and_then(|form| Write::asked(named, form)) else {
         return (
             "400 Bad Request",
             TEXT,
@@ -775,13 +814,14 @@ fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
     }
 }
 
-/// What a request comes to: its status, the kind of body, and the body.
+/// What a request comes to: its status, the kind of body, and the body. A
+/// page offers writes with the tokens `writes` issues, where it issues any.
 fn answered(
     head: &Head,
     latest: &Latest,
     hosts: &Hosts,
     start: &Start,
-    writable: bool,
+    writes: Option<Tokens>,
 ) -> (&'static str, &'static str, String) {
     if !hosts.allow(head.only("Host")) {
         return (
@@ -803,15 +843,15 @@ fn answered(
     let Some(asked) = Asked::started_on(&head.target, start) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here()));
     };
-    let (status, page) = drawn(&asked, &held, writable);
+    let (status, page) = drawn(&asked, &held, writes);
     (status, HTML, page)
 }
 
 /// The page `asked` names, drawn from `held`, and its status, offering
-/// writes where `writable`. A page started on the command line's roots is
-/// drawn at them as the held config places them, since an edit can move them
-/// after the page was asked for.
-fn drawn(asked: &Asked, held: &Held, writable: bool) -> (&'static str, String) {
+/// writes with the tokens `writes` issues, where it issues any. A page
+/// started on the command line's roots is drawn at them as the held config
+/// places them, since an edit can move them after the page was asked for.
+fn drawn(asked: &Asked, held: &Held, writes: Option<Tokens>) -> (&'static str, String) {
     let cfg = &held.cfg;
     let asked = &Asked {
         start: Start {
@@ -825,7 +865,7 @@ fn drawn(asked: &Asked, held: &Held, writable: bool) -> (&'static str, String) {
         offset: Local::now().offset().fix(),
         collecting: Vec::from_iter(held.collecting.clone()),
         lapsed: held.lapsed.clone(),
-        writable,
+        writes,
     };
     let Some(snapshot) = held.snapshot.clone() else {
         // Until the first read answers, the forest is each project's line
@@ -910,7 +950,18 @@ mod tests {
     /// What the request `sent` is answered, with `latest` held, by a run
     /// whose writes `writes` runs, where it takes them.
     fn replied(sent: &str, latest: &Latest, writes: Option<&dyn Runner>) -> Reply {
-        replied_by(sent, latest, writes.map(Writer::through).as_ref())
+        replied_by(
+            sent,
+            latest,
+            writes
+                .map(|runner| Writer::through(runner, tokens()))
+                .as_ref(),
+        )
+    }
+
+    /// The tokens a test's run issues.
+    fn tokens() -> Tokens {
+        Tokens::keyed([7; 32])
     }
 
     /// The same, by a run whose writes `writer` makes.
@@ -1251,7 +1302,7 @@ mod tests {
         assert!(latest.now().lapsed.is_empty(), "not yet");
         at(62);
         assert_eq!(latest.now().lapsed, ["arkham"]);
-        let page = drawn(&Asked::of("/").expect("the forest"), &latest.now(), false).1;
+        let page = drawn(&Asked::of("/").expect("the forest"), &latest.now(), None).1;
         assert!(
             page.contains("<span class=\"mark warn\">?</span>"),
             "{page}"
@@ -1381,7 +1432,7 @@ mod tests {
         };
         let first = held_once(&latest, None, reads("arkham"));
         let forest = Asked::of("/").expect("the forest");
-        assert!(!drawn(&forest, &latest.now(), false).1.contains(">dunwich"));
+        assert!(!drawn(&forest, &latest.now(), None).1.contains(">dunwich"));
 
         std::fs::write(
             &path,
@@ -1390,7 +1441,7 @@ mod tests {
         .expect("the config is ours to write");
 
         held_once(&latest, Some(first), reads("dunwich"));
-        let page = drawn(&forest, &latest.now(), false).1;
+        let page = drawn(&forest, &latest.now(), None).1;
         assert!(page.contains(">dunwich"), "{page}");
         assert!(page.contains("lay the feeder cable"), "{page}");
         drop(told);
@@ -1482,7 +1533,7 @@ mod tests {
             }],
         };
         let asked = Asked::started_on("/", &as_launched).expect("the forest");
-        let page = drawn(&asked, &held, false).1;
+        let page = drawn(&asked, &held, None).1;
         assert!(page.contains("lay the feeder cable"), "{page}");
         assert!(!page.contains("open the gate"), "{page}");
     }
@@ -1584,7 +1635,7 @@ mod tests {
         let sent = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         let head = head(&mut sent.as_bytes(), &mut Vec::new()).expect("a head");
         let (status, _, body) =
-            answered(&head, &latest, &Hosts::default(), &Start::default(), false);
+            answered(&head, &latest, &Hosts::default(), &Start::default(), None);
         assert_eq!(status, "503 Service Unavailable");
         let line = &body[body.find(">arkham").expect("the project is named")..];
         let line = &line[..line.find("</div>").expect("the line ends")];
@@ -1630,13 +1681,139 @@ mod tests {
         })
     }
 
-    /// A post of the comment form `form` to `target`, as a browser sends it.
+    /// A post of the comment form `form` to `target` from the bead's own
+    /// page, as a browser sends it, with the token that page issued.
     fn posted(target: &str, form: &str) -> String {
+        let path = target.split('?').next().unwrap_or_default();
+        let form = match address::written(path) {
+            Some((bead, write)) => format!("{form}&{TOKEN}={}", tokens().issue(&bead, write)),
+            None => form.to_string(),
+        };
+        posted_with(
+            target,
+            &format!("Host: {BEADS}\r\nOrigin: http://{BEADS}\r\n"),
+            &form,
+        )
+    }
+
+    /// A post of the form `form` to `target` with the header lines `headers`.
+    fn posted_with(target: &str, headers: &str, form: &str) -> String {
         format!(
-            "POST {target} HTTP/1.1\r\nHost: {BEADS}\r\n\
+            "POST {target} HTTP/1.1\r\n{headers}\
              Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
             form.len()
         )
+    }
+
+    /// A post from a page on another site, or from a page that will not say
+    /// where it is, is refused before any bd runs, and says it was the origin.
+    #[test]
+    fn a_write_posted_from_another_site_is_refused() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let form = format!(
+            "text=hello&{TOKEN}={}",
+            tokens().issue(&arkham_gate(), COMMENT)
+        );
+        for (host, origin) in [
+            (BEADS, Some("http://dunwich.invalid")),
+            ("localhost:8080", Some("http://localhost:3000")),
+            (BEADS, Some("null")),
+            (BEADS, None),
+        ] {
+            let origin_line =
+                origin.map_or(String::new(), |origin| format!("Origin: {origin}\r\n"));
+            let reply = replied(
+                &posted_with(
+                    "/arkham/ark-1/comment",
+                    &format!("Host: {host}\r\n{origin_line}"),
+                    &form,
+                ),
+                &latest,
+                Some(&runner),
+            );
+            assert_eq!(reply.status, "403 Forbidden", "{origin:?}");
+            assert_eq!(
+                reply.body,
+                html::saying(&phrase::posted_from_elsewhere(origin, host))
+            );
+            assert_eq!(reply.sent_to, None);
+        }
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// A proxy that sends bdi web a Host other than the one the browser
+    /// asked for makes every write look posted from elsewhere. It is refused,
+    /// and the refusal names both, so whoever runs the proxy can see why.
+    #[test]
+    fn a_write_through_a_proxy_that_rewrites_the_host_says_the_origin_did_not_match() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let form = format!(
+            "text=hello&{TOKEN}={}",
+            tokens().issue(&arkham_gate(), COMMENT)
+        );
+        let reply = replied(
+            &posted_with(
+                "/arkham/ark-1/comment",
+                "Host: 127.0.0.1:8080\r\nOrigin: https://beads.example.invalid\r\n",
+                &form,
+            ),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "403 Forbidden");
+        let said =
+            phrase::posted_from_elsewhere(Some("https://beads.example.invalid"), "127.0.0.1:8080");
+        assert!(said.contains("https://beads.example.invalid"), "{said}");
+        assert!(said.contains("127.0.0.1:8080"), "{said}");
+        assert_eq!(reply.body, html::saying(&said));
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// A post carrying no token, or one this run did not issue for that
+    /// bead's form, is refused before any bd runs.
+    #[test]
+    fn a_write_whose_token_the_page_did_not_issue_is_refused() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let elsewhere = BeadKey {
+            id: "ark-2".to_string(),
+            ..arkham_gate()
+        };
+        for token in [
+            None,
+            Some(String::new()),
+            Some("guessed".to_string()),
+            Some(tokens().issue(&elsewhere, COMMENT)),
+            Some(Tokens::keyed([8; 32]).issue(&arkham_gate(), COMMENT)),
+        ] {
+            let form = match &token {
+                Some(token) => format!("text=hello&{TOKEN}={token}"),
+                None => "text=hello".to_string(),
+            };
+            let reply = replied(
+                &posted_with(
+                    "/arkham/ark-1/comment",
+                    &format!("Host: {BEADS}\r\nOrigin: http://{BEADS}\r\n"),
+                    &form,
+                ),
+                &latest,
+                Some(&runner),
+            );
+            assert_eq!(reply.status, "403 Forbidden", "{token:?}");
+            assert_eq!(reply.body, html::saying(phrase::form_not_issued()));
+            assert_eq!(reply.sent_to, None);
+        }
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// The bead arkham's tracker holds that every write here is made to.
+    fn arkham_gate() -> BeadKey {
+        BeadKey {
+            project: "arkham".to_string(),
+            id: "ark-1".to_string(),
+        }
     }
 
     const COMMENTED: &str = "bd -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
@@ -1794,13 +1971,13 @@ mod tests {
     fn a_write_with_no_length_or_too_long_a_one_is_refused() {
         let latest = arkham_held();
         let runner = FakeRunner::default();
-        let unmeasured = format!("POST /arkham/ark-1/comment HTTP/1.1\r\nHost: {BEADS}\r\n\r\n");
+        let unmeasured = format!("POST /arkham/ark-1/comment HTTP/1.1\r\nHost: {BEADS}\r\nOrigin: http://{BEADS}\r\n\r\n");
         assert_eq!(
             replied(&unmeasured, &latest, Some(&runner)).status,
             "411 Length Required"
         );
         let too_long = format!(
-            "POST /arkham/ark-1/comment HTTP/1.1\r\nHost: {BEADS}\r\nContent-Length: {}\r\n\r\n",
+            "POST /arkham/ark-1/comment HTTP/1.1\r\nHost: {BEADS}\r\nOrigin: http://{BEADS}\r\nContent-Length: {}\r\n\r\n",
             LARGEST_WRITE + 1
         );
         assert_eq!(
@@ -1866,7 +2043,7 @@ mod tests {
     fn a_write_sent_while_another_is_being_made_is_refused_for_now() {
         let latest = arkham_held();
         let runner = FakeRunner::default().with(COMMENTED, "");
-        let writer = Writer::through(&runner);
+        let writer = Writer::through(&runner, tokens());
         let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
         {
             let _making = writer.one_at_a_time.lock().expect("nothing else holds it");
