@@ -319,6 +319,32 @@ fn a_deferral_given_no_date_is_not_made() {
     );
 }
 
+/// A comment pasted over several lines keeps its words apart: the entry is
+/// one line, so each line break becomes a space, and the one a copied line
+/// ends in is left out.
+#[test]
+fn a_comment_pasted_over_lines_keeps_its_words_apart() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("m"),
+        vec![Event::Pasted("first line\nsecond\tline\n".to_string())],
+        pressed([KeyCode::Enter]),
+    ]);
+
+    assert_eq!(
+        run.writing.made(),
+        [(
+            "arkham".to_string(),
+            the_tree(),
+            Write::Comment,
+            "first line second line".to_string(),
+        )]
+    );
+}
+
 /// A close needs no reason, so one with nothing typed is made.
 #[test]
 fn a_close_given_no_reason_is_made() {

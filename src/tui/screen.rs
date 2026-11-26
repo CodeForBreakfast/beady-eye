@@ -718,7 +718,7 @@ impl Shown {
     /// the line break a copied line usually ends in is left out.
     fn pasted(&mut self, text: &str) -> bool {
         if let Some(entry) = self.entry.as_mut() {
-            return typed_in(&mut entry.query, text);
+            return typed_in(&mut entry.query, &one_line(text));
         }
         let Some(prompt) = self.sought.as_mut() else {
             return false;
@@ -1218,6 +1218,17 @@ fn typed_in(query: &mut Query, text: &str) -> bool {
         changed |= query.edit(Edit::Character(glyph)) == Edited::Changed;
     }
     changed
+}
+
+/// Words pasted into the entry as one line: each line break or tab between
+/// words becomes a space, and the line break a copied line ends in is left
+/// out.
+fn one_line(text: &str) -> String {
+    text.trim_end_matches(['\r', '\n'])
+        .split(['\r', '\n', '\t'])
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One frame: the forest, the tail beneath it, the height the forest is told
