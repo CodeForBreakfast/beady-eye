@@ -786,6 +786,9 @@ impl Web {
     /// The actor a writable `bdi web` writes as, or why it cannot start.
     pub fn actor(&self) -> anyhow::Result<&str> {
         match self.actor.as_deref().map(str::trim) {
+            Some(actor) if actor.contains('\0') => {
+                anyhow::bail!("[web] actor holds a NUL byte, which no command line can pass to bd")
+            }
             Some(actor) if !actor.is_empty() => Ok(actor),
             _ => anyhow::bail!(
                 "bdi web --writes needs [web] actor in the config: the one actor bd \
@@ -2161,10 +2164,16 @@ path = "/home/user/dev/kadath"
     }
 
     /// An actor of nothing but spaces names nobody, so a writable `bdi web`
-    /// refuses it as it refuses none.
+    /// refuses it as it refuses none, and an actor no command line can carry
+    /// to bd is refused too.
     #[test]
-    fn a_blank_web_actor_is_no_actor() {
-        for written in ["", "[web]\n", "[web]\nactor = \"  \"\n"] {
+    fn a_web_actor_bd_cannot_be_given_is_refused() {
+        for written in [
+            "",
+            "[web]\n",
+            "[web]\nactor = \"  \"\n",
+            "[web]\nactor = \"car\\u0000ter\"\n",
+        ] {
             let cfg = Config::from_toml(&format!("{ONE_PROJECT}{written}")).expect("parses");
 
             let refused = cfg.web.actor().expect_err("no actor");
