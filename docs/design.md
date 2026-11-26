@@ -795,6 +795,7 @@ happened to exist.
 | situation | what `bdi` does |
 |---|---|
 | the bead's agent session is in a different pane from the one its pane key names | the agent session wins; nothing is reported |
+| no live pane holds the bead's agent session, and the pane its pane key names holds another agent's | no join; reported with the pane and both sessions, on the bead and in `conflicts` |
 | `agent_pane` and `display_agent` name different panes | the bead's own key wins; the disagreement is reported |
 | several panes name one bead | none wins; reported |
 | one pane is named by several beads | none wins; reported, with what the pane says it is working on |
@@ -828,7 +829,8 @@ later. `started_at` stays parsed and unused.
 **A refused claim carries its refusal.** Where a bead's own key named a live
 pane the join would not award it — because the pane sits in another project,
 or in none, or because several beads name it or its agent session, or the
-session is in several panes — the bead's `orphan-claim`
+session is in several panes, or another agent's session is in the pane — the
+bead's `orphan-claim`
 anomaly carries that conflict as its reason, and the row says it: *claimed ·
 its pane is in no configured project*, *claimed · 3 beads name its pane*. A
 bead whose row said only *claimed · no pane* sent the reader after a dead agent
@@ -3111,6 +3113,7 @@ choosing what to start rather than drawing a tree:
       "blocked_by": ["smt-4kd3p.13"],
       "orphaned_dependencies": [ { "id": "mdw-9", "reason": "not-read", "projects": ["meadow"] } ],
       "agent": null,
+      "anomalies": [],
       "badges": [],
       "labels": ["human"],
       "parent": { "project": "summit-works", "id": "smt-4kd3p" },
@@ -3143,7 +3146,9 @@ dependency on another project's bead, the beads with `ready` true are what
 `bd ready` names. A blocked bead is listed too, because what blocks it is
 what says which work is next. `orphaned_dependencies` names each blocker no
 answer held and why, as the tree's node does, so a blocker in a project the
-run did not read is reported as not read. `labels` and `description` are as
+run did not read is reported as not read. `anomalies` is every rule that
+fires on the bead, as its node carries them, so a claim with no agent says
+why. `labels` and `description` are as
 bd reported them: a bead with no labels has an empty array, and one with no description
 has `null`. bdi gives no label a meaning, so a reader wanting the beads
 labelled `human` asks for them with `--label human`. `parent` is the bead

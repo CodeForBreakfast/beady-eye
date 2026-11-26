@@ -2963,6 +2963,41 @@ mod tests {
             .to_string()
     }
 
+    /// A claim on a pane another agent now holds is said on the bead's row,
+    /// and the conflicts name the pane and both sessions, as the terminal
+    /// draws them.
+    #[test]
+    fn a_claim_on_a_pane_another_agent_holds_names_both_sessions() {
+        use crate::model::anomaly::Anomaly;
+        use crate::model::join::Conflict;
+
+        let replaced = Conflict::PaneHoldsAnotherAgentSession {
+            bead: key("smt-4kd3p.6"),
+            pane: crate::model::types::testing::key("w:p1"),
+            agent_session: "sess-dish".to_string(),
+            pane_agent_session: "sess-mast".to_string(),
+        };
+        let refused = Anomaly::OrphanClaim {
+            refused: Some(replaced.clone()),
+        };
+        let mut snapshot = with_the_bead_changed(|node| node.anomalies = vec![refused.clone()]);
+        snapshot.conflicts = vec![replaced];
+
+        let row = text_of(&row_of(snapshot.clone(), "smt-4kd3p.6"));
+        assert!(
+            row.contains("its pane holds another agent session"),
+            "{row}"
+        );
+        let html = page_of(snapshot, "/");
+        let lines = page_lines(&html);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("holds agent session sess-mast, not sess-dish")),
+            "{lines:#?}"
+        );
+    }
+
     /// Every rule that fired is said once, as one sentence, where the
     /// terminal joins a phrase for each.
     #[test]
