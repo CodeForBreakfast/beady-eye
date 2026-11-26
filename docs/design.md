@@ -150,14 +150,17 @@ Anything workflow-specific is expressed as configuration, not code. See
 person makes.** bd is built for agents to work on a person's behalf, so the
 bigger edits stay with agents: a title or a description, dependencies,
 labels, and filing a bead. A person asks an agent for one by commenting on the
-bead, and the plugin wakes a session that holds or watches the bead on a
-comment or a change of status. `bdi` presents bd's own features and builds nothing on top of them,
-so anything layered on top is configuration. Nothing stops a person running bd
+bead. The plugin wakes a session watching the bead on a comment or a change
+of status, and a session watches without asking the bead that names it as its
+agent session. `bdi` presents bd's own features and builds nothing on top of
+them, so anything layered on top is configuration. Nothing stops a person running bd
 themselves, so `bdi` puts no warning or guard in front of a write.
 
 That rule says what may be added, and no bd write is ruled out of `bdi` for
-being a write. What `bdi` makes today is the list below and nothing else, and
-a write joins it only by being added to `PASSED_THROUGH`. Each light-touch write is one bd command:
+being a write. The light-touch writes `bdi` makes today are the list below and
+nothing else, and a write joins them only by being added to `PASSED_THROUGH`.
+Settling a gate is a write of its own, which `bdi gates` makes. Each
+light-touch write is one bd command:
 
 | write | bd runs | terminal key | web page |
 |---|---|---|---|
@@ -172,8 +175,10 @@ a write joins it only by being added to `PASSED_THROUGH`. Each light-touch write
 
 Each write goes into `bdi bd` once, in `collect/bd.rs`, and the terminal's
 bead view and a writable `bdi web` call the same function `bdi bd` does. That
-function checks the command line and enters the tracker's environment, so a
-write reaches the tracker its bead was read from and no other. Releasing a
+function checks the command line and starts bd in the project's tracker,
+entered as it is read, so no flag or variable can point it at another. bd
+still routes an id that tracker does not hold to wherever its routes say, so
+a writable `bdi web` writes only to a bead its page draws. Releasing a
 claim rests on the anomaly for a claim with no live agent, so only the
 terminal offers it, because `bdi web` reads no agents. It names the holder,
 so bd refuses it if the bead's assignee has changed since.
