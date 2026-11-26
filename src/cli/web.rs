@@ -1705,6 +1705,23 @@ mod tests {
         assert_eq!(runner.calls(), []);
     }
 
+    /// An address whose bead looks like a flag is refused as `bdi bd` refuses
+    /// one, and says so, so bd is never run.
+    #[test]
+    fn a_write_to_a_bead_named_like_a_flag_runs_nothing() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted("/arkham/--db=elsewhere/comment", "text=hello"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "502 Bad Gateway");
+        assert!(reply.body.contains("--db=elsewhere"), "{}", reply.body);
+        assert_eq!(reply.sent_to, None);
+        assert_eq!(runner.calls(), []);
+    }
+
     /// A tracker that stalls holds up one write and not every request, so a
     /// write sent while another is being made is refused for now.
     #[test]
