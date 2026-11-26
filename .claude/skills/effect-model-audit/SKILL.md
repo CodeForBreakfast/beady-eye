@@ -1,6 +1,6 @@
 ---
 name: effect-model-audit
-description: Use when asked to audit the type modelling of beady-eye's Claude Code plugin — whether its domain types are honest, whether they can represent illegal states, or for a periodic model-level type review. Triggers on "audit our type modelling", "are our types honest", "can our types represent illegal states", "model-level type review", "audit our domain types". The judgement sibling to effect-native-audit: a workflow-driven reasoning sweep over the plugin's domain types, not an anchored regression net and not the Effect language service.
+description: Use when asked to audit the type modelling of beady-eye's Claude Code plugin — whether its domain types are honest, whether they can represent illegal states, or for a periodic model-level type review. The judgement sibling to effect-native-audit: a workflow-driven reasoning sweep over the plugin's domain types, not an anchored regression net and not the Effect language service.
 ---
 
 # Effect-model type audit

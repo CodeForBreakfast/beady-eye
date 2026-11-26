@@ -381,7 +381,7 @@ impl Driven {
     /// `since`.
     ///
     /// The drain has to be running for this to terminate at all, which is the
-    /// fact [`Driven::drop`] below turns on and `CLAUDE.md` has the Darwin
+    /// fact [`Driven::drop`] below turns on and the module comment has the Darwin
     /// measurements for. Here it means the wait cannot be the reader.
     ///
     /// A `bdi` still alive at the deadline is left to the caller with
