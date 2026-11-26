@@ -4654,8 +4654,8 @@ drawn once cannot turn. Until the
 first read answers, the forest is each project's line with that mark, as the
 terminal opens, and a bead's page says the trackers are still being read.
 `/healthz` passes once every project has been asked once, whether or not its
-tracker answered, because a tracker that fails is drawn as failing. It is
-read-only, and no reader signs in.
+tracker answered, because a tracker that fails is drawn as failing. No reader
+signs in, and it is read-only unless `--writes` starts it.
 
 **It answers only the names it was told it serves.** With no sign-in, a page
 elsewhere could point a name of its own at the listener and have a visitor's
@@ -4668,6 +4668,25 @@ the host, so a loopback run needs no setting, and a probe by the pod's address
 passes. Behind a proxy the check reads the Host the proxy sends, so the proxy
 passes the browser's through. The check sits in `cli/web.rs`, at the top of
 the one function every request goes through.
+
+**A writable page takes a write only from its own page.** The Host check does
+not stop another site's page posting a form to the listener's own name through
+a visitor's browser. So a post is refused with `403 Forbidden` before bd runs
+unless two things hold. Its one `Origin` names the host and port its `Host`
+does, since a browser sends an `Origin` with every form it posts. Under a
+`no-referrer` policy it sends `Origin: null` instead, so every page names
+`same-origin` in a `<meta name="referrer">`, which a header a proxy adds does
+not override. The scheme is not compared, because behind a proxy that ends
+TLS `bdi web` cannot tell which one the browser used, and a page served on the
+other scheme at the same host and port still cannot read the token. Comparing
+against the allowed names instead would take a post from another port on
+`localhost`. And its form carries the token the bead's page issued: an
+HMAC-SHA256 of the bead's project, its id and the write's name, under a key
+each run reads from `/dev/urandom`. Another site's page cannot read the token,
+because the browser will not hand it a page from another origin. A proxy that
+rewrites Host makes every write fail the first check, so the refusal names
+both the origin and the host. `view/address.rs` issues and checks the token,
+since it composes the form's address and reads its fields.
 
 **Three places, each knowing one thing.** `cli/web.rs` serves: it holds the
 latest snapshot and answers requests, on the HTTP plumbing in `collect/http.rs`

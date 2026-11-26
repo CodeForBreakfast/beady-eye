@@ -17,6 +17,10 @@
 use std::collections::{BTreeSet, HashMap};
 use std::iter;
 
+use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
+
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::view::forest::{flatten, listed, only_ready, view_of, Forest, Landed, List};
@@ -161,9 +165,16 @@ pub const TEXT: &str = "text";
 /// The longest comment the form takes, in the UTF-16 units a browser counts.
 pub const LONGEST_COMMENT: usize = 7000;
 
-/// The most bytes a browser posts a comment's form as. One UTF-16 unit is at
-/// most three bytes of UTF-8, and a form sends each of those as `%XX`.
-pub const LARGEST_COMMENT_FORM: usize = TEXT.len() + "=".len() + LONGEST_COMMENT * 9;
+/// The most bytes a browser posts a comment's form as: the comment and the
+/// form's token. One UTF-16 unit is at most three bytes of UTF-8, and a form
+/// sends each of those as `%XX`.
+pub const LARGEST_COMMENT_FORM: usize = TEXT.len()
+    + "=".len()
+    + LONGEST_COMMENT * 9
+    + "&".len()
+    + TOKEN.len()
+    + "=".len()
+    + TOKEN_LENGTH;
 
 /// Where a form on `key`'s page posts the write named `write`.
 pub fn writing(key: &BeadKey, write: &str) -> String {
@@ -201,6 +212,69 @@ pub fn field(body: &str, name: &str) -> Option<String> {
         .filter_map(|pair| pair.split_once('='))
         .find(|(key, _)| *key == name)
         .and_then(|(_, value)| form_decoded(value))
+}
+
+/// The field a write's form carries the token its page issued in.
+pub const TOKEN: &str = "token";
+
+/// How long a token is: an HMAC-SHA256 in unpadded URL-safe base64, which a
+/// browser posts as it is.
+pub const TOKEN_LENGTH: usize = 43;
+
+/// What issues the token a writable page puts in each write's form, and
+/// checks the token a post carries. A page on another site cannot read one,
+/// so a form it posts carries none that checks. Each run has its own key,
+/// and a form drawn by an earlier run carries a token this run never issued.
+#[derive(Clone, Copy)]
+pub struct Tokens {
+    key: [u8; 32],
+}
+
+/// Without the key, which a log or a panic has no business holding.
+impl std::fmt::Debug for Tokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tokens").finish_non_exhaustive()
+    }
+}
+
+impl Tokens {
+    /// Tokens under a key read from the system's random source.
+    pub fn new() -> std::io::Result<Self> {
+        use std::io::Read;
+        let mut key = [0; 32];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
+        Ok(Self { key })
+    }
+
+    #[cfg(test)]
+    pub fn keyed(key: [u8; 32]) -> Self {
+        Self { key }
+    }
+
+    /// The token for the form on `bead`'s page that makes the write `write`.
+    pub fn issue(&self, bead: &BeadKey, write: &str) -> String {
+        BASE64_URL_SAFE_NO_PAD.encode(self.signing(bead, write).finalize().into_bytes())
+    }
+
+    /// Whether `token` is the one [`issue`](Self::issue) gives for the form
+    /// on `bead`'s page that makes `write`.
+    pub fn issued(&self, token: &str, bead: &BeadKey, write: &str) -> bool {
+        BASE64_URL_SAFE_NO_PAD
+            .decode(token)
+            .is_ok_and(|digest| self.signing(bead, write).verify_slice(&digest).is_ok())
+    }
+
+    /// The HMAC over `bead` and `write`, each part led by its length so no
+    /// two forms sign the same bytes.
+    fn signing(&self, bead: &BeadKey, write: &str) -> Hmac<Sha256> {
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.key).expect("an HMAC takes a key of any length");
+        for part in [&bead.project, &bead.id, write] {
+            mac.update(&part.len().to_be_bytes());
+            mac.update(part.as_bytes());
+        }
+        mac
+    }
 }
 
 /// Whether a bead of `project` has an address a browser keeps as it is
@@ -844,5 +918,53 @@ mod tests {
         assert_eq!(field(form, TEXT).as_deref(), Some("lift the gate, then +1"));
         assert_eq!(field(form, "reason"), None);
         assert_eq!(field("text=%zz", TEXT), None);
+    }
+
+    /// A token is issued for one bead and one write, and checks for that
+    /// form alone, issued by those tokens alone.
+    #[test]
+    fn a_token_checks_only_for_the_form_it_was_issued_in() {
+        let tokens = Tokens::keyed([7; 32]);
+        let gate = BeadKey {
+            project: "arkham".to_string(),
+            id: "ark-1".to_string(),
+        };
+        let token = tokens.issue(&gate, COMMENT);
+        assert_eq!(token.len(), TOKEN_LENGTH);
+        assert!(tokens.issued(&token, &gate, COMMENT));
+
+        let elsewhere = BeadKey {
+            id: "ark-2".to_string(),
+            ..gate.clone()
+        };
+        assert!(!tokens.issued(&token, &elsewhere, COMMENT));
+        assert!(!tokens.issued(&token, &gate, "close"));
+        assert!(!Tokens::keyed([8; 32]).issued(&token, &gate, COMMENT));
+        assert!(!tokens.issued("", &gate, COMMENT));
+        assert!(!tokens.issued("not base64!", &gate, COMMENT));
+    }
+
+    /// A project and an id are told apart however they are spelled, so the
+    /// token one bead's form carries does not check for another's.
+    #[test]
+    fn a_token_tells_where_the_project_ends_and_the_id_starts() {
+        let tokens = Tokens::keyed([7; 32]);
+        let split = |project: &str, id: &str| BeadKey {
+            project: project.to_string(),
+            id: id.to_string(),
+        };
+        let token = tokens.issue(&split("ark", "ham/ark-1"), COMMENT);
+        assert!(!tokens.issued(&token, &split("arkham", "/ark-1"), COMMENT));
+    }
+
+    /// Two runs issue different tokens for the same form.
+    #[test]
+    fn each_run_issues_its_own_tokens() {
+        let gate = BeadKey {
+            project: "arkham".to_string(),
+            id: "ark-1".to_string(),
+        };
+        let token = Tokens::new().expect("a key").issue(&gate, COMMENT);
+        assert!(!Tokens::new().expect("a key").issued(&token, &gate, COMMENT));
     }
 }
