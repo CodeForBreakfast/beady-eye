@@ -1,0 +1,197 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "result": {
+    "hidden_finished": 0,
+    "machines": [
+      {
+        "host": "kadath",
+        "id": "5b0e8c3f1a7d4e29b6c2f0a9d8e7c615",
+        "keeps_running_after_logout": null,
+        "logout_linger_user": null,
+        "name": "kadath",
+        "session": null,
+        "state": "connected",
+        "target": "ssh kadath",
+        "temporary": false,
+        "version": "0.1.21",
+        "via": false
+      }
+    ],
+    "terminals": [
+      {
+        "address": "t1",
+        "argv": [
+          "bash"
+        ],
+        "cols": 200,
+        "created_ms": 1795624198615,
+        "cwd": "/tmp/bdi-ground",
+        "die_with_parent": false,
+        "exit_code": null,
+        "finished_ms": null,
+        "foreground": {
+          "argv": [
+            "bash"
+          ],
+          "cwd": "/tmp/bdi-ground",
+          "name": "bash",
+          "pid": 757053
+        },
+        "identity": "ghostty",
+        "keep": false,
+        "labels": {},
+        "name": null,
+        "notify": true,
+        "parent": null,
+        "pid": 757053,
+        "reason": null,
+        "reported": false,
+        "rm": false,
+        "rows": 120,
+        "screen": "exact",
+        "signal": null,
+        "state": "live",
+        "status": null,
+        "status_ms": null,
+        "template": null,
+        "title": "",
+        "turn": 0
+      },
+      {
+        "address": "t4",
+        "argv": [
+          "claude"
+        ],
+        "cols": 200,
+        "created_ms": 1795624256727,
+        "cwd": "/tmp/bdi-ground",
+        "die_with_parent": false,
+        "exit_code": null,
+        "finished_ms": null,
+        "foreground": {
+          "argv": [
+            "claude"
+          ],
+          "cwd": "/tmp/bdi-ground/dunwich",
+          "name": "claude",
+          "pid": 806058
+        },
+        "identity": "ghostty",
+        "keep": false,
+        "labels": {
+          "claude.session": "4c1f0a2e-7d3b-4e8a-9f61-2b5c8d0e7a13"
+        },
+        "name": null,
+        "notify": true,
+        "parent": null,
+        "pid": 806058,
+        "reason": null,
+        "reported": true,
+        "rm": false,
+        "rows": 120,
+        "screen": "exact",
+        "signal": null,
+        "state": "live",
+        "status": {
+          "app": "claude",
+          "msg": "parsing the log",
+          "state": "working",
+          "title": "reading the trailers"
+        },
+        "status_ms": 1795624256735,
+        "template": null,
+        "title": "",
+        "turn": 0
+      },
+      {
+        "address": "t7",
+        "argv": [
+          "claude"
+        ],
+        "cols": 200,
+        "created_ms": 1795624259873,
+        "cwd": "/tmp/bdi-ground",
+        "die_with_parent": false,
+        "exit_code": null,
+        "finished_ms": null,
+        "foreground": {
+          "argv": [
+            "claude"
+          ],
+          "cwd": "/tmp/bdi-ground/lander",
+          "name": "claude",
+          "pid": 808425
+        },
+        "identity": "ghostty",
+        "keep": false,
+        "labels": {},
+        "name": null,
+        "notify": true,
+        "parent": null,
+        "pid": 808425,
+        "reason": null,
+        "reported": true,
+        "rm": false,
+        "rows": 120,
+        "screen": "exact",
+        "signal": null,
+        "state": "live",
+        "status": {
+          "app": "claude",
+          "kind": "permission",
+          "state": "blocked"
+        },
+        "status_ms": 1795624259882,
+        "template": null,
+        "title": "",
+        "turn": 0
+      },
+      {
+        "address": "kadath/t3",
+        "argv": [
+          "claude"
+        ],
+        "cols": 200,
+        "created_ms": 1795624380095,
+        "cwd": "/srv/bdi-ground",
+        "die_with_parent": false,
+        "exit_code": null,
+        "finished_ms": null,
+        "foreground": {
+          "argv": [
+            "claude"
+          ],
+          "cwd": "/srv/bdi-ground/dunwich",
+          "name": "claude",
+          "pid": 913842
+        },
+        "identity": "ghostty",
+        "keep": false,
+        "labels": {
+          "claude.session": "9e2d7c41-0b6a-4f3e-8d15-7a4c2e9b1f08"
+        },
+        "name": null,
+        "notify": true,
+        "parent": null,
+        "pid": 913842,
+        "reason": null,
+        "reported": true,
+        "rm": false,
+        "rows": 120,
+        "screen": "exact",
+        "signal": null,
+        "state": "live",
+        "status": {
+          "app": "claude",
+          "state": "idle",
+          "title": "waiting on review"
+        },
+        "status_ms": 1795624380101,
+        "template": null,
+        "title": "",
+        "turn": 0
+      }
+    ]
+  }
+}
