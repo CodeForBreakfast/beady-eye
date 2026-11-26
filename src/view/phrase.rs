@@ -438,6 +438,9 @@ fn refusal(refused: Option<&Conflict>) -> Option<String> {
         Conflict::AgentSessionInSeveralPanes { panes, .. } => {
             Some(format!("its agent session is in {} panes", panes.len()))
         }
+        Conflict::PaneHoldsAnotherAgentSession { .. } => {
+            Some("its pane holds another agent session".to_string())
+        }
         // Neither of these ever gets here. A refusal sends the reader to the
         // disagreement's row to find the pane the claim was for, and these two
         // name no one pane, so `join::resolve` refuses no claim with either.
@@ -522,6 +525,16 @@ pub fn conflict(conflict: &Conflict) -> String {
             bead_key(bead),
             panes.len(),
             panes.iter().map(pane_key).collect::<Vec<_>>().join(", ")
+        ),
+        Conflict::PaneHoldsAnotherAgentSession {
+            bead,
+            pane,
+            agent_session,
+            pane_agent_session,
+        } => format!(
+            "{}: its pane {} holds agent session {pane_agent_session}, not {agent_session}",
+            bead_key(bead),
+            pane_key(pane),
         ),
     }
 }
@@ -1691,7 +1704,15 @@ mod tests {
                         panes: vec![pane_key("wCM:p9"), pane_key("wCM:p6")],
                     })
                 }
-                Conflict::AgentSessionInSeveralPanes { .. } => None,
+                Conflict::AgentSessionInSeveralPanes { .. } => {
+                    Some(Conflict::PaneHoldsAnotherAgentSession {
+                        bead: key("smt-4kd3p.20"),
+                        pane: pane_key("wCM:p9"),
+                        agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+                        pane_agent_session: "e07b2d41-9c3a-4f58-8b16-3d9a0c7e4f25".into(),
+                    })
+                }
+                Conflict::PaneHoldsAnotherAgentSession { .. } => None,
             },
         )
     }
@@ -2706,6 +2727,39 @@ mod tests {
 
         assert_eq!(contested, "claimed · 2 beads claim its agent session");
         assert_eq!(held_twice, "claimed · its agent session is in 2 panes");
+    }
+
+    /// A pane that went to another agent names the bead, the pane, the
+    /// session the bead wrote and the one the pane holds.
+    #[test]
+    fn a_pane_holding_another_agent_session_names_both_sessions_and_the_pane() {
+        let said = conflict(&Conflict::PaneHoldsAnotherAgentSession {
+            bead: key("smt-4kd3p.20"),
+            pane: pane_key("wCM:p9"),
+            agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+            pane_agent_session: "e07b2d41-9c3a-4f58-8b16-3d9a0c7e4f25".into(),
+        });
+
+        assert_eq!(
+            said,
+            "summit-works · smt-4kd3p.20: its pane wCM:p9 in default holds agent session \
+             e07b2d41-9c3a-4f58-8b16-3d9a0c7e4f25, not 5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"
+        );
+    }
+
+    /// The bead's own row says why its claim has no pane.
+    #[test]
+    fn a_claim_refused_for_another_agent_session_in_its_pane_says_so() {
+        let said = anomaly(&Anomaly::OrphanClaim {
+            refused: Some(Conflict::PaneHoldsAnotherAgentSession {
+                bead: key("smt-4kd3p.20"),
+                pane: pane_key("wCM:p9"),
+                agent_session: "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952".into(),
+                pane_agent_session: "e07b2d41-9c3a-4f58-8b16-3d9a0c7e4f25".into(),
+            }),
+        });
+
+        assert_eq!(said, "claimed · its pane holds another agent session");
     }
 
     /// A pane under no configured project has no project to name, and saying
