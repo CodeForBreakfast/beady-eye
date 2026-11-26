@@ -202,15 +202,19 @@ impl ViewOptions {
 /// A command `bdi` passes to bd rather than draws.
 #[derive(Subcommand)]
 enum Passing {
-    /// Run `bd human respond`, `bd defer` or `bd comments add` against a
-    /// configured project's tracker, entered and credentialled as bdi reads
-    /// it. No other bd command is passed, and no flag but the response or the
-    /// date deferred until.
+    /// Run one of bd's light-touch writes against a configured project's
+    /// tracker, entered and credentialled as bdi reads it: `human respond`,
+    /// `defer --until`, `comments add`, `close`, `reopen`, `human dismiss`,
+    /// `unclaim --if-assignee` or `update --priority`. No other bd command is
+    /// passed, and no flag but the one each write takes.
     Bd {
         /// The configured project whose tracker the command is run against.
         project: String,
-        /// `human respond`, the bead and the response, `defer`, the bead and
-        /// `--until <date>`, or `comments add`, the bead and the text.
+        /// The command, then its bead and what it writes: `human respond`
+        /// with the response, `defer` with `--until <date>`, `comments add`
+        /// with the text, `close` with an optional `--reason`, `reopen`,
+        /// `human dismiss` with an optional reason, `unclaim` with
+        /// `--if-assignee <holder>`, or `update` with `--priority <p>`.
         #[arg(
             value_name = "ARGS",
             required = true,
