@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# The invented ground the README's animation is recorded in: beads trackers
+# The invented ground beady-eye's recordings are made in: beads trackers
 # for the arkham and dunwich projects, and a herdr that answers for them and
-# nothing else. Once bdi first shows what an agent is saying, arkham's work
-# moves on under it: a new agent takes a bead, and the search index's agent
-# finishes a bead and takes the next.
+# nothing else. It lays the beads and starts nothing, so each recording
+# moves them as its own story needs.
 #
 # Everything here is invented, and has to be — CONTRIBUTING.md's *Only
 # invented examples go in this repository*.
 #
-# Run by record.sh, which hands it an empty directory.
+# Run by record.sh and web-demo.sh, each handing it an empty directory.
 set -euo pipefail
 
 ground=${1:?an empty directory to lay the ground in}
@@ -24,16 +23,22 @@ fi
 mkdir -p "$arkham" "$dunwich" "$ground/bin" "$ground/herdr" \
   "$ground/.config/beady-eye"
 cp "$here"/bin/* "$ground/bin/"
+# The trackers are laid under the ground's own home, so no setting in the
+# caller's bd or git config shapes them.
+export HOME="$ground" XDG_CONFIG_HOME="$ground/.config"
 
 # Every `bd` here must reach the trackers laid here and nothing else, both
 # below and in the steps herdr takes later. A maintainer's shell points
 # BEADS_DIR at a real tracker, and bd prefers it to the directory it runs in,
-# so the ground's beads would land there.
+# so the ground's beads would land there. A caller's GIT_DIR would likewise
+# have each tracker's `git init` reach the caller's repository.
 cat >"$ground/isolate" <<'SH'
 for var in $(env | grep -E '^(BEADS|BD)_' | cut -d= -f1); do
   unset "$var"
 done
-export BEADS_ACTOR=wilbur
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+export BEADS_ACTOR=wilbur BD_DISABLE_METRICS=1
 SH
 # shellcheck source=/dev/null
 . "$ground/isolate"
@@ -55,9 +60,19 @@ path = "$dunwich"
 poll = false
 TOML
 
+# bdi web over this ground and nothing else: its config whatever the caller's
+# XDG_CONFIG_HOME says, and a runtime directory of its own, short for the
+# reason record.sh gives. BDI names the binary, and bdi on PATH serves without it.
+mkdir -m 700 "$ground/run"
+cat >"$ground/web" <<SH
+#!/bin/sh
+cd '$ground' && HOME='$ground' XDG_CONFIG_HOME='$ground/.config' \\
+  XDG_RUNTIME_DIR='$ground/run' exec "\${BDI:-bdi}" web "\$@"
+SH
+chmod +x "$ground/web"
+
 tracker() { # prefix
   git init -q
-  bd metrics off >/dev/null 2>&1 || true
   bd init --prefix "$1" --stealth >/dev/null
 }
 new() { bd create --silent "$@" >/dev/null; }
@@ -117,24 +132,3 @@ cat >"$ground/herdr/visible.wG:p4" <<'PANE'
 
   Reading the gateway's docs on key rotation.
 PANE
-
-# Each step waits for herdr to take it, so the tracker bdi reads next agrees
-# with the agents herdr lists. The steps start soon after bdi first shows a
-# pane's tail.
-step() { # commands
-  printf '%s\n' "$1" >"$ground/herdr/next" && mv "$ground/herdr/next" "$ground/herdr/due"
-  for _ in $(seq 600); do [ -e "$ground/herdr/taken" ] && break; sleep 0.1; done
-  rm -f "$ground/herdr/taken"
-}
-(
-  for _ in $(seq 1200); do [ -e "$ground/herdr/read" ] && break; sleep 0.1; done
-  sleep 0.5
-  step ". '$ground/isolate' && cd '$arkham' && bd update ark-1.2 --status in_progress --set-metadata agent_pane=wG:p4 >/dev/null &&
-    cp '$ground/herdr/keys.json' '$ground/herdr/default.json'"
-  sleep 1.5
-  step ". '$ground/isolate' && cd '$arkham' && bd update ark-2.1 --unset-metadata agent_pane >/dev/null &&
-    bd close ark-2.1 >/dev/null &&
-    bd update ark-2.2 --status in_progress --set-metadata agent_pane=wG:p3 >/dev/null"
-) </dev/null >"$ground/arkham.log" 2>&1 &
-echo $! >"$ground/clock.pid"
-disown

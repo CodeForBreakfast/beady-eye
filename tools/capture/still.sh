@@ -17,25 +17,19 @@ out="$repo/docs/images/bdi-web.png"
 page="/arkham/ark-1.1?at=arkham%3Aark-1%2Farkham%3Aark-1.1&open=b%3Adunwich%3Adun-1#shown"
 
 ground=$(mktemp -d /tmp/bdi-ground.XXXX)
-runtime=$(mktemp -d /tmp/bdi-rt.XXXX)
 web=
-trap '[ -z "$web" ] || kill "$web" 2>/dev/null || true; rm -rf "$ground" "$runtime"' EXIT
+trap '[ -z "$web" ] || kill "$web" 2>/dev/null || true; rm -rf "$ground"' EXIT
 
 "$repo/tools/capture/ground.sh" "$ground"
-# The ground's clock moves arkham's work on for the animation, and the still
-# has nothing for it to move.
-kill "$(cat "$ground/clock.pid")"
 # shellcheck source=/dev/null
 . "$ground/isolate"
-export XDG_RUNTIME_DIR="$runtime"
 export PATH="$ground/bin:$PATH"
 
 # --poll reads dunwich as well, which the ground's config leaves unpolled.
 # HOME stays the caller's for Chromium, which hangs in headless mode on a
 # profile it has to make new. Port 0 and the address bdi web says it took
 # keep the shot off any other server already listening here.
-(cd "$ground" && HOME="$ground" exec "$repo/target/release/bdi" web --listen 127.0.0.1:0 --poll) \
-  >"$ground/web.out" &
+BDI="$repo/target/release/bdi" "$ground/web" --listen 127.0.0.1:0 --poll >"$ground/web.out" &
 web=$!
 url=
 for _ in $(seq 300); do

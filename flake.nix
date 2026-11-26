@@ -173,6 +173,12 @@
         beady-eye = beadyEyeFor pkgs;
         artifacts = artifactsFor pkgs;
 
+        webDemo = pkgs.writeShellApplication {
+          name = "web-demo";
+          runtimeInputs = [ beady-eye bd pkgs.bash pkgs.git pkgs.coreutils pkgs.curl pkgs.gnugrep pkgs.gnused ];
+          text = ''exec ${./tools/capture}/web-demo.sh "$@"'';
+        };
+
         # What `cargo package` is handed. It builds the tarball Cargo.toml's
         # `include` list selects, and refuses a `readme` it cannot find — but
         # all it does with README.md and LICENSE is copy them, and no part of
@@ -4317,6 +4323,14 @@ and a second line"
           tap-formula = tapFormula;
           unbuilt-checks = unbuiltChecks;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { inherit image; };
+
+        # `nix run github:CodeForBreakfast/beady-eye#web-demo -- --help` says
+        # what it does and how long one cycle runs.
+        apps.web-demo = {
+          type = "app";
+          program = "${webDemo}/bin/web-demo";
+          meta.description = "bdi web over invented beads that move on a fixed cycle";
+        };
 
         # `nix flake check` is the whole of CI. Anything CI should run belongs
         # here, not in the workflow that calls it.
