@@ -489,7 +489,8 @@ A flag's value that starts with a dash is joined to it, as
 `--reason='-1, a duplicate'`, and a comment or response that starts with one
 goes after `--`. `u` is offered only on a bead the eye flags as a claim with
 no live agent, and it names the holder, so `bd` refuses it if the bead's
-assignee has changed since. It needs bd 1.2.0 or newer, the first with
+assignee has changed since. `bdi bd <project> unclaim` checks no agent, so
+whatever calls it decides the agent has gone. It needs bd 1.2.0 or newer, the first with
 `--if-assignee`. `bdi --beads` gives each bead deferred to a date
 its `defer_until`. Responding and dismissing both close the bead, as
 `bd` does. `X` and the page's dismiss form give no reason, so give one through

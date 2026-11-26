@@ -61,7 +61,8 @@ the list, and each command takes only its own flag. A command line, a key or a
 form that gets it to run anything else, or to start bd in another project's
 tracker, is worth a report. bd's own routes can still send an id the tracker
 does not hold to another tracker, as they would for any bd run there, and a
-writable `bdi web` writes only to a bead its page draws.
+writable `bdi web` takes a write only to an id its last read drew, which bd
+then resolves as it resolves any id.
 
 **It takes writes on a web page.** `bdi web` takes writes only when it is
 started with `--writes`, and makes each as the one actor its config names. It
