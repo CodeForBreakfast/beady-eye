@@ -178,7 +178,8 @@ bead view and a writable `bdi web` call the same function `bdi bd` does. That
 function checks the command line and starts bd in the project's tracker,
 entered as it is read, so no flag or variable can point it at another. bd
 still routes an id that tracker does not hold to wherever its routes say, so
-a writable `bdi web` writes only to a bead its page draws. Releasing a
+a writable `bdi web` takes a write only to an id its last read drew, which bd
+then resolves as it resolves any id. Releasing a
 claim rests on the anomaly for a claim with no live agent, so only the
 terminal offers it, because `bdi web` reads no agents. It names the holder,
 so bd refuses it if the bead's assignee has changed since.
