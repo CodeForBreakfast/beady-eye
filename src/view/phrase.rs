@@ -1213,6 +1213,23 @@ pub fn copied() -> &'static str {
     "Copied"
 }
 
+/// The field on a writable web page's bead view that takes a comment, in
+/// beads' word for one.
+pub fn comment() -> &'static str {
+    "Comment"
+}
+
+/// The button that adds what the comment field holds to the bead, as `bd
+/// comments add` does.
+pub fn add_comment() -> &'static str {
+    "Add comment"
+}
+
+/// What a web page says where bd refused a write, with what bd said.
+pub fn not_written(why: &str) -> String {
+    format!("bd did not make the write: {why}")
+}
+
 /// The name each cell of a web bead page's grid of fields goes by: `bd
 /// show`'s own word for the field, and beads' word for progress.
 pub mod field {

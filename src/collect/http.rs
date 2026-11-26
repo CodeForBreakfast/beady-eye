@@ -74,13 +74,14 @@ pub(crate) fn reply(stream: &TcpStream, status: &str, kind: &str, body: &[u8], p
 }
 
 /// Answer as [`reply`] does, with `body` sent in `encoding`, the one the
-/// request was found to take.
+/// request was found to take, and the header lines `headers` beside it.
 pub(crate) fn reply_in(
     stream: &TcpStream,
     status: &str,
     kind: &str,
     body: &[u8],
     encoding: Encoding,
+    headers: &str,
     patience: Duration,
 ) {
     let body = match encoding {
@@ -94,7 +95,8 @@ pub(crate) fn reply_in(
             )
         }
     };
-    answer_with(stream, status, kind, encoding.headers(), &body, patience);
+    let headers = format!("{}{headers}", encoding.headers());
+    answer_with(stream, status, kind, &headers, &body, patience);
 }
 
 fn answer_with(
@@ -347,6 +349,46 @@ pub(crate) fn head(from: &mut impl Read, held: &mut Vec<u8>) -> Result<Head, Unr
                 .collect(),
         });
     }
+}
+
+/// Why a request's body was not read.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Unbodied {
+    /// Its head names no length, or sends it in chunks.
+    Unmeasured,
+    /// The length its head names is over the most the caller takes.
+    TooLarge,
+    /// It ended or failed before it was whole.
+    Unreadable,
+}
+
+/// The body of the request whose `head` [`head`] read into `held`, read on
+/// from `from` to the length its Content-Length names, at most `largest`
+/// bytes.
+pub(crate) fn body(
+    from: &mut impl Read,
+    mut held: Vec<u8>,
+    head: &Head,
+    largest: usize,
+) -> Result<Vec<u8>, Unbodied> {
+    let length = head
+        .header("Content-Length")
+        .and_then(|length| length.trim().parse::<usize>().ok());
+    let length = match length {
+        _ if head.header("Transfer-Encoding").is_some() => return Err(Unbodied::Unmeasured),
+        None => return Err(Unbodied::Unmeasured),
+        Some(length) if length > largest => return Err(Unbodied::TooLarge),
+        Some(length) => length,
+    };
+    let mut body = held.split_off(head.end);
+    if body.len() < length {
+        let mut rest = vec![0; length - body.len()];
+        from.read_exact(&mut rest)
+            .map_err(|_| Unbodied::Unreadable)?;
+        body.extend_from_slice(&rest);
+    }
+    body.truncate(length);
+    Ok(body)
 }
 
 #[cfg(test)]
