@@ -81,6 +81,10 @@ struct Held {
     cfg: Arc<Config>,
     /// The latest snapshot, where the trackers have been read at all.
     snapshot: Option<Snapshot>,
+    /// The config the snapshot was read under, which a write to one of its
+    /// beads goes by, since a config taken up since may name another
+    /// tracker for the same project.
+    read_under: Arc<Config>,
     /// The read being made, so a page drawn while it is out says so, and
     /// says a tracker has stopped answering once it has been out too long.
     collecting: Option<Awaited>,
@@ -96,8 +100,10 @@ type DrawnFrom = (u64, bool);
 
 impl Latest {
     fn new(cfg: Config) -> Self {
+        let cfg = Arc::new(cfg);
         Self::holding(Held {
-            cfg: Arc::new(cfg),
+            read_under: Arc::clone(&cfg),
+            cfg,
             snapshot: None,
             collecting: None,
             lapsed: Vec::new(),
@@ -548,6 +554,7 @@ fn read_what_is_due(
     );
     latest.change(|held| {
         held.snapshot = Some(snapshot);
+        held.read_under = cfg;
         held.collecting = None;
     });
     true
@@ -722,7 +729,11 @@ fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
     let Some(snapshot) = &held.snapshot else {
         return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet())).into();
     };
-    let Some(project) = held.cfg.read().find(|project| project.name == bead.project) else {
+    let Some(project) = held
+        .read_under
+        .read()
+        .find(|project| project.name == bead.project)
+    else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     };
     // bd takes the start of an id, and routes an id it does not hold to
@@ -1406,6 +1417,7 @@ mod tests {
             Utc::now(),
         );
         let latest = Latest::holding(Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1452,6 +1464,7 @@ mod tests {
             Utc::now(),
         );
         let held = Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1526,6 +1539,7 @@ mod tests {
             Utc::now(),
         );
         Latest::holding(Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1554,6 +1568,7 @@ mod tests {
         let asked_at = Utc::now() - chrono::TimeDelta::seconds(600);
         let latest = Latest::holding(Held {
             cfg: Arc::new(cfg.clone()),
+            read_under: Arc::new(cfg.clone()),
             snapshot: None,
             collecting: Some(Awaited {
                 wanted: Wanted::Everything,
@@ -1603,6 +1618,7 @@ mod tests {
             Utc::now(),
         );
         Latest::holding(Held {
+            read_under: Arc::new(cfg.clone()),
             cfg: Arc::new(cfg),
             snapshot: Some(snapshot),
             collecting: None,
@@ -1621,6 +1637,25 @@ mod tests {
     }
 
     const COMMENTED: &str = "bd -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
+
+    /// A write goes to the tracker its bead was read from, so a config that
+    /// has since pointed the project elsewhere does not send it there.
+    #[test]
+    fn a_write_goes_to_the_tracker_its_bead_was_read_from() {
+        let mut held = arkham_held().now();
+        held.cfg = Arc::new(
+            Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/elsewhere/arkham\"\n")
+                .expect("a config"),
+        );
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &Latest::holding(held),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other");
+        assert_eq!(runner.calls().len(), 1);
+    }
 
     #[test]
     fn a_run_that_takes_no_writes_refuses_a_write() {
