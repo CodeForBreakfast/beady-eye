@@ -23,9 +23,9 @@ name the version or the commit.
 
 ## What is worth reporting
 
-`bdi` issues reads, with two exceptions. `bdi bd <project> human respond` runs
-that write against the named project's tracker, and `bdi gates` settles gh:pr
-gates. Every other `bd` command line it spells is a read, and the pane tail it draws is output it was handed rather
+`bdi` issues reads, with two exceptions. The light-touch writes, such as a
+comment, a close or a deferral, run against the named project's tracker, and
+`bdi gates` settles gates. Every other `bd` command line it spells is a read, and the pane tail it draws is output it was handed rather
 than a shell it runs. That is a property of those command lines rather than a
 guarantee about your tracker —
 a `bd` older than 1.3.0 writes on its own account when it opens one, rewriting
@@ -53,10 +53,23 @@ mode `0600` under the user's own runtime directory, and its whole protocol is on
 project name per line. Anything that lets a line do more than schedule a read of
 a project the config already names belongs here.
 
-**It passes one write through.** `bdi bd` runs `bd human respond` against the
-tracker of the project it names, with that project's credential. A command line
-that gets it to run anything else, or to reach another project's tracker, is
-worth a report.
+**It passes light-touch writes through.** `bdi bd`, the terminal's bead
+window and a writable `bdi web` run one of a fixed list of `bd` commands
+against the tracker of the project named, or the one the bead was read from,
+with that project's credential. `PASSED_THROUGH` in `src/collect/bd.rs` is
+the list, and each command takes only its own flag. A command line, a key or a
+form that gets it to run anything else, or to reach another project's tracker,
+is worth a report.
+
+**It takes writes on a web page.** `bdi web` takes writes only when it is
+started with `--writes`, and makes each as the one actor its config names. It
+asks nobody to sign in, so whoever can reach the page can write, and limiting
+that is the job of whatever fronts it. It refuses a post whose `Origin` names
+another host and port than its `Host`, and one whose form lacks the token the
+bead's page issued, an HMAC-SHA256 under a key each run reads from
+`/dev/urandom`. Anything that gets a write past either check from another
+site's page, gets a write made on a page started without `--writes`, or gets
+a write made under any actor but the configured one is worth a report.
 
 **It settles pull-request gates.** `bdi gates` runs `gh pr view` on the
 repository and number a gh:pr gate names, as whoever `gh` is signed in as. On

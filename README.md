@@ -35,6 +35,10 @@ it see gives it more to do.
   the bead's wait. A failing check, a conflict, a review or a comment is passed
   on to the bead that waits. An issue closing, or a repository publishing its
   next release, ends a wait on it too.
+- **It takes your small decisions back.** From a bead's window in the
+  terminal, or its page on a `bdi web` you let write, you can comment, close,
+  reopen, respond, defer or set a priority without dropping to `bd`. Anything
+  bigger you ask of an agent, by commenting on the bead.
 
 ![An animation of bdi over two projects, arkham and dunwich. Each project's beads are drawn as trees under the goal they serve, each bead with its status glyph and its id, and beside the three beads being worked sits the agent working each one, named in green by what it is doing. The selection moves onto the refund bead, and the band under the trees shows what that agent's pane is saying. Then a new agent takes the bead to cut the live keys over, the search index's agent finishes its bead and takes the next, and the trees redraw as each happens. The selection moves onto the live keys bead, and the band shows what its new agent is saying.](docs/bdi-at-work.gif)
 
@@ -54,13 +58,13 @@ a bead can reach whoever watches that bead, and neither side needs to know the
 other. The bead is the address, and the tracker keeps the message long after
 the listener has gone. The view you just saw is one of the listeners.
 
-![A diagram in the poster's colours. Above, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds gates, the first of the writers on the left, which ships with beady-eye: bdi gates closes a gate once what it awaits says the wait is over, and comments on the bead when its pull request has news. Below it are the other writers: people with bd, other agents, and scripts and CI. Each writer has an arrow into a beads tracker, and the one from gates is a tentacle. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which tells the session; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. A second tentacle curls from the scripts back into the tracker, labelled the way back: a person answers, defers or comments, with bdi bd.](docs/images/writers-and-listeners.svg)
+![A diagram in the poster's colours. Above, three sources: GitHub, with its pull requests, issues, releases and runs; the clock; and other beads in any configured tracker. Each feeds gates, the first of the writers on the left, which ships with beady-eye: bdi gates closes a gate once what it awaits says the wait is over, and comments on the bead when its pull request has news. Below it are the other writers: people with bd, other agents, and scripts and CI. Each writer has an arrow into a beads tracker, and the one from gates is a tentacle. An arrow runs from the tracker to an eye labelled bdi watch, one per machine, and from the eye to the listeners on the right: the Claude Code plugin, which tells the session; the view, which redraws the trees of work; and scripts, sent a line of JSON per change. A second tentacle curls from the scripts back into the tracker, labelled the way back: a person's small decisions, with bdi bd.](docs/images/writers-and-listeners.svg)
 
 The tentacles are beady-eye's own reach into the tracker. `bdi gates` is one
 of the writers. It reads GitHub, the clock and other beads, and closes the
 gates whose wait is over. `bdi bd` is the way back. Whatever showed a person
-the bead passes on their answer, deferral or comment, and `bdi bd` writes it
-to the bead. Writing back, below, has both.
+the bead passes on their decision, such as a comment, a close or a deferral,
+and `bdi bd` writes it to the bead. Writing back, below, has both.
 
 ## Summoning
 
@@ -153,6 +157,7 @@ Keys to start with. `?` lists the lot.
 | `←` `→` `h` `l` | collapse or expand; again to move to the parent or first child |
 | `Enter` | open the bead, and from there, focus its pane |
 | `f` | focus the selected bead's pane |
+| `m` `x` `o` `R` `X` `z` `u` `p` | in an open bead, comment, close and the other writes [Writing back](#writing-back) lists |
 | `a` | every tree, not only the ones with a live agent |
 | `F` | only the selected bead and the work beneath it; again for the whole forest |
 | `r` | the ready list in place of the forest, or in a view only its ready beads; again to undo |
@@ -252,10 +257,26 @@ taken.
 
 The page asks nobody to sign in. Anyone who can reach the address can read
 every tracker it reads, so listen only where everyone who can reach it may
-read them all. It is read-only unless it is started with `--writes`, and then
-anyone who can reach it can comment on a bead. Every write is made as the one
-actor [`[web] actor`](docs/configuration.md#web) names, and a writable page
-does not start without one.
+read them all.
+
+Started with `--writes`, the page also writes. Each bead's page then offers a
+form for each light-touch write that Writing back, below, lists, except
+releasing a claim, since the page sees no agents. Anyone who can reach the
+address can make them. Every write is made as the one actor
+[`[web] actor`](docs/configuration.md#web) names, and a writable page does not
+start without one:
+
+```toml
+[web]
+actor = "carter"
+```
+
+```console
+$ bdi web --listen 127.0.0.1:8080 --writes
+```
+
+`bdi` builds no login. Whatever fronts the page, such as a proxy that signs
+people in, decides who reaches it, and so who can write.
 
 A writable page refuses a write posted from another site with `403
 Forbidden`, and runs no bd for it. The post's `Origin` has to name the host
@@ -443,30 +464,42 @@ $ claude --dangerously-load-development-channels plugin:beady-eye@beady-eye
 ## Writing back
 
 beady-eye writes to a tracker in two ways.
-`bdi bd` writes what a person decided: an answer, a deferral or a comment.
+`bdi bd` writes what a person decided, such as a comment, a close or a deferral.
 `bdi gates` writes what GitHub, the clock and other beads say about a wait.
 Each works in a tracker the config names, with that project's own `bd`.
 
-`bdi bd <project> human respond <bead> <response>` carries a person's answer
-to a bead that asked for one. It runs that project's `bd` the way the eye reads
-it, so whatever asks needs no map of trackers or credentials. No other `bd`
-command is passed, and no flag but `-r`/`--response`. A response that starts
-with a dash goes after `--`.
+Each light-touch write is one `bd` command. In the terminal, open a bead and
+press its key. On a `bdi web` started with `--writes`, each bead's page has a
+form for each but releasing a claim. Anywhere else, `bdi bd <project>` passes
+the `bd` command on:
 
-`bdi bd <project> defer <bead> --until <date>` puts a bead off until a date a
-person chose, and takes no flag but `--until`. It reaches the tracker the
-same way, and `bdi --beads` gives each bead deferred to a date its
-`defer_until`.
+| write | `bdi bd <project> …` | key |
+|---|---|---|
+| comment | `comments add <bead> -- <text>` | `m` |
+| close, with a reason | `close <bead> --reason <reason>` | `x` |
+| reopen | `reopen <bead>` | `o` |
+| respond to a bead that needs a human | `human respond <bead> <response>` | `R` |
+| dismiss a bead that needs a human | `human dismiss <bead>` | `X` |
+| defer until a date | `defer <bead> --until <date>` | `z` |
+| release the claim of an agent that is gone | `unclaim <bead> --if-assignee <holder>` | `u` |
+| set the priority | `update <bead> --priority <p>` | `p` |
 
-`bdi bd <project> comments add <bead> -- <text>` puts a comment a person wrote
-on a bead, and takes no flag at all. A word that starts with a dash goes after
-`--`.
+No other `bd` command is passed, and no flag but the one each write takes.
+Words that start with a dash go after `--`. `u` is offered only on a bead the
+eye flags as a claim with no live agent, and it names the holder, so `bd`
+refuses it if someone has claimed the bead since. `bdi --beads` gives each
+bead deferred to a date its `defer_until`. Anything bigger, such as a new
+title, a dependency or a new bead, is an agent's job: comment on the bead to
+ask for it.
 
-For all three, nothing after the project can pick another
-tracker, and neither can a `BEADS_` or `BD_` variable the caller exports.
-What the project's own directory sets still applies. So a permission rule on
-`bdi bd <project>` holds a caller to that one project, provided the caller
-cannot choose the `HOME` or `PATH` that `bdi` runs with.
+`bdi bd` runs that project's `bd` the way the eye reads it, so whatever asks
+needs no map of trackers or credentials. Nothing after the project can pick
+another tracker, and neither can a `BEADS_` or `BD_` variable the caller
+exports. What the project's own directory sets still applies. So a permission
+rule on `bdi bd <project>` holds a caller to that one project, provided the
+caller cannot choose the `HOME` or `PATH` that `bdi` runs with. The terminal
+and `bdi bd` write as whoever runs them, and a writable `bdi web` as its
+`[web] actor`.
 
 `bdi gates` settles the beads waiting on pull requests. Whoever opens the pull
 request records the wait as a beads gate on its number, and `bdi gates` never

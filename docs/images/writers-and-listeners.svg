@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="980" height="600" viewBox="0 0 980 600" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13">
-<title>Writers change beads in a tracker, bdi watch sees each change, and tells the Claude Code plugin, the view and scripts on its socket. One writer is gates, which ships with beady-eye and reads GitHub, the clock and other beads. From the listener side, a person answers, defers or comments with bdi bd.</title>
+<title>Writers change beads in a tracker, bdi watch sees each change, and tells the Claude Code plugin, the view and scripts on its socket. One writer is gates, which ships with beady-eye and reads GitHub, the clock and other beads. From the listener side, a person's small decisions go back with bdi bd.</title>
 <defs>
   <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
     <path d="M0 0 L10 5 L0 10 z" fill="#efe2c4"/>
@@ -109,5 +109,5 @@
 
 <!-- the way back -->
 <text x="660" y="562" text-anchor="middle" fill="#5fae9b" font-size="12" letter-spacing="2">THE WAY BACK</text>
-<text x="660" y="582" text-anchor="middle" fill="#efe2c4">a person answers, defers or comments, with <tspan font-family="ui-monospace, Menlo, Consolas, monospace">bdi bd</tspan></text>
+<text x="660" y="582" text-anchor="middle" fill="#efe2c4">a person's small decisions, with <tspan font-family="ui-monospace, Menlo, Consolas, monospace">bdi bd</tspan></text>
 </svg>

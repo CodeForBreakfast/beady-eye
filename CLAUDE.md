@@ -2,8 +2,9 @@
 
 `bdi` joins a beads tracker to a herdr session and draws one tree of work per
 root, annotated with the live agent on each node. It writes to a tracker only
-through `bdi bd` and by settling gates, as the next two sections say. Every
-other bd command line `bdi` spells is a read, and `collect/` spells all of them.
+to carry a person's light-touch write and to settle gates, as the next two
+sections say. Every other bd command line `bdi` spells is a read, and
+`collect/` spells all of them.
 `docs/design.md`'s *Reading a tracker is not leaving it alone* has the
 measurements.
 
@@ -12,9 +13,16 @@ measurements.
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
 - The reading side: which `bd`, `herdr`, `hc` and `gh` command lines it spells, and
   how it parses what they print.
-- `bdi bd`, which carries a person's light-touch write, such as an answer, a
-  deferral or a comment, to the right tracker. `PASSED_THROUGH` in
-  `collect/bd.rs` lists the writes it passes.
+- The light-touch writes, which carry a person's small decision to the right
+  tracker: a comment, a close with a reason, a reopen, a response to a
+  human-needed bead or its dismissal, a deferral, releasing the claim of an
+  agent that is gone, and a priority. `bdi bd` passes each one, the bead
+  window offers each by a key, and a writable `bdi web` offers each but the
+  release as a form, all through one write path. `PASSED_THROUGH` in
+  `collect/bd.rs` lists them.
+- A writable `bdi web`'s guards: writes only under `--writes`, as the one
+  `[web] actor`, and refused from another site by origin and a per-form token.
+  It builds no login.
 - Gates, which settles a gate:
   it re-reads the pull request from GitHub, closes the gate on a merge, and
   on a close without one tells the beads the gate holds back. A gate on an
@@ -36,8 +44,9 @@ measurements.
 - **herdr.** Panes, agent detection and agent status belong to the herdr
   project, and the herdr app's terminals and their status to its `hc`. `bdi`
   draws what each reports.
-- **Every other write to a tracker.** `bdi` never creates a bead. Whoever runs
-  `bdi` does everything else with `bd`, creating the gate included.
+- **Every other write to a tracker.** `bdi` never creates a bead, and leaves
+  titles, descriptions, dependencies and labels to agents. Whoever runs `bdi`
+  does everything else with `bd`, creating the gate included.
 - **How agents are organised.** `bdi` knows no roles, orchestration model or
   skill names. A convention a setup keeps in bead metadata is named in the
   user's config and drawn without interpretation.
