@@ -1,7 +1,7 @@
 //! The light-touch writes a person makes from the terminal, made in turn on a
 //! thread of their own so that a tracker slow to answer never holds the screen.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
@@ -45,8 +45,14 @@ struct Queued {
 }
 
 impl Writer {
-    pub fn new<A: From<Wrote> + Send + 'static>(answers: Sender<A>) -> Self {
-        Self::making(answers, written)
+    /// A writer that tells the watcher at `watcher` of each write bd takes.
+    pub fn new<A: From<Wrote> + Send + 'static>(
+        answers: Sender<A>,
+        watcher: Option<PathBuf>,
+    ) -> Self {
+        Self::making(answers, move |project: &Project, asked: &[String]| {
+            written(project, asked, watcher.as_deref())
+        })
     }
 
     fn making<A: From<Wrote> + Send + 'static>(
@@ -105,17 +111,23 @@ impl Drop for Writer {
 /// Make a write with the environment the terminal reads the project with,
 /// the caller's choice of tracker included, so that it reaches the tracker
 /// the bead on the screen was read from.
-fn written(project: &Project, asked: &[String]) -> anyhow::Result<()> {
-    let (argv, env) = bd::writing(&RealRunner, project, asked, None)?;
-    made("bd", &argv, Some(&project.path), &env)
+fn written(project: &Project, asked: &[String], watcher: Option<&Path>) -> anyhow::Result<()> {
+    bd::make(
+        &RealRunner,
+        project,
+        asked,
+        None,
+        watcher,
+        |argv, env| made("bd", argv, Some(&project.path), env),
+        |()| true,
+    )
 }
 
 /// Run a write, and where it is refused say why in the words it was refused
 /// in, on one line. Only the person who made the write reads them, on their
 /// own terminal, where `bdi bd` shows bd's stderr too.
-fn made(program: &str, argv: &[String], cwd: Option<&Path>, env: &Env) -> anyhow::Result<()> {
-    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let out = run::captured(program, &argv, cwd, env)?;
+fn made(program: &str, argv: &[&str], cwd: Option<&Path>, env: &Env) -> anyhow::Result<()> {
+    let out = run::captured(program, argv, cwd, env)?;
     if out.status.success() {
         return Ok(());
     }
@@ -185,9 +197,8 @@ mod tests {
         let refused = made(
             "sh",
             &[
-                "-c".to_string(),
-                "printf 'Error: invalid --until format \"someday\"\\nHint: try tomorrow\\n' >&2; exit 1"
-                    .to_string(),
+                "-c",
+                "printf 'Error: invalid --until format \"someday\"\\nHint: try tomorrow\\n' >&2; exit 1",
             ],
             None,
             &Env::new(),
@@ -203,13 +214,7 @@ mod tests {
     /// A refusal bd gave no words for is still said, in bdi's own.
     #[test]
     fn a_write_refused_in_silence_says_how_it_ended() {
-        let refused = made(
-            "sh",
-            &["-c".to_string(), "exit 3".to_string()],
-            None,
-            &Env::new(),
-        )
-        .expect_err("refused");
+        let refused = made("sh", &["-c", "exit 3"], None, &Env::new()).expect_err("refused");
 
         assert_eq!(
             format!("{refused:#}"),

@@ -606,6 +606,52 @@ fn the_refresh_key_has_the_watcher_a_view_reads_through_read_again() {
     stopped(watcher);
 }
 
+/// `bdi bd` run in `home` with `write` as its words.
+fn bdi_bd(home: &Path, tracker: &ShimmedTracker, write: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .args(["bd", "arkham"])
+        .args(write.split_whitespace())
+        .current_dir(home)
+        .env("HOME", home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("BDI_PROJECT")
+        .envs(tracker.environment())
+        .output()
+        .expect("bdi runs")
+}
+
+/// A write `bdi bd` makes has the watcher read the project again at once,
+/// rather than at its next poll, so whatever reads through it sees the write.
+/// With the watcher gone, the write is made as it always was, and nothing is
+/// said of the watcher.
+#[test]
+fn a_write_through_bdi_bd_has_the_watcher_read_its_project_again() {
+    const COMMENTED: &str = "comments add dun-0tp noted";
+    let (home, tracker) = a_home_with_a_watcher_configured("watched-write");
+    tracker.answers_with(COMMENTED, "✓\n");
+    let watcher = watching_in(&home, &tracker);
+    let read_before = reads_in_full(&tracker);
+
+    let watched = bdi_bd(&home, &tracker, COMMENTED);
+    until(
+        || reads_in_full(&tracker) > read_before,
+        "the read the write asked for",
+    );
+    stopped(watcher);
+    let unwatched = bdi_bd(&home, &tracker, COMMENTED);
+
+    for out in [watched, unwatched] {
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "✓\n");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    }
+}
+
 /// A board started before the watcher holds the changes socket, and the
 /// watcher takes it from the board: a push there reaches every board reading
 /// through the watcher, without waiting for this one to find the watcher.

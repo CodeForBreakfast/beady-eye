@@ -12,6 +12,8 @@ Minor release, **0.45.0 → 0.46.0**.
 
 **A writable `bdi web` refuses a form posted from another site.** The refusal says which address the form came from. If you put a proxy in front of `bdi web`, it has to pass on the Host the browser asked for, or every change is refused.
 
+**A change you make from bdi shows at once wherever `bdi watch` serves the project.** Once bd takes a change made from the terminal, a writable `bdi web` or `bdi bd`, bdi tells the watcher, which reads the project again, so every view it feeds shows the change straight away. With no watcher running, the change is made as before.
+
 **`bdi bd` passes more changes through.** It now takes `close`, `reopen`, `human dismiss`, `unclaim --if-assignee` and `update --priority` as well as the comment, response and deferral it took before.
 
 **A claim whose pane holds another agent now says so.** The bead reads "claimed · its pane holds another agent session", where before it looked like a seat that had never registered. `bdi --beads` lists the same reason beside each bead.

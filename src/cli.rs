@@ -3,7 +3,7 @@
 
 use std::io::{ErrorKind, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{ExitCode, ExitStatus};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -921,9 +921,15 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
         );
     };
     environment::forget_the_callers_tracker();
-    let (argv, env) = bd::writing(&RealRunner, project, asked, None)?;
-    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
+    let exited = bd::make(
+        &RealRunner,
+        project,
+        asked,
+        None,
+        where_this_machine_watches(&cfg).as_deref(),
+        |argv, env| Ok(run::handed_over("bd", argv, Some(&project.path), env)?),
+        ExitStatus::success,
+    )?;
     Ok(exited
         .code()
         .and_then(|code| u8::try_from(code).ok())

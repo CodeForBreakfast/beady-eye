@@ -1197,9 +1197,10 @@ It has a socket of its own, apart from the one a view watches, at
 `$XDG_RUNTIME_DIR/beady-eye/watcher.sock` or the path `[watcher]` names. A
 consumer watching beads connects to it. It also takes the lines a view takes
 from a producer: a project's name, or `covered <project>`. The README has a worked
-one. The view, `bdi --json` and `bdi --beads` find the watcher at the same
-path and read through it, so a `[watcher]` socket is named once for all
-three. They read a project
+one. A write made through `bdi bd`, the view or a writable `bdi web` names its
+project there once bd has taken it, so the watcher reads the project at once.
+The view, `bdi --json` and `bdi --beads` find the watcher at the same path and
+read through it, so a `[watcher]` socket is named once for all three. They read a project
 themselves where the watcher's config gives it another `path` or
 `environment_command` than theirs does.
 

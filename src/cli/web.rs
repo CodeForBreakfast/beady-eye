@@ -354,7 +354,13 @@ pub(super) fn web(
     let writes = match writes_as {
         Some(actor) => {
             let tokens = Tokens::new().context("reading a key for the write forms' tokens")?;
-            Some(Writer::through(&RealRunner, actor, tokens, told.clone()))
+            Some(Writer::through(
+                &RealRunner,
+                actor,
+                tokens,
+                told.clone(),
+                where_this_machine_watches(&cfg),
+            ))
         }
         None => None,
     };
@@ -408,13 +414,15 @@ struct Answering {
 /// What makes a write: the runner bd is run through, one write at a time, so
 /// a tracker that stalls holds one of the request slots and not all of them,
 /// the actor bd records every write under, the tokens each write's form
-/// carries, and where a project written to is asked to be read again.
+/// carries, where a project written to is asked to be read again, and where
+/// the watcher is told of it.
 struct Writer<'a> {
     runner: &'a dyn Runner,
     actor: String,
     one_at_a_time: Mutex<()>,
     tokens: Tokens,
     reread: Sender<Heard>,
+    watcher: Option<PathBuf>,
 }
 
 impl<'a> Writer<'a> {
@@ -423,6 +431,7 @@ impl<'a> Writer<'a> {
         actor: String,
         tokens: Tokens,
         reread: Sender<Heard>,
+        watcher: Option<PathBuf>,
     ) -> Self {
         Self {
             runner,
@@ -430,6 +439,7 @@ impl<'a> Writer<'a> {
             one_at_a_time: Mutex::new(()),
             tokens,
             reread,
+            watcher,
         }
     }
 }
@@ -824,14 +834,18 @@ fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
             .into();
     };
     let words = write.asked(&bead.id, &given);
-    let made = bd::writing(runner, project, &words, Some(&writer.actor)).and_then(|(argv, env)| {
-        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        Ok(runner.run("bd", &argv, Some(&project.path), &env)?)
-    });
+    let made = bd::make(
+        runner,
+        project,
+        &words,
+        Some(&writer.actor),
+        writer.watcher.as_deref(),
+        |argv, env| Ok(runner.run("bd", argv, Some(&project.path), env)?),
+        |_| true,
+    );
     match made {
         Ok(_) => {
-            // Read again as the terminal reads again after a write, and not
-            // through a producer, so nothing is passed on to a watcher.
+            // Read again as the terminal reads again after a write.
             let _ = writer.reread.send(Heard::Changed(bead.project.clone()));
             Reply {
                 status: "303 See Other",
@@ -991,7 +1005,7 @@ mod tests {
             latest,
             writes
                 .map(|runner| {
-                    Writer::through(runner, ACTOR.to_string(), tokens(), mpsc::channel().0)
+                    Writer::through(runner, ACTOR.to_string(), tokens(), mpsc::channel().0, None)
                 })
                 .as_ref(),
         )
@@ -2005,27 +2019,39 @@ mod tests {
     }
 
     /// A write that bd made has the bead's project read again, as the
-    /// terminal has it read, so the page shows the bead as it now stands. A
+    /// terminal has it read, and told to the watcher, so the page shows the
+    /// bead as it now stands whether or not it reads through the watcher. A
     /// write bd refused changed nothing to read.
     #[test]
-    fn a_write_made_has_its_project_read_again() {
+    fn a_write_made_has_its_project_read_again_and_told_to_the_watcher() {
         let latest = arkham_held();
         let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
         let refusal = RunFailure::from_exit("bd", Some(1), "Error: connection refused");
+        let (watcher, watcher_heard) = changes::testing::a_watcher_hearing("web-write-told");
         for (runner, read_again) in [
             (FakeRunner::default().with(COMMENTED, ""), true),
             (FakeRunner::default().failing(COMMENTED, refusal), false),
         ] {
             let (told, heard) = mpsc::channel();
-            let writer = Writer::through(&runner, ACTOR.to_string(), tokens(), told);
+            let writer = Writer::through(
+                &runner,
+                ACTOR.to_string(),
+                tokens(),
+                told,
+                Some(watcher.clone()),
+            );
             replied_by(&posting, &latest, Some(&writer));
             let asked: Vec<Heard> = heard.try_iter().collect();
-            let wanted = if read_again {
-                vec![Heard::Changed("arkham".to_string())]
+            let watcher_told: Vec<String> = watcher_heard.try_iter().collect();
+            let (wanted, wanted_told) = if read_again {
+                (
+                    vec![Heard::Changed("arkham".to_string())],
+                    vec!["arkham".to_string()],
+                )
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             };
-            assert_eq!(asked, wanted);
+            assert_eq!((asked, watcher_told), (wanted, wanted_told));
         }
     }
 
@@ -2203,7 +2229,13 @@ mod tests {
     fn a_write_sent_while_another_is_being_made_is_refused_for_now() {
         let latest = arkham_held();
         let runner = FakeRunner::default().with(COMMENTED, "");
-        let writer = Writer::through(&runner, ACTOR.to_string(), tokens(), mpsc::channel().0);
+        let writer = Writer::through(
+            &runner,
+            ACTOR.to_string(),
+            tokens(),
+            mpsc::channel().0,
+            None,
+        );
         let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
         {
             let _making = writer.one_at_a_time.lock().expect("nothing else holds it");
@@ -2243,7 +2275,13 @@ mod tests {
     fn a_form_not_issued_is_refused_while_another_write_is_being_made() {
         let latest = arkham_held();
         let runner = FakeRunner::default();
-        let writer = Writer::through(&runner, ACTOR.to_string(), tokens(), mpsc::channel().0);
+        let writer = Writer::through(
+            &runner,
+            ACTOR.to_string(),
+            tokens(),
+            mpsc::channel().0,
+            None,
+        );
         let posting = posted_with(
             "/arkham/ark-1/comment",
             &format!("Host: {BEADS}\r\nOrigin: http://{BEADS}\r\n"),
