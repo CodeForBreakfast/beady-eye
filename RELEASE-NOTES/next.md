@@ -4,9 +4,9 @@ Minor release, **0.45.0 → 0.46.0**.
 
 ## Highlights
 
-**You can make small changes to a bead from bdi.** Open a bead's window and press a key: `m` comments, `x` closes with a reason, `o` reopens, `R` responds to a bead that needs a human, `X` dismisses one, `z` defers until a date, `u` releases the claim of an agent that has gone, and `p` sets the priority. Words are typed on a line at the foot, Enter makes the change and Esc leaves it unmade, and a close is the only change that needs no words. bdi says at the foot what it did, or shows the message bd refused it with.
+**You can make small changes to a bead from bdi.** Open a bead's window and press a key: `m` comments, `x` closes with a reason, `o` reopens, `R` responds to a bead that needs a human, `X` dismisses one, `z` defers until a date, `u` releases the claim of an agent that has gone, and `p` sets the priority. Comment, close, respond, defer and priority open a line at the foot for your words, where Enter makes the change and Esc leaves it unmade. Reopen, dismiss and release act the moment you press the key. bdi says at the foot what it did, or shows the message bd refused it with.
 
-**`bdi web` can make the same changes, once you turn them on.** Start it with `--writes` and each bead's page offers forms to comment, close, reopen, respond, dismiss, defer and set the priority. Release stays in the terminal. Without `--writes`, `bdi web` stays read-only, and no page shows a form.
+**`bdi web` can make the same changes, once you turn them on.** Start it with `--writes` and each bead's page offers forms to comment, close, reopen, respond, dismiss, defer and set the priority. Release stays in the terminal. The page asks nobody to sign in, so anyone who can reach it can make these changes, and `--writes` belongs only where everyone with access is trusted to. Without `--writes`, `bdi web` stays read-only, and no page shows a form.
 
 **A writable `bdi web` writes as the one name you give it.** Set `actor` under `[web]` in your config, and bd records every change from the page under that name. `bdi web --writes` refuses to start without one. It reads the name when it starts, so an edit waits for a restart.
 
