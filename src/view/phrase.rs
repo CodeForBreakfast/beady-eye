@@ -1283,6 +1283,31 @@ pub fn add_comment() -> &'static str {
     "Add comment"
 }
 
+/// What a web page says where it refused a write because the post's origin,
+/// `origin` where it named one, is not the page's own at `host`. A proxy that
+/// rewrites Host makes every write look this way, so both are named. An
+/// origin of `null` is a browser declining to name one.
+pub fn posted_from_elsewhere(origin: Option<&str>, host: &str) -> String {
+    match origin.filter(|origin| *origin != "null") {
+        Some(origin) => format!(
+            "bdi web refused the write: it was posted from {origin}, which is not \
+             a page at {host}. A proxy in front of bdi web has to pass on the \
+             Host the browser asked for."
+        ),
+        None => "bdi web refused the write: the browser did not say which page it \
+                 was posted from."
+            .to_string(),
+    }
+}
+
+/// What a web page says where it refused a write whose form carried no token
+/// this run of bdi web issued for it, as a form left open across a restart
+/// does.
+pub fn form_not_issued() -> &'static str {
+    "bdi web refused the write: its form did not come from this bdi web, or \
+     came from it before it restarted. Go back to the bead and write it again."
+}
+
 /// What a web page says where bd refused a write, with what bd said.
 pub fn not_written(why: &str) -> String {
     format!("bd did not make the write: {why}")

@@ -250,9 +250,17 @@ every 15 seconds that nothing else is sent. A page whose connection is
 refused asks again 15 seconds later, and stays as it was drawn until one is
 taken.
 
-The page is read-only and asks nobody to sign in. Anyone who can reach the
-address can read every tracker it reads, so listen only where everyone who
-can reach it may read them all.
+The page asks nobody to sign in. Anyone who can reach the address can read
+every tracker it reads, so listen only where everyone who can reach it may
+read them all. It is read-only unless it is started with `--writes`, and then
+anyone who can reach it can comment on a bead.
+
+A writable page refuses a write posted from another site with `403
+Forbidden`, and runs no bd for it. The post's `Origin` has to name the host
+and port its `Host` does, and its form has to carry the token the bead's page
+issued. Each run issues its own tokens, so a form left open across a restart
+is refused, and reloading the page gives it a fresh one. A writable run
+answers with `Cache-Control: no-cache`, so no cache hands out a stale one.
 
 It answers only a request sent to `localhost`, to an address, or to a name
 given with `--allow-host`. So a page elsewhere cannot point a name of its own
@@ -269,7 +277,9 @@ included. A probe that asks by the pod's or the machine's address is answered.
 `bdi web` sees the Host the proxy sends, not the one the browser sent. So the
 proxy must pass the browser's Host through unchanged. A proxy that rewrites it
 to an address turns the check off, and one that rewrites it to another name is
-refused unless that name is allowed.
+refused unless that name is allowed. On a writable page, a rewritten Host no
+longer matches the browser's `Origin`, so every write is refused, and the
+refusal names both.
 
 ## Being seen
 
