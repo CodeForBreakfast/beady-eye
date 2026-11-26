@@ -17,6 +17,7 @@ use crate::collect::agents::Agents;
 use crate::collect::changes::{self, Heard, Reported, Socket};
 use crate::collect::panes::{Aside, Panes};
 use crate::collect::watched;
+use crate::collect::writes::{Writer, Writes};
 use crate::view::{Notch, Notice};
 
 use super::drive::Event;
@@ -71,13 +72,14 @@ fn said_at_the_foot(refused: &changes::Refused) -> Notice {
 }
 
 /// The loop's ends: the events it waits on, the channel a collection is asked
-/// for on, the provider to ask what is on a pane, the inbound socket for as
-/// long as there is a view to keep live, and whatever this run of `bdi` has to
-/// say about itself.
+/// for on, the provider to ask what is on a pane, where a write is handed to
+/// be made, the inbound socket for as long as there is a view to keep live,
+/// and whatever this run of `bdi` has to say about itself.
 pub(super) type Wired = (
     Receiver<Event>,
     Sender<Asked>,
     Box<dyn Panes>,
+    Box<dyn Writes>,
     Option<Socket>,
     Vec<Notice>,
 );
@@ -102,6 +104,7 @@ pub(super) fn wire(
     // The provider's own threads, whose answers come back here like everything
     // else's: the loop waits on one channel and never on the provider.
     let panes: Box<dyn Panes> = Box::new(Aside::new(agents, to_the_loop.clone()));
+    let writes: Box<dyn Writes> = Box::new(Writer::new(to_the_loop.clone()));
 
     let collecting = to_the_loop.clone();
     thread::spawn(move || collector(collect, &asked, &collecting));
@@ -144,7 +147,7 @@ pub(super) fn wire(
         );
     });
 
-    (events, ask, panes, socket, refused.into_iter().collect())
+    (events, ask, panes, writes, socket, refused.into_iter().collect())
 }
 
 /// What tells `bdi` that a project's work has moved on.

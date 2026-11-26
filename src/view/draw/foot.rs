@@ -108,15 +108,15 @@ pub(super) fn notices(snapshot: &Snapshot, standing: &[Notice]) -> Vec<Notice> {
 pub(super) fn status_bar(
     notices: &[Notice],
     said: Option<&Said>,
-    prompt: Option<&str>,
+    prompt: Option<String>,
     keys: &[String],
     spine: Spine,
     focused: bool,
     width: usize,
 ) -> Fitted {
-    if let Some(typed) = prompt {
+    if let Some(prompted) = prompt {
         return Fitted::new(
-            vec![Span::raw(phrase::prompt(typed))],
+            vec![Span::raw(prompted)],
             Vec::new(),
             Vec::new(),
         );

@@ -27,7 +27,7 @@ use crate::view::forest::Spine;
 use crate::view::lines::Section;
 use crate::view::row::WARNING;
 use crate::view::show::{Prose, Ties};
-use crate::view::{Freshness, Mark, Notice, Said};
+use crate::view::{Freshness, Mark, Notice, Said, Write};
 
 /// The oldest bd whose command line `bdi` runs, as README states it. A
 /// literal rather than a `const` so the phrase naming it stays a
@@ -951,15 +951,56 @@ pub fn said(said: &Said) -> String {
         }
         Said::Matched { key, of: 1, .. } => format!("{} · the only match", bead_key(key)),
         Said::Matched { key, at, of } => format!("{} · match {at} of {of}", bead_key(key)),
+        Said::Written { bead, write } => format!("{} · {}", bead_key(bead), done(*write)),
+        Said::NotWritten { bead, write, why } => {
+            format!("{} · not {}: {why}", bead_key(bead), done(*write))
+        }
     }
 }
 
-/// The search prompt, with what the reader has typed into it so far.
+/// What a write did to a bead, in beads' own words for it.
+fn done(write: Write) -> &'static str {
+    match write {
+        Write::Comment => "commented on",
+        Write::Close => "closed",
+        Write::Reopen => "reopened",
+        Write::Respond => "responded to",
+        Write::Dismiss => "dismissed",
+        Write::Defer => "deferred",
+        Write::Release => "released",
+        Write::Priority => "given its priority",
+    }
+}
+
+/// What the entry asks for, drawn before what the reader types into it.
+pub fn asks(write: Write) -> &'static str {
+    match write {
+        Write::Comment => "comment: ",
+        Write::Close => "close, with the reason: ",
+        Write::Reopen => "reopen: ",
+        Write::Respond => "response: ",
+        Write::Dismiss => "dismiss: ",
+        Write::Defer => "defer until: ",
+        Write::Release => "release: ",
+        Write::Priority => "priority: ",
+    }
+}
+
+/// Why a write had no tracker to go to: the config in force names no project
+/// the bead is in.
+pub fn not_configured(project: &str) -> String {
+    format!("the config names no project {project}")
+}
+
+/// What the search prompt is drawn with before what the reader has typed.
 ///
 /// The key is drawn beside what it took, the way every terminal a reader has
 /// searched in draws it — which is the whole argument for `/` being the key.
-pub fn prompt(typed: &str) -> String {
-    format!("/{typed}")
+pub const SEEKING: &str = "/";
+
+/// A prompt, with what the reader has typed into it so far.
+pub fn prompt(asks: &str, typed: &str) -> String {
+    format!("{asks}{typed}")
 }
 
 /// A bead, named the only way a bead can be named across trackers.
@@ -1406,8 +1447,25 @@ mod tests {
 
         // The prompt with something typed into it and with nothing, because
         // an empty one is what a reader sees the instant they press the key.
-        said.push(prompt("bdi-2bb.37"));
-        said.push(prompt(""));
+        said.push(prompt(SEEKING, "bdi-2bb.37"));
+        said.push(prompt(SEEKING, ""));
+        for write in [
+            Write::Comment,
+            Write::Close,
+            Write::Reopen,
+            Write::Respond,
+            Write::Dismiss,
+            Write::Defer,
+            Write::Release,
+            Write::Priority,
+        ] {
+            said.push(prompt(asks(write), "tomorrow"));
+            said.push(super::said(&Said::Written {
+                bead: key("smt-4kd3p.20"),
+                write,
+            }));
+        }
+        said.push(not_configured("summit-works"));
 
         for rule in every_anomaly() {
             said.push(anomaly(&rule));

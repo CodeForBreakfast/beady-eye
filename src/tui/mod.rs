@@ -136,7 +136,7 @@ pub fn run(
     let reported = Reported::watching(projects);
     // Held, not discarded: the socket comes off the filesystem when this
     // returns, so the run that made it is the run that clears it away.
-    let (events, ask, panes, _socket, from_the_wiring) =
+    let (events, ask, panes, writes, _socket, from_the_wiring) =
         wire(reported.clone(), agents, hearing, collect, asked_to_stop);
     // Only this process's own, and only the wiring's: what settling the config
     // could not do is on the snapshot, where both mouths read it.
@@ -154,7 +154,15 @@ pub fn run(
     let started = Utc::now();
     outstanding.ask(Wanted::Everything, started);
 
-    let mut screen = Screen::showing(awaiting, panes, at_startup, Drawing::to(cfg), started)?;
+    let mut screen = Screen::showing(
+        awaiting,
+        panes,
+        writes,
+        cfg.projects.clone(),
+        at_startup,
+        Drawing::to(cfg),
+        started,
+    )?;
     screen.focus_when_drawn(cfg.roots.named_beads());
     if ready_list {
         screen.list_ready();

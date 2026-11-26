@@ -22,7 +22,9 @@ use ratatui::{Frame, Terminal};
 
 use crate::app::Awaited;
 use crate::collect::panes::{Answer, Panes};
-use crate::config::{self, Background, Config, Crop};
+use crate::collect::writes::{Wrote, Writes};
+use crate::config::{self, Background, Config, Crop, Project};
+use crate::model::anomaly::Anomaly;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
 use crate::model::types::PaneKey;
@@ -35,7 +37,7 @@ use crate::view::query::{Edited, Query};
 use crate::view::row::Layout;
 use crate::view::show::{self, Show};
 use crate::view::tail::{self, Tail};
-use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Typing};
+use crate::view::{draw, Action, Edit, Freshness, Motion, Notch, Notice, Said, Typing, Write};
 
 use super::clipboard;
 use super::drive::{Landed, Showing, View};
@@ -175,6 +177,14 @@ struct Shown {
     /// is: it is about a prompt over the rows, not about the rows. The loop
     /// holds that a prompt is up; this is what is in it.
     sought: Option<Prompt>,
+    /// The entry taking a write's words, while one is up over the bead
+    /// window.
+    entry: Option<Entry>,
+    /// Where a write from the bead window is handed to be made.
+    writes: Box<dyn Writes>,
+    /// The projects the config in force names, which is where a write finds
+    /// the tracker of the bead it is made to.
+    projects: Vec<Project>,
     /// What the collection in flight is reading and when it was asked for,
     /// where one is running. Every project line it names says its own rows
     /// are about to be replaced, and the rest of the screen carries on saying
@@ -243,10 +253,13 @@ enum Reading {
 }
 
 impl Shown {
+    #[allow(clippy::too_many_arguments)]
     fn of(
         snapshot: Snapshot,
         panes: Box<dyn Panes>,
         clipboard: Box<dyn io::Write>,
+        writes: Box<dyn Writes>,
+        projects: Vec<Project>,
         drawing: Drawing,
         at_startup: Vec<Notice>,
         started: DateTime<Utc>,
@@ -266,6 +279,9 @@ impl Shown {
             due: None,
             said: None,
             sought: None,
+            entry: None,
+            writes,
+            projects,
             // Nothing in flight until the loop says otherwise. A collection
             // is already running by the time this exists — the run asks for
             // one before it opens the screen — and it reaches this the way
@@ -444,7 +460,10 @@ impl Shown {
         let (broken, redrawn) = match reloaded {
             Reloaded::Untouched => return false,
             Reloaded::Unchanged => (false, false),
-            Reloaded::Fresh(written) => (false, self.draws_to(Drawing::to(written), now)),
+            Reloaded::Fresh(written) => {
+                self.projects.clone_from(&written.projects);
+                (false, self.draws_to(Drawing::to(written), now))
+            }
             Reloaded::Broken => (true, false),
         };
         let said = self.standing.contains(&Notice::ConfigWouldNotReload);
@@ -646,7 +665,7 @@ impl Shown {
     /// it to take. What the search has come to is kept for when Enter gives
     /// the foot back.
     fn pressed(&mut self) -> bool {
-        self.sought.is_none() && self.said.take().is_some()
+        self.sought.is_none() && self.entry.is_none() && self.said.take().is_some()
     }
 
     /// Take one keystroke into the search prompt, reporting whether the screen
@@ -663,6 +682,9 @@ impl Shown {
     /// leaves the selection where the last step put it, and Esc puts the
     /// forest back as it stood when the prompt went up.
     fn typing(&mut self, typing: Typing) -> bool {
+        if self.entry.is_some() {
+            return self.typing_words(typing);
+        }
         let Some(prompt) = self.sought.as_mut() else {
             return false;
         };
@@ -695,14 +717,100 @@ impl Shown {
     /// The prompt is one line and no id has a control character in it, so
     /// the line break a copied line usually ends in is left out.
     fn pasted(&mut self, text: &str) -> bool {
+        if let Some(entry) = self.entry.as_mut() {
+            return typed_in(&mut entry.query, text);
+        }
         let Some(prompt) = self.sought.as_mut() else {
             return false;
         };
-        let mut changed = false;
-        for glyph in text.chars().filter(|glyph| !glyph.is_control()) {
-            changed |= prompt.query.edit(Edit::Character(glyph)) == Edited::Changed;
+        typed_in(&mut prompt.query, text) && self.seek()
+    }
+
+    /// Take one keystroke into the entry: Enter makes the write with what was
+    /// typed, and Esc takes the entry down with nothing written.
+    fn typing_words(&mut self, typing: Typing) -> bool {
+        let Some(entry) = self.entry.as_mut() else {
+            return false;
+        };
+        match typing {
+            Typing::Edit(edit) => entry.query.edit(edit) != Edited::Nothing,
+            Typing::NextMatch | Typing::PreviousMatch => false,
+            Typing::Abandoned => {
+                self.entry = None;
+                true
+            }
+            Typing::Sought => {
+                if let Some(entry) = self.entry.take() {
+                    let typed = entry.query.typed().to_string();
+                    self.make(entry.bead, entry.write, typed);
+                }
+                true
+            }
         }
-        changed && self.seek()
+    }
+
+    /// Start a write to the bead the window is on, reporting whether the
+    /// screen has changed: a write given words opens the entry for them, and
+    /// any other is made at once.
+    ///
+    /// A release is the one write a bead can refuse here. It lets go of a
+    /// claim whose agent is gone, so it is offered only where bdi has flagged
+    /// the claim as having no live agent, and it names the holder so that bd
+    /// refuses it should the claim have changed hands since.
+    fn begin(&mut self, write: Write) -> bool {
+        let Some(node) = show::selected(&self.forest) else {
+            return false;
+        };
+        let bead = BeadKey {
+            project: node.project.clone(),
+            id: node.id.clone(),
+        };
+        if write == Write::Release {
+            let orphaned = node
+                .anomalies
+                .iter()
+                .any(|anomaly| matches!(anomaly, Anomaly::OrphanClaim { .. }));
+            let Some(holder) = node.assignee.clone().filter(|_| orphaned) else {
+                return false;
+            };
+            return self.make(bead, write, holder);
+        }
+        if write.is_typed() {
+            self.entry = Some(Entry {
+                write,
+                bead,
+                query: Query::default(),
+            });
+            return true;
+        }
+        self.make(bead, write, String::new())
+    }
+
+    /// Hand a write to the tracker of the project its bead is in, or say why
+    /// there is none to hand it to, reporting whether the foot now says so.
+    fn make(&mut self, bead: BeadKey, write: Write, given: String) -> bool {
+        let Some(project) = self.projects.iter().find(|project| project.name == bead.project)
+        else {
+            let why = phrase::not_configured(&bead.project);
+            self.said = Some(Said::NotWritten { bead, write, why });
+            return true;
+        };
+        self.writes.write(project, bead, write, given);
+        false
+    }
+
+    /// Say what bd answered to a write.
+    fn wrote(&mut self, wrote: &Wrote) -> bool {
+        let (bead, write) = (wrote.bead.clone(), wrote.write);
+        self.said = Some(match &wrote.refused {
+            None => Said::Written { bead, write },
+            Some(why) => Said::NotWritten {
+                bead,
+                write,
+                why: why.clone(),
+            },
+        });
+        true
     }
 
     /// Go to a bead matching what has been typed into the prompt, counting
@@ -796,6 +904,9 @@ impl Shown {
         }
         if action == Action::CopyId {
             return self.copy_id();
+        }
+        if let Action::Write(write) = action {
+            return self.begin(write);
         }
         if let Action::NextMatch | Action::PreviousMatch = action {
             return self.step_match(action == Action::NextMatch);
@@ -991,9 +1102,12 @@ pub(super) trait PutBack: Backend<Error: Send + Sync + 'static> {
 }
 
 impl Screen {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn showing(
         snapshot: Snapshot,
         panes: Box<dyn Panes>,
+        writes: Box<dyn Writes>,
+        projects: Vec<Project>,
         at_startup: Vec<Notice>,
         drawing: Drawing,
         started: DateTime<Utc>,
@@ -1010,6 +1124,8 @@ impl Screen {
                 snapshot,
                 panes,
                 Box::new(io::stdout()),
+                writes,
+                projects,
                 drawing,
                 at_startup,
                 started,
@@ -1072,6 +1188,28 @@ fn put_the_terminal_back_on_a_panic() {
 struct Prompt {
     query: Query,
     origin: forest::Origin,
+}
+
+/// The entry: the write it takes words for, the bead the write is to, and
+/// what has been typed.
+///
+/// The bead is kept rather than read off the window when Enter is pressed,
+/// so the write goes to the bead the entry was opened on.
+struct Entry {
+    write: Write,
+    bead: BeadKey,
+    query: Query,
+}
+
+/// Put a paste into a prompt at its cursor, reporting whether what it holds
+/// changed. A prompt is one line, so the line break a copied line usually
+/// ends in is left out.
+fn typed_in(query: &mut Query, text: &str) -> bool {
+    let mut changed = false;
+    for glyph in text.chars().filter(|glyph| !glyph.is_control()) {
+        changed |= query.edit(Edit::Character(glyph)) == Edited::Changed;
+    }
+    changed
 }
 
 /// One frame: the forest, the tail beneath it, the height the forest is told
@@ -1243,6 +1381,10 @@ impl<B: PutBack> View for Screen<B> {
         self.shown.pasted(text)
     }
 
+    fn wrote(&mut self, wrote: &Wrote) -> bool {
+        self.shown.wrote(wrote)
+    }
+
     fn scroll(&mut self, motion: Motion) -> bool {
         self.shown.scroll(motion)
     }
@@ -1292,6 +1434,7 @@ impl<B: PutBack> View for Screen<B> {
             lapsed,
             said,
             sought,
+            entry,
             drawing,
             room,
             ..
@@ -1299,13 +1442,24 @@ impl<B: PutBack> View for Screen<B> {
         let over = match showing {
             Showing::Forest | Showing::Searching => Over::Nothing,
             Showing::Bindings => Over::Bindings,
-            Showing::Bead => Over::Bead(show),
+            Showing::Bead | Showing::Writing => Over::Bead(show),
         };
         let keys = keys_under(&over, forest);
+        let prompt = match (sought.as_ref(), entry.as_ref()) {
+            (_, Some(entry)) => Some(draw::Prompt {
+                asks: phrase::asks(entry.write),
+                query: &entry.query,
+            }),
+            (Some(prompt), None) => Some(draw::Prompt {
+                asks: phrase::SEEKING,
+                query: &prompt.query,
+            }),
+            (None, None) => None,
+        };
         let foot = draw::Foot {
             standing: &says,
             said: said.as_ref(),
-            prompt: sought.as_ref().map(|prompt| &prompt.query),
+            prompt,
             keys: &keys,
         };
         let band = draw::Band {
@@ -1370,6 +1524,26 @@ mod tests {
     use std::os::fd::AsRawFd;
     use std::process::Command;
     use std::sync::{Arc, Mutex};
+
+    /// Where a test's writes are handed: each one as the screen made it, with
+    /// the name of the project it found for the bead.
+    #[derive(Clone, Default)]
+    pub(super) struct Writing(Arc<Mutex<Vec<(String, BeadKey, Write, String)>>>);
+
+    impl Writing {
+        pub(super) fn made(&self) -> Vec<(String, BeadKey, Write, String)> {
+            self.0.lock().expect("the writes").clone()
+        }
+    }
+
+    impl Writes for Writing {
+        fn write(&self, project: &Project, bead: BeadKey, write: Write, given: String) {
+            self.0
+                .lock()
+                .expect("the writes")
+                .push((project.name.clone(), bead, write, given));
+        }
+    }
 
     /// What the bindings window has inside its border, one string per row,
     /// with the forest it sits over left out. Trailing blanks are trimmed, so
@@ -1530,6 +1704,14 @@ mod tests {
                 "  q, ^C     quit",
                 "  Esc       go back to the forest from the bead view",
                 "  Tab       move to the next bead the shown bead names; Enter follows it",
+                "  m         in the bead view, comment on the bead",
+                "  x         in the bead view, close the bead, with a reason",
+                "  o         in the bead view, reopen the bead",
+                "  R         in the bead view, respond to a bead that needs a human",
+                "  X         in the bead view, dismiss a bead that needs a human",
+                "  z         in the bead view, defer the bead until a date",
+                "  u         in the bead view, release a claim whose agent is gone",
+                "  p         in the bead view, set the bead's priority",
                 "  ^R        collect from the trackers again now",
                 "  e         expand the selected node and everything under it",
                 "  E         expand the whole forest",
@@ -1786,7 +1968,10 @@ mod tests {
         let foot = draw::Foot {
             standing: &[],
             said: pressed.said,
-            prompt: pressed.prompt,
+            prompt: pressed.prompt.map(|query| draw::Prompt {
+                asks: phrase::SEEKING,
+                query,
+            }),
             keys: &keys,
         };
         Painted::drawn_by(width, height, |frame| {
@@ -2133,6 +2318,8 @@ mod tests {
             snapshot,
             Box::new(Asking::default()),
             Box::new(io::sink()),
+            Box::new(Writing::default()),
+            Vec::new(),
             drawing(),
             nothing_said(),
             an_instant(),
@@ -2149,6 +2336,8 @@ mod tests {
             snapshot,
             Box::new(Asking::default()),
             Box::new(io::sink()),
+            Box::new(Writing::default()),
+            Vec::new(),
             drawing(),
             at_startup,
             started,
@@ -2169,6 +2358,8 @@ mod tests {
                 snapshot,
                 Box::new(panes.clone()),
                 Box::new(io::sink()),
+                Box::new(Writing::default()),
+                Vec::new(),
                 Drawing {
                     tail_every: every,
                     ..drawing()
@@ -3373,6 +3564,8 @@ mod tests {
                 snapshot,
                 Box::new(panes.clone()),
                 Box::new(io::sink()),
+                Box::new(Writing::default()),
+                Vec::new(),
                 Drawing { crops, ..drawing() },
                 nothing_said(),
                 an_instant(),
@@ -4203,6 +4396,8 @@ mod tests {
                 snapshot,
                 Box::new(Asking::default()),
                 Box::new(clipboard.clone()),
+                Box::new(Writing::default()),
+                Vec::new(),
                 drawing(),
                 nothing_said(),
                 an_instant(),
@@ -4798,6 +4993,8 @@ mod tests {
             a_grove(6),
             Box::new(Asking::default()),
             Box::new(Refusing),
+            Box::new(Writing::default()),
+            Vec::new(),
             drawing(),
             nothing_said(),
             an_instant(),

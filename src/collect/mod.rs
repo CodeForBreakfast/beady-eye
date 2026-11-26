@@ -10,8 +10,8 @@
 //! the pull requests each tracker's gates wait on, one for what each thing a
 //! pull request does means to those gates, one for the gates waiting on an
 //! issue or a release, one for GitHub's webhook deliveries about pull
-//! requests, and one for answering HTTP requests, which both those
-//! deliveries and the web view arrive by.
+//! requests, one for answering HTTP requests, which both those deliveries and
+//! the web view arrive by, and one for the writes the terminal makes.
 
 pub mod agents;
 pub mod bd;
@@ -32,3 +32,4 @@ pub mod upstream;
 pub mod watched;
 pub mod webhook;
 pub mod worktree;
+pub mod writes;
