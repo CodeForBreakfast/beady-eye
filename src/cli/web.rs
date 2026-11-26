@@ -835,13 +835,9 @@ fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
         )
             .into();
     };
-    let made = bd::writing(runner, project, &write.words(&bead.id)).and_then(|(argv, env)| {
-        // The flag, because bd takes it ahead of any actor its environment
-        // names, and that environment is whatever entering the project gives.
-        let actor = format!("--actor={}", writer.actor);
-        let argv: Vec<&str> = std::iter::once(actor.as_str())
-            .chain(argv.iter().map(String::as_str))
-            .collect();
+    let words = write.words(&bead.id);
+    let made = bd::writing(runner, project, &words, Some(&writer.actor)).and_then(|(argv, env)| {
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         Ok(runner.run("bd", &argv, Some(&project.path), &env)?)
     });
     match made {

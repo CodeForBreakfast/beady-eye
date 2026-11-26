@@ -921,7 +921,7 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
         );
     };
     environment::forget_the_callers_tracker();
-    let (argv, env) = bd::writing(&RealRunner, project, asked)?;
+    let (argv, env) = bd::writing(&RealRunner, project, asked, None)?;
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
     Ok(exited
