@@ -676,7 +676,8 @@ fn said(
                     )
                 }
             };
-            Some(taken(&head, &form, &latest.now().cfg, writer.runner))
+            let held = latest.now();
+            Some(taken(&head, &form, &held, writer.runner))
         }
         _ => Some(answered(&head, latest, hosts, start, writes.is_some()).into()),
     }
@@ -711,16 +712,24 @@ impl Write {
 }
 
 /// What a post whose head is `head` and whose form is `form` comes to: the
-/// write it asks for made through `bdi bd` to a project `cfg` reads, run by
+/// write it asks for made through `bdi bd` to a bead `held` draws, run by
 /// `runner`, and the reader sent back to the bead's page. Otherwise, why the
 /// write was not made.
-fn taken(head: &Head, form: &[u8], cfg: &Config, runner: &dyn Runner) -> Reply {
+fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
     let Some((bead, named)) = address::written(head.path()) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     };
-    let Some(project) = cfg.read().find(|project| project.name == bead.project) else {
+    let Some(snapshot) = &held.snapshot else {
+        return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet())).into();
+    };
+    let Some(project) = held.cfg.read().find(|project| project.name == bead.project) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     };
+    // bd takes the start of an id, and routes an id it does not hold to
+    // another tracker, so only an id the page draws names the bead exactly.
+    if snapshot.node(&bead).is_none() {
+        return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
+    }
     let Some(write) = std::str::from_utf8(form)
         .ok()
         .and_then(|form| Write::asked(named, form))
@@ -1585,7 +1594,21 @@ mod tests {
         let cfg =
             Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/nowhere/arkham\"\n")
                 .expect("a config");
-        Latest::new(cfg)
+        let snapshot = Collection::default().collect(
+            &cfg,
+            &Unasked,
+            &arkhams_tracker(),
+            &Wanted::Everything,
+            Filter::All,
+            Utc::now(),
+        );
+        Latest::holding(Held {
+            cfg: Arc::new(cfg),
+            snapshot: Some(snapshot),
+            collecting: None,
+            lapsed: Vec::new(),
+            change: 0,
+        })
     }
 
     /// A post of the comment form `form` to `target`, as a browser sends it.
@@ -1725,8 +1748,8 @@ mod tests {
         assert_eq!(runner.calls(), []);
     }
 
-    /// An address whose bead looks like a flag is refused as `bdi bd` refuses
-    /// one, and says so, so bd is never run.
+    /// An address whose bead looks like a flag names no bead the page draws,
+    /// so bd is never run.
     #[test]
     fn a_write_to_a_bead_named_like_a_flag_runs_nothing() {
         let latest = arkham_held();
@@ -1736,9 +1759,42 @@ mod tests {
             &latest,
             Some(&runner),
         );
-        assert_eq!(reply.status, "502 Bad Gateway");
-        assert!(reply.body.contains("--db=elsewhere"), "{}", reply.body);
+        assert_eq!(reply.status, NOT_FOUND);
         assert_eq!(reply.sent_to, None);
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// A write names the bead by the id its page drew, so an id that is only
+    /// the start of one, or that bd would route to another tracker, runs
+    /// nothing.
+    #[test]
+    fn a_write_to_a_bead_the_page_does_not_draw_runs_nothing() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted("/arkham/ark/comment", "text=hello"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, NOT_FOUND);
+        assert_eq!(reply.sent_to, None);
+        assert_eq!(runner.calls(), []);
+    }
+
+    /// Until the first read answers, whether the bead is there cannot be
+    /// said, so a write waits for it.
+    #[test]
+    fn a_write_before_the_first_read_answers_runs_nothing() {
+        let cfg =
+            Config::from_toml("[[projects]]\nname = \"arkham\"\npath = \"/nowhere/arkham\"\n")
+                .expect("a config");
+        let runner = FakeRunner::default();
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=hello"),
+            &Latest::new(cfg),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, UNAVAILABLE);
         assert_eq!(runner.calls(), []);
     }
 
