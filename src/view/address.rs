@@ -26,7 +26,7 @@ use crate::model::snapshot::Snapshot;
 use crate::view::forest::{flatten, listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{Content, Line, Place};
 use crate::view::row::Layout;
-use crate::view::Action;
+use crate::view::{Action, Write};
 
 /// The query keys a fold pointed open and a fold pointed shut are written
 /// under.
@@ -157,12 +157,37 @@ pub fn address(key: &BeadKey) -> String {
     format!("/{}/{}", encoded(&key.project), encoded(&key.id))
 }
 
-/// The last segment of the address a bead's comment form posts to, and the
-/// field the comment's text is posted in.
+/// The last segment of the address a bead's comment form posts to.
 pub const COMMENT: &str = "comment";
+
+/// The writes a writable page offers on a bead's page, in the order it draws
+/// their forms, each with the last segment of the address its form posts to.
+/// Release is left to the terminal: bdi offers it only where it flags a
+/// claim whose agent is gone, and `bdi web` asks no agent provider, so it
+/// never flags one.
+pub const OFFERED: [(Write, &str); 7] = [
+    (Write::Comment, COMMENT),
+    (Write::Close, "close"),
+    (Write::Reopen, "reopen"),
+    (Write::Respond, "respond"),
+    (Write::Dismiss, "dismiss"),
+    (Write::Defer, "defer"),
+    (Write::Priority, "priority"),
+];
+
+/// The write a page offers whose form posts to an address ending in `named`.
+pub fn offered(named: &str) -> Option<Write> {
+    OFFERED
+        .iter()
+        .find(|(_, name)| *name == named)
+        .map(|(write, _)| *write)
+}
+
+/// The field a write's words are posted in.
 pub const TEXT: &str = "text";
 
-/// The longest comment the form takes, in the UTF-16 units a browser counts.
+/// The longest words any write's form takes, in the UTF-16 units a browser
+/// counts. A comment is the longest a write is given.
 pub const LONGEST_COMMENT: usize = 7000;
 
 /// The most bytes a browser posts a comment's form as: the comment and the

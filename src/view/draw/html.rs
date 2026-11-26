@@ -22,14 +22,14 @@ use crate::model::snapshot::{Node, ProviderState, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
 use crate::view::address::{
-    line_name, Asked, Root, Tokens, COMMENT, FIND, LONGEST_COMMENT, SHOWN, TEXT, TOKEN,
+    line_name, Asked, Root, Tokens, FIND, LONGEST_COMMENT, OFFERED, SHOWN, TEXT, TOKEN,
 };
 use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
 use crate::view::row::{agent_doing, Cell, Layout, Progress, WARNING};
 use crate::view::show::{Page, Prose, Tied, Ties};
-use crate::view::{palette, phrase, show, Freshness, Said};
+use crate::view::{palette, phrase, show, Freshness, Said, Write};
 
 use super::bead::{elided_run, referenced_line};
 use super::foot::notices;
@@ -134,19 +134,48 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     }
 }
 
-/// The form on a writable page's bead view that adds a comment, posting it
-/// to `action` with `token`.
-fn commenting(html: &mut String, action: &str, token: &str) {
+/// The form on a writable page's bead view that makes `write` to `node`,
+/// posting it to `action` with `token`. A write given words has a field for
+/// them, which a write made only with words requires.
+fn writing(html: &mut String, write: Write, node: &Node, action: &str, token: &str) {
     html.push_str(&format!(
         "<form class=\"write\" action=\"{}\" method=\"post\">\
-         <input type=\"hidden\" name=\"{TOKEN}\" value=\"{}\"><label>{}\
-         <textarea name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\" required></textarea></label>\
-         <button>{}</button></form>",
+         <input type=\"hidden\" name=\"{TOKEN}\" value=\"{}\">",
         escaped(action),
         escaped(token),
-        escaped(phrase::comment()),
-        escaped(phrase::add_comment())
     ));
+    let required = if write.needs_words() { " required" } else { "" };
+    let field = match write {
+        Write::Comment | Write::Respond => Some(format!(
+            "<textarea name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\"{required}></textarea>"
+        )),
+        Write::Close | Write::Defer => Some(format!(
+            "<input name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\"{required}>"
+        )),
+        Write::Priority => Some(priorities(node.priority)),
+        Write::Reopen | Write::Dismiss | Write::Release => None,
+    };
+    if let (Some(field), Some(label)) = (field, phrase::words_for(write)) {
+        html.push_str(&format!("<label>{}{field}</label>", escaped(label)));
+    }
+    html.push_str(&format!(
+        "<button>{}</button></form>",
+        escaped(phrase::make(write))
+    ));
+}
+
+/// The priorities bd takes, to pick from, with `current` picked.
+fn priorities(current: u8) -> String {
+    let options: String = (0..=4)
+        .map(|priority| {
+            let picked = if priority == current { " selected" } else { "" };
+            format!(
+                "<option value=\"{priority}\"{picked}>{}</option>",
+                phrase::priority(priority)
+            )
+        })
+        .collect();
+    format!("<select name=\"{TEXT}\">{options}</select>")
 }
 
 /// What the band over a page says of one root the page asks to be drawn with.
@@ -954,11 +983,15 @@ impl Drawing<'_> {
         }
         if let Some(tokens) = &self.writes {
             let key = node.key();
-            commenting(
-                html,
-                &self.asked.writing(&key, COMMENT),
-                &tokens.issue(&key, COMMENT),
-            );
+            for (write, named) in OFFERED {
+                writing(
+                    html,
+                    write,
+                    node,
+                    &self.asked.writing(&key, named),
+                    &tokens.issue(&key, named),
+                );
+            }
         }
         html.push_str("</div>");
     }
@@ -1681,7 +1714,8 @@ border-radius:8px;background:none;color:var(--muted);font:500 var(--size-detail)
 .acts>:hover{background:var(--sunk);color:var(--fg)}\
 .acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
 aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
-.write label{display:block}.write textarea{display:block;box-sizing:border-box;width:100%;min-height:6em;margin:6px 0}\
+.write{margin:0 0 12px}.write:not(:has(label)){display:inline-block;margin-right:8px}.write label{display:block}\
+.write label>*{display:block;box-sizing:border-box;width:100%;margin:6px 0}.write textarea{min-height:6em}.write select{width:auto}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
 overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
 main.open .line .bead>.project{display:none}}\
@@ -4205,12 +4239,12 @@ mod tests {
         );
     }
 
-    /// A bead's page on a page that takes writes ends with the form that
-    /// comments on the bead, posted to the bead's own address for it with
-    /// the token issued for that form. A page that takes none draws no form
-    /// that posts.
+    /// A bead's page on a page that takes writes ends with a form for each
+    /// write the web offers, in the order it offers them, each posted to the
+    /// bead's own address for it with the token issued for that form. A page
+    /// that takes none draws no form that posts.
     #[test]
-    fn only_a_writable_page_offers_a_comment_on_the_bead() {
+    fn only_a_writable_page_offers_the_light_touch_writes_on_the_bead() {
         let asked = Asked::of(&format!("{}?shut=gate", address(&key("smt-4kd3p.6"))))
             .expect("a bead's page");
         let tokens = Tokens::keyed([7; 32]);
@@ -4220,28 +4254,52 @@ mod tests {
         };
         let html = page(ground(), &Layout::default(), &asked, writable).html;
         let bead = inside(aside_of(&html), "page");
-        let form = &bead[bead.find("<form").expect("a comment form")..];
+        let forms: Vec<&str> = bead
+            .split("<form ")
+            .skip(1)
+            .map(|form| &form[..form.find("</form>").expect("the form ends")])
+            .collect();
+        assert_eq!(forms.len(), OFFERED.len(), "{bead}");
+        for (form, (write, named)) in forms.iter().zip(OFFERED) {
+            assert!(
+                form.starts_with(&format!(
+                    "class=\"write\" action=\"/summit-works/smt-4kd3p.6/{named}?shut=gate\" method=\"post\">"
+                )),
+                "{form}"
+            );
+            let token = tokens.issue(&key("smt-4kd3p.6"), named);
+            assert!(
+                form.contains(&format!(
+                    "<input type=\"hidden\" name=\"token\" value=\"{token}\">"
+                )),
+                "{form}"
+            );
+            let text = text_of(&format!("<form {form}"));
+            assert!(
+                text.starts_with(phrase::words_for(write).unwrap_or_default()),
+                "{form}"
+            );
+            assert!(text.ends_with(phrase::make(write)), "{form}");
+            assert_eq!(
+                form.contains(" required"),
+                write.needs_words() && write != Write::Priority,
+                "{form}"
+            );
+        }
         assert!(
-            form.starts_with(
-                "<form class=\"write\" action=\"/summit-works/smt-4kd3p.6/comment?shut=gate\" method=\"post\">"
-            ),
-            "{form}"
+            forms[0].contains("<textarea name=\"text\" maxlength=\"7000\" required>"),
+            "{}",
+            forms[0]
         );
+        let priority = forms
+            .iter()
+            .find(|form| form.contains("/priority?"))
+            .expect("a priority form");
         assert!(
-            form.contains("<textarea name=\"text\" maxlength=\"7000\" required>"),
-            "{form}"
+            priority.contains("<option value=\"2\" selected>P2</option>"),
+            "the bead's own priority is the one the form holds: {priority}"
         );
-        let token = tokens.issue(&key("smt-4kd3p.6"), COMMENT);
-        assert!(
-            form.contains(&format!(
-                "<input type=\"hidden\" name=\"token\" value=\"{token}\">"
-            )),
-            "{form}"
-        );
-        assert_eq!(
-            text_of(form),
-            [phrase::comment(), phrase::add_comment()].concat()
-        );
+        assert!(!bead.contains("/release"), "{bead}");
 
         let read_only = page(ground(), &Layout::default(), &asked, drawing()).html;
         assert!(!read_only.contains("method=\"post\""), "{read_only}");

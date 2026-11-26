@@ -533,11 +533,11 @@ fn opening_a_page_and_returning_to_it_after_a_change_each_send_it_once() {
     );
 }
 
-/// A page from a run that takes writes is sent once too, though its form
-/// carries a token that a later run will not take.
+/// A page from a run that takes writes is sent once too, though each of its
+/// forms carries a token that a later run will not take.
 #[cfg(target_os = "linux")]
 #[test]
-fn opening_a_page_that_takes_a_comment_sends_it_once() {
+fn opening_a_page_that_takes_writes_sends_it_once() {
     let home = a_home_naming_one_project_settled(
         "web-once-writes",
         &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
@@ -547,8 +547,8 @@ fn opening_a_page_that_takes_a_comment_sends_it_once() {
     let (mut page, _) = opened_once(&home, &relay, "/arkham/dun-0tp");
     assert_eq!(
         page.evaluate("document.querySelectorAll('input[name=token]').length"),
-        serde_json::json!(1),
-        "the page is the bead's, with its form"
+        serde_json::json!(beady_eye::view::address::OFFERED.len()),
+        "the page is the bead's, with a form for each write it offers"
     );
 }
 
@@ -709,7 +709,7 @@ fn each_view_picked_from_the_menu_lists_only_what_it_selects() {
 }
 
 /// A comment, as the shim records the call past the `-C` naming the tracker.
-const COMMENTED: &str = "comments add dun-0tp -- the gate is shut";
+const COMMENTED: &str = "comments add -- dun-0tp the gate is shut";
 
 /// The config's table naming the one actor a writable `bdi web` writes as.
 const WRITES_AS_CARTER: &str = "[web]\nactor = \"carter\"\n";
@@ -759,6 +759,65 @@ fn a_write_lands_under_the_actor_the_config_names() {
         .filter(|call| call.ends_with(COMMENTED))
         .collect();
     assert_eq!(commented, [format!("carter {COMMENTED}")]);
+}
+
+/// A write lands in the tracker, and the page then shows the bead as it
+/// now stands, read again for the write though the project does not poll
+/// and no producer speaks for it.
+#[test]
+fn after_a_write_the_beads_page_shows_it_as_it_now_stands() {
+    let home = a_home_naming_one_project_settled(
+        "web-write-then-shown",
+        &format!("poll = false\n{WRITES_AS_CARTER}"),
+    );
+    let named = home
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a home has a name");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let reprioritised = "update --priority=0 -- dun-0tp";
+    tracker.answers_for(named, reprioritised, "");
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    until_it_has_read(&address);
+    let shown_at = |priority: &str| {
+        get(&address, "/arkham/dun-0tp")
+            .1
+            .contains(&format!("<dt>Priority</dt><dd>{priority}</dd>"))
+    };
+    assert!(shown_at("P1"), "the bead is drawn as first read");
+
+    tracker.holds(&with_the_roots_priority(THE_DESCRIBED_SUBTREE, 0));
+    assert!(shown_at("P1"), "nothing reads the tracker again on its own");
+    assert_eq!(
+        posted_from_the_beads_page(&address, "priority", "text=0"),
+        "HTTP/1.1 303 See Other"
+    );
+
+    assert!(tracker
+        .calls()
+        .iter()
+        .any(|call| call.ends_with(reprioritised)));
+    let giving_up = Instant::now() + GIVING_UP;
+    while !shown_at("P0") {
+        assert!(
+            Instant::now() < giving_up,
+            "the page never showed the write"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `capture`, with dun-0tp at `priority`.
+fn with_the_roots_priority(capture: &str, priority: u8) -> String {
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(capture).expect("a capture of bd list --json");
+    for row in &mut rows {
+        if row["id"] == THE_ROOT.0 {
+            row["priority"] = priority.into();
+        }
+    }
+    serde_json::to_string(&rows).expect("rows serialise")
 }
 
 /// A writable `bdi web` with no actor would write as whoever runs it, so it
@@ -825,23 +884,31 @@ fn a_tracker_taking_the_comment(home: &Path) -> ShimmedTracker {
 }
 
 /// The status line the `bdi web` at `address` answers with when the bead's
-/// page posts `COMMENTED`, as a browser posts the bead's form: from the page
-/// bdi web drew it on, with the token that page carries.
+/// page posts `COMMENTED`, as a browser posts the bead's form.
 fn the_comment_posted_to(address: &str) -> String {
+    posted_from_the_beads_page(address, "comment", "text=the+gate+is+shut")
+}
+
+/// The status line the `bdi web` at `address` answers with when the form on
+/// dun-0tp's page that makes `write` posts `fields`, as a browser posts it:
+/// from the page bdi web drew it on, with the token that form carries.
+fn posted_from_the_beads_page(address: &str, write: &str, fields: &str) -> String {
     let (_, page) = get(address, "/arkham/dun-0tp");
+    let action = format!("action=\"/arkham/dun-0tp/{write}");
     let token = page
-        .split_once("name=\"token\" value=\"")
+        .split_once(action.as_str())
+        .and_then(|(_, form)| form.split_once("name=\"token\" value=\""))
         .and_then(|(_, rest)| rest.split_once('"'))
         .map(|(token, _)| token)
-        .expect("the bead's page carries a token in its form");
+        .unwrap_or_else(|| panic!("the bead's page carries a token in its {write} form"));
     let mut stream = TcpStream::connect(address).expect("bdi web takes the connection");
     stream
         .set_read_timeout(Some(GIVING_UP))
         .expect("a read timeout");
-    let form = format!("token={token}&text=the+gate+is+shut");
+    let form = format!("token={token}&{fields}");
     write!(
         stream,
-        "POST /arkham/dun-0tp/comment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\n\
+        "POST /arkham/dun-0tp/{write} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\n\
          Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
         form.len()
     )

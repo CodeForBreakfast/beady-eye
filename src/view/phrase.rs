@@ -1271,16 +1271,33 @@ pub fn copied() -> &'static str {
     "Copied"
 }
 
-/// The field on a writable web page's bead view that takes a comment, in
-/// beads' word for one.
-pub fn comment() -> &'static str {
-    "Comment"
+/// The field on a writable web page's bead view that takes a write's words,
+/// as the terminal's entry asks for them, or nothing for a write made with
+/// none.
+pub fn words_for(write: Write) -> Option<&'static str> {
+    match write {
+        Write::Comment => Some("Comment"),
+        Write::Close => Some("Close, with the reason"),
+        Write::Respond => Some("Response"),
+        Write::Defer => Some("Defer until"),
+        Write::Priority => Some("Priority"),
+        Write::Reopen | Write::Dismiss | Write::Release => None,
+    }
 }
 
-/// The button that adds what the comment field holds to the bead, as `bd
-/// comments add` does.
-pub fn add_comment() -> &'static str {
-    "Add comment"
+/// The button on a writable web page's bead view that makes a write, in
+/// beads' word for it.
+pub fn make(write: Write) -> &'static str {
+    match write {
+        Write::Comment => "Add comment",
+        Write::Close => "Close",
+        Write::Reopen => "Reopen",
+        Write::Respond => "Respond",
+        Write::Dismiss => "Dismiss",
+        Write::Defer => "Defer",
+        Write::Release => "Release",
+        Write::Priority => "Set priority",
+    }
 }
 
 /// What a web page says where it refused a write because the post's origin,
@@ -1523,6 +1540,8 @@ mod tests {
                 bead: key("smt-4kd3p.20"),
                 write,
             }));
+            said.extend(words_for(write).map(str::to_string));
+            said.push(make(write).to_string());
         }
         said.push(not_configured("summit-works"));
         said.push(NOTHING_TYPED.to_string());
@@ -3011,5 +3030,23 @@ mod tests {
     #[test]
     fn a_heading_says_what_is_left_of_the_whole() {
         assert_eq!(left_of(1412, 3880), "1412 left of 3880");
+    }
+
+    /// A web page's form has a field for exactly the writes the terminal
+    /// opens an entry for.
+    #[test]
+    fn a_write_has_a_field_on_the_page_where_it_is_given_words() {
+        for write in [
+            Write::Comment,
+            Write::Close,
+            Write::Reopen,
+            Write::Respond,
+            Write::Dismiss,
+            Write::Defer,
+            Write::Release,
+            Write::Priority,
+        ] {
+            assert_eq!(words_for(write).is_some(), write.is_typed(), "{write:?}");
+        }
     }
 }

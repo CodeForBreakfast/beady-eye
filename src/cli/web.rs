@@ -21,7 +21,7 @@ use crate::app::{
     CHECKED_EVERY,
 };
 use crate::collect::agents::{Agents, Unasked};
-use crate::collect::bd;
+use crate::collect::bd::{self, Write};
 use crate::collect::changes::{self, Heard, Report, Reported, Socket};
 use crate::collect::environment::{self, EnvironmentCache};
 use crate::collect::http::{self, close, head, Encoding, Head, Patient, Unbodied, Unread};
@@ -30,7 +30,7 @@ use crate::collect::tracker::Trackers;
 use crate::collect::watched::{self, Through};
 use crate::config::Config;
 use crate::model::snapshot::{Filter, Snapshot};
-use crate::view::address::{self, Asked, Start, Tokens, COMMENT, TEXT as COMMENT_TEXT, TOKEN};
+use crate::view::address::{self, Asked, Start, Tokens, TEXT as TEXT_FIELD, TOKEN};
 use crate::view::draw::html;
 use crate::view::forest::listed;
 use crate::view::{phrase, Notice};
@@ -354,7 +354,7 @@ pub(super) fn web(
     let writes = match writes_as {
         Some(actor) => {
             let tokens = Tokens::new().context("reading a key for the write forms' tokens")?;
-            Some(Writer::through(&RealRunner, actor, tokens))
+            Some(Writer::through(&RealRunner, actor, tokens, told.clone()))
         }
         None => None,
     };
@@ -407,22 +407,29 @@ struct Answering {
 
 /// What makes a write: the runner bd is run through, one write at a time, so
 /// a tracker that stalls holds one of the request slots and not all of them,
-/// the actor bd records every write under, and the tokens each write's form
-/// carries.
+/// the actor bd records every write under, the tokens each write's form
+/// carries, and where a project written to is asked to be read again.
 struct Writer<'a> {
     runner: &'a dyn Runner,
     actor: String,
     one_at_a_time: Mutex<()>,
     tokens: Tokens,
+    reread: Sender<Heard>,
 }
 
 impl<'a> Writer<'a> {
-    fn through(runner: &'a dyn Runner, actor: String, tokens: Tokens) -> Self {
+    fn through(
+        runner: &'a dyn Runner,
+        actor: String,
+        tokens: Tokens,
+        reread: Sender<Heard>,
+    ) -> Self {
         Self {
             runner,
             actor,
             one_at_a_time: Mutex::new(()),
             tokens,
+            reread,
         }
     }
 }
@@ -749,37 +756,17 @@ fn from_its_own_page(head: &Head) -> bool {
     }
 }
 
-/// A write a post asks of a bead's tracker.
-enum Write {
-    /// Add the text to the bead as a comment.
-    Comment(String),
-}
-
-impl Write {
-    /// Whether a page offers a write named `named`, with a form of its own.
-    fn offered(named: &str) -> bool {
-        named == COMMENT
-    }
-
-    /// The write a post to an address ending in `named` asks for with the
-    /// form `form`, or nothing where it asks for none.
-    fn asked(named: &str, form: &str) -> Option<Self> {
-        match named {
-            COMMENT => address::field(form, COMMENT_TEXT)
-                .filter(|text| !text.trim().is_empty())
-                .map(Self::Comment),
-            _ => None,
-        }
-    }
-
-    /// What `bdi bd` is asked for to make this write to `bead`.
-    fn words(self, bead: &str) -> Vec<String> {
-        match self {
-            Self::Comment(text) => ["comments", "add", bead, "--", &text]
-                .map(String::from)
-                .to_vec(),
-        }
-    }
+/// The write a post to an address ending in `named` asks for with the form
+/// `form`, and the words it posted, trimmed as the terminal trims what is
+/// typed. Nothing where it asks for no write a page offers, or posts no words
+/// for one made only with words.
+fn asked(named: &str, form: &str) -> Option<(Write, String)> {
+    let write = address::offered(named)?;
+    let given = address::field(form, TEXT_FIELD)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    (!(given.is_empty() && write.needs_words())).then_some((write, given))
 }
 
 /// The refusal of a post to a write's address whose form carries no token
@@ -787,7 +774,8 @@ impl Write {
 /// a fresh form. Nothing for a post whose form carries one, or for a post to
 /// an address that names no write a page offers.
 fn not_issued(head: &Head, form: &[u8], tokens: &Tokens) -> Option<Reply> {
-    let (bead, named) = address::written(head.path()).filter(|(_, named)| Write::offered(named))?;
+    let (bead, named) =
+        address::written(head.path()).filter(|(_, named)| address::offered(named).is_some())?;
     let issued = std::str::from_utf8(form)
         .ok()
         .and_then(|form| address::field(form, TOKEN))
@@ -827,7 +815,7 @@ fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
     if snapshot.node(&bead).is_none() {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     }
-    let Some(write) = form.and_then(|form| Write::asked(named, form)) else {
+    let Some((write, given)) = form.and_then(|form| asked(named, form)) else {
         return (
             "400 Bad Request",
             TEXT,
@@ -835,18 +823,23 @@ fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
         )
             .into();
     };
-    let words = write.words(&bead.id);
+    let words = write.asked(&bead.id, &given);
     let made = bd::writing(runner, project, &words, Some(&writer.actor)).and_then(|(argv, env)| {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         Ok(runner.run("bd", &argv, Some(&project.path), &env)?)
     });
     match made {
-        Ok(_) => Reply {
-            status: "303 See Other",
-            kind: TEXT,
-            body: String::new(),
-            sent_to: Some(address::written_back(&bead, &head.target)),
-        },
+        Ok(_) => {
+            // Read again as the terminal reads again after a write, and not
+            // through a producer, so nothing is passed on to a watcher.
+            let _ = writer.reread.send(Heard::Changed(bead.project.clone()));
+            Reply {
+                status: "303 See Other",
+                kind: TEXT,
+                body: String::new(),
+                sent_to: Some(address::written_back(&bead, &head.target)),
+            }
+        }
         Err(why) => (
             "502 Bad Gateway",
             HTML,
@@ -953,6 +946,7 @@ mod tests {
     use crate::collect::run::RunFailure;
     use crate::collect::tracker::testing::{Fake, Fakes};
     use crate::model::join::BeadKey;
+    use crate::view::address::COMMENT;
 
     /// What a request for `target` with `method` is answered, with `latest`
     /// held.
@@ -996,7 +990,9 @@ mod tests {
             sent,
             latest,
             writes
-                .map(|runner| Writer::through(runner, ACTOR.to_string(), tokens()))
+                .map(|runner| {
+                    Writer::through(runner, ACTOR.to_string(), tokens(), mpsc::channel().0)
+                })
                 .as_ref(),
         )
     }
@@ -1898,7 +1894,7 @@ mod tests {
     const ACTOR: &str = "carter";
 
     const COMMENTED: &str =
-        "bd --actor=carter -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
+        "bd --actor=carter -C /nowhere/arkham comments add -- ark-1 the gate is shut, again";
 
     /// A bead the page draws from a project its scope took in to read a
     /// blocker takes the comment its page offers.
@@ -1972,6 +1968,86 @@ mod tests {
         );
     }
 
+    /// Each write the page offers reaches bd as `bdi bd` and the terminal
+    /// spell it, with the words its form posted, trimmed as the terminal
+    /// trims what is typed.
+    #[test]
+    fn each_write_the_page_offers_is_made_as_the_terminal_makes_it() {
+        let latest = arkham_held();
+        for (named, form, write, given) in [
+            (
+                "close",
+                "text=+shut+for+good+",
+                Write::Close,
+                "shut for good",
+            ),
+            ("close", "", Write::Close, ""),
+            ("reopen", "", Write::Reopen, ""),
+            ("respond", "text=open+it", Write::Respond, "open it"),
+            ("dismiss", "", Write::Dismiss, ""),
+            ("defer", "text=tomorrow", Write::Defer, "tomorrow"),
+            ("priority", "text=0", Write::Priority, "0"),
+        ] {
+            let made = format!(
+                "bd --actor=carter -C /nowhere/arkham {}",
+                write.asked("ark-1", given).join(" ")
+            );
+            let runner = FakeRunner::default().with(&made, "");
+            let reply = replied(
+                &posted(&format!("/arkham/ark-1/{named}"), form),
+                &latest,
+                Some(&runner),
+            );
+            assert_eq!(reply.status, "303 See Other", "{named}: {}", reply.body);
+            assert_eq!(reply.sent_to.as_deref(), Some("/arkham/ark-1#shown"));
+            runner.call(&made);
+        }
+    }
+
+    /// A write that bd made has the bead's project read again, as the
+    /// terminal has it read, so the page shows the bead as it now stands. A
+    /// write bd refused changed nothing to read.
+    #[test]
+    fn a_write_made_has_its_project_read_again() {
+        let latest = arkham_held();
+        let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
+        let refusal = RunFailure::from_exit("bd", Some(1), "Error: connection refused");
+        for (runner, read_again) in [
+            (FakeRunner::default().with(COMMENTED, ""), true),
+            (FakeRunner::default().failing(COMMENTED, refusal), false),
+        ] {
+            let (told, heard) = mpsc::channel();
+            let writer = Writer::through(&runner, ACTOR.to_string(), tokens(), told);
+            replied_by(&posting, &latest, Some(&writer));
+            let asked: Vec<Heard> = heard.try_iter().collect();
+            let wanted = if read_again {
+                vec![Heard::Changed("arkham".to_string())]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(asked, wanted);
+        }
+    }
+
+    /// A write a page offers only with words is refused with none, and runs
+    /// nothing.
+    #[test]
+    fn a_write_made_only_with_words_posted_with_none_runs_nothing() {
+        let latest = arkham_held();
+        let runner = FakeRunner::default();
+        for named in ["respond", "defer", "priority"] {
+            for form in ["", "text=", "text=+%0A"] {
+                let reply = replied(
+                    &posted(&format!("/arkham/ark-1/{named}"), form),
+                    &latest,
+                    Some(&runner),
+                );
+                assert_eq!(reply.status, "400 Bad Request", "{named} {form}");
+            }
+        }
+        assert_eq!(runner.calls(), []);
+    }
+
     /// The reader is sent back to the page as they left it: the folds, the
     /// list and the copy the form's address carried.
     #[test]
@@ -1997,7 +2073,7 @@ mod tests {
     #[test]
     fn a_comment_that_looks_like_a_flag_is_written_as_the_comment() {
         let latest = arkham_held();
-        let flagged = "bd --actor=carter -C /nowhere/arkham comments add ark-1 -- --db=elsewhere";
+        let flagged = "bd --actor=carter -C /nowhere/arkham comments add -- ark-1 --db=elsewhere";
         let runner = FakeRunner::default().with(flagged, "");
         let reply = replied(
             &posted("/arkham/ark-1/comment", "text=--db%3Delsewhere"),
@@ -2027,7 +2103,8 @@ mod tests {
     }
 
     /// A post that names no write, no text, a project the run does not read
-    /// or a name with no form behind it runs nothing.
+    /// or a name with no form behind it runs nothing. Release is the
+    /// terminal's alone.
     #[test]
     fn a_post_that_asks_for_no_write_this_run_makes_runs_nothing() {
         let latest = arkham_held();
@@ -2037,6 +2114,7 @@ mod tests {
             ("/arkham/ark-1/comment", "text=+%0A", "400 Bad Request"),
             ("/arkham/ark-1/comment", "said=hello", "400 Bad Request"),
             ("/arkham/ark-1/burn", "text=hello", "400 Bad Request"),
+            ("/arkham/ark-1/release", "text=carter", "400 Bad Request"),
             ("/dunwich/dun-1/comment", "text=hello", "404 Not Found"),
             ("/arkham/ark-1", "text=hello", "404 Not Found"),
             ("/", "text=hello", "404 Not Found"),
@@ -2125,7 +2203,7 @@ mod tests {
     fn a_write_sent_while_another_is_being_made_is_refused_for_now() {
         let latest = arkham_held();
         let runner = FakeRunner::default().with(COMMENTED, "");
-        let writer = Writer::through(&runner, ACTOR.to_string(), tokens());
+        let writer = Writer::through(&runner, ACTOR.to_string(), tokens(), mpsc::channel().0);
         let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
         {
             let _making = writer.one_at_a_time.lock().expect("nothing else holds it");
@@ -2165,7 +2243,7 @@ mod tests {
     fn a_form_not_issued_is_refused_while_another_write_is_being_made() {
         let latest = arkham_held();
         let runner = FakeRunner::default();
-        let writer = Writer::through(&runner, ACTOR.to_string(), tokens());
+        let writer = Writer::through(&runner, ACTOR.to_string(), tokens(), mpsc::channel().0);
         let posting = posted_with(
             "/arkham/ark-1/comment",
             &format!("Host: {BEADS}\r\nOrigin: http://{BEADS}\r\n"),
@@ -2184,7 +2262,7 @@ mod tests {
     fn the_longest_comment_the_form_takes_is_not_too_long() {
         let latest = arkham_held();
         let commented = format!(
-            "bd --actor=carter -C /nowhere/arkham comments add ark-1 -- {}",
+            "bd --actor=carter -C /nowhere/arkham comments add -- ark-1 {}",
             "€".repeat(address::LONGEST_COMMENT)
         );
         let runner = FakeRunner::default().with(&commented, "");
