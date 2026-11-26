@@ -58,8 +58,8 @@ const TEXT: &str = "text/plain; charset=utf-8";
 
 const UNAVAILABLE: &str = "503 Service Unavailable";
 
-/// The most of a write's form read, which a comment's text is well inside.
-const LARGEST_WRITE: usize = 64 * 1024;
+/// The most of a write's form read: whatever the comment form lets through.
+const LARGEST_WRITE: usize = address::LARGEST_COMMENT_FORM;
 
 /// Which trees a page draws: every one, since `bdi web` asks no agent
 /// provider and so cannot tell a tree with a live agent from one without.
@@ -1742,6 +1742,25 @@ mod tests {
             replied_by(&posting, &latest, Some(&writer)).status,
             "303 See Other"
         );
+    }
+
+    /// The longest comment the form lets through is taken whatever it is
+    /// written in, so a draft is never lost to a refusal the form allowed.
+    #[test]
+    fn the_longest_comment_the_form_takes_is_not_too_long() {
+        let latest = arkham_held();
+        let commented = format!(
+            "bd -C /nowhere/arkham comments add ark-1 -- {}",
+            "€".repeat(address::LONGEST_COMMENT)
+        );
+        let runner = FakeRunner::default().with(&commented, "");
+        let euros = "%E2%82%AC".repeat(address::LONGEST_COMMENT);
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", &format!("text={euros}")),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other", "{}", reply.body);
     }
 
     /// A write sent to a name nobody allowed is refused as a read is.

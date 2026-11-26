@@ -21,7 +21,9 @@ use crate::model::join::BeadKey;
 use crate::model::snapshot::{Node, ProviderState, Snapshot};
 use crate::model::types::{Edge, Status};
 use crate::model::watching::Watching;
-use crate::view::address::{line_name, writing, Asked, Root, COMMENT, FIND, SHOWN, TEXT};
+use crate::view::address::{
+    line_name, writing, Asked, Root, COMMENT, FIND, LONGEST_COMMENT, SHOWN, TEXT,
+};
 use crate::view::fitted::{indent, Block, Mark, Marked, Shorter};
 use crate::view::forest::{listed, only_ready, view_of, Forest, Landed, List};
 use crate::view::lines::{self, Content, Level, Line, Note, ProjectLine, Waiting};
@@ -136,7 +138,8 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
 fn commenting(html: &mut String, key: &BeadKey) {
     html.push_str(&format!(
         "<form class=\"write\" action=\"{}\" method=\"post\"><label>{}\
-         <textarea name=\"{TEXT}\" required></textarea></label><button>{}</button></form>",
+         <textarea name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\" required></textarea></label>\
+         <button>{}</button></form>",
         escaped(&writing(key, COMMENT)),
         escaped(phrase::comment()),
         escaped(phrase::add_comment())
@@ -4169,7 +4172,10 @@ mod tests {
             ),
             "{form}"
         );
-        assert!(form.contains("<textarea name=\"text\" required>"), "{form}");
+        assert!(
+            form.contains("<textarea name=\"text\" maxlength=\"7000\" required>"),
+            "{form}"
+        );
         assert_eq!(
             text_of(form),
             [phrase::comment(), phrase::add_comment()].concat()

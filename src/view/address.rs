@@ -158,6 +158,13 @@ pub fn address(key: &BeadKey) -> String {
 pub const COMMENT: &str = "comment";
 pub const TEXT: &str = "text";
 
+/// The longest comment the form takes, in the UTF-16 units a browser counts.
+pub const LONGEST_COMMENT: usize = 7000;
+
+/// The most bytes a browser posts a comment's form as. One UTF-16 unit is at
+/// most three bytes of UTF-8, and a form sends each of those as `%XX`.
+pub const LARGEST_COMMENT_FORM: usize = TEXT.len() + "=".len() + LONGEST_COMMENT * 9;
+
 /// Where a form on `key`'s page posts the write named `write`.
 pub fn writing(key: &BeadKey, write: &str) -> String {
     format!("{}/{write}", address(key))
