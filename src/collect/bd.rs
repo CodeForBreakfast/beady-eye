@@ -1283,6 +1283,12 @@ impl Write {
         !matches!(self, Write::Reopen | Write::Dismiss | Write::Release)
     }
 
+    /// Whether the write is made only with words typed: every typed write but
+    /// a close, whose reason is the one bd does without.
+    pub fn needs_words(self) -> bool {
+        self.is_typed() && self != Write::Close
+    }
+
     /// What `bdi bd` is asked for to make this write to `id`. `given` is what
     /// the person typed, or the holder of the claim a release lets go.
     ///

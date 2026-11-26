@@ -992,6 +992,10 @@ pub fn not_configured(project: &str) -> String {
     format!("the config names no project {project}")
 }
 
+/// Why a write that is made only with words was not made: the entry was left
+/// with none in it.
+pub const NOTHING_TYPED: &str = "nothing was typed";
+
 /// What the search prompt is drawn with before what the reader has typed.
 ///
 /// The key is drawn beside what it took, the way every terminal a reader has
@@ -1466,6 +1470,7 @@ mod tests {
             }));
         }
         said.push(not_configured("summit-works"));
+        said.push(NOTHING_TYPED.to_string());
 
         for rule in every_anomaly() {
             said.push(anomaly(&rule));

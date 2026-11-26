@@ -740,9 +740,14 @@ impl Shown {
                 true
             }
             Typing::Sought => {
-                if let Some(entry) = self.entry.take() {
-                    let typed = entry.query.typed().to_string();
-                    self.make(entry.bead, entry.write, typed);
+                if let Some(Entry { write, bead, query }) = self.entry.take() {
+                    let typed = query.typed().trim().to_string();
+                    if typed.is_empty() && write.needs_words() {
+                        let why = phrase::NOTHING_TYPED.to_string();
+                        self.said = Some(Said::NotWritten { bead, write, why });
+                    } else {
+                        self.make(bead, write, typed);
+                    }
                 }
                 true
             }

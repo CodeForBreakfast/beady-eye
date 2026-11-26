@@ -298,6 +298,42 @@ fn a_write_bd_refused_says_why_at_the_foot() {
     );
 }
 
+/// A deferral with no date typed is not made, because bd takes a deferral
+/// without one as a deferral with no end; the foot says why.
+#[test]
+fn a_deferral_given_no_date_is_not_made() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    let (said, _) = run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("z  "),
+        pressed([KeyCode::Enter]),
+    ]);
+
+    assert!(run.writing.made().is_empty());
+    assert!(
+        said.last()
+            .is_some_and(|foot| foot.contains("arkham · dun-0tp · not deferred: nothing was typed")),
+        "{said:#?}"
+    );
+}
+
+/// A close needs no reason, so one with nothing typed is made.
+#[test]
+fn a_close_given_no_reason_is_made() {
+    let run = Run::over(THE_DESCRIBED_SUBTREE).naming_its_project();
+
+    run.after([
+        walked(),
+        pressed([KeyCode::Enter]),
+        typed("x"),
+        pressed([KeyCode::Enter]),
+    ]);
+
+    assert_eq!(run.writing.made().len(), 1);
+}
+
 /// A write to a bead in a project the config in force no longer names has no
 /// tracker to go to, and says so rather than going nowhere quietly.
 #[test]
