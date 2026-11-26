@@ -501,25 +501,7 @@ fn opening_a_page_and_returning_to_it_after_a_change_each_send_it_once() {
     let home = a_home_naming_one_project_settled("web-once", "[tui]\nrefresh_seconds = 1\n");
     let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
     let relay = Relay::to(&address);
-    let mut page = browser::Browser::open(&home, &format!("http://{}/", relay.address), 1200, 600);
-    page.until("document.readyState === 'complete'", GIVING_UP);
-    relay.until_asked(2);
-    // Each second's read draws the page twice, as the read goes out and
-    // as it comes back.
-    std::thread::sleep(Duration::from_secs(3));
-    let opened = relay.answered();
-    let [(fetched, page_bytes), (listened, stream_bytes)] = &opened[..] else {
-        panic!("the page asked for itself and then for its changes alone: {opened:?}");
-    };
-    assert!(!fetched.contains("since="), "{fetched}");
-    assert!(
-        listened.contains("since="),
-        "the script holds the page: {listened}"
-    );
-    assert!(
-        stream_bytes * 4 < *page_bytes,
-        "opening sent the page's {page_bytes} bytes, then {stream_bytes} more down its stream"
-    );
+    let (mut page, page_bytes) = opened_once(&home, &relay, "/");
 
     page.evaluate(
         r#"Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
@@ -546,9 +528,53 @@ fn opening_a_page_and_returning_to_it_after_a_change_each_send_it_once() {
     };
     assert!(listened.contains("since="), "{listened}");
     assert!(
-        stream_bytes * 4 < *page_bytes,
+        stream_bytes * 4 < page_bytes,
         "returning sent {stream_bytes} bytes for a page of {page_bytes}"
     );
+}
+
+/// A page from a run that takes writes is sent once too, though its form
+/// carries a token that a later run will not take.
+#[cfg(target_os = "linux")]
+#[test]
+fn opening_a_page_that_takes_a_comment_sends_it_once() {
+    let home = a_home_naming_one_project_settled("web-once-writes", "[tui]\nrefresh_seconds = 1\n");
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let relay = Relay::to(&address);
+    let (mut page, _) = opened_once(&home, &relay, "/arkham/dun-0tp");
+    assert_eq!(
+        page.evaluate("document.querySelectorAll('input[name=token]').length"),
+        serde_json::json!(1),
+        "the page is the bead's, with its form"
+    );
+}
+
+/// Open `path` through `relay`, and see that the browser fetched the page
+/// and its script then asked only for the changes since it. Gives the
+/// browser and the size of the page it fetched.
+#[cfg(target_os = "linux")]
+fn opened_once(home: &Path, relay: &Relay, path: &str) -> (browser::Browser, usize) {
+    let url = format!("http://{}{path}", relay.address);
+    let mut page = browser::Browser::open(home, &url, 1200, 600);
+    page.until("document.readyState === 'complete'", GIVING_UP);
+    relay.until_asked(2);
+    // Each second's read draws the page twice, as the read goes out and
+    // as it comes back.
+    std::thread::sleep(Duration::from_secs(3));
+    let opened = relay.answered();
+    let [(fetched, page_bytes), (listened, stream_bytes)] = &opened[..] else {
+        panic!("the page asked for itself and then for its changes alone: {opened:?}");
+    };
+    assert!(!fetched.contains("since="), "{fetched}");
+    assert!(
+        listened.contains("since="),
+        "the script holds the page: {listened}"
+    );
+    assert!(
+        stream_bytes * 4 < *page_bytes,
+        "opening sent the page's {page_bytes} bytes, then {stream_bytes} more down its stream"
+    );
+    (page, *page_bytes)
 }
 
 /// A relay between a browser and `bdi web`, which keeps the first line of

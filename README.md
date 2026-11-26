@@ -260,7 +260,7 @@ Forbidden`, and runs no bd for it. The post's `Origin` has to name the host
 and port its `Host` does, and its form has to carry the token the bead's page
 issued. Each run issues its own tokens, so a form left open across a restart
 is refused, and reloading the page gives it a fresh one. A writable run
-answers with `Cache-Control: no-store`, so no cache hands out a stale one.
+answers with `Cache-Control: no-cache`, so no cache hands out a stale one.
 
 It answers only a request sent to `localhost`, to an address, or to a name
 given with `--allow-host`. So a page elsewhere cannot point a name of its own

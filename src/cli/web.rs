@@ -615,8 +615,9 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
 }
 
 /// The header lines `reply` is sent with: where it sends the reader on, and,
-/// from a run that takes writes, that nothing is to keep it, since a page
-/// carries tokens a later run will not take.
+/// from a run that takes writes, that a kept copy is asked for again before
+/// it is shown, since a page carries tokens a later run will not take. The
+/// copy is still kept, because the page's script reads the page from it.
 fn headers(reply: &Reply, writable: bool) -> String {
     let sent_on = reply
         .sent_to
@@ -624,7 +625,7 @@ fn headers(reply: &Reply, writable: bool) -> String {
         .map(|to| format!("Location: {to}\r\n"))
         .unwrap_or_default();
     let kept = if writable {
-        "Cache-Control: no-store\r\n"
+        "Cache-Control: no-cache\r\n"
     } else {
         ""
     };
@@ -1718,18 +1719,19 @@ mod tests {
         )
     }
 
-    /// A run that takes writes asks that nothing keep what it answers, since
-    /// a page it drew carries tokens a later run will not take. A read-only
-    /// run's pages may be kept.
+    /// A run that takes writes asks that a kept copy of what it answers be
+    /// asked for again before it is shown, since a page it drew carries
+    /// tokens a later run will not take. A read-only run's pages may be
+    /// shown as they were kept.
     #[test]
-    fn nothing_keeps_what_a_run_that_takes_writes_answers() {
+    fn a_kept_copy_of_what_a_run_that_takes_writes_answers_is_asked_for_again() {
         let latest = arkham_held();
         let page = replied(
             &format!("GET /arkham/ark-1 HTTP/1.1\r\nHost: {BEADS}\r\n\r\n"),
             &latest,
             None,
         );
-        assert_eq!(headers(&page, true), "Cache-Control: no-store\r\n");
+        assert_eq!(headers(&page, true), "Cache-Control: no-cache\r\n");
         assert_eq!(headers(&page, false), "");
 
         let runner = FakeRunner::default().with(COMMENTED, "");
@@ -1740,7 +1742,7 @@ mod tests {
         );
         assert_eq!(
             headers(&written, true),
-            "Location: /arkham/ark-1#shown\r\nCache-Control: no-store\r\n"
+            "Location: /arkham/ark-1#shown\r\nCache-Control: no-cache\r\n"
         );
     }
 
