@@ -26,7 +26,7 @@ use crate::collect::hc;
 use crate::collect::herdr;
 use crate::collect::run::{self, RealRunner, Runner};
 use crate::collect::stream;
-use crate::collect::tracker::{OpenFailure, Trackers};
+use crate::collect::tracker::Trackers;
 use crate::collect::watched::Through;
 use crate::config::{Config, Delivery, Poll};
 use crate::model::join::BeadKey;
@@ -906,23 +906,8 @@ fn passed_to_bd(config: &Path, project: &str, asked: &[String]) -> anyhow::Resul
             config.display()
         );
     };
-    let argv = bd::passed_through(&project.path, asked)?;
     environment::forget_the_callers_tracker();
-    let env = environment::tracker_env(
-        &RealRunner,
-        project,
-        environment::ambient_credential().as_deref(),
-        EnvironmentCache::here().as_ref(),
-    )
-    .map_err(|failure| match failure {
-        OpenFailure::NoEnvironment => {
-            anyhow::anyhow!("could not set up {}'s environment", project.name)
-        }
-        OpenFailure::NoCredential => {
-            anyhow::anyhow!("{}'s credential command failed", project.name)
-        }
-        OpenFailure::Refused(failure) => failure.into(),
-    })?;
+    let (argv, env) = bd::writing(&RealRunner, project, asked)?;
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let exited = run::handed_over("bd", &argv, Some(&project.path), &env)?;
     Ok(exited
