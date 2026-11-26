@@ -729,9 +729,12 @@ fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
     let Some(snapshot) = &held.snapshot else {
         return (UNAVAILABLE, HTML, html::saying(phrase::not_read_yet())).into();
     };
+    // Any project the config names, since a scope widens to read a blocker
+    // and the bead is drawn either way.
     let Some(project) = held
         .read_under
-        .read()
+        .projects
+        .iter()
         .find(|project| project.name == bead.project)
     else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
@@ -1637,6 +1640,30 @@ mod tests {
     }
 
     const COMMENTED: &str = "bd -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
+
+    /// A bead the page draws from a project its scope took in to read a
+    /// blocker takes the comment its page offers.
+    #[test]
+    fn a_write_to_a_bead_drawn_from_beyond_the_scope_is_made() {
+        let mut held = arkham_held().now();
+        held.read_under = Arc::new(
+            Config::from_toml(
+                "[[projects]]\nname = \"arkham\"\npath = \"/nowhere/arkham\"\n\
+                 [[projects]]\nname = \"dunwich\"\npath = \"/nowhere/dunwich\"\n",
+            )
+            .expect("a config")
+            .scoped_to(&["dunwich".to_string()])
+            .expect("dunwich is configured"),
+        );
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let reply = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &Latest::holding(held),
+            Some(&runner),
+        );
+        assert_eq!(reply.status, "303 See Other");
+        assert_eq!(runner.calls().len(), 1);
+    }
 
     /// A write goes to the tracker its bead was read from, so a config that
     /// has since pointed the project elsewhere does not send it there.
