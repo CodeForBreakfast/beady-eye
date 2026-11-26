@@ -945,7 +945,8 @@ config. A `bdi web` started with `--writes` and no `actor` refuses to start.
 
 `bdi web` reads `actor` when it starts, so an edit to it waits for a restart.
 A `bdi web` without `--writes` does not use it, and neither do the view and
-`bdi bd`, which write as the person running them.
+`bdi bd`, which name no actor and leave bd to record the one the project's
+environment gives it.
 
 ## `[anomalies]`
 

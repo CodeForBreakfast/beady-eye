@@ -488,8 +488,9 @@ No other `bd` command is passed, and no flag but the one each write takes.
 A flag's value that starts with a dash is joined to it, as
 `--reason='-1, a duplicate'`, and a comment or response that starts with one
 goes after `--`. `u` is offered only on a bead the eye flags as a claim with
-no live agent, and it names the holder, so `bd` refuses it if someone has claimed the bead since. `bdi --beads` gives each
-bead deferred to a date its `defer_until`. Anything bigger, such as a new
+no live agent, and it names the holder, so `bd` refuses it if the bead's
+assignee has changed since. `bdi --beads` gives each bead deferred to a date
+its `defer_until`. Anything bigger, such as a new
 title, a dependency or a new bead, is an agent's job: comment on the bead to
 ask for it.
 
@@ -498,9 +499,11 @@ needs no map of trackers or credentials. Nothing after the project can pick
 another tracker, and neither can a `BEADS_` or `BD_` variable the caller
 exports. What the project's own directory sets still applies. So a permission
 rule on `bdi bd <project>` holds a caller to that one project, provided the
-caller cannot choose the `HOME` or `PATH` that `bdi` runs with. The terminal
-and `bdi bd` write as whoever runs them, and a writable `bdi web` as its
-`[web] actor`.
+caller cannot choose the `HOME` or `PATH` that `bdi` runs with.
+
+The terminal and `bdi bd` name no actor, so `bd` records the one the
+project's environment gives it, as it would for a `bd` you ran there. A
+writable `bdi web` names its `[web] actor`, which wins over the environment.
 
 `bdi gates` settles the beads waiting on pull requests. Whoever opens the pull
 request records the wait as a beads gate on its number, and `bdi gates` never

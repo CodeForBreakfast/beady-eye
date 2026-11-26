@@ -170,14 +170,17 @@ by being added to `PASSED_THROUGH`. Each light-touch write is one bd command:
 | set the priority | `bd update --priority` | `p` | yes |
 
 Each write goes into `bdi bd` once, in `collect/bd.rs`, and the terminal's
-bead view and a writable `bdi web` call the same function `bdi bd` does. That function checks the command line and enters the
-tracker's environment, so a write reaches the tracker its bead was read from
-and no other. Releasing a claim rests on the anomaly for a claim with no live
-agent, so only the terminal offers it, because `bdi web` reads no agents. It
-names the holder, so bd refuses it if someone has claimed the bead since.
+bead view and a writable `bdi web` call the same function `bdi bd` does. That
+function checks the command line and enters the tracker's environment, so a
+write reaches the tracker its bead was read from and no other. Releasing a
+claim rests on the anomaly for a claim with no live agent, so only the
+terminal offers it, because `bdi web` reads no agents. It names the holder,
+so bd refuses it if the bead's assignee has changed since.
 
-The terminal and `bdi bd` write as the person running them. A writable web
-page is guarded instead, because whoever reaches it is not known:
+The terminal and `bdi bd` name no actor, so bd records the one the project's
+environment gives it, as it would for the person's own bd. A writable web page
+names its actor instead, and is guarded, because whoever reaches it is not
+known:
 
 - it takes no write unless whoever starts `bdi web` turns writes on with
   `--writes`;
