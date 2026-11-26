@@ -779,7 +779,9 @@ fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
         .and_then(|form| address::field(form, TOKEN))
         .is_some_and(|token| writer.tokens.issued(&token, &bead, named));
     if !issued {
-        return (FORBIDDEN, HTML, html::saying(phrase::form_not_issued())).into();
+        let back = address::written_back(&bead, &head.target);
+        let said = html::saying_back_to(phrase::form_not_issued(), &back);
+        return (FORBIDDEN, HTML, said).into();
     }
     let runner = writer.runner;
     let Some(snapshot) = &held.snapshot else {
@@ -1844,7 +1846,15 @@ mod tests {
                 Some(&runner),
             );
             assert_eq!(reply.status, "403 Forbidden", "{token:?}");
-            assert_eq!(reply.body, html::saying(phrase::form_not_issued()));
+            assert_eq!(
+                reply.body,
+                html::saying_back_to(phrase::form_not_issued(), "/arkham/ark-1#shown")
+            );
+            assert!(
+                reply.body.contains("href=\"/arkham/ark-1#shown\""),
+                "the refusal links to the bead's page, which issues a fresh form, \
+                 rather than leave the reader to reload the post"
+            );
             assert_eq!(reply.sent_to, None);
         }
         assert_eq!(runner.calls(), []);

@@ -173,20 +173,26 @@ fn not_in_any_tree(key: &BeadKey) -> String {
 /// A page with nothing on it but one sentence and a link to the forest, for
 /// an address that has no forest to draw.
 pub fn saying(said: &str) -> String {
-    head(phrase::PRODUCT, None) + &said_alone(said)
+    saying_back_to(said, "/")
+}
+
+/// A page with nothing on it but one sentence and a link back to `back`.
+pub fn saying_back_to(said: &str, back: &str) -> String {
+    head(phrase::PRODUCT, None) + &said_alone(said, back)
 }
 
 /// The same, for an address that will have a forest to draw once the server
 /// has read one, which the page is kept current to.
 pub fn saying_kept_current(said: &str) -> String {
-    kept_current(phrase::PRODUCT, &said_alone(said))
+    kept_current(phrase::PRODUCT, &said_alone(said, "/"))
 }
 
-fn said_alone(said: &str) -> String {
+fn said_alone(said: &str, back: &str) -> String {
     format!(
         "<body><footer><p>{}</p>\
-         <p><a class=\"close\" href=\"/\">{}</a></p></footer></body></html>\n",
+         <p><a class=\"close\" href=\"{}\">{}</a></p></footer></body></html>\n",
         escaped(said),
+        escaped(back),
         escaped(phrase::back())
     )
 }

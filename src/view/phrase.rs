@@ -1292,7 +1292,7 @@ pub fn posted_from_elsewhere(origin: Option<&str>, host: &str) -> String {
 /// does.
 pub fn form_not_issued() -> &'static str {
     "bdi web refused the write: its form did not come from this bdi web, or \
-     came from it before it restarted. Reload the page and write it again."
+     came from it before it restarted. Go back to the bead and write it again."
 }
 
 /// What a web page says where bd refused a write, with what bd said.
