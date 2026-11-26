@@ -489,7 +489,8 @@ A flag's value that starts with a dash is joined to it, as
 `--reason='-1, a duplicate'`, and a comment or response that starts with one
 goes after `--`. `u` is offered only on a bead the eye flags as a claim with
 no live agent, and it names the holder, so `bd` refuses it if the bead's
-assignee has changed since. `bdi --beads` gives each bead deferred to a date
+assignee has changed since. It needs bd 1.2.0 or newer, the first with
+`--if-assignee`. `bdi --beads` gives each bead deferred to a date
 its `defer_until`. Anything bigger, such as a new
 title, a dependency or a new bead, is an agent's job: comment on the bead to
 ask for it.
