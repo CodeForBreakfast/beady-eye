@@ -12,10 +12,9 @@ measurements.
 - `bdi`, the terminal view that joins a beads tracker to a herdr session.
 - The reading side: which `bd`, `herdr`, `hc` and `gh` command lines it spells, and
   how it parses what they print.
-- `bdi bd`, which carries a person's reply to the right tracker. It passes
-  through `bd human respond` for their answer, which closes the bead that
-  asked, `bd defer --until` for the date they chose, and `bd comments add` for
-  their comment.
+- `bdi bd`, which carries a person's light-touch write, such as an answer, a
+  deferral or a comment, to the right tracker. `PASSED_THROUGH` in
+  `collect/bd.rs` lists the writes it passes.
 - Gates, which settles a gate:
   it re-reads the pull request from GitHub, closes the gate on a merge, and
   on a close without one tells the beads the gate holds back. A gate on an
