@@ -3460,13 +3460,22 @@ and a second line"
         # finding a project's worktrees, and a shell with coreutils for a
         # `credential_command`. The bd is the one every shell here gets. It is
         # built for Linux hosts only, because the cluster that runs it is amd64.
+        #
+        # git there only reads a local repository, so it is built without the
+        # http and https transports, which are all that bring openssl into the
+        # image.
+        imageGit = pkgs.gitMinimal.overrideAttrs (git: {
+          buildInputs = builtins.filter (p: p != pkgs.openssl && p != pkgs.curl)
+            git.buildInputs;
+          makeFlags = git.makeFlags ++ [ "NO_OPENSSL=1" "NO_CURL=1" ];
+        });
         imageRoot = pkgs.buildEnv {
           name = "beady-eye-image-root";
           paths = [
             beady-eye
             pkgs.gh
             bd
-            pkgs.gitMinimal
+            imageGit
             pkgs.bash
             pkgs.coreutils
             pkgs.cacert
@@ -3510,7 +3519,13 @@ and a second line"
           gh --version
           bd --version
           git --version
+          git init -q "$TMPDIR/repo"
+          git -C "$TMPDIR/repo" worktree list
           sh -c 'cat /dev/null'
+          if ${pkgs.gnugrep}/bin/grep -- '-openssl-' ${pkgs.writeClosure [ imageRoot ]}; then
+            echo "the image carries openssl, and nothing bdi runs there needs it" >&2
+            exit 1
+          fi
           test -e ${image}
           if [ "$$" != 1 ]; then
             echo "image-test needs the build sandbox, where the build is PID 1" >&2
