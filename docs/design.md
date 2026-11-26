@@ -150,9 +150,9 @@ Anything workflow-specific is expressed as configuration, not code. See
 person makes.** bd is built for agents to work on a person's behalf, so the
 bigger edits stay with agents: a title or a description, dependencies,
 labels, and filing a bead. A person asks an agent for one by commenting on the
-bead. The plugin wakes a session watching the bead on a comment or a change
-of status, and a session watches without asking the bead that names it as its
-agent session. `bdi` presents bd's own features and builds nothing on top of
+bead, and the plugin tells a session watching the bead of the comment.
+*Watching the work a session holds* says which beads a session watches
+without asking. `bdi` presents bd's own features and builds nothing on top of
 them, so anything layered on top is configuration. Nothing stops a person running bd
 themselves, so `bdi` puts no warning or guard in front of a write.
 

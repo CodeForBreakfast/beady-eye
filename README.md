@@ -500,7 +500,8 @@ needs no map of trackers or credentials. Nothing after the project can pick
 another tracker, and neither can a `BEADS_` or `BD_` variable the caller
 exports. What the project's own directory sets still applies. So a permission
 rule on `bdi bd <project>` holds a caller to that one project, provided the
-caller cannot choose the `HOME` or `PATH` that `bdi` runs with.
+caller cannot choose the `HOME` or `PATH` that `bdi` runs with, and the
+project's tracker has no routes that send an id it does not hold elsewhere.
 
 The terminal and `bdi bd` name no actor, so `bd` records the one the
 project's environment gives it, as it would for a `bd` you ran there. A
