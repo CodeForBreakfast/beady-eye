@@ -56,7 +56,7 @@ pub struct Hearing {
     pub passing_on: PassingOn,
 }
 
-use drive::{drive, View};
+use drive::{drive, refused_while_leaving, View};
 use screen::{Drawing, Screen};
 use wire::wire;
 
@@ -169,7 +169,7 @@ pub fn run(
     }
     screen.collecting(outstanding.awaited());
 
-    drive(
+    let driven = drive(
         &mut screen,
         &events,
         &ask,
@@ -177,5 +177,12 @@ pub fn run(
         Reading::of(armed, reported).unread(armed_unread(&arms, cfg)),
         &arms,
         reload,
-    )
+    );
+    // The screen puts the terminal back and then makes the writes still
+    // queued, so what bd refused of them is said on the terminal it left.
+    drop(screen);
+    for refused in refused_while_leaving(&events) {
+        eprintln!("{refused}");
+    }
+    driven
 }

@@ -22,7 +22,7 @@ use crate::collect::panes::Answer;
 use crate::collect::writes::Wrote;
 use crate::model::join::BeadKey;
 use crate::model::snapshot::Snapshot;
-use crate::view::{Action, Motion, Notch, Typing};
+use crate::view::{phrase, Action, Motion, Notch, Said, Typing};
 
 use super::keys::{action, typing};
 
@@ -87,6 +87,23 @@ impl From<Wrote> for Event {
     fn from(wrote: Wrote) -> Self {
         Event::Wrote(wrote)
     }
+}
+
+/// What the foot would have said of each write bd refused after the loop
+/// stopped reading: a reader who quits straight after a write still hears
+/// that it was not made.
+pub(super) fn refused_while_leaving(events: &Receiver<Event>) -> Vec<String> {
+    events
+        .try_iter()
+        .filter_map(|event| match event {
+            Event::Wrote(Wrote {
+                bead,
+                write,
+                refused: Some(why),
+            }) => Some(phrase::said(&Said::NotWritten { bead, write, why })),
+            _ => None,
+        })
+        .collect()
 }
 
 /// What the screen has on it.
@@ -941,7 +958,6 @@ pub(super) mod tests {
     use crate::tui::fixtures::{a_snapshot, arkham, ferry, reading, A_MOMENT, PATIENCE};
     use crate::tui::keys::tests::{control, key};
     use crate::tui::wire::collector;
-    use crate::view::phrase;
     use crate::view::{Edit, Write};
     use chrono::TimeDelta;
     use ratatui::crossterm::event::KeyCode;
@@ -1931,6 +1947,22 @@ pub(super) mod tests {
 
         assert_eq!(view.wrote, [refused]);
         assert!(view.collecting().is_empty(), "{:?}", view.collecting());
+    }
+
+    /// A write bd answers once the loop has stopped reading is said as it
+    /// would have been at the foot, and one that landed is not mentioned.
+    #[test]
+    fn a_write_refused_once_the_loop_has_stopped_is_still_said() {
+        let (events, waiting) = mpsc::channel();
+        events.send(Event::Wrote(wrote(None))).expect("sent");
+        events
+            .send(Event::Wrote(wrote(Some("ark-1 is already closed"))))
+            .expect("sent");
+
+        assert_eq!(
+            refused_while_leaving(&waiting),
+            ["arkham · ark-1 · not closed: ark-1 is already closed"]
+        );
     }
 
     /// A row with no bead on it has nothing to show, so Enter there puts no
