@@ -106,7 +106,7 @@ impl Drop for Writer {
 /// the caller's choice of tracker included, so that it reaches the tracker
 /// the bead on the screen was read from.
 fn written(project: &Project, asked: &[String]) -> anyhow::Result<()> {
-    let (argv, env) = bd::writing(&RealRunner, project, asked)?;
+    let (argv, env) = bd::writing(&RealRunner, project, asked, None)?;
     made("bd", &argv, Some(&project.path), &env)
 }
 

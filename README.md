@@ -253,7 +253,9 @@ taken.
 The page asks nobody to sign in. Anyone who can reach the address can read
 every tracker it reads, so listen only where everyone who can reach it may
 read them all. It is read-only unless it is started with `--writes`, and then
-anyone who can reach it can comment on a bead.
+anyone who can reach it can comment on a bead. Every write is made as the one
+actor [`[web] actor`](docs/configuration.md#web) names, and a writable page
+does not start without one.
 
 A writable page refuses a write posted from another site with `403
 Forbidden`, and runs no bd for it. The post's `Origin` has to name the host

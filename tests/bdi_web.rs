@@ -538,7 +538,10 @@ fn opening_a_page_and_returning_to_it_after_a_change_each_send_it_once() {
 #[cfg(target_os = "linux")]
 #[test]
 fn opening_a_page_that_takes_a_comment_sends_it_once() {
-    let home = a_home_naming_one_project_settled("web-once-writes", "[tui]\nrefresh_seconds = 1\n");
+    let home = a_home_naming_one_project_settled(
+        "web-once-writes",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
     let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
     let relay = Relay::to(&address);
     let (mut page, _) = opened_once(&home, &relay, "/arkham/dun-0tp");
@@ -708,19 +711,17 @@ fn each_view_picked_from_the_menu_lists_only_what_it_selects() {
 /// A comment, as the shim records the call past the `-C` naming the tracker.
 const COMMENTED: &str = "comments add dun-0tp -- the gate is shut";
 
+/// The config's table naming the one actor a writable `bdi web` writes as.
+const WRITES_AS_CARTER: &str = "[web]\nactor = \"carter\"\n";
+
 /// A database the shell that started `bdi web` exports never reaches bd, so
 /// a comment lands where the project's own config says. Only the project's
 /// tracker has an answer, so a redirected write is refused.
 #[test]
 fn a_database_the_caller_exports_does_not_redirect_a_write() {
-    let home = a_home_naming_one_project("web-write-ignores-exported-database");
-    let named = home
-        .file_name()
-        .and_then(|name| name.to_str())
-        .expect("a home has a name");
-    let tracker = ShimmedTracker::beside(&home);
-    tracker.holds(THE_DESCRIBED_SUBTREE);
-    tracker.answers_for(named, COMMENTED, "");
+    let home =
+        a_home_naming_one_project_settled("web-write-ignores-exported-database", WRITES_AS_CARTER);
+    let tracker = a_tracker_taking_the_comment(&home);
     let (_web, address) = bdi_web(
         &home,
         &tracker,
@@ -730,15 +731,110 @@ fn a_database_the_caller_exports_does_not_redirect_a_write() {
     );
     until_it_has_read(&address);
 
-    // As a browser posts the bead's form: from the page bdi web drew it on,
-    // with the token that page carries.
-    let (_, page) = get(&address, "/arkham/dun-0tp");
+    assert_eq!(the_comment_posted_to(&address), "HTTP/1.1 303 See Other");
+    assert_eq!(tracker.calls_for("kadath"), Vec::<String>::new());
+}
+
+/// bd records a write under the actor it is told ahead of the one its
+/// environment names, so the comment lands as the config's actor and not as
+/// the one the shell that started `bdi web` exports.
+#[test]
+fn a_write_lands_under_the_actor_the_config_names() {
+    let home =
+        a_home_naming_one_project_settled("web-write-as-the-configured-actor", WRITES_AS_CARTER);
+    let tracker = a_tracker_taking_the_comment(&home);
+    let (_web, address) = bdi_web(
+        &home,
+        &tracker,
+        &["--writes"],
+        Some(&home),
+        &[("BEADS_ACTOR", "pickman"), ("BD_ACTOR", "pickman")],
+    );
+    until_it_has_read(&address);
+
+    assert_eq!(the_comment_posted_to(&address), "HTTP/1.1 303 See Other");
+    let commented: Vec<_> = tracker
+        .acted_calls()
+        .into_iter()
+        .filter(|call| call.ends_with(COMMENTED))
+        .collect();
+    assert_eq!(commented, [format!("carter {COMMENTED}")]);
+}
+
+/// A writable `bdi web` with no actor would write as whoever runs it, so it
+/// does not start, and names the key it wants.
+#[test]
+fn a_web_taking_writes_with_no_actor_configured_refuses_to_start() {
+    let home = a_home_naming_one_project("web-writes-with-no-actor");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let spawned_by = std::process::id();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
+    command
+        .args(["web", "--listen", "127.0.0.1:0", "--writes"])
+        .current_dir(&home)
+        .env("HOME", &home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("XDG_RUNTIME_DIR")
+        .envs(tracker.environment())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe { command.pre_exec(move || die_with(spawned_by)) };
+    let mut web = Web(command.spawn().expect("bdi web starts"));
+    let giving_up = Instant::now() + GIVING_UP;
+    let exited = loop {
+        if let Some(exited) = web.0.try_wait().expect("bdi web can be waited on") {
+            break exited;
+        }
+        assert!(Instant::now() < giving_up, "bdi web started");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut answered = String::new();
+    let mut said = String::new();
+    web.0
+        .stdout
+        .take()
+        .expect("its stdout")
+        .read_to_string(&mut answered)
+        .expect("its stdout is text");
+    web.0
+        .stderr
+        .take()
+        .expect("its stderr")
+        .read_to_string(&mut said)
+        .expect("its stderr is text");
+
+    assert!(!exited.success(), "bdi web exited {exited}");
+    assert_eq!(answered, "");
+    assert!(said.contains("[web] actor"), "{said}");
+    assert_eq!(tracker.calls(), Vec::<String>::new());
+}
+
+/// A tracker holding the described subtree that takes the comment
+/// `the_comment_posted_to` makes.
+fn a_tracker_taking_the_comment(home: &Path) -> ShimmedTracker {
+    let named = home
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a home has a name");
+    let tracker = ShimmedTracker::beside(home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.answers_for(named, COMMENTED, "");
+    tracker
+}
+
+/// The status line the `bdi web` at `address` answers with when the bead's
+/// page posts `COMMENTED`, as a browser posts the bead's form: from the page
+/// bdi web drew it on, with the token that page carries.
+fn the_comment_posted_to(address: &str) -> String {
+    let (_, page) = get(address, "/arkham/dun-0tp");
     let token = page
         .split_once("name=\"token\" value=\"")
         .and_then(|(_, rest)| rest.split_once('"'))
         .map(|(token, _)| token)
         .expect("the bead's page carries a token in its form");
-    let mut stream = TcpStream::connect(&address).expect("bdi web takes the connection");
+    let mut stream = TcpStream::connect(address).expect("bdi web takes the connection");
     stream
         .set_read_timeout(Some(GIVING_UP))
         .expect("a read timeout");
@@ -754,11 +850,5 @@ fn a_database_the_caller_exports_does_not_redirect_a_write() {
     stream
         .read_to_string(&mut answer)
         .expect("bdi web answers and closes");
-
-    assert_eq!(
-        answer.lines().next(),
-        Some("HTTP/1.1 303 See Other"),
-        "{answer}"
-    );
-    assert_eq!(tracker.calls_for("kadath"), Vec::<String>::new());
+    answer.lines().next().unwrap_or_default().to_string()
 }

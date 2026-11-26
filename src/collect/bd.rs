@@ -1232,12 +1232,22 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
 /// bd's argv for `asked` against `project`'s tracker, and the environment
 /// that tracker is written in. `bdi bd`, the terminal and a writable `bdi web`
 /// all write through here, so a write reaches bd one way whichever made it.
+///
+/// The write is recorded under `actor` where one is given. bd takes the flag
+/// ahead of any actor the environment names, and the environment is whatever
+/// entering the project gives. Where none is given, bd records the actor the
+/// environment names.
 pub fn writing(
     runner: &dyn Runner,
     project: &Project,
     asked: &[String],
+    actor: Option<&str>,
 ) -> anyhow::Result<(Vec<String>, Env)> {
-    let argv = passed_through(&project.path, asked)?;
+    let argv = actor
+        .map(|actor| format!("--actor={actor}"))
+        .into_iter()
+        .chain(passed_through(&project.path, asked)?)
+        .collect();
     let env = environment::tracker_env(
         runner,
         project,

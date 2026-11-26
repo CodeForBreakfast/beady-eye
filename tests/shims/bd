@@ -41,6 +41,10 @@
 #                            BD_EVENTS_JOURNAL set to, after the value it was
 #                            set to, so a reader can say bd was told to keep
 #                            its events journal.
+#   BDI_SHIM_BD_ACTED        file this appends every call to, after the actor
+#                            bd would record it under: the `--actor=` the call
+#                            opens with, or else BEADS_ACTOR, or else BD_ACTOR,
+#                            which is bd's own order, and `-` where none is.
 #   BDI_SHIM_BD_HANGS_WHILE  path to the flag. Touch it and every bd call from
 #                            then on waits until it goes away; write a call's
 #                            opening words into it and only the calls starting
@@ -96,6 +100,20 @@ tracker() {
 }
 tracker=$(tracker "$@")
 
+# The `--actor=` among the flags that open the call, or nothing.
+flagged_actor() {
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --actor=*) printf '%s' "${1#--actor=}"; return ;;
+      -C) shift 2 ;;
+      -*) shift ;;
+      *) return ;;
+    esac
+  done
+}
+actor=$(flagged_actor "$@")
+actor=${actor:-${BEADS_ACTOR:-${BD_ACTOR:--}}}
+
 # Written down before anything below can hold, refuse or answer the call, so
 # the record is of what bd was asked rather than of how asking it went.
 if [ -n "${BDI_SHIM_BD_CALLED:-}" ]; then
@@ -107,6 +125,10 @@ if [ -n "${BDI_SHIM_BD_CALLED_FOR:-}" ] && [ -n "$tracker" ]; then
 fi
 if [ -n "${BDI_SHIM_BD_JOURNALLED:-}" ] && [ -n "${BD_EVENTS_JOURNAL+set}" ]; then
   printf '%s %s\n' "$BD_EVENTS_JOURNAL" "$asked" >>"$BDI_SHIM_BD_JOURNALLED"
+fi
+
+if [ -n "${BDI_SHIM_BD_ACTED:-}" ]; then
+  printf '%s %s\n' "$actor" "$asked" >>"$BDI_SHIM_BD_ACTED"
 fi
 
 # Held after the call has been read rather than before, so the flag can name
