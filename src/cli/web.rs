@@ -602,20 +602,33 @@ fn answer(stream: TcpStream, answering: &Arc<Answering>) {
         return;
     };
     answering.live.remember(&reply.body);
-    let sent_on = reply
-        .sent_to
-        .map(|to| format!("Location: {to}\r\n"))
-        .unwrap_or_default();
     http::reply_in(
         &stream.stream,
         reply.status,
         reply.kind,
         reply.body.as_bytes(),
         encoding,
-        &sent_on,
+        &headers(&reply, answering.writes.is_some()),
         PATIENCE,
     );
     close(stream.stream, stream.deadline);
+}
+
+/// The header lines `reply` is sent with: where it sends the reader on, and,
+/// from a run that takes writes, that nothing is to keep it, since a page
+/// carries tokens a later run will not take.
+fn headers(reply: &Reply, writable: bool) -> String {
+    let sent_on = reply
+        .sent_to
+        .as_ref()
+        .map(|to| format!("Location: {to}\r\n"))
+        .unwrap_or_default();
+    let kept = if writable {
+        "Cache-Control: no-store\r\n"
+    } else {
+        ""
+    };
+    sent_on + kept
 }
 
 /// What a request is answered: its status, the kind of body and the body,
@@ -1703,6 +1716,32 @@ mod tests {
              Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
             form.len()
         )
+    }
+
+    /// A run that takes writes asks that nothing keep what it answers, since
+    /// a page it drew carries tokens a later run will not take. A read-only
+    /// run's pages may be kept.
+    #[test]
+    fn nothing_keeps_what_a_run_that_takes_writes_answers() {
+        let latest = arkham_held();
+        let page = replied(
+            &format!("GET /arkham/ark-1 HTTP/1.1\r\nHost: {BEADS}\r\n\r\n"),
+            &latest,
+            None,
+        );
+        assert_eq!(headers(&page, true), "Cache-Control: no-store\r\n");
+        assert_eq!(headers(&page, false), "");
+
+        let runner = FakeRunner::default().with(COMMENTED, "");
+        let written = replied(
+            &posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again"),
+            &latest,
+            Some(&runner),
+        );
+        assert_eq!(
+            headers(&written, true),
+            "Location: /arkham/ark-1#shown\r\nCache-Control: no-store\r\n"
+        );
     }
 
     /// A post from a page on another site, or from a page that will not say
