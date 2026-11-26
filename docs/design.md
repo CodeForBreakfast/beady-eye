@@ -4713,8 +4713,9 @@ bd as `--actor`, and a run started with `--writes` and no actor refuses to
 start. A write that lands sends the reader back to the bead's page with `303
 See Other`, and asks for the project to be read again without waiting for that
 read. So the page the reader lands on can still show the bead as it stood, and
-an open page redraws it once the read answers. A refused one shows bd's own
-message.
+an open page redraws it once the read answers. A refused one says what bdi
+made of bd's failure, as a read's failure is said, and never shows bd's own
+stderr, which can name the tracker's credentials.
 
 **It answers only the names it was told it serves.** With no sign-in, a page
 elsewhere could point a name of its own at the listener and have a visitor's
