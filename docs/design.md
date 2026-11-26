@@ -155,8 +155,9 @@ comment or a change of status. `bdi` presents bd's own features and builds nothi
 so anything layered on top is configuration. Nothing stops a person running bd
 themselves, so `bdi` puts no warning or guard in front of a write.
 
-What `bdi` makes is the list below and nothing else, and a write joins it only
-by being added to `PASSED_THROUGH`. Each light-touch write is one bd command:
+That rule says what may be added, and no bd write is ruled out of `bdi` for
+being a write. What `bdi` makes today is the list below and nothing else, and
+a write joins it only by being added to `PASSED_THROUGH`. Each light-touch write is one bd command:
 
 | write | bd runs | terminal key | web page |
 |---|---|---|---|
