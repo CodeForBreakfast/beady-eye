@@ -210,7 +210,9 @@ pub fn version(page: &str) -> Option<&str> {
 /// A page's head, titled `title`. Where the page names a `version`, it
 /// carries the script that keeps it current. The version and the title each
 /// end their line, so a patch that changes either leaves the line holding
-/// the style and the script alone.
+/// the style and the script alone. Its referrer policy is `same-origin`
+/// whatever a proxy's header says, so a post from one of its forms carries
+/// the page's Origin, which a writable `bdi web` checks.
 fn head(title: &str, version: Option<&str>) -> String {
     let (named, script) = match version {
         Some(version) => (
@@ -224,6 +226,7 @@ fn head(title: &str, version: Option<&str>) -> String {
     format!(
         "<!doctype html><html lang=\"en\"{named}>\n<head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <meta name=\"referrer\" content=\"same-origin\">\
          <title>{}</title>\n<style>{}{STYLE}</style>{script}</head>",
         escaped(title),
         palette::page_colours()
@@ -4202,6 +4205,21 @@ mod tests {
         let read_only = page(ground(), &Layout::default(), &asked, drawing()).html;
         assert!(!read_only.contains("method=\"post\""), "{read_only}");
         assert!(!read_only.contains("<textarea"), "{read_only}");
+    }
+
+    /// A page names its own referrer policy, which a proxy's header cannot
+    /// change, so a browser posting its form says which page it came from.
+    /// Under `no-referrer` it sends `Origin: null`, and the write is refused.
+    #[test]
+    fn a_page_says_its_origin_on_its_own_posts() {
+        let asked = Asked::of(&address(&key("smt-4kd3p.6"))).expect("a bead's page");
+        let html = page(ground(), &Layout::default(), &asked, drawing()).html;
+        let head = &html[..html.find("</head>").expect("a head")];
+        assert!(
+            head.contains("<meta name=\"referrer\" content=\"same-origin\">"),
+            "{head}"
+        );
+        assert!(saying("anything").contains("<meta name=\"referrer\" content=\"same-origin\">"));
     }
 
     /// Drawn with one bead as its only root, the page's head puts every tree

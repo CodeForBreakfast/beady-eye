@@ -1227,9 +1227,10 @@ pub fn add_comment() -> &'static str {
 
 /// What a web page says where it refused a write because the post's origin,
 /// `origin` where it named one, is not the page's own at `host`. A proxy that
-/// rewrites Host makes every write look this way, so both are named.
+/// rewrites Host makes every write look this way, so both are named. An
+/// origin of `null` is a browser declining to name one.
 pub fn posted_from_elsewhere(origin: Option<&str>, host: &str) -> String {
-    match origin {
+    match origin.filter(|origin| *origin != "null") {
         Some(origin) => format!(
             "bdi web refused the write: it was posted from {origin}, which is not \
              a page at {host}. A proxy in front of bdi web has to pass on the \

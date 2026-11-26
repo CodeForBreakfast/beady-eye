@@ -1737,6 +1737,7 @@ mod tests {
                 reply.body,
                 html::saying(&phrase::posted_from_elsewhere(origin, host))
             );
+            assert!(!reply.body.contains("from null"), "{}", reply.body);
             assert_eq!(reply.sent_to, None);
         }
         assert_eq!(runner.calls(), []);

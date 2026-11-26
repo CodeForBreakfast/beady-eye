@@ -4660,7 +4660,10 @@ the one function every request goes through.
 not stop another site's page posting a form to the listener's own name through
 a visitor's browser. So a post is refused with `403 Forbidden` before bd runs
 unless two things hold. Its one `Origin` names the host and port its `Host`
-does, since a browser sends an `Origin` with every form it posts. Comparing
+does, since a browser sends an `Origin` with every form it posts. Under a
+`no-referrer` policy it sends `Origin: null` instead, so every page names
+`same-origin` in a `<meta name="referrer">`, which a header a proxy adds does
+not override. Comparing
 against the allowed names instead would take a post from another port on
 `localhost`. And its form carries the token the bead's page issued: an
 HMAC-SHA256 of the bead's project, its id and the write's name, under a key
