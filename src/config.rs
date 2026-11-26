@@ -44,6 +44,8 @@ pub struct Config {
     #[serde(default)]
     pub gates: Gates,
     #[serde(default)]
+    pub web: Web,
+    #[serde(default)]
     pub tui: Tui,
     #[serde(default)]
     pub theme: Theme,
@@ -770,6 +772,29 @@ impl Changes {
     }
 }
 
+/// How `bdi web` writes, where it is started taking writes.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Web {
+    /// The actor bd records every write from the page under, whoever reached
+    /// it. Without one a write would carry whatever actor the serving
+    /// process's own environment gives bd.
+    pub actor: Option<String>,
+}
+
+impl Web {
+    /// The actor a writable `bdi web` writes as, or why it cannot start.
+    pub fn actor(&self) -> anyhow::Result<&str> {
+        match self.actor.as_deref().map(str::trim) {
+            Some(actor) if !actor.is_empty() => Ok(actor),
+            _ => anyhow::bail!(
+                "bdi web --writes needs [web] actor in the config: the one actor bd \
+                 records every write from the page under"
+            ),
+        }
+    }
+}
+
 /// Where `bdi watch` takes its socket.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
@@ -1043,6 +1068,7 @@ impl Config {
             changes: Changes::default(),
             watcher: Watcher::default(),
             gates: Gates::default(),
+            web: Web::default(),
             tui: Tui::default(),
             theme: Theme::default(),
             tail: Tail::default(),
@@ -1570,6 +1596,9 @@ poll_seconds = 300
 owners = ["example", "miskatonic"]
 excluded_owners = ["dunwich"]
 
+[web]
+actor = "carter"
+
 [tui]
 refresh_seconds = 5
 unanswered_after_seconds = 90
@@ -1712,6 +1741,7 @@ path = "/home/user/dev/kadath"
         assert_eq!(cfg.gates.poll(), Duration::from_secs(300));
         assert_eq!(cfg.gates.owners, ["example", "miskatonic"]);
         assert_eq!(cfg.gates.excluded_owners, ["dunwich"]);
+        assert_eq!(cfg.web.actor().expect("an actor"), "carter");
         assert_eq!(cfg.tui.refresh_seconds, 5);
         assert_eq!(cfg.tui.unanswered_after_seconds, 90);
         assert_eq!(cfg.tui.tail_refresh_millis, 100);
@@ -2130,6 +2160,19 @@ path = "/home/user/dev/kadath"
         assert!(refused.to_string().contains("serve"), "{refused}");
     }
 
+    /// An actor of nothing but spaces names nobody, so a writable `bdi web`
+    /// refuses it as it refuses none.
+    #[test]
+    fn a_blank_web_actor_is_no_actor() {
+        for written in ["", "[web]\n", "[web]\nactor = \"  \"\n"] {
+            let cfg = Config::from_toml(&format!("{ONE_PROJECT}{written}")).expect("parses");
+
+            let refused = cfg.web.actor().expect_err("no actor");
+
+            assert!(refused.to_string().contains("[web] actor"), "{refused}");
+        }
+    }
+
     #[test]
     fn a_config_of_one_project_gets_every_default() {
         let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
@@ -2147,6 +2190,7 @@ path = "/home/user/dev/kadath"
         assert_eq!(cfg.gates.poll_seconds, 60);
         assert!(cfg.gates.owners.is_empty());
         assert!(cfg.gates.excluded_owners.is_empty());
+        assert_eq!(cfg.web.actor, None);
         assert_eq!(cfg.tui.refresh_seconds, 30);
         assert_eq!(cfg.tui.unanswered_after_seconds, 30);
         assert_eq!(cfg.tui.tail_refresh_millis, 250);

@@ -264,8 +264,10 @@ enum Passing {
         #[arg(long = "allow-host", value_name = "NAME")]
         allow_hosts: Vec<String>,
         /// Take writes from the page, each made through bdi bd. bdi web asks
-        /// nobody to log in, so whoever reaches the page can write. Without
-        /// this the page offers no write and refuses every one.
+        /// nobody to log in, so whoever reaches the page can write, and every
+        /// write is made as the one actor [web] actor names, which it needs
+        /// to start. Without this the page offers no write and refuses every
+        /// one.
         #[arg(long)]
         writes: bool,
         /// Read the configuration from this file, rather than

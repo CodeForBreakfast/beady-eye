@@ -90,6 +90,9 @@ socket = "/run/user/1000/beady-eye/watcher.sock"
 poll_seconds = 60
 owners = ["dunwich"]
 
+[web]
+actor = "carter"
+
 [anomalies]
 stale_claim_days = 30
 
@@ -930,6 +933,19 @@ not here. They are given on the command line and in the environment, as
 never sits in a config file.
 
 `bdi web` and the view do not use `[gates]`, because they settle no gate.
+
+## `[web]`
+
+`actor` names the one actor bd records every write from a writable `bdi web`
+under. bd records an actor on every write, and the page asks nobody to log
+in, so without one a write would carry whatever actor the serving process's
+own environment gives bd. `bdi web --writes` passes it to bd as `--actor`,
+which bd takes ahead of `BEADS_ACTOR`, `BD_ACTOR` and the tracker's own
+config. A `bdi web` started with `--writes` and no `actor` refuses to start.
+
+`bdi web` reads `actor` when it starts, so an edit to it waits for a restart.
+A `bdi web` without `--writes` does not use it, and neither do the view and
+`bdi bd`, which write as the person running them.
 
 ## `[anomalies]`
 

@@ -305,6 +305,10 @@ pub(super) fn web(
         )?
         .config,
     )?;
+    let writes_as = match writable {
+        true => Some(cfg.web.actor()?.to_string()),
+        false => None,
+    };
     let start = Start {
         list: listed(None, view.ready),
         roots: cfg.roots.named_beads(),
@@ -350,7 +354,7 @@ pub(super) fn web(
         latest: Arc::clone(&latest),
         hosts,
         start,
-        writes: writable.then(|| Writer::through(&RealRunner)),
+        writes: writes_as.map(|actor| Writer::through(&RealRunner, actor)),
         live: live::Streams::default(),
     });
     http::accept(
@@ -393,16 +397,19 @@ struct Answering {
 }
 
 /// What makes a write: the runner bd is run through, one write at a time, so
-/// a tracker that stalls holds one of the request slots and not all of them.
+/// a tracker that stalls holds one of the request slots and not all of them,
+/// and the actor bd records every write under.
 struct Writer<'a> {
     runner: &'a dyn Runner,
+    actor: String,
     one_at_a_time: Mutex<()>,
 }
 
 impl<'a> Writer<'a> {
-    fn through(runner: &'a dyn Runner) -> Self {
+    fn through(runner: &'a dyn Runner, actor: String) -> Self {
         Self {
             runner,
+            actor,
             one_at_a_time: Mutex::new(()),
         }
     }
@@ -684,7 +691,7 @@ fn said(
                 }
             };
             let held = latest.now();
-            Some(taken(&head, &form, &held, writer.runner))
+            Some(taken(&head, &form, &held, writer))
         }
         _ => Some(answered(&head, latest, hosts, start, writes.is_some()).into()),
     }
@@ -722,7 +729,7 @@ impl Write {
 /// write it asks for made through `bdi bd` to a bead `held` draws, run by
 /// `runner`, and the reader sent back to the bead's page. Otherwise, why the
 /// write was not made.
-fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
+fn taken(head: &Head, form: &[u8], held: &Held, writer: &Writer) -> Reply {
     let Some((bead, named)) = address::written(head.path()) else {
         return (NOT_FOUND, HTML, html::saying(phrase::no_page_here())).into();
     };
@@ -755,8 +762,14 @@ fn taken(head: &Head, form: &[u8], held: &Held, runner: &dyn Runner) -> Reply {
         )
             .into();
     };
+    let runner = writer.runner;
     let made = bd::writing(runner, project, &write.words(&bead.id)).and_then(|(argv, env)| {
-        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        // The flag, because bd takes it ahead of any actor its environment
+        // names, and that environment is whatever entering the project gives.
+        let actor = format!("--actor={}", writer.actor);
+        let argv: Vec<&str> = std::iter::once(actor.as_str())
+            .chain(argv.iter().map(String::as_str))
+            .collect();
         Ok(runner.run("bd", &argv, Some(&project.path), &env)?)
     });
     match made {
@@ -910,7 +923,13 @@ mod tests {
     /// What the request `sent` is answered, with `latest` held, by a run
     /// whose writes `writes` runs, where it takes them.
     fn replied(sent: &str, latest: &Latest, writes: Option<&dyn Runner>) -> Reply {
-        replied_by(sent, latest, writes.map(Writer::through).as_ref())
+        replied_by(
+            sent,
+            latest,
+            writes
+                .map(|runner| Writer::through(runner, ACTOR.to_string()))
+                .as_ref(),
+        )
     }
 
     /// The same, by a run whose writes `writer` makes.
@@ -1639,7 +1658,11 @@ mod tests {
         )
     }
 
-    const COMMENTED: &str = "bd -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
+    /// The actor a run taking writes is configured to write as.
+    const ACTOR: &str = "carter";
+
+    const COMMENTED: &str =
+        "bd --actor=carter -C /nowhere/arkham comments add ark-1 -- the gate is shut, again";
 
     /// A bead the page draws from a project its scope took in to read a
     /// blocker takes the comment its page offers.
@@ -1738,7 +1761,7 @@ mod tests {
     #[test]
     fn a_comment_that_looks_like_a_flag_is_written_as_the_comment() {
         let latest = arkham_held();
-        let flagged = "bd -C /nowhere/arkham comments add ark-1 -- --db=elsewhere";
+        let flagged = "bd --actor=carter -C /nowhere/arkham comments add ark-1 -- --db=elsewhere";
         let runner = FakeRunner::default().with(flagged, "");
         let reply = replied(
             &posted("/arkham/ark-1/comment", "text=--db%3Delsewhere"),
@@ -1866,7 +1889,7 @@ mod tests {
     fn a_write_sent_while_another_is_being_made_is_refused_for_now() {
         let latest = arkham_held();
         let runner = FakeRunner::default().with(COMMENTED, "");
-        let writer = Writer::through(&runner);
+        let writer = Writer::through(&runner, ACTOR.to_string());
         let posting = posted("/arkham/ark-1/comment", "text=the+gate+is+shut%2C+again");
         {
             let _making = writer.one_at_a_time.lock().expect("nothing else holds it");
@@ -1888,7 +1911,7 @@ mod tests {
     fn the_longest_comment_the_form_takes_is_not_too_long() {
         let latest = arkham_held();
         let commented = format!(
-            "bd -C /nowhere/arkham comments add ark-1 -- {}",
+            "bd --actor=carter -C /nowhere/arkham comments add ark-1 -- {}",
             "€".repeat(address::LONGEST_COMMENT)
         );
         let runner = FakeRunner::default().with(&commented, "");

@@ -39,6 +39,7 @@ pub struct ShimmedTracker {
     called: PathBuf,
     called_for: PathBuf,
     journalled: PathBuf,
+    acted: PathBuf,
     unanswered: PathBuf,
     hangs_while: PathBuf,
     holding: PathBuf,
@@ -59,6 +60,7 @@ impl ShimmedTracker {
             called: beside.join("bd-called"),
             called_for: beside.join("bd-called-for"),
             journalled: beside.join("bd-journalled"),
+            acted: beside.join("bd-acted"),
             unanswered: beside.join("bd-unanswered"),
             hangs_while: beside.join("bd-hangs"),
             holding: beside.join("bd-holding"),
@@ -86,6 +88,10 @@ impl ShimmedTracker {
         environment.push((
             "BDI_SHIM_BD_JOURNALLED".to_string(),
             self.journalled.display().to_string(),
+        ));
+        environment.push((
+            "BDI_SHIM_BD_ACTED".to_string(),
+            self.acted.display().to_string(),
         ));
         environment.push((
             "BDI_SHIM_BD_UNANSWERED".to_string(),
@@ -263,6 +269,16 @@ impl ShimmedTracker {
     /// `tracker`, for a test that has to tell two projects' reads apart.
     pub fn calls_for(&self, tracker: &str) -> Vec<String> {
         std::fs::read_to_string(self.called_for.join(tracker))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Every call `bd` was asked, each after the actor bd would record it
+    /// under.
+    pub fn acted_calls(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.acted)
             .unwrap_or_default()
             .lines()
             .map(str::to_string)
