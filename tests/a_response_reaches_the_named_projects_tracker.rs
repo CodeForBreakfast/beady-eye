@@ -81,6 +81,53 @@ fn a_response_is_run_against_the_named_projects_tracker_and_bd_answers_the_calle
     assert_eq!(tracker.calls(), [RESPONDED]);
 }
 
+/// Every light-touch write lands in the named project's tracker as it was
+/// typed. Only kadath's tracker has an answer for each, so a write reaching
+/// arkham's instead would be refused rather than served.
+#[test]
+fn each_light_touch_write_is_run_against_the_named_projects_tracker() {
+    let home = a_home_naming_two_projects("each-write-reaches-kadath", "");
+    let tracker = ShimmedTracker::beside(&home);
+    let writes = [
+        "defer kad-1 --until 2026-03-20",
+        "comments add kad-1 -- one more thing",
+        "close kad-1 -r done",
+        "reopen kad-1",
+        "human dismiss kad-1 not needed",
+        "unclaim kad-1 --if-assignee nyarlathotep",
+        "update kad-1 --priority 1",
+    ];
+    for write in writes {
+        tracker.answers_for("kadath", write, "✓\n");
+    }
+
+    for write in writes {
+        let out = bdi(&home, &tracker, &format!("bd kadath {write}"));
+
+        assert!(out.status.success(), "{write:?}: {}", said(&out.stderr));
+        assert_eq!(said(&out.stdout), "✓\n", "{write:?}");
+    }
+    assert_eq!(tracker.calls(), writes);
+}
+
+/// The holder is what lets bd refuse a claim taken since the caller looked,
+/// so an unclaim without it never reaches bd.
+#[test]
+fn an_unclaim_naming_no_holder_is_refused_before_bd_is_reached() {
+    let home = a_home_naming_two_projects("unclaim-without-holder", "");
+    let tracker = ShimmedTracker::beside(&home);
+
+    let out = bdi(&home, &tracker, "bd kadath unclaim kad-1");
+
+    assert!(!out.status.success());
+    assert!(
+        said(&out.stderr).contains("--if-assignee"),
+        "{}",
+        said(&out.stderr)
+    );
+    assert_eq!(tracker.calls(), Vec::<String>::new());
+}
+
 /// Whether a tracker keeps the journal is its config's to say, so the
 /// caller's own setting reaches bd no more than its choice of database does.
 #[test]
