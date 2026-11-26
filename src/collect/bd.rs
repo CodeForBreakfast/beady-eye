@@ -1,9 +1,9 @@
 //! bd's command line as the way to a project's tracker.
 //!
-//! The one module that spells `bd -C <path> --readonly …`, and the four ways
-//! `bdi` writes: the `bd -C <path> human respond …`, `bd -C <path> defer …` and
-//! `bd -C <path> comments add …` that `bdi bd` passes through, and the gate resolve and comment that settle
-//! a gate. Each question the
+//! The one module that spells `bd -C <path> --readonly …`, and the ways `bdi`
+//! writes: the light-touch writes such as `bd -C <path> human respond …` that
+//! `bdi bd` passes through, and the gate resolve and comment that settle a
+//! gate. Each question the
 //! seam asks is one bd invocation or two, answered in bd's own JSON and parsed
 //! here and nowhere else. The roots to draw the rows under are read off the
 //! rows themselves, in `app::tracker`.
@@ -505,9 +505,9 @@ impl Cli<'_> {
 
 /// One project's tracker opened to settle its gates.
 ///
-/// Settling a gate is the fourth of the four ways `bdi` writes to a tracker,
-/// beside the `human respond`, `defer` and `comments add` that `bdi bd` passes through. `resolve` and
-/// `comment` are those writes, and everything else here is a read.
+/// Settling a gate is the one way `bdi` writes to a tracker beside the writes
+/// `bdi bd` passes through. `resolve` and `comment` are those writes, and
+/// everything else here is a read.
 pub struct Settling<'r>(Reader<'r>);
 
 impl Settling<'_> {
@@ -1085,24 +1085,68 @@ struct Passed {
     /// Each takes the word after it as its value, whatever the word looks
     /// like.
     flags: &'static [&'static str],
+    /// Whether the command is refused unless one of its flags is given.
+    flag_required: bool,
 }
 
-/// The bd commands `bdi bd` passes through, which are three of the four ways
-/// `bdi` writes. `Settling` is the fourth.
-const PASSED_THROUGH: [Passed; 3] = [
+/// The bd commands `bdi bd` passes through. `Settling` is the only other way
+/// `bdi` writes.
+const PASSED_THROUGH: [Passed; 8] = [
     Passed {
         command: &["human", "respond"],
         flags: &["-r", "--response"],
+        flag_required: false,
     },
     Passed {
         command: &["defer"],
         flags: &["--until"],
+        flag_required: false,
     },
     Passed {
         command: &["comments", "add"],
         flags: &[],
+        flag_required: false,
+    },
+    Passed {
+        command: &["close"],
+        flags: &["-r", "--reason"],
+        flag_required: false,
+    },
+    Passed {
+        command: &["reopen"],
+        flags: &[],
+        flag_required: false,
+    },
+    Passed {
+        command: &["human", "dismiss"],
+        flags: &[],
+        flag_required: false,
+    },
+    // bd's compare-and-swap on the holder is what refuses a claim taken since
+    // the caller looked, so an unclaim without it is never passed.
+    Passed {
+        command: &["unclaim"],
+        flags: &["--if-assignee"],
+        flag_required: true,
+    },
+    Passed {
+        command: &["update"],
+        flags: &["-p", "--priority"],
+        flag_required: true,
     },
 ];
+
+/// Every command `bdi bd` passes through, as a refusal names them.
+fn every_command_passed() -> String {
+    let named: Vec<String> = PASSED_THROUGH
+        .iter()
+        .map(|passed| format!("`{}`", passed.command.join(" ")))
+        .collect();
+    match named.split_last() {
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
 
 /// Whether `word` is `flag` with its value joined on, as `--until=x` or
 /// `-rx`.
@@ -1133,19 +1177,21 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
             .eq(passed.command.iter().copied())
     }) else {
         anyhow::bail!(
-            "bdi bd passes only `human respond`, `defer` and `comments add` through to a \
-             tracker, and was asked for `{}`",
+            "bdi bd passes only {} through to a tracker, and was asked for `{}`",
+            every_command_passed(),
             asked.join(" ")
         );
     };
+    let mut flag_given = false;
     let mut words = asked[passed.command.len()..].iter();
     while let Some(word) = words.next() {
         match word.as_str() {
             "--" => break,
             flag if passed.flags.contains(&flag) => {
+                flag_given = true;
                 words.next();
             }
-            given if passed.flags.iter().any(|flag| joined(given, flag)) => {}
+            given if passed.flags.iter().any(|flag| joined(given, flag)) => flag_given = true,
             flag if flag.starts_with('-') && flag != "-" => anyhow::bail!(
                 "bdi bd passes `{}` {}, so it refuses {flag}; a word that starts with a dash \
                  goes after --",
@@ -1157,6 +1203,13 @@ pub fn passed_through(path: &Path, asked: &[String]) -> anyhow::Result<Vec<Strin
             ),
             _ => {}
         }
+    }
+    if passed.flag_required && !flag_given {
+        anyhow::bail!(
+            "bdi bd passes `{}` only with {}",
+            passed.command.join(" "),
+            passed.flags.join(" or ")
+        );
     }
     let named = path.to_string_lossy();
     Ok(["-C", named.as_ref()]
@@ -2906,22 +2959,26 @@ mod tests {
     #[test]
     fn any_other_bd_command_is_refused() {
         for line in [
-            "close dun-7",
-            "human dismiss dun-7",
+            "done dun-7",
             "human",
+            "human list",
             "respond dun-7",
             "undefer dun-7",
             "deferred dun-7",
             "comments dun-7",
             "comments list dun-7",
             "comments",
+            "claim dun-7",
+            "reclaim dun-7",
+            "show dun-7",
         ] {
             let refused = passed(line).expect_err(line);
 
             assert!(
-                refused
-                    .to_string()
-                    .contains("`human respond`, `defer` and `comments add`"),
+                refused.to_string().contains(
+                    "`human respond`, `defer`, `comments add`, `close`, `reopen`, \
+                     `human dismiss`, `unclaim` and `update`"
+                ),
                 "{line:?} got: {refused}"
             );
         }
@@ -3038,6 +3095,155 @@ mod tests {
             "comments add dun-7 --db=ferry yes",
             "comments add dun-7 --global yes",
             "comments add -C /srv/work/ferry dun-7 yes",
+        ] {
+            assert!(passed(line).is_err(), "{line:?} was passed through");
+        }
+    }
+
+    #[test]
+    fn a_close_with_a_reason_is_passed_to_the_projects_tracker_as_written() {
+        assert_eq!(
+            passed("close dun-7 -r done").expect("a close is passed through"),
+            format!("-C {} close dun-7 -r done", project_dir().display())
+        );
+        for line in [
+            "close dun-7",
+            "close dun-7 --reason done",
+            "close dun-7 --reason=done",
+            "close dun-7 -rdone",
+        ] {
+            assert!(passed(line).is_ok(), "{line:?} was refused");
+        }
+    }
+
+    /// `--force` would close past an open gate or a pinned bead, and the rest
+    /// reach beyond the bead being closed.
+    #[test]
+    fn a_close_refuses_every_flag_but_the_reason_and_names_it() {
+        for flag in [
+            "--force",
+            "-f",
+            "--claim-next",
+            "--continue",
+            "--reason-file",
+        ] {
+            let line = format!("close dun-7 -r done {flag} x");
+            let refused = passed(&line).expect_err(&line);
+
+            assert!(refused.to_string().contains(flag), "got: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_reopen_is_passed_to_the_projects_tracker_and_takes_no_flag() {
+        assert_eq!(
+            passed("reopen dun-7").expect("a reopen is passed through"),
+            format!("-C {} reopen dun-7", project_dir().display())
+        );
+        let refused = passed("reopen dun-7 -r again").expect_err("a reopen takes no reason");
+        assert!(refused.to_string().contains("no flag"), "got: {refused}");
+    }
+
+    /// bd takes a dismissal's reason as the words after the bead.
+    #[test]
+    fn a_dismissal_is_passed_to_the_projects_tracker_and_takes_no_flag() {
+        assert_eq!(
+            passed("human dismiss dun-7 not needed now").expect("a dismissal is passed through"),
+            format!(
+                "-C {} human dismiss dun-7 not needed now",
+                project_dir().display()
+            )
+        );
+        assert!(passed("human dismiss dun-7 --reason x").is_err());
+    }
+
+    #[test]
+    fn an_unclaim_naming_the_holder_is_passed_to_the_projects_tracker_as_written() {
+        assert_eq!(
+            passed("unclaim dun-7 --if-assignee nyarlathotep")
+                .expect("an unclaim naming the holder is passed through"),
+            format!(
+                "-C {} unclaim dun-7 --if-assignee nyarlathotep",
+                project_dir().display()
+            )
+        );
+        assert!(passed("unclaim dun-7 --if-assignee=nyarlathotep").is_ok());
+    }
+
+    /// Without the holder, bd releases whatever claim the bead holds now,
+    /// which may be one taken since the caller looked.
+    #[test]
+    fn an_unclaim_that_names_no_holder_is_refused() {
+        for line in [
+            "unclaim dun-7",
+            "unclaim dun-7 -- --if-assignee nyarlathotep",
+        ] {
+            let refused = passed(line).expect_err(line);
+
+            assert!(
+                refused.to_string().contains("--if-assignee"),
+                "got: {refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unclaim_refuses_the_flags_that_release_any_claim() {
+        for flag in ["--force", "-r", "--reason"] {
+            let line = format!("unclaim dun-7 --if-assignee nyarlathotep {flag} x");
+            let refused = passed(&line).expect_err(&line);
+
+            assert!(refused.to_string().contains(flag), "got: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_priority_is_passed_to_the_projects_tracker_as_written() {
+        assert_eq!(
+            passed("update dun-7 --priority 1").expect("a priority is passed through"),
+            format!("-C {} update dun-7 --priority 1", project_dir().display())
+        );
+        for line in [
+            "update dun-7 -p P0",
+            "update dun-7 --priority=4",
+            "update dun-7 -p2",
+        ] {
+            assert!(passed(line).is_ok(), "{line:?} was refused");
+        }
+    }
+
+    #[test]
+    fn an_update_without_a_priority_is_refused() {
+        let refused = passed("update dun-7").expect_err("an update names a priority");
+        assert!(refused.to_string().contains("--priority"), "got: {refused}");
+    }
+
+    #[test]
+    fn an_update_refuses_every_flag_but_the_priority_and_names_it() {
+        for flag in [
+            "--title",
+            "--status",
+            "-s",
+            "--assignee",
+            "--claim",
+            "--add-label",
+            "-d",
+        ] {
+            let line = format!("update dun-7 -p 1 {flag} x");
+            let refused = passed(&line).expect_err(&line);
+
+            assert!(refused.to_string().contains(flag), "got: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_close_reopen_dismissal_unclaim_or_priority_refuses_a_flag_picking_another_tracker() {
+        for line in [
+            "close dun-7 -r done -C /srv/work/ferry",
+            "reopen dun-7 --db=ferry",
+            "human dismiss dun-7 --global",
+            "unclaim dun-7 --if-assignee x --database ferry",
+            "update -C /srv/work/ferry dun-7 -p 1",
         ] {
             assert!(passed(line).is_err(), "{line:?} was passed through");
         }
