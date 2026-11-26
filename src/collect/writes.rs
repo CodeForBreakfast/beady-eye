@@ -2,7 +2,7 @@
 //! thread of their own so that a tracker slow to answer never holds the screen.
 
 use std::sync::mpsc::{self, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use crate::collect::bd::{self, Write};
 use crate::collect::run::{RealRunner, Runner};
@@ -27,9 +27,13 @@ pub struct Wrote {
 }
 
 /// Writes through `bdi bd`'s own path, one at a time in the order they were
-/// made, with every answer sent on to the channel it was made with.
+/// made, with every answer sent on to the channel it was made with. Let go,
+/// it makes every write still queued before it goes, so a reader who quits
+/// straight after a write still has it made, within the deadline the
+/// terminal gives a leaving `bdi`.
 pub struct Writer {
-    queue: Sender<Queued>,
+    queue: Option<Sender<Queued>>,
+    making: Option<JoinHandle<()>>,
 }
 
 struct Queued {
@@ -49,7 +53,7 @@ impl Writer {
         make: impl Fn(&Project, &[String]) -> anyhow::Result<()> + Send + 'static,
     ) -> Self {
         let (queue, queued) = mpsc::channel::<Queued>();
-        thread::spawn(move || {
+        let making = thread::spawn(move || {
             for Queued {
                 project,
                 bead,
@@ -65,23 +69,35 @@ impl Writer {
                     write,
                     refused,
                 };
-                if answers.send(wrote.into()).is_err() {
-                    return;
-                }
+                let _ = answers.send(wrote.into());
             }
         });
-        Self { queue }
+        Self {
+            queue: Some(queue),
+            making: Some(making),
+        }
     }
 }
 
 impl Writes for Writer {
     fn write(&self, project: &Project, bead: BeadKey, write: Write, given: String) {
-        let _ = self.queue.send(Queued {
-            project: project.clone(),
-            bead,
-            write,
-            given,
-        });
+        if let Some(queue) = &self.queue {
+            let _ = queue.send(Queued {
+                project: project.clone(),
+                bead,
+                write,
+                given,
+            });
+        }
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.queue.take();
+        if let Some(making) = self.making.take() {
+            let _ = making.join();
+        }
     }
 }
 
@@ -140,5 +156,26 @@ mod tests {
                 Write::Priority.asked("dun-0tp", "2"),
             ]
         );
+    }
+
+    /// A reader who quits with writes still queued has them made: the
+    /// writer is let go after the terminal is put back, and waits for them.
+    #[test]
+    fn a_writer_let_go_makes_every_write_still_queued() {
+        let (answers, answered) = mpsc::channel::<Wrote>();
+        drop(answered);
+        let reached = Arc::new(Mutex::new(0));
+        let seen = Arc::clone(&reached);
+        let writer = Writer::making(answers, move |_: &Project, _: &[String]| {
+            thread::sleep(Duration::from_millis(20));
+            *seen.lock().expect("the writes") += 1;
+            Ok(())
+        });
+
+        writer.write(&arkham(), bead(), Write::Reopen, String::new());
+        writer.write(&arkham(), bead(), Write::Dismiss, String::new());
+        drop(writer);
+
+        assert_eq!(*reached.lock().expect("the writes"), 2);
     }
 }
