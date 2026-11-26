@@ -1531,10 +1531,14 @@ mod tests {
     /// Where a test's writes are handed: each one as the screen made it, with
     /// the name of the project it found for the bead.
     #[derive(Clone, Default)]
-    pub(super) struct Writing(Arc<Mutex<Vec<(String, BeadKey, Write, String)>>>);
+    pub(super) struct Writing(Arc<Mutex<Vec<Made>>>);
+
+    /// One write as a test sees it made: the project's name, the bead, the
+    /// write and the words given with it.
+    pub(super) type Made = (String, BeadKey, Write, String);
 
     impl Writing {
-        pub(super) fn made(&self) -> Vec<(String, BeadKey, Write, String)> {
+        pub(super) fn made(&self) -> Vec<Made> {
             self.0.lock().expect("the writes").clone()
         }
     }
