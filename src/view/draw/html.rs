@@ -2376,6 +2376,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const drop = (gone) => {
     const next = gone.nextSibling;
     if (!(gone.matches?.("details[data-key]") && holdsWords(gone))) gone.remove();
+    else for (const button of gone.querySelectorAll("button")) button.disabled = true;
     return next;
   };
   const key = (at) => at.id || (at.firstElementChild?.id && " " + at.firstElementChild.id) || "";
@@ -2438,8 +2439,9 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 
 /// The part of the page's script that says whether a write's entry holds
 /// words the reader typed, which nothing the page does may lose: a redraw
-/// keeps the entry though the page no longer offers its write, and Escape
-/// does not close the bead.
+/// keeps the entry though the page no longer offers its write, with its
+/// buttons disabled until it offers the write again, and Escape does not
+/// close the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
   [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
 "##;
@@ -2476,7 +2478,9 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// in the bead's panel, which takes the focus as the page opens, so a
 /// letter typed elsewhere on the page, or by speech input, opens nothing. On a touch screen a deferral's entry
 /// leaves the keyboard down, so its days to pick stay in view. Ctrl+Enter
-/// makes the write a text area is typed for, where Enter starts a new line.
+/// makes the write a text area is typed for, where Enter starts a new line,
+/// unless the write's button is disabled or an input method is still
+/// composing what it types.
 /// Enter held down makes no write: the press that opened an entry and moved
 /// to its button is not also the press that writes.
 const WRITES_BY_KEY: &str = r##"{
@@ -2487,14 +2491,15 @@ const WRITES_BY_KEY: &str = r##"{
   };
   addEventListener("keydown", (event) => {
     const { target, key } = event;
-    if (event.defaultPrevented) return;
+    if (event.defaultPrevented || event.isComposing) return;
     const typingLines = target.matches?.("textarea") && !(event.ctrlKey || event.metaKey);
     if (event.repeat && key === "Enter" && target.closest?.("aside details[data-key]") && !typingLines) {
       return event.preventDefault();
     }
     if (key === "Enter" && (event.ctrlKey || event.metaKey) && target.matches?.("textarea") && target.form) {
       event.preventDefault();
-      return target.form.requestSubmit();
+      const making = target.form.querySelector("button:not([disabled])");
+      return making && target.form.requestSubmit(making);
     }
     if (event.ctrlKey || event.metaKey || event.altKey || target.matches?.("input,textarea,select")) return;
     if (!target.closest?.("aside")) return;

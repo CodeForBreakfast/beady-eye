@@ -790,8 +790,9 @@ fn escape_never_takes_the_reader_away_from_words_typed() {
 }
 
 /// A write's entry holding words stays as the page is kept current, though
-/// the bead has changed so the page no longer offers that write. An entry
-/// holding no words goes.
+/// the bead has changed so the page no longer offers that write, and it
+/// makes no write until the bead takes it again. An entry holding no words
+/// goes.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_redraw_keeps_an_entry_holding_words() {
@@ -826,10 +827,68 @@ fn a_redraw_keeps_an_entry_holding_words() {
     assert_eq!(
         page.evaluate(
             "[document.querySelector('#write-respond textarea')?.value, \
-              !!document.querySelector('#write-dismiss')]"
+              !!document.querySelector('#write-dismiss'), \
+              document.querySelector('#write-respond .foot button').disabled]"
         ),
-        serde_json::json!(["carbide", false]),
-        "the response keeps its words, and the dismissal goes"
+        serde_json::json!(["carbide", false, true]),
+        "the response keeps its words and makes no write, and the dismissal goes"
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.press("Enter", true);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        !tracker
+            .acted_calls()
+            .iter()
+            .any(|call| call.contains("human respond")),
+        "Ctrl+Enter sent a response the bead no longer takes: {:?}",
+        tracker.acted_calls()
+    );
+
+    tracker.holds(&with_the_root_changed(&needing_a_human, |root| {
+        root["priority"] = 2.into();
+    }));
+    page.until(
+        "document.querySelector('#write-priority>summary').textContent === 'P2' \
+         && !document.querySelector('#write-respond .foot button').disabled",
+        GIVING_UP,
+    );
+}
+
+/// Ctrl+Enter pressed while an input method is still composing what it
+/// types is the input method's, and makes no write.
+#[cfg(target_os = "linux")]
+#[test]
+fn ctrl_enter_while_composing_makes_no_write() {
+    let home = a_home_naming_one_project_settled("web-write-composing", WRITES_AS_CARTER);
+    let tracker = a_tracker_taking_the_comment(&home);
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    until_it_has_read(&address);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    page.evaluate(
+        "const entry = document.querySelector('#write-comment'); entry.open = true; \
+         const field = entry.querySelector('textarea'); field.value = 'the gate is shut'; \
+         field.focus(); field.dispatchEvent(new KeyboardEvent('keydown', \
+           { key: 'Enter', ctrlKey: true, isComposing: true, bubbles: true, cancelable: true }))",
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        (
+            tracker
+                .acted_calls()
+                .contains(&format!("carter {COMMENTED}")),
+            page.evaluate("document.querySelector('#write-comment textarea')?.value")
+        ),
+        (false, serde_json::json!("the gate is shut")),
     );
 }
 
