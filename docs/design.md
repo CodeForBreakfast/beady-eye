@@ -2178,7 +2178,8 @@ covered line lets it say otherwise without costing a read. The word goes before
 the name so that a producer that only sends bare names keeps working
 unchanged. A producer that sends `covered` to a `bdi` older than the word is
 answered `unknown covered <project>`, which is how it can tell. The one cost is
-that a project whose own name begins with `covered ` cannot be reported bare.
+that a project whose own name begins with `covered ` or `written ` cannot be
+reported bare.
 
 The name must match a project's `name` in the config. A connection may carry as
 many lines as you like and may stay open for the life of the writer, so a
