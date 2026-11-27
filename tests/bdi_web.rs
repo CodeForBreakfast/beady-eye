@@ -1145,11 +1145,12 @@ fn escape_shuts_the_entry_the_focus_is_in_first() {
     );
 }
 
-/// The priority's choices fit the narrowest phone, so opening them moves
-/// nothing off the screen.
+/// The priority's choices and a deferral's days to pick fit the narrowest
+/// phone, so opening them moves nothing off the screen and every day's name
+/// fits its button.
 #[cfg(target_os = "linux")]
 #[test]
-fn the_priority_choices_fit_the_narrowest_phone() {
+fn the_writes_fit_the_narrowest_phone() {
     let home = a_home_naming_one_project_settled("web-priority-on-a-phone", WRITES_AS_CARTER);
     let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
     let mut page = browser::Browser::open(
@@ -1169,6 +1170,47 @@ fn the_priority_choices_fit_the_narrowest_phone() {
               document.documentElement.scrollWidth <= innerWidth]"
         ),
         serde_json::json!([true, true]),
+    );
+    page.evaluate("document.querySelector('#write-defer').open = true");
+    assert_eq!(
+        page.evaluate(
+            "[...document.querySelectorAll('#write-defer .pick')] \
+               .map((pick) => pick.scrollWidth <= pick.clientWidth)"
+        ),
+        serde_json::json!([true, true, true]),
+    );
+}
+
+/// A redraw that takes away the control the focus is on, as a bead that no
+/// longer needs a human loses its dismissal, gives the focus to the bead's
+/// panel, so its keys still answer.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_redraw_taking_the_focused_control_gives_the_focus_to_the_panel() {
+    let home = a_home_naming_one_project_settled(
+        "web-redraw-takes-the-focus",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-dismiss')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-dismiss>summary').focus()");
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    page.until("!document.querySelector('#write-dismiss')", GIVING_UP);
+    assert_eq!(
+        page.evaluate("document.activeElement === document.querySelector('aside')"),
+        serde_json::json!(true),
     );
 }
 

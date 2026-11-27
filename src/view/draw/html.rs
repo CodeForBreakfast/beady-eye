@@ -2184,7 +2184,7 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .writes kbd{display:none}\
 .writes :is(textarea,input){font-size:var(--size-field)}\
 .writes .hint{flex-basis:100%}\
-.writes .picks{flex:1 0 100%;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}\
+.writes .picks{flex:1 0 100%;display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5em,1fr))}\
 .writes button{height:48px;border-radius:12px;font-size:var(--size-row-phone)}\
 .writes button.pick{padding:0 6px;font-size:var(--size-row)}\
 .writes .along{flex-wrap:wrap}.writes .along input{flex:1 0 100%}.writes .along button{height:48px}\
@@ -2442,8 +2442,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
     const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
-    const typing = document.activeElement?.matches("aside details[data-key] :is(textarea,input)") && document.activeElement;
-    const typedTo = typing && [typing.selectionStart, typing.selectionEnd];
+    const inThePanel = !focus && document.activeElement?.closest("aside") && document.activeElement;
+    const typedTo = inThePanel && inThePanel.matches("textarea,input") && [inThePanel.selectionStart, inThePanel.selectionEnd];
     inReadersZone(drawn);
     document.title = drawn.title;
     reconcile(document.body, drawn.body);
@@ -2454,9 +2454,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
       const back = focus.isConnected && goes(focus) === focused[1] ? focus : alike(focused[0], focused[1])[focused[2]];
       if (back !== document.activeElement) back ? back.focus({ preventScroll: true }) : focus.blur();
     }
-    if (typing?.isConnected && typing !== document.activeElement) {
-      typing.focus({ preventScroll: true });
-      typing.setSelectionRange(...typedTo);
+    if (inThePanel && inThePanel !== document.activeElement) {
+      const back = inThePanel.isConnected ? inThePanel : document.querySelector("aside");
+      back?.focus({ preventScroll: true });
+      if (back === inThePanel && typedTo) inThePanel.setSelectionRange(...typedTo);
     }
   };
 });"##;
@@ -2469,9 +2470,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 /// afresh, and stays open over the entry the page would open on. Drawing
 /// one element again can take a kept entry back from beside it, so a redraw
 /// reads where to go next only once it has drawn the element it is on. A
-/// field
-/// being typed in keeps the focus and the cursor through
-/// the move. Escape does not close the bead.
+/// control in the bead's panel keeps the focus through the move, and a
+/// field keeps its cursor. Where the redraw takes the control away, the
+/// panel takes the focus, so its keys still answer. Escape does not close
+/// the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
   [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
 "##;
