@@ -1183,7 +1183,8 @@ fn the_writes_fit_the_narrowest_phone() {
 
 /// A redraw that takes away the control the focus is on, as a bead that no
 /// longer needs a human loses its dismissal, gives the focus to the bead's
-/// panel, so its keys still answer.
+/// panel, so its keys still answer. So does one that disables it, as it
+/// disables the button of a response kept for its words.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_redraw_taking_the_focused_control_gives_the_focus_to_the_panel() {
@@ -1205,11 +1206,44 @@ fn a_redraw_taking_the_focused_control_gives_the_focus_to_the_panel() {
         "document.readyState === 'complete' && document.querySelector('#write-dismiss')",
         GIVING_UP,
     );
+    let on_the_panel = "document.activeElement === document.querySelector('aside')";
     page.evaluate("document.querySelector('#write-dismiss>summary').focus()");
     tracker.holds(THE_DESCRIBED_SUBTREE);
     page.until("!document.querySelector('#write-dismiss')", GIVING_UP);
+    assert_eq!(page.evaluate(on_the_panel), serde_json::json!(true));
+
+    tracker.holds(&needing_a_human);
+    page.until("document.querySelector('#write-dismiss')", GIVING_UP);
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+    page.evaluate("document.querySelector('#write-respond .foot button').focus()");
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    page.until("!document.querySelector('#write-dismiss')", GIVING_UP);
     assert_eq!(
-        page.evaluate("document.activeElement === document.querySelector('aside')"),
+        page.evaluate(&format!(
+            "[document.querySelector('#write-respond .foot button').disabled, {on_the_panel}]"
+        )),
+        serde_json::json!([true, true]),
+    );
+}
+
+/// A bead's page that takes no writes has no keys to answer, so its panel
+/// leaves the focus where the browser puts it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_page_taking_no_writes_leaves_the_focus_alone() {
+    let home = a_home_naming_one_project_settled("web-read-only-focus", "");
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until("document.readyState === 'complete'", GIVING_UP);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        page.evaluate("document.activeElement === document.body"),
         serde_json::json!(true),
     );
 }

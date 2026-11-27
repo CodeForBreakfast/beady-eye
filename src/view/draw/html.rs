@@ -2454,10 +2454,11 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
       const back = focus.isConnected && goes(focus) === focused[1] ? focus : alike(focused[0], focused[1])[focused[2]];
       if (back !== document.activeElement) back ? back.focus({ preventScroll: true }) : focus.blur();
     }
-    if (inThePanel && inThePanel !== document.activeElement) {
-      const back = inThePanel.isConnected ? inThePanel : document.querySelector("aside");
-      back?.focus({ preventScroll: true });
-      if (back === inThePanel && typedTo) inThePanel.setSelectionRange(...typedTo);
+    if (inThePanel && (inThePanel !== document.activeElement || inThePanel.matches(":disabled"))) {
+      inThePanel.focus({ preventScroll: true });
+      if (inThePanel === document.activeElement && !inThePanel.matches(":disabled")) {
+        if (typedTo) inThePanel.setSelectionRange(...typedTo);
+      } else document.querySelector("aside")?.focus({ preventScroll: true });
     }
   };
 });"##;
@@ -2471,8 +2472,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 /// one element again can take a kept entry back from beside it, so a redraw
 /// reads where to go next only once it has drawn the element it is on. A
 /// control in the bead's panel keeps the focus through the move, and a
-/// field keeps its cursor. Where the redraw takes the control away, the
-/// panel takes the focus, so its keys still answer. Escape does not close
+/// field keeps its cursor. Where the redraw takes the control away or
+/// disables it, the panel takes the focus, so its keys still answer. Escape does not close
 /// the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
   [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
@@ -2510,7 +2511,8 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// as pressing its button does: the field it is typed in, or a deferral's
 /// first day to pick, which leaves a phone's keyboard down so the days stay
 /// in view. A key opens an entry only while the focus is in the bead's
-/// panel, which takes the focus as the page opens, so a letter typed
+/// panel, which takes the focus as a page offering writes opens, so a
+/// letter typed
 /// elsewhere on the page, or by speech input, opens nothing. The panel takes
 /// it again once the page has loaded, because the browser's move to the
 /// address's fragment drops the focus.
@@ -2523,7 +2525,9 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// into the field.
 const WRITES_BY_KEY: &str = r##"{
   const focusThePanel = () =>
-    document.activeElement === document.body && document.querySelector("aside")?.focus({ preventScroll: true });
+    document.activeElement === document.body &&
+    document.querySelector("aside details[data-key]") &&
+    document.querySelector("aside").focus({ preventScroll: true });
   addEventListener("DOMContentLoaded", focusThePanel);
   addEventListener("load", focusThePanel);
   const cursorInto = (entry) =>
