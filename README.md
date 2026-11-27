@@ -259,12 +259,25 @@ The page asks nobody to sign in. Anyone who can reach the address can read
 every tracker it reads, so listen only where everyone who can reach it may
 read them all.
 
-Started with `--writes`, the page also writes. Each bead's page then offers a
-form for each light-touch write that Writing back, below, lists, except
-releasing a claim, since the page sees no agents. Anyone who can reach the
-address can make them. Every write is made as the one actor
-[`[web] actor`](docs/configuration.md#web) names, and a writable page does not
-start without one:
+Started with `--writes`, the page also writes. Each bead's page then offers
+the light-touch writes that Writing back, below, lists, where they apply to the
+bead:
+
+- Every bead takes a comment and a new priority.
+- A bead that is not closed takes a close and a deferral.
+- A closed bead takes a reopen.
+- A bead that is not closed and carries bd's `human` label takes a response and
+  a dismissal, and its page opens on the response.
+
+The page decides from the bead's status and labels alone. It never offers to
+release a claim, since it sees no agents. Each write rests as a button in a row
+at the end of the bead's page, and the priority as a button in its cell.
+Pressing one opens its form, and only the button inside the form writes. The
+key the terminal makes a write with opens its form too.
+
+Anyone who can reach the address can make the writes. Every write is made as
+the one actor [`[web] actor`](docs/configuration.md#web) names, and a writable
+page does not start without one:
 
 ```toml
 [web]
@@ -469,9 +482,9 @@ beady-eye writes to a tracker in two ways.
 Each works in a tracker the config names, with that project's own `bd`.
 
 Each light-touch write is one `bd` command. In the terminal, open a bead and
-press its key. On a `bdi web` started with `--writes`, each bead's page has a
-form for each but releasing a claim. Anywhere else, `bdi bd <project>` passes
-the `bd` command on:
+press its key. On a `bdi web` started with `--writes`, each bead's page offers
+each write that applies to the bead, as In a browser, above, says. Anywhere
+else, `bdi bd <project>` passes the `bd` command on:
 
 | write | `bdi bd <project> …` | key |
 |---|---|---|
