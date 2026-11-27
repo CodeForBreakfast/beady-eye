@@ -92,6 +92,7 @@ coin one — and say so.**
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
 | **reach** | *coined* | the `path` and `environment_command` a project's config entry gives, and the server and database where the entry names a database in place of a checkout. Together they decide the tracker bd reaches. Neither project names them together. |
+| **written** | *coined* | a project `bdi` has just made a light-touch write to: a `written <project>` line on the watcher's socket. The watcher reads the project again, and tells no watch of it how current it is until a read begun since the line has come back. Neither project names this: the channel is `bdi`'s own. |
 | **covered** | *coined* | a project something outside `bdi` has said it is watching, with nothing changed: a `covered <project>` line on the inbound channel. A covered line, and a read of the project coming back, each vouch for its rows for `[changes] covered_for_seconds`. The first covered line stands down the poll of a project that says nothing about `poll`, for the rest of the run. A project that does not poll and that nothing has vouched for in that time has **lapsed**, and its mark says so. Neither project names this: the channel is `bdi`'s own. |
 | **window** | *coined* | how long a read is held after it is asked for before it is sent, so that a burst about one project costs one read. It runs from the first notification and is not reset by the ones after it: under reset a held-down `^R` would withhold the read it exists to force. The screen says the read is coming when it is asked for, never when it goes. |
 | **way down** | *coined* | the beads stepped through from a tree's root to a line. A bead reached more than once is drawn once per way down to it, and the way down is what tells the copies apart, what a fold and a selection are held by, and where a loop is cut. |
@@ -2028,11 +2029,18 @@ whose project names its `bd serve`, since that stream is beads' interface for
 exactly this and carries every client's writes.
 
 **The second is `bdi`'s own light-touch writes.** Once bd has taken a write
-made through `bdi bd`, the terminal or a writable `bdi web`, `bdi` names the
-project on the watcher's own socket, as a producer does, and waits a few
-seconds at most to connect and for the watcher's answer. Whatever reads
-through the watcher then reads the write straight away, rather than at the
-project's next poll. A write bd refused tells the watcher nothing. Where no
+made through `bdi bd`, the terminal or a writable `bdi web`, `bdi` sends
+`written <project>` on the watcher's own socket, and waits a few seconds at
+most to connect and for the watcher's answer. The watcher reads the project
+again, as it does for a bare name. Until a read begun since that line comes
+back, it tells no watch of the project how current the project is, so no
+consumer closes its answer on the beads as they stood before the write. A
+read through the watcher made after the write therefore shows it, however
+long the read takes, and a view shows it when that read comes back. A read
+that finds nothing moved answers too, since a write can change nothing a read
+sees, and so does the tracker going unreachable. A producer's `covered` line
+does not, because it vouches that nothing has moved. A write bd refused tells
+the watcher nothing. Where no
 watcher answers, the write is made as it would be with none, and nothing is
 said of the watcher. The notice goes to the watcher's socket and not to the
 one views watch, because a view with no watcher already reads its project
@@ -2339,7 +2347,8 @@ makes every check *Where the socket may sit* makes. It is a separate path
 from a view's inbound channel because that channel goes to whichever run asks
 first, and a view started while the watcher was restarting would hold it for
 the rest of its life. The socket takes a producer's lines too, a bare project
-name and `covered <project>`, and answers them as the inbound channel does. A
+name, `covered <project>` and `written <project>`, and answers them as the
+inbound channel does. A
 second `bdi watch` finds the first by connecting, as a view finds another
 view, and exits saying which socket is taken.
 

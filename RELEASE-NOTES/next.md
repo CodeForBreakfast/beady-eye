@@ -12,7 +12,7 @@ Minor release, **0.45.0 → 0.46.0**.
 
 **A writable `bdi web` refuses a form posted from another site.** The refusal says which address the form came from. If you put a proxy in front of `bdi web`, it has to pass on the Host the browser asked for, or every change is refused.
 
-**A change you make from bdi shows at once wherever `bdi watch` serves the project.** Once bd takes a change made from the terminal, a writable `bdi web` or `bdi bd`, bdi tells the watcher, which reads the project again, so every view it feeds shows the change straight away. With no watcher running, the change is made as before.
+**A change you make from bdi shows in the next read through `bdi watch`.** Once bd takes a change made from the terminal, a writable `bdi web` or `bdi bd`, bdi tells the watcher, which reads the project again. Until that read is in, the watcher answers no read of the project, so whatever reads through it next shows the change, and a view shows it once that read is in. With no watcher running, the change is made as before.
 
 **`bdi bd` passes more changes through.** It now takes `close`, `reopen`, `human dismiss`, `unclaim --if-assignee` and `update --priority` as well as the comment, response and deferral it took before.
 
@@ -21,6 +21,8 @@ Minor release, **0.45.0 → 0.46.0**.
 ## Upgrading
 
 **The terminal keys work as soon as you upgrade.** Only `bdi web` is opt-in, and it stays read-only unless you start it with `--writes` and set `[web] actor`.
+
+**Restart `bdi watch` when you upgrade.** A watcher from an older release does not know the line a change from bdi now sends it, so it reads the project only when something else reports it.
 
 ## Maintenance
 

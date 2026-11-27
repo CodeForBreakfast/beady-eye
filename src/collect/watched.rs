@@ -541,14 +541,14 @@ fn watch(
 /// be told to it.
 const ANSWERING_WITHIN: Duration = Duration::from_secs(2);
 
-/// Tell the watcher at `at` that `project` changed, as a producer does, and
+/// Tell the watcher at `at` that `bdi` has just written to `project`, and
 /// wait for its answer, which it gives once it has taken the report. Nothing
 /// where no watcher answers there in time.
 pub fn tell_of_a_change(at: Option<&Path>, project: &str) {
     let Some((mut to, mut from)) = at.and_then(|at| connected_to(at, ANSWERING_WITHIN)) else {
         return;
     };
-    if writeln!(to, "{}", Heard::Changed(project.to_string()).line()).is_ok() {
+    if writeln!(to, "{}", Heard::Written(project.to_string()).line()).is_ok() {
         answered(&mut from, ANSWERING_WITHIN);
     }
 }

@@ -81,8 +81,12 @@ pub enum Said {
         at: DateTime<Utc>,
         beads: BTreeMap<String, Held>,
     },
-    /// Nothing has moved as of `at`, so the beads held already stand.
+    /// A producer covering the project says nothing has moved as of `at`, so
+    /// the beads held already stand.
     Vouched { at: DateTime<Utc> },
+    /// A read begun at `at` found nothing had moved since the beads held were
+    /// read, so they stand.
+    Unmoved { at: DateTime<Utc> },
     /// The last attempt to reach the tracker failed. The beads held already
     /// stand as the last known, and as old as when they were last vouched
     /// for.
@@ -113,6 +117,14 @@ pub struct Standing {
     /// not move it, because a producer's report of a change can be vouched
     /// for before the read it asked for has finished.
     pub read_at: Option<DateTime<Utc>>,
+    /// When the source began the latest read that came back, whether it
+    /// replaced the beads or found nothing had moved.
+    pub looked_at: Option<DateTime<Utc>>,
+    /// When `bdi` last said it had written to the project. Until a read
+    /// begun since then comes back, no watch is told how current the project
+    /// is, so none closes its answer on the beads as they were before the
+    /// write.
+    pub written_at: Option<DateTime<Utc>>,
     /// Why the last attempt to reach the tracker failed, where it did.
     pub unreachable: Option<TrackerFailure>,
     /// Whether the project has lapsed since it was last vouched for.
@@ -142,6 +154,9 @@ impl Standing {
             None if self.unreachable.is_some() => Vec::new(),
             None => return None,
         };
+        if self.awaits_its_write() {
+            return Some(lines);
+        }
         lines.push(watching::freshness_line(
             project,
             &self.reach,
@@ -151,6 +166,12 @@ impl Standing {
             &self.events,
         ));
         Some(lines)
+    }
+
+    /// Whether a write `bdi` made is newer than the latest read that came
+    /// back.
+    fn awaits_its_write(&self) -> bool {
+        self.written_at > self.looked_at
     }
 }
 
@@ -219,6 +240,7 @@ impl Hold {
                 standing.beads = Some(beads);
                 standing.as_of = standing.as_of.max(Some(at));
                 standing.read_at = Some(at);
+                standing.looked_at = standing.looked_at.max(Some(at));
                 standing.unreachable = None;
                 standing.lapsed = false;
             }
@@ -226,7 +248,15 @@ impl Hold {
                 standing.as_of = standing.as_of.max(Some(at));
                 standing.lapsed = false;
             }
-            Said::Unreachable(failure) => standing.unreachable = Some(failure),
+            Said::Unmoved { at } => {
+                standing.as_of = standing.as_of.max(Some(at));
+                standing.looked_at = standing.looked_at.max(Some(at));
+                standing.lapsed = false;
+            }
+            Said::Unreachable(failure) => {
+                standing.unreachable = Some(failure);
+                standing.written_at = None;
+            }
             Said::Lapsed => standing.lapsed = true,
         }
         let records = match answer.journal {
@@ -260,11 +290,19 @@ impl Hold {
                 continue;
             };
             lines.extend(told);
-            if !consumer.tells(lines) {
+            if !lines.is_empty() && !consumer.tells(lines) {
                 behind.push(id);
             }
         }
         self.hang_up(behind);
+    }
+
+    /// `bdi` said at `at` that it had written to `project`, so no watch is
+    /// told how current the project is until a read begun since comes back.
+    pub fn written(&mut self, project: &str, at: DateTime<Utc>) {
+        if let Some(standing) = self.projects.get_mut(project) {
+            standing.written_at = standing.written_at.max(Some(at));
+        }
     }
 
     /// A connection that will watch beads, sent its lines on `telling`.
@@ -505,10 +543,14 @@ pub fn serve(
                 .err()
                 .map(|refusal| watching::refused_line(line, refusal)),
             _ => {
+                let told_at = Utc::now();
                 let Some(answer) = changes::answered(message, reported, changed) else {
                     return false;
                 };
-                Some(answer)
+                if let changes::Answer::Watched(Heard::Written(project)) = &answer {
+                    locked(hold).written(project, told_at);
+                }
+                Some(answer.to_string())
             }
         };
         answer.is_none_or(|answer| telling.send(vec![answer]).is_ok())
@@ -855,6 +897,86 @@ mod tests {
 
         assert_eq!(at_once, [["bead", "freshness"]]);
         assert_eq!(kinds(&told), [["bead", "freshness"]], "and after");
+    }
+
+    /// dunwich read at the start, then written to by `bdi` a second later,
+    /// and a consumer watching it from then on.
+    fn written_to_after_its_read() -> (Hold, Receiver<Vec<String>>, UnixStream) {
+        let (mut hold, consumer, told, theirs) = a_consumer(8);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        hold.written("dunwich", later(1));
+        hold.watch(consumer, &watching_dunwich(), later(2))
+            .expect("dunwich is read");
+        (hold, told, theirs)
+    }
+
+    /// A watch after a write is sent the beads it starts from, and is not
+    /// told how current they are, which would close its answer on the beads
+    /// as they were before the write. A read begun before the write, such as
+    /// the one in flight when it was told, is no answer to it either.
+    #[test]
+    fn a_watch_after_a_write_is_told_how_current_only_by_a_read_begun_since() {
+        let (mut hold, told, _theirs) = written_to_after_its_read();
+        let at_once = kinds(&told);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        let after_an_older_read = kinds(&told);
+        hold.take(read("dunwich", later(3), &["dun-1"]));
+
+        assert_eq!(at_once, [["bead"]]);
+        assert_eq!(after_an_older_read, Vec::<Vec<String>>::new());
+        assert_eq!(kinds(&told), [["freshness"]]);
+    }
+
+    /// A write that changed nothing a read can see leaves the beads held
+    /// standing, so a read begun since that finds nothing moved answers.
+    #[test]
+    fn a_read_since_a_write_that_finds_nothing_moved_answers_the_watch() {
+        let (mut hold, told, _theirs) = written_to_after_its_read();
+        kinds(&told);
+
+        hold.take(said("dunwich", Said::Unmoved { at: later(3) }));
+
+        assert_eq!(kinds(&told), [["freshness"]]);
+    }
+
+    /// A producer covering the project says nothing has moved, which a write
+    /// `bdi` made has just made untrue.
+    #[test]
+    fn a_producer_vouching_after_a_write_does_not_answer_the_watch() {
+        let (mut hold, told, _theirs) = written_to_after_its_read();
+        kinds(&told);
+
+        hold.take(said("dunwich", Said::Vouched { at: later(3) }));
+
+        assert_eq!(kinds(&told), Vec::<Vec<String>>::new());
+    }
+
+    /// The read a write asked for failing leaves the beads as last read, and
+    /// the watch is told so rather than kept waiting for a read that is not
+    /// coming.
+    #[test]
+    fn a_tracker_unreachable_after_a_write_answers_the_watch_saying_so() {
+        let (mut hold, told, _theirs) = written_to_after_its_read();
+        kinds(&told);
+
+        hold.take(said("dunwich", Said::Unreachable(TrackerFailure::Auth)));
+
+        assert_eq!(kinds(&told), [["freshness"]]);
+    }
+
+    /// The write is said to the hold after the source has been told of it,
+    /// so the read it asked for can come back first, and then it holds
+    /// nothing up.
+    #[test]
+    fn a_write_said_after_the_read_it_asked_for_came_back_holds_nothing() {
+        let (mut hold, consumer, told, _theirs) = a_consumer(4);
+        hold.take(read("dunwich", later(2), &["dun-1"]));
+
+        hold.written("dunwich", later(1));
+        hold.watch(consumer, &watching_dunwich(), later(3))
+            .expect("dunwich is read");
+
+        assert_eq!(kinds(&told), [["bead", "freshness"]]);
     }
 
     /// Each line sent so far, as its kind and the project it is about.

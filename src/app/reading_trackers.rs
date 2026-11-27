@@ -63,7 +63,7 @@ impl Refreshing {
         heard
             .into_iter()
             .filter_map(|heard| match heard {
-                Heard::Changed(project) => {
+                Heard::Changed(project) | Heard::Written(project) => {
                     self.outstanding.ask(Wanted::Project(project), now);
                     None
                 }

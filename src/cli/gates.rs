@@ -239,7 +239,10 @@ struct Passing {
 
 impl changes::Report for Passing {
     fn report(&self, heard: changes::Heard) -> bool {
-        let changed = matches!(heard, changes::Heard::Changed(_));
+        let changed = matches!(
+            heard,
+            changes::Heard::Changed(_) | changes::Heard::Written(_)
+        );
         self.heard.send(heard).is_ok() && (!changed || self.wake.send(Woken::Changed).is_ok())
     }
 }

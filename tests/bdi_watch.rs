@@ -652,6 +652,79 @@ fn a_write_through_bdi_bd_has_the_watcher_read_its_project_again() {
     }
 }
 
+/// The status a one-shot's `--json` answer gives bead `id`.
+fn status_in(written: &Value, id: &str) -> Option<String> {
+    let mut found = None;
+    let mut looking = vec![written];
+    while let Some(value) = looking.pop() {
+        match value {
+            Value::Object(fields) if fields.get("id") == Some(&json!(id)) => {
+                found = fields
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+            }
+            Value::Object(fields) => looking.extend(fields.values()),
+            Value::Array(values) => looking.extend(values),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// A read through the watcher made straight after `bdi bd` writes shows the
+/// write, though the read the write asked for is still coming. The watcher
+/// holds the answer until that read is in, rather than answering with the
+/// beads as they were before the write.
+#[test]
+fn a_one_shot_straight_after_a_write_through_bdi_bd_shows_the_write_while_its_read_is_slow() {
+    const CLOSED: &str = "close dun-0tp.7";
+    let (home, tracker) = a_home_with_a_watcher_configured("written-slowly");
+    tracker.answers_with(CLOSED, "✓\n");
+    let watcher = watching_in(&home, &tracker);
+    tracker.hang_on(READ_IN_FULL);
+    tracker.holds(&the_described_subtree_with(|rows| {
+        closing(rows, "dun-0tp.7")
+    }));
+
+    let wrote = bdi_bd(&home, &tracker, CLOSED);
+    assert!(
+        wrote.status.success(),
+        "{}",
+        String::from_utf8_lossy(&wrote.stderr)
+    );
+    tracker.wait_until_holding(GIVING_UP);
+    let mut reading = Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .args(["--json", "--all"])
+        .current_dir(&home)
+        .env("HOME", &home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DOLT_PASSWORD")
+        .env_remove("BDI_PROJECT")
+        .envs(tracker.environment())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("bdi runs");
+    let answered_early = Instant::now() + Duration::from_secs(2);
+    while reading.try_wait().expect("the one-shot is ours").is_none()
+        && Instant::now() < answered_early
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    tracker.let_go();
+    let read = reading.wait_with_output().expect("the one-shot finishes");
+    stopped(watcher);
+
+    assert!(
+        read.status.success(),
+        "{}",
+        String::from_utf8_lossy(&read.stderr)
+    );
+    let written: Value = serde_json::from_slice(&read.stdout).expect("bdi writes JSON");
+    assert_eq!(status_in(&written, "dun-0tp.7").as_deref(), Some("closed"));
+}
+
 /// A board started before the watcher holds the changes socket, and the
 /// watcher takes it from the board: a push there reaches every board reading
 /// through the watcher, without waiting for this one to find the watcher.
