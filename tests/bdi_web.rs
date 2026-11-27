@@ -994,6 +994,72 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     );
 }
 
+/// A response kept through the bead going stays kept while the bead is
+/// back but needs no human, and is the one the page offers, with its words,
+/// once the bead needs a human again.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_kept_response_returns_with_its_write() {
+    let home = a_home_naming_one_project_settled(
+        "web-kept-response-returns",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let labelled = |labels: serde_json::Value| {
+        let mut rows: Vec<serde_json::Value> =
+            serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+        for row in &mut rows {
+            if row["id"] == A_BEAD_BENEATH.0 {
+                row["labels"] = labels.clone();
+            }
+        }
+        rows
+    };
+    let holding = |rows: &[serde_json::Value]| serde_json::to_string(rows).expect("rows serialise");
+    let needing_a_human = labelled(serde_json::json!(["human"]));
+    let (_web, address, tracker) = serving(&home, &holding(&needing_a_human), &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", A_BEAD_BENEATH.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+    let the_response = "[...document.querySelectorAll('#write-respond')].map((entry) => \
+         [entry.querySelector('textarea').value, entry.querySelector('.foot button').disabled, \
+          !!entry.closest('.writes')])";
+
+    let gone: Vec<serde_json::Value> = needing_a_human
+        .iter()
+        .filter(|row| row["id"] != A_BEAD_BENEATH.0)
+        .cloned()
+        .collect();
+    tracker.holds(&holding(&gone));
+    page.until("document.querySelector('aside>p.missing')", GIVING_UP);
+    tracker.holds(&holding(&labelled(serde_json::json!([]))));
+    page.until("document.querySelector('aside .page')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(the_response),
+        serde_json::json!([["carbide", true, false]]),
+        "the response stays kept while the bead needs no human"
+    );
+
+    tracker.holds(&holding(&needing_a_human));
+    page.until(
+        "document.querySelector('.writes #write-respond')",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(the_response),
+        serde_json::json!([["carbide", false, true]]),
+        "the kept response is the one the page offers"
+    );
+}
+
 /// Ctrl+Enter or Escape pressed while an input method is still composing
 /// what it types is the input method's: it makes no write, and leaves the
 /// entry open.

@@ -2374,10 +2374,11 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     return null;
   };
   const drawnIn = (drawn, at) => at.matches("aside") ? drawn.querySelector("aside") : drawn.getElementById(at.id);
+  const entriesIn = (node) =>
+    node.matches?.("details[data-key]") ? [node] : [...(node.querySelectorAll?.("details[data-key]") ?? [])];
   const drop = (gone) => {
     const next = gone.nextSibling;
-    const entries = gone.matches?.("details[data-key]") ? [gone] : [...(gone.querySelectorAll?.("details[data-key]") ?? [])];
-    const kept = entries.filter(holdsWords);
+    const kept = entriesIn(gone).filter(holdsWords);
     for (const entry of kept) {
       for (const button of entry.querySelectorAll("button")) button.disabled = true;
       if (entry !== gone) gone.before(entry);
@@ -2386,11 +2387,12 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     return next;
   };
   const keepingWords = (coming) => {
-    for (const fresh of coming.querySelectorAll?.("details[data-key]") ?? []) {
+    for (const fresh of entriesIn(coming)) {
       const kept = document.getElementById(fresh.id);
       if (!kept) continue;
       if (kept.open) for (const resting of coming.querySelectorAll("details[name=write][open]")) resting.open = false;
       reconcile(kept, fresh);
+      if (fresh === coming) return kept;
       fresh.replaceWith(kept);
     }
     return coming;
@@ -2426,8 +2428,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
         if (between !== match) now.insertBefore(match, at);
         else while (at !== match) at = drop(at);
       }
-      if (match === at) at = at.nextSibling;
       reconcile(match, want);
+      at = match.nextSibling;
     }
     while (at) at = drop(at);
   };
@@ -2464,7 +2466,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 /// keeps the entry though the page no longer offers its write, or no longer
 /// shows the bead at all, with its buttons disabled until the write is
 /// offered again, when the kept entry takes the place of the one drawn
-/// afresh, and stays open over the entry the page would open on. A field
+/// afresh, and stays open over the entry the page would open on. Drawing
+/// one element again can take a kept entry back from beside it, so a redraw
+/// reads where to go next only once it has drawn the element it is on. A
+/// field
 /// being typed in keeps the focus and the cursor through
 /// the move. Escape does not close the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
