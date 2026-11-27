@@ -994,11 +994,12 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     );
 }
 
-/// Ctrl+Enter pressed while an input method is still composing what it
-/// types is the input method's, and makes no write.
+/// Ctrl+Enter or Escape pressed while an input method is still composing
+/// what it types is the input method's: it makes no write, and leaves the
+/// entry open.
 #[cfg(target_os = "linux")]
 #[test]
-fn ctrl_enter_while_composing_makes_no_write() {
+fn a_key_pressed_while_composing_is_the_input_methods() {
     let home = a_home_naming_one_project_settled("web-write-composing", WRITES_AS_CARTER);
     let tracker = a_tracker_taking_the_comment(&home);
     let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
@@ -1028,6 +1029,46 @@ fn ctrl_enter_while_composing_makes_no_write() {
             page.evaluate("document.querySelector('#write-comment textarea')?.value")
         ),
         (false, serde_json::json!("the gate is shut")),
+    );
+
+    page.evaluate(
+        "const empty = document.querySelector('#write-comment textarea'); empty.value = ''; \
+         empty.dispatchEvent(new KeyboardEvent('keydown', \
+           { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }))",
+    );
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-comment').open, \
+              document.activeElement === document.querySelector('#write-comment textarea')]"
+        ),
+        serde_json::json!([true, true]),
+    );
+}
+
+/// The priority's choices fit the narrowest phone, so opening them moves
+/// nothing off the screen.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_priority_choices_fit_the_narrowest_phone() {
+    let home = a_home_naming_one_project_settled("web-priority-on-a-phone", WRITES_AS_CARTER);
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        280,
+        640,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-priority')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-priority').open = true");
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-priority form').getBoundingClientRect().right <= innerWidth, \
+              document.documentElement.scrollWidth <= innerWidth]"
+        ),
+        serde_json::json!([true, true]),
     );
 }
 

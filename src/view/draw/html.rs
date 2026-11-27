@@ -2190,6 +2190,7 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .writes .along{flex-wrap:wrap}.writes .along input{flex:1 0 100%}.writes .along button{height:48px}\
 .writes .foot>button{flex:1 0 100%}\
 .fields .set>summary{margin:-10px -8px;padding:10px 6px 10px 8px}\
+.fields .set>form{flex-wrap:wrap;box-sizing:border-box;max-width:calc(100vw - 16px)}\
 .fields .set button{width:52px;height:44px;font-size:var(--size-row-phone)}}\
 :is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
@@ -2476,8 +2477,9 @@ const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
 /// or entry before the bead, though not the entry the page opened on unless
 /// the focus is in it. It never closes a bead while a write's field holds
 /// words, so no words typed are lost, and an Escape held down acts once.
+/// An Escape an input method is still composing with is the input method's.
 const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || event.defaultPrevented || event.repeat) return;
+  if (event.key !== "Escape" || event.defaultPrevented || event.repeat || event.isComposing) return;
   if (event.target.matches?.("input,textarea,select")) {
     const entry = event.target.closest("details");
     if (!entry || event.target.value) return;
