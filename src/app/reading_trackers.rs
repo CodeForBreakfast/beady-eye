@@ -192,8 +192,10 @@ impl ReadingTrackers {
         self.lapsed = lapsed;
     }
 
-    /// Make the read whose turn has come, where one has.
-    fn read_what_is_due(&mut self, now: DateTime<Utc>) -> bool {
+    /// Make the read whose turn has come, where one has, dated by when it
+    /// begins, which is after every report it carries was heard.
+    fn read_what_is_due(&mut self) -> bool {
+        let now = Utc::now();
         let Some(wanted) = self.refresh.due(now) else {
             return false;
         };
@@ -229,7 +231,7 @@ impl ChangeSource for ReadingTrackers {
             if let Some(answer) = self.told.pop_front() {
                 return Some(answer);
             }
-            if self.read_what_is_due(now) {
+            if self.read_what_is_due() {
                 continue;
             }
             if !self.refresh.wait(now, None) {
@@ -504,7 +506,7 @@ mod tests {
         assert!(
             (0..10).any(|_| {
                 let answer = source.next().expect("dunwich was read again");
-                answer.project == "dunwich" && matches!(answer.said, Said::Unreachable(_))
+                answer.project == "dunwich" && matches!(answer.said, Said::Unreachable { .. })
             }),
             "dunwich was never read again once a producer covered it"
         );

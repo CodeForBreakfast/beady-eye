@@ -493,8 +493,10 @@ impl Collection {
                     self.answered.insert(project.clone(), differing);
                     said
                 }
-                Err(failure) => (found == Some(Found::Moved))
-                    .then(|| watcher::Said::Unreachable(failure.clone())),
+                Err(failure) => (found == Some(Found::Moved)).then(|| watcher::Said::Unreachable {
+                    at: read.at,
+                    failure: failure.clone(),
+                }),
             };
             let said = said.or_else(|| {
                 (found == Some(Found::Unmoved)).then_some(watcher::Said::Unmoved { at: read.at })
@@ -4331,7 +4333,10 @@ prefix = "kad"
         assert_eq!(said, [("dunwich", false), ("ferry", true)]);
         assert!(matches!(
             answers[0].said,
-            watcher::Said::Unreachable(TrackerFailure::Auth)
+            watcher::Said::Unreachable {
+                failure: TrackerFailure::Auth,
+                ..
+            }
         ));
     }
 
@@ -4368,7 +4373,7 @@ prefix = "kad"
                     watcher::Said::Read { .. } => "read",
                     watcher::Said::Vouched { .. } => "vouched",
                     watcher::Said::Unmoved { .. } => "unmoved",
-                    watcher::Said::Unreachable(_) => "unreachable",
+                    watcher::Said::Unreachable { .. } => "unreachable",
                     watcher::Said::Lapsed => "lapsed",
                 };
                 (answer.project.as_str(), said)

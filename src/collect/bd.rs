@@ -3517,7 +3517,7 @@ mod tests {
         )
         .expect("the write is made");
 
-        assert_eq!(heard.try_recv(), Ok("arkham".to_string()));
+        assert_eq!(heard.try_recv(), Ok("written arkham".to_string()));
         assert!(
             ran.ends_with("comments add -- ark-1 one more thing"),
             "{ran}"

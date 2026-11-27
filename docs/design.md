@@ -2038,7 +2038,7 @@ consumer closes its answer on the beads as they stood before the write. A
 read through the watcher made after the write therefore shows it, however
 long the read takes, and a view shows it when that read comes back. A read
 that finds nothing moved answers too, since a write can change nothing a read
-sees, and so does the tracker going unreachable. A producer's `covered` line
+sees, and so does one that fails to reach the tracker. A producer's `covered` line
 does not, because it vouches that nothing has moved. A write bd refused tells
 the watcher nothing. Where no
 watcher answers, the write is made as it would be with none, and nothing is

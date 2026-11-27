@@ -87,10 +87,13 @@ pub enum Said {
     /// A read begun at `at` found nothing had moved since the beads held were
     /// read, so they stand.
     Unmoved { at: DateTime<Utc> },
-    /// The last attempt to reach the tracker failed. The beads held already
-    /// stand as the last known, and as old as when they were last vouched
-    /// for.
-    Unreachable(TrackerFailure),
+    /// The attempt to reach the tracker begun at `at` failed. The beads held
+    /// already stand as the last known, and as old as when they were last
+    /// vouched for.
+    Unreachable {
+        at: DateTime<Utc>,
+        failure: TrackerFailure,
+    },
     /// Nothing has vouched for the project for `[changes]
     /// covered_for_seconds`, and nothing polls it. The beads held already
     /// stand as the last known until a read or a vouch comes.
@@ -253,9 +256,11 @@ impl Hold {
                 standing.looked_at = standing.looked_at.max(Some(at));
                 standing.lapsed = false;
             }
-            Said::Unreachable(failure) => {
+            Said::Unreachable { at, failure } => {
                 standing.unreachable = Some(failure);
-                standing.written_at = None;
+                if standing.written_at <= Some(at) {
+                    standing.written_at = None;
+                }
             }
             Said::Lapsed => standing.lapsed = true,
         }
@@ -693,7 +698,10 @@ mod tests {
 
         hold.take(said(
             "dunwich",
-            Said::Unreachable(TrackerFailure::Unavailable),
+            Said::Unreachable {
+                at: later(30),
+                failure: TrackerFailure::Unavailable,
+            },
         ));
 
         let standing = hold.of("dunwich").expect("dunwich was read");
@@ -707,7 +715,10 @@ mod tests {
         let mut hold = Hold::default();
         hold.take(said(
             "dunwich",
-            Said::Unreachable(TrackerFailure::Unavailable),
+            Said::Unreachable {
+                at: now(),
+                failure: TrackerFailure::Unavailable,
+            },
         ));
 
         hold.take(read("dunwich", later(30), &[]));
@@ -851,7 +862,13 @@ mod tests {
         hold.watch(consumer, &watching_dunwich(), now())
             .expect("dunwich is read");
 
-        hold.take(said("dunwich", Said::Unreachable(TrackerFailure::Auth)));
+        hold.take(said(
+            "dunwich",
+            Said::Unreachable {
+                at: now(),
+                failure: TrackerFailure::Auth,
+            },
+        ));
 
         let batch = told.try_recv().expect("a batch");
         let line: serde_json::Value = serde_json::from_str(&batch[0]).expect("JSON");
@@ -959,9 +976,34 @@ mod tests {
         let (mut hold, told, _theirs) = written_to_after_its_read();
         kinds(&told);
 
-        hold.take(said("dunwich", Said::Unreachable(TrackerFailure::Auth)));
+        hold.take(said(
+            "dunwich",
+            Said::Unreachable {
+                at: later(3),
+                failure: TrackerFailure::Auth,
+            },
+        ));
 
         assert_eq!(kinds(&told), [["freshness"]]);
+    }
+
+    /// A read begun before the write, such as the one in flight when it was
+    /// told, failing says nothing of the write, so the watch waits on for
+    /// the read the write asked for.
+    #[test]
+    fn a_read_begun_before_a_write_failing_does_not_answer_the_watch() {
+        let (mut hold, told, _theirs) = written_to_after_its_read();
+        kinds(&told);
+
+        hold.take(said(
+            "dunwich",
+            Said::Unreachable {
+                at: now(),
+                failure: TrackerFailure::Auth,
+            },
+        ));
+
+        assert_eq!(kinds(&told), Vec::<Vec<String>>::new());
     }
 
     /// The write is said to the hold after the source has been told of it,
