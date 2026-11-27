@@ -873,6 +873,49 @@ fn a_redraw_keeps_an_entry_holding_words() {
     );
 }
 
+/// A response a redraw brings, because the bead has come to need a human,
+/// does not open over an entry the reader has open: the comment being typed
+/// stays open with its words, and the response waits shut. The browser
+/// shuts an open entry inserted beside another open one of the same name.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_response_a_redraw_brings_leaves_the_open_entry_open() {
+    let home = a_home_naming_one_project_settled(
+        "web-redraw-brings-a-response",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    page.press("m", false);
+    page.until(
+        "document.activeElement === document.querySelector('#write-comment textarea')",
+        GIVING_UP,
+    );
+    page.type_text("the gate is shut");
+
+    tracker.holds(&with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    }));
+    page.until("document.querySelector('#write-respond')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-comment').open, \
+              document.querySelector('#write-comment textarea').value, \
+              document.querySelector('#write-respond').open]"
+        ),
+        serde_json::json!([true, "the gate is shut", false]),
+    );
+}
+
 /// Ctrl+Enter pressed while an input method is still composing what it
 /// types is the input method's, and makes no write.
 #[cfg(target_os = "linux")]
