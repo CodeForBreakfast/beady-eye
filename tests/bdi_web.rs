@@ -916,6 +916,58 @@ fn a_response_a_redraw_brings_leaves_the_open_entry_open() {
     );
 }
 
+/// Words typed into a write survive a redraw that finds the bead gone:
+/// the entry stays beside the notice that says so, making no write. Once the
+/// bead is back, the entry holding the words is the one its page shows, and
+/// it writes again.
+#[cfg(target_os = "linux")]
+#[test]
+fn words_typed_survive_the_bead_going_and_coming_back() {
+    let home = a_home_naming_one_project_settled(
+        "web-bead-goes-and-comes-back",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", A_BEAD_BENEATH.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    page.press("m", false);
+    page.until(
+        "document.activeElement === document.querySelector('#write-comment textarea')",
+        GIVING_UP,
+    );
+    page.type_text("the gate is shut");
+    let the_comment = "[...document.querySelectorAll('#write-comment')].map((entry) => \
+         [entry.querySelector('textarea').value, entry.querySelector('.foot button').disabled, \
+          !!entry.closest('.writes')])";
+
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+    rows.retain(|row| row["id"] != A_BEAD_BENEATH.0);
+    tracker.holds(&serde_json::to_string(&rows).expect("rows serialise"));
+    page.until("document.querySelector('aside>p.missing')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(the_comment),
+        serde_json::json!([["the gate is shut", true, false]]),
+        "the words stay beside the notice, and make no write"
+    );
+
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    page.until("document.querySelector('aside .page')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(the_comment),
+        serde_json::json!([["the gate is shut", false, true]]),
+        "the bead's page shows the entry holding the words, and it writes again"
+    );
+}
+
 /// Ctrl+Enter pressed while an input method is still composing what it
 /// types is the input method's, and makes no write.
 #[cfg(target_os = "linux")]

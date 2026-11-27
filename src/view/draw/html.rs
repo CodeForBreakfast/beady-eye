@@ -2375,9 +2375,23 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const drawnIn = (drawn, at) => at.matches("aside") ? drawn.querySelector("aside") : drawn.getElementById(at.id);
   const drop = (gone) => {
     const next = gone.nextSibling;
-    if (!(gone.matches?.("details[data-key]") && holdsWords(gone))) gone.remove();
-    else for (const button of gone.querySelectorAll("button")) button.disabled = true;
+    const entries = gone.matches?.("details[data-key]") ? [gone] : [...(gone.querySelectorAll?.("details[data-key]") ?? [])];
+    const kept = entries.filter(holdsWords);
+    for (const entry of kept) {
+      for (const button of entry.querySelectorAll("button")) button.disabled = true;
+      if (entry !== gone) gone.before(entry);
+    }
+    if (!kept.includes(gone)) gone.remove();
     return next;
+  };
+  const keepingWords = (coming) => {
+    for (const fresh of coming.querySelectorAll?.("details[data-key]") ?? []) {
+      const kept = document.getElementById(fresh.id);
+      if (!kept) continue;
+      reconcile(kept, fresh);
+      fresh.replaceWith(kept);
+    }
+    return coming;
   };
   const key = (at) => at.id || (at.firstElementChild?.id && " " + at.firstElementChild.id) || "";
   const same = (now, next) => now.nodeType === next.nodeType && now.nodeName === next.nodeName && !key(now) && !key(next);
@@ -2401,7 +2415,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     for (const want of [...next.childNodes]) {
       const match = key(want) ? kept.get(key(want)) : nextLike(at, want, wanted);
       if (!match) {
-        now.insertBefore(want, at);
+        now.insertBefore(keepingWords(want), at);
         continue;
       }
       if (match !== at) {
@@ -2438,10 +2452,11 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 });"##;
 
 /// The part of the page's script that says whether a write's entry holds
-/// words the reader typed, which nothing the page does may lose: a redraw
-/// keeps the entry though the page no longer offers its write, with its
-/// buttons disabled until it offers the write again, and Escape does not
-/// close the bead.
+/// words the reader typed, which nothing the page does may lose. A redraw
+/// keeps the entry though the page no longer offers its write, or no longer
+/// shows the bead at all, with its buttons disabled until the write is
+/// offered again, when the kept entry takes the place of the one drawn
+/// afresh. Escape does not close the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
   [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
 "##;
