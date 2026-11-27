@@ -776,6 +776,50 @@ fn escape_never_takes_the_reader_away_from_words_typed() {
     );
 }
 
+/// A write's entry holding words stays as the page is kept current, though
+/// the bead has changed so the page no longer offers that write. An entry
+/// holding no words goes.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_redraw_keeps_an_entry_holding_words() {
+    let home = a_home_naming_one_project_settled(
+        "web-redraw-keeps-words",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+
+    tracker.holds(&with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["priority"] = 0.into();
+    }));
+    page.until(
+        "document.querySelector('#write-priority>summary').textContent === 'P0'",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-respond textarea')?.value, \
+              !!document.querySelector('#write-dismiss')]"
+        ),
+        serde_json::json!(["carbide", false]),
+        "the response keeps its words, and the dismissal goes"
+    );
+}
+
 /// `capture`, with dun-0tp as `change` leaves it.
 fn with_the_root_changed(capture: &str, change: impl Fn(&mut serde_json::Value)) -> String {
     let mut rows: Vec<serde_json::Value> =

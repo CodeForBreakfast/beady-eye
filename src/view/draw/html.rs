@@ -386,7 +386,7 @@ fn head(title: &str, version: Option<&str>) -> String {
         Some(version) => (
             format!("{VERSION}{version}\""),
             format!(
-                "<script>{IN_READERS_ZONE}{SHORTENS}{KEPT_CURRENT}{ESCAPE_CLOSES}{WRITES_BY_KEY}{COPIES}</script>"
+                "<script>{IN_READERS_ZONE}{WORDS_TYPED}{SHORTENS}{KEPT_CURRENT}{ESCAPE_CLOSES}{WRITES_BY_KEY}{COPIES}</script>"
             ),
         ),
         None => (String::new(), String::new()),
@@ -1116,8 +1116,11 @@ impl Drawing<'_> {
         }
         if let Some(tokens) = &self.writes {
             let key = node.key();
+            // A page kept current matches an element without an id by its
+            // first child's, so without its own the row would be drawn anew
+            // once its first write no longer applied, words typed and all.
             html.push_str(&format!(
-                "<div class=\"writes\" role=\"group\" aria-label=\"{}\">",
+                "<div id=\"writes\" class=\"writes\" role=\"group\" aria-label=\"{}\">",
                 escaped(phrase::write_to_this_bead())
             ));
             for write in ROW.into_iter().filter(|&write| applies(write, node)) {
@@ -2365,7 +2368,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const drawnIn = (drawn, at) => at.matches("aside") ? drawn.querySelector("aside") : drawn.getElementById(at.id);
   const drop = (gone) => {
     const next = gone.nextSibling;
-    gone.remove();
+    if (!(gone.matches?.("details[data-key]") && holdsWords(gone))) gone.remove();
     return next;
   };
   const key = (at) => at.id || (at.firstElementChild?.id && " " + at.firstElementChild.id) || "";
@@ -2426,6 +2429,14 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   };
 });"##;
 
+/// The part of the page's script that says whether a write's entry holds
+/// words the reader typed, which nothing the page does may lose: a redraw
+/// keeps the entry though the page no longer offers its write, and Escape
+/// does not close the bead.
+const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
+  [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
+"##;
+
 /// The part of the page's script that closes an open bead on Escape, as
 /// its close link does. Escape is left to a field being typed in, but for
 /// an empty one in a write's entry, which it closes. It closes an open menu
@@ -2447,8 +2458,7 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
     menu.querySelector("summary").focus();
     return;
   }
-  const fields = document.querySelectorAll("aside details[data-key] :is(textarea,input:not([type=hidden]))");
-  if ([...fields].some((field) => field.value)) return;
+  if ([...document.querySelectorAll("aside details[data-key]")].some(holdsWords)) return;
   const close = document.querySelector("aside>a.close");
   if (close) location.assign(close.href);
 });"##;
