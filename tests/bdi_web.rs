@@ -562,8 +562,9 @@ fn opening_a_page_that_takes_writes_sends_it_once() {
 /// Each write's entry on a writable bead's page opens from the keyboard:
 /// by the key the terminal makes the write with, as soon as the page opens,
 /// or by Enter on its button, and either moves to its first control: the
-/// field it is typed in, or a deferral's first day to pick. Escape held
-/// down shuts the entry and goes no further. A
+/// field it is typed in, or a deferral's first day to pick. The key held
+/// down types nothing into the field, and Escape held down shuts the entry
+/// and goes no further. A
 /// letter typed while the focus is in the forest, or nowhere, opens
 /// nothing. Escape in the empty field shuts
 /// the entry and goes back to its button, and in a field holding words it
@@ -635,6 +636,14 @@ fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
         serde_json::json!(format!("/arkham/{}", THE_ROOT.0)),
         "Escape held down shuts the entry and stays on the bead"
     );
+    page.hold("m");
+    page.until(in_the_comment, GIVING_UP);
+    assert_eq!(
+        page.evaluate("document.activeElement.value"),
+        serde_json::json!(""),
+        "the key held down to open the comment types nothing into it"
+    );
+    page.press("Escape", false);
     page.press("z", false);
     page.until(
         "document.querySelector('#write-defer').open \
@@ -918,9 +927,11 @@ fn a_response_a_redraw_brings_leaves_the_open_entry_open() {
 
 /// Words typed into a write survive a redraw that finds the bead gone:
 /// the entry stays beside the notice that says so, making no write. Once the
-/// bead is back, the entry holding the words is the one its page shows, and
-/// it writes again. Through both, the cursor stays where the reader left it,
-/// so what they type next goes on the end of the words.
+/// bead is back, the entry holding the words is the one its page shows,
+/// open, and it writes again, though the bead now needs a human and its page
+/// would otherwise open on the response. Through both, the cursor stays
+/// where the reader left it, so what they type next goes on the end of the
+/// words.
 #[cfg(target_os = "linux")]
 #[test]
 fn words_typed_survive_the_bead_going_and_coming_back() {
@@ -947,7 +958,7 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     page.type_text("the gate is shut");
     let the_comment = "[...document.querySelectorAll('#write-comment')].map((entry) => \
          [entry.querySelector('textarea').value, entry.querySelector('.foot button').disabled, \
-          !!entry.closest('.writes'), \
+          !!entry.closest('.writes'), entry.open, \
           document.activeElement === entry.querySelector('textarea') \
             && document.activeElement.selectionStart === document.activeElement.value.length])";
 
@@ -958,15 +969,27 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     page.until("document.querySelector('aside>p.missing')", GIVING_UP);
     assert_eq!(
         page.evaluate(the_comment),
-        serde_json::json!([["the gate is shut", true, false, true]]),
+        serde_json::json!([["the gate is shut", true, false, true, true]]),
         "the words stay beside the notice, and make no write"
     );
 
-    tracker.holds(THE_DESCRIBED_SUBTREE);
-    page.until("document.querySelector('aside .page')", GIVING_UP);
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+    for row in &mut rows {
+        if row["id"] == A_BEAD_BENEATH.0 {
+            row["labels"] = serde_json::json!(["human"]);
+        }
+    }
+    tracker.holds(&serde_json::to_string(&rows).expect("rows serialise"));
+    page.until(
+        "document.querySelector('aside .page #write-respond')",
+        GIVING_UP,
+    );
     assert_eq!(
-        page.evaluate(the_comment),
-        serde_json::json!([["the gate is shut", false, true, true]]),
+        page.evaluate(&format!(
+            "[{the_comment}, document.querySelector('#write-respond').open]"
+        )),
+        serde_json::json!([[["the gate is shut", false, true, true, true]], false]),
         "the bead's page shows the entry holding the words, and it writes again"
     );
 }

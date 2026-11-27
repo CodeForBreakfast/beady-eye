@@ -2388,6 +2388,7 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     for (const fresh of coming.querySelectorAll?.("details[data-key]") ?? []) {
       const kept = document.getElementById(fresh.id);
       if (!kept) continue;
+      if (kept.open) for (const resting of coming.querySelectorAll("details[name=write][open]")) resting.open = false;
       reconcile(kept, fresh);
       fresh.replaceWith(kept);
     }
@@ -2462,7 +2463,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 /// keeps the entry though the page no longer offers its write, or no longer
 /// shows the bead at all, with its buttons disabled until the write is
 /// offered again, when the kept entry takes the place of the one drawn
-/// afresh. A field being typed in keeps the focus and the cursor through
+/// afresh, and stays open over the entry the page would open on. A field
+/// being typed in keeps the focus and the cursor through
 /// the move. Escape does not close the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
   [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
@@ -2508,7 +2510,8 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// a new line, unless the write's button is disabled or an input method is
 /// still composing what it types. Enter held down makes no write: the press
 /// that opened an entry and moved to its button is not also the press that
-/// writes.
+/// writes. Nor does the key that opened an entry, held down, type itself
+/// into the field.
 const WRITES_BY_KEY: &str = r##"{
   const focusThePanel = () =>
     document.activeElement === document.body && document.querySelector("aside")?.focus({ preventScroll: true });
@@ -2516,9 +2519,12 @@ const WRITES_BY_KEY: &str = r##"{
   addEventListener("load", focusThePanel);
   const cursorInto = (entry) =>
     entry.querySelector(":is(textarea,input:not([type=hidden]),button:not([disabled])):not(summary *)")?.focus();
+  let opening = null;
+  addEventListener("keyup", (event) => event.code === opening && (opening = null));
   addEventListener("keydown", (event) => {
     const { target, key } = event;
     if (event.defaultPrevented || event.isComposing) return;
+    if (event.repeat && event.code === opening) return event.preventDefault();
     const typingLines = target.matches?.("textarea") && !(event.ctrlKey || event.metaKey);
     if (event.repeat && key === "Enter" && target.closest?.("aside details[data-key]") && !typingLines) {
       return event.preventDefault();
@@ -2533,6 +2539,7 @@ const WRITES_BY_KEY: &str = r##"{
     const entry = key.length === 1 && document.querySelector(`aside details[data-key="${CSS.escape(key)}"]`);
     if (!entry) return;
     event.preventDefault();
+    opening = event.code;
     entry.open = true;
     cursorInto(entry);
   });
