@@ -549,11 +549,14 @@ pub fn serve(
                 .map(|refusal| watching::refused_line(line, refusal)),
             _ => {
                 let told_at = Utc::now();
+                // Held while the source is told, so the read a write asks
+                // for cannot come back before the write is recorded.
+                let mut held = locked(hold);
                 let Some(answer) = changes::answered(message, reported, changed) else {
                     return false;
                 };
                 if let changes::Answer::Watched(Heard::Written(project)) = &answer {
-                    locked(hold).written(project, told_at);
+                    held.written(project, told_at);
                 }
                 Some(answer.to_string())
             }

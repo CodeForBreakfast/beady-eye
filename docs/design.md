@@ -2035,8 +2035,9 @@ most to connect and for the watcher's answer. The watcher reads the project
 again, as it does for a bare name. Until a read begun since that line comes
 back, it tells no watch of the project how current the project is, so no
 consumer closes its answer on the beads as they stood before the write. A
-read through the watcher made after the write therefore shows it, however
-long the read takes, and a view shows it when that read comes back. A read
+read through the watcher made after the write therefore shows it, and a view
+shows it when that read comes back. A consumer still gives up on a watcher
+that leaves a project unanswered for a minute, and reads the tracker itself. A read
 that finds nothing moved answers too, since a write can change nothing a read
 sees, and so does one that fails to reach the tracker. A producer's `covered` line
 does not, because it vouches that nothing has moved. A write bd refused tells
