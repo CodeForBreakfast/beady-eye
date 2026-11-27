@@ -694,6 +694,7 @@ fn a_one_shot_straight_after_a_write_through_bdi_bd_shows_the_write_while_its_re
         String::from_utf8_lossy(&wrote.stderr)
     );
     tracker.wait_until_holding(GIVING_UP);
+    let read_by_the_watcher = reads_in_full(&tracker);
     let mut reading = Command::new(env!("CARGO_BIN_EXE_bdi"))
         .args(["--json", "--all"])
         .current_dir(&home)
@@ -723,6 +724,11 @@ fn a_one_shot_straight_after_a_write_through_bdi_bd_shows_the_write_while_its_re
     );
     let written: Value = serde_json::from_slice(&read.stdout).expect("bdi writes JSON");
     assert_eq!(status_in(&written, "dun-0tp.7").as_deref(), Some("closed"));
+    assert_eq!(
+        reads_in_full(&tracker),
+        read_by_the_watcher,
+        "the one-shot read the tracker itself"
+    );
 }
 
 /// A board started before the watcher holds the changes socket, and the
