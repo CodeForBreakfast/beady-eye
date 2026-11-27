@@ -4745,8 +4745,8 @@ flags no claim with no live agent. Each write rests as a button in a row at
 the end of the page, and the priority as a button in its cell. Pressing one
 opens its form, and only the button inside the form writes, so a stray tap
 on a phone writes nothing. The terminal's key for a write opens its form,
-while the focus is on the bead or nowhere, so a letter typed elsewhere on
-the page opens nothing. Each write is made as the one actor `[web] actor`
+while the focus is in the bead's panel, which takes the focus as the page
+opens, so a letter typed elsewhere on the page opens nothing. Each write is made as the one actor `[web] actor`
 names, passed to bd as `--actor`, and a run started with `--writes` and
 no actor refuses to start. A write that lands sends the reader back to the
 bead's page with `303 See Other`, and asks for the project to be read again

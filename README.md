@@ -273,8 +273,8 @@ The page decides from the bead's status and labels alone. It never offers to
 release a claim, since it sees no agents. Each write rests as a button in a row
 at the end of the bead's page, and the priority as a button in its cell.
 Pressing one opens its form, and only the button inside the form writes. The
-key the terminal makes a write with opens its form too, while the focus is on
-the bead or nowhere.
+key the terminal makes a write with opens its form too, while the focus is in
+the bead's panel, which takes the focus as the page opens.
 
 Anyone who can reach the address can make the writes. Every write is made as
 the one actor [`[web] actor`](docs/configuration.md#web) names, and a writable

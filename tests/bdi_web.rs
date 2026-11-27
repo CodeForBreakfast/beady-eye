@@ -259,7 +259,7 @@ fn a_beads_address_answers_with_that_bead_shown() {
     let (_web, address) = a_web_over_the_tracker("web-bead", &[]);
     let (status, body) = get(&address, &format!("/arkham/{}", A_BEAD_BENEATH.0));
     assert_eq!(status, "HTTP/1.1 200 OK");
-    let aside = &body[body.find("<aside>").expect("the bead view is drawn")..];
+    let aside = &body[body.find("<aside").expect("the bead view is drawn")..];
     assert!(aside.contains(A_BEAD_BENEATH.1), "{aside}");
     // The root rests shut, so the page opened it to reach the bead, and the
     // link keeps it open.
@@ -560,10 +560,10 @@ fn opening_a_page_that_takes_writes_sends_it_once() {
 }
 
 /// Each write's entry on a writable bead's page opens from the keyboard:
-/// by the key the terminal makes the write with, while the focus is in the
-/// bead's panel or nowhere, or by Enter on its button, and either puts the
-/// cursor in its field. A letter typed while the focus is in the forest
-/// opens nothing. Escape in the empty field shuts
+/// by the key the terminal makes the write with, as soon as the page opens,
+/// or by Enter on its button, and either puts the cursor in its field. A
+/// letter typed while the focus is in the forest, or nowhere, opens
+/// nothing. Escape in the empty field shuts
 /// the entry and goes back to its button, and in a field holding words it
 /// does nothing, so no words are lost. Ctrl+Enter makes the write a text
 /// area is typed for.
@@ -589,14 +589,6 @@ fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
     let on_its_button = "!document.querySelector('#write-comment').open \
          && document.activeElement === document.querySelector('#write-comment>summary')";
 
-    page.evaluate("document.querySelector('.forest a[href]').focus()");
-    page.press("m", false);
-    assert_eq!(
-        page.evaluate("document.querySelector('details[name=write][open]')"),
-        serde_json::Value::Null,
-        "a letter typed in the forest opens no write"
-    );
-    page.evaluate("document.activeElement.blur()");
     page.press("m", false);
     page.until(in_the_comment, GIVING_UP);
     page.press("Escape", false);
@@ -625,6 +617,27 @@ fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
             tracker.acted_calls()
         );
         std::thread::sleep(Duration::from_millis(50));
+    }
+
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment') \
+         && !document.querySelector('#write-comment textarea').value",
+        GIVING_UP,
+    );
+    for (focus, said) in [
+        (
+            "document.querySelector('.forest a[href]').focus()",
+            "in the forest",
+        ),
+        ("document.activeElement.blur()", "with the focus nowhere"),
+    ] {
+        page.evaluate(focus);
+        page.press("m", false);
+        assert_eq!(
+            page.evaluate("document.querySelector('details[name=write][open]')"),
+            serde_json::Value::Null,
+            "a letter typed {said} opens no write"
+        );
     }
 }
 

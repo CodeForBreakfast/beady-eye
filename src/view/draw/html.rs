@@ -65,6 +65,11 @@ pub struct Drawn {
     pub writes: Option<Tokens>,
 }
 
+/// The opening of the panel a bead's page shows the bead in. It can hold
+/// the focus, which the page's script gives it as the page opens, so the
+/// keys that open a write answer there and nowhere else.
+const OPENS_THE_PANEL: &str = "<aside tabindex=\"-1\">";
+
 /// The attribute of a kept-current page's root element that names its
 /// version, which its script asks for the changes since.
 const VERSION: &str = " data-version=\"";
@@ -109,7 +114,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     if let Some(key) = &asked.bead {
         let list = list_name(forest.list());
         html.push_str(&format!(
-            "<aside><a class=\"close\" href=\"{}\" aria-label=\"{}\">{}</a>\n",
+            "{OPENS_THE_PANEL}<a class=\"close\" href=\"{}\" aria-label=\"{}\">{}</a>\n",
             escaped(&asked.closing(node.and(forest.place()), forest.list().is_some())),
             escaped(&phrase::back_to(&list)),
             escaped(&list)
@@ -148,8 +153,9 @@ const ROW: [Write; 6] = [
 ];
 
 /// What marks the entry a page opens on: open as it is drawn, which the
-/// page's script leaves to the reader from then on, and passed over by the
-/// first Escape, which closes the bead as it would on any other page.
+/// page's script leaves to the reader from then on, and passed over by an
+/// Escape pressed while the focus is outside it, which closes the bead as
+/// it would on any other page.
 const OPEN_AT_REST: &str = " open data-open-at-rest";
 
 /// The key that opens each write's entry on a writable bead's page, which is
@@ -1870,6 +1876,7 @@ border-radius:8px;background:none;color:var(--muted);font:500 var(--size-detail)
 .acts>:hover{background:var(--sunk);color:var(--fg)}\
 .acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
 aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
+aside:focus{outline:0}\
 .writes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:18px;padding-top:14px;\
 border-top:1px solid var(--line);white-space:normal;font-family:var(--body)}\
 .writes>details{display:contents}.writes>details::details-content{display:contents}\
@@ -2466,13 +2473,14 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// The part of the page's script that opens a write's entry by the key the
 /// terminal makes it with, and puts the cursor in the entry's field, as
 /// pressing its button does. A key opens an entry only while the focus is
-/// in the bead's panel or nowhere, so a letter typed elsewhere on the page,
-/// or by speech input, opens nothing. On a touch screen a deferral's entry
+/// in the bead's panel, which takes the focus as the page opens, so a
+/// letter typed elsewhere on the page, or by speech input, opens nothing. On a touch screen a deferral's entry
 /// leaves the keyboard down, so its days to pick stay in view. Ctrl+Enter
 /// makes the write a text area is typed for, where Enter starts a new line.
 /// Enter held down makes no write: the press that opened an entry and moved
 /// to its button is not also the press that writes.
 const WRITES_BY_KEY: &str = r##"{
+  addEventListener("DOMContentLoaded", () => document.querySelector("aside")?.focus({ preventScroll: true }));
   const cursorInto = (entry) => {
     if (entry.id === "write-defer" && matchMedia("(pointer:coarse)").matches) return;
     (entry.querySelector("textarea,input:not([type=hidden])") ?? entry.querySelector("button:not([disabled])"))?.focus();
@@ -2489,7 +2497,7 @@ const WRITES_BY_KEY: &str = r##"{
       return target.form.requestSubmit();
     }
     if (event.ctrlKey || event.metaKey || event.altKey || target.matches?.("input,textarea,select")) return;
-    if (target !== document.body && !target.closest?.("aside")) return;
+    if (!target.closest?.("aside")) return;
     const entry = key.length === 1 && document.querySelector(`aside details[data-key="${CSS.escape(key)}"]`);
     if (!entry) return;
     event.preventDefault();
@@ -3569,7 +3577,10 @@ mod tests {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
         assert!(html.contains(ESCAPE_CLOSES), "{html}");
         assert!(ESCAPE_CLOSES.contains("querySelector(\"aside>a.close\")"));
-        assert!(html.contains("<aside><a class=\"close\" href=\""), "{html}");
+        assert!(
+            html.contains(&format!("{OPENS_THE_PANEL}<a class=\"close\" href=\"")),
+            "{html}"
+        );
     }
 
     /// A menu does not close itself on Escape, so Escape closes an open
@@ -3964,7 +3975,7 @@ mod tests {
         terminal.select_line(parent);
         terminal.apply(Action::ToggleFold);
         assert_eq!(page_lines(&answer.html), terminal_lines(&terminal));
-        let aside = &answer.html[answer.html.find("<aside>").expect("the bead view")..];
+        let aside = &answer.html[answer.html.find(OPENS_THE_PANEL).expect("the bead view")..];
         assert!(text_of(aside).contains("apply the two niri settings"));
     }
 
@@ -4486,7 +4497,7 @@ mod tests {
 
     /// What a bead's page holds beside the forest.
     fn aside_of(html: &str) -> &str {
-        let open = html.find("<aside>").expect("the bead view") + "<aside>".len();
+        let open = html.find(OPENS_THE_PANEL).expect("the bead view") + OPENS_THE_PANEL.len();
         &html[open..html.find("</aside>").expect("the bead view ends")]
     }
 
@@ -5437,7 +5448,7 @@ mod tests {
     fn a_bead_said_to_be_ready_and_blocked_is_said_to_be_ready_as_the_terminal_says() {
         let snapshot = with_the_bead_changed(|bead| bead.ready = true);
         let html = page_of(snapshot, &address(&key("smt-4kd3p.6")));
-        let aside = &html[html.find("<aside>").expect("the bead view")..];
+        let aside = &html[html.find(OPENS_THE_PANEL).expect("the bead view")..];
         assert!(!aside.contains("class=\"waits\""), "{aside}");
         let state = inside(inside(aside, "head"), "state");
         assert_eq!(text_of(inside(state, "pill")), phrase::ready());
@@ -7840,7 +7851,7 @@ mod tests {
 
     /// The same of the references the bead view on `html` draws.
     fn named_by_the_bead_view(html: &str) -> HashMap<String, Asked> {
-        references_on(&html[html.find("<aside>").expect("the bead view")..])
+        references_on(&html[html.find(OPENS_THE_PANEL).expect("the bead view")..])
     }
 
     /// Where a list has a row expanded to the beads waiting on it, a bead
@@ -8175,7 +8186,7 @@ mod tests {
     fn a_bead_a_view_lists_opens_in_the_view_whichever_copy_it_lists() {
         let target = format!("{}?view={}", address(&key("smt-4kd3p.1")), VIEWS[0].0);
         let html = page_of(reached_twice(), &target);
-        let aside = &html[html.find("<aside>").expect("the bead view")..];
+        let aside = &html[html.find(OPENS_THE_PANEL).expect("the bead view")..];
         let link = aside
             .split("<a class=\"bead\" href=\"")
             .skip(1)
