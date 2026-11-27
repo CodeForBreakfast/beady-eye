@@ -4534,59 +4534,46 @@ mod tests {
     /// page opens on it.
     #[test]
     fn a_beads_page_offers_each_write_only_where_it_applies() {
-        let human = || vec![NEEDS_A_HUMAN.to_string()];
-        let cases: [(&str, Box<dyn Fn(&mut Node)>, &[(&str, bool)]); 6] = [
-            (
-                "open",
-                Box::new(|_| {}),
-                &[("comment", false), ("close", false), ("defer", false)],
-            ),
-            (
-                "deferred",
-                Box::new(|bead| bead.status = Status::Deferred),
-                &[("comment", false), ("close", false), ("defer", false)],
-            ),
-            (
-                "closed",
-                Box::new(|bead| bead.status = Status::Closed),
-                &[("comment", false), ("reopen", false)],
-            ),
+        let a_bead = |status: Status, needing_a_human: bool| {
+            with_the_bead_changed(|bead| {
+                bead.status = status.clone();
+                if needing_a_human {
+                    bead.labels = vec![NEEDS_A_HUMAN.to_string()];
+                }
+            })
+        };
+        let any_open_bead: &[(&str, bool)] =
+            &[("comment", false), ("close", false), ("defer", false)];
+        let any_closed_bead: &[(&str, bool)] = &[("comment", false), ("reopen", false)];
+        let needing_a_human: &[(&str, bool)] = &[
+            ("respond", true),
+            ("dismiss", false),
+            ("comment", false),
+            ("close", false),
+            ("defer", false),
+        ];
+        let cases = [
+            ("open", a_bead(Status::Open, false), any_open_bead),
+            ("deferred", a_bead(Status::Deferred, false), any_open_bead),
+            ("closed", a_bead(Status::Closed, false), any_closed_bead),
             (
                 "needing a human",
-                Box::new(move |bead| bead.labels = human()),
-                &[
-                    ("respond", true),
-                    ("dismiss", false),
-                    ("comment", false),
-                    ("close", false),
-                    ("defer", false),
-                ],
+                a_bead(Status::Open, true),
+                needing_a_human,
             ),
             (
                 "in progress, needing a human",
-                Box::new(move |bead| {
-                    bead.status = Status::InProgress;
-                    bead.labels = human();
-                }),
-                &[
-                    ("respond", true),
-                    ("dismiss", false),
-                    ("comment", false),
-                    ("close", false),
-                    ("defer", false),
-                ],
+                a_bead(Status::InProgress, true),
+                needing_a_human,
             ),
             (
                 "closed, once needing a human",
-                Box::new(move |bead| {
-                    bead.status = Status::Closed;
-                    bead.labels = human();
-                }),
-                &[("comment", false), ("reopen", false)],
+                a_bead(Status::Closed, true),
+                any_closed_bead,
             ),
         ];
-        for (bead, change, offered) in cases {
-            let html = writable_page(with_the_bead_changed(change));
+        for (bead, snapshot, offered) in cases {
+            let html = writable_page(snapshot);
             let expected: Vec<(String, bool)> = offered
                 .iter()
                 .map(|(write, open)| (write.to_string(), *open))
