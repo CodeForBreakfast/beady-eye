@@ -2438,6 +2438,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     const focus = document.activeElement?.matches("a[href]") && document.activeElement;
     const focused = focus && [pane(focus), goes(focus)];
     if (focused) focused.push(alike(...focused).indexOf(focus));
+    const typing = document.activeElement?.matches("aside details[data-key] :is(textarea,input)") && document.activeElement;
+    const typedTo = typing && [typing.selectionStart, typing.selectionEnd];
     inReadersZone(drawn);
     document.title = drawn.title;
     reconcile(document.body, drawn.body);
@@ -2448,6 +2450,10 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
       const back = focus.isConnected && goes(focus) === focused[1] ? focus : alike(focused[0], focused[1])[focused[2]];
       if (back !== document.activeElement) back ? back.focus({ preventScroll: true }) : focus.blur();
     }
+    if (typing?.isConnected && typing !== document.activeElement) {
+      typing.focus({ preventScroll: true });
+      typing.setSelectionRange(...typedTo);
+    }
   };
 });"##;
 
@@ -2456,7 +2462,8 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 /// keeps the entry though the page no longer offers its write, or no longer
 /// shows the bead at all, with its buttons disabled until the write is
 /// offered again, when the kept entry takes the place of the one drawn
-/// afresh. Escape does not close the bead.
+/// afresh. A field being typed in keeps the focus and the cursor through
+/// the move. Escape does not close the bead.
 const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
   [...entry.querySelectorAll("textarea,input:not([type=hidden])")].some((field) => field.value);
 "##;

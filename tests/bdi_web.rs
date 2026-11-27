@@ -919,7 +919,8 @@ fn a_response_a_redraw_brings_leaves_the_open_entry_open() {
 /// Words typed into a write survive a redraw that finds the bead gone:
 /// the entry stays beside the notice that says so, making no write. Once the
 /// bead is back, the entry holding the words is the one its page shows, and
-/// it writes again.
+/// it writes again. Through both, the cursor stays where the reader left it,
+/// so what they type next goes on the end of the words.
 #[cfg(target_os = "linux")]
 #[test]
 fn words_typed_survive_the_bead_going_and_coming_back() {
@@ -946,7 +947,9 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     page.type_text("the gate is shut");
     let the_comment = "[...document.querySelectorAll('#write-comment')].map((entry) => \
          [entry.querySelector('textarea').value, entry.querySelector('.foot button').disabled, \
-          !!entry.closest('.writes')])";
+          !!entry.closest('.writes'), \
+          document.activeElement === entry.querySelector('textarea') \
+            && document.activeElement.selectionStart === document.activeElement.value.length])";
 
     let mut rows: Vec<serde_json::Value> =
         serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
@@ -955,7 +958,7 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     page.until("document.querySelector('aside>p.missing')", GIVING_UP);
     assert_eq!(
         page.evaluate(the_comment),
-        serde_json::json!([["the gate is shut", true, false]]),
+        serde_json::json!([["the gate is shut", true, false, true]]),
         "the words stay beside the notice, and make no write"
     );
 
@@ -963,7 +966,7 @@ fn words_typed_survive_the_bead_going_and_coming_back() {
     page.until("document.querySelector('aside .page')", GIVING_UP);
     assert_eq!(
         page.evaluate(the_comment),
-        serde_json::json!([["the gate is shut", false, true]]),
+        serde_json::json!([["the gate is shut", false, true, true]]),
         "the bead's page shows the entry holding the words, and it writes again"
     );
 }
