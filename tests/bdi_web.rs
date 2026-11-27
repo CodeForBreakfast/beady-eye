@@ -1111,6 +1111,40 @@ fn a_key_pressed_while_composing_is_the_input_methods() {
     );
 }
 
+/// Escape shuts the open entry the focus is in, though the menu of lists is
+/// open too, and goes back to the entry's button.
+#[cfg(target_os = "linux")]
+#[test]
+fn escape_shuts_the_entry_the_focus_is_in_first() {
+    let home = a_home_naming_one_project_settled("web-escape-the-focused-entry", WRITES_AS_CARTER);
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-priority')",
+        GIVING_UP,
+    );
+    page.press("p", false);
+    page.until(
+        "document.activeElement?.closest('#write-priority form')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('details.lists').open = true");
+    page.press("Escape", false);
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-priority').open, \
+              document.querySelector('details.lists').open, \
+              document.activeElement === document.querySelector('#write-priority>summary')]"
+        ),
+        serde_json::json!([false, true, true]),
+    );
+}
+
 /// The priority's choices fit the narrowest phone, so opening them moves
 /// nothing off the screen.
 #[cfg(target_os = "linux")]

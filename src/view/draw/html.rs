@@ -2479,8 +2479,8 @@ const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
 /// The part of the page's script that closes an open bead on Escape, as
 /// its close link does. Escape is left to a field being typed in, but for
 /// an empty one in a write's entry, which it closes. It closes an open menu
-/// or entry before the bead, though not the entry the page opened on unless
-/// the focus is in it. It never closes a bead while a write's field holds
+/// or entry before the bead, the one the focus is in first, and never the
+/// entry the page opened on unless the focus is in it. It never closes a bead while a write's field holds
 /// words, so no words typed are lost, and an Escape held down acts once.
 /// An Escape an input method is still composing with is the input method's.
 const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
@@ -2492,7 +2492,7 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
     entry.querySelector("summary").focus();
     return;
   }
-  const menu = document.querySelector("details[open]:is(:not([data-open-at-rest]),:focus-within)");
+  const menu = event.target.closest?.("details[open]") ?? document.querySelector("details[open]:not([data-open-at-rest])");
   if (menu) {
     menu.open = false;
     menu.querySelector("summary").focus();
