@@ -2451,9 +2451,9 @@ const WORDS_TYPED: &str = r##"const holdsWords = (entry) =>
 /// an empty one in a write's entry, which it closes. It closes an open menu
 /// or entry before the bead, though not the entry the page opened on unless
 /// the focus is in it. It never closes a bead while a write's field holds
-/// words, so no words typed are lost.
+/// words, so no words typed are lost, and an Escape held down acts once.
 const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || event.defaultPrevented) return;
+  if (event.key !== "Escape" || event.defaultPrevented || event.repeat) return;
   if (event.target.matches?.("input,textarea,select")) {
     const entry = event.target.closest("details");
     if (!entry || event.target.value) return;
@@ -2473,22 +2473,27 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 });"##;
 
 /// The part of the page's script that opens a write's entry by the key the
-/// terminal makes it with, and puts the cursor in the entry's field, as
-/// pressing its button does. A key opens an entry only while the focus is
-/// in the bead's panel, which takes the focus as the page opens, so a
-/// letter typed elsewhere on the page, or by speech input, opens nothing. On a touch screen a deferral's entry
-/// leaves the keyboard down, so its days to pick stay in view. Ctrl+Enter
-/// makes the write a text area is typed for, where Enter starts a new line,
-/// unless the write's button is disabled or an input method is still
-/// composing what it types.
-/// Enter held down makes no write: the press that opened an entry and moved
-/// to its button is not also the press that writes.
+/// terminal makes it with, and moves the focus to the entry's first control,
+/// as pressing its button does: the field it is typed in, or a deferral's
+/// first day to pick, which leaves a phone's keyboard down so the days stay
+/// in view. A key opens an entry only while the focus is in the bead's
+/// panel, which takes the focus as the page opens, so a letter typed
+/// elsewhere on the page, or by speech input, opens nothing. The panel takes
+/// it again once the page has loaded, because the browser's move to the
+/// address's fragment drops the focus.
+///
+/// Ctrl+Enter makes the write a text area is typed for, where Enter starts
+/// a new line, unless the write's button is disabled or an input method is
+/// still composing what it types. Enter held down makes no write: the press
+/// that opened an entry and moved to its button is not also the press that
+/// writes.
 const WRITES_BY_KEY: &str = r##"{
-  addEventListener("DOMContentLoaded", () => document.querySelector("aside")?.focus({ preventScroll: true }));
-  const cursorInto = (entry) => {
-    if (entry.id === "write-defer" && matchMedia("(pointer:coarse)").matches) return;
-    (entry.querySelector("textarea,input:not([type=hidden])") ?? entry.querySelector("button:not([disabled])"))?.focus();
-  };
+  const focusThePanel = () =>
+    document.activeElement === document.body && document.querySelector("aside")?.focus({ preventScroll: true });
+  addEventListener("DOMContentLoaded", focusThePanel);
+  addEventListener("load", focusThePanel);
+  const cursorInto = (entry) =>
+    entry.querySelector(":is(textarea,input:not([type=hidden]),button:not([disabled])):not(summary *)")?.focus();
   addEventListener("keydown", (event) => {
     const { target, key } = event;
     if (event.defaultPrevented || event.isComposing) return;

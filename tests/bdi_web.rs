@@ -561,7 +561,9 @@ fn opening_a_page_that_takes_writes_sends_it_once() {
 
 /// Each write's entry on a writable bead's page opens from the keyboard:
 /// by the key the terminal makes the write with, as soon as the page opens,
-/// or by Enter on its button, and either puts the cursor in its field. A
+/// or by Enter on its button, and either moves to its first control: the
+/// field it is typed in, or a deferral's first day to pick. Escape held
+/// down shuts the entry and goes no further. A
 /// letter typed while the focus is in the forest, or nowhere, opens
 /// nothing. Escape in the empty field shuts
 /// the entry and goes back to its button, and in a field holding words it
@@ -624,6 +626,22 @@ fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
          && !document.querySelector('#write-comment textarea').value",
         GIVING_UP,
     );
+    page.press("m", false);
+    page.until(in_the_comment, GIVING_UP);
+    page.hold("Escape");
+    page.until(on_its_button, GIVING_UP);
+    assert_eq!(
+        page.evaluate("location.pathname"),
+        serde_json::json!(format!("/arkham/{}", THE_ROOT.0)),
+        "Escape held down shuts the entry and stays on the bead"
+    );
+    page.press("z", false);
+    page.until(
+        "document.querySelector('#write-defer').open \
+         && document.activeElement === document.querySelector('#write-defer .pick')",
+        GIVING_UP,
+    );
+    page.press("Escape", false);
     for (focus, said) in [
         (
             "document.querySelector('.forest a[href]').focus()",
