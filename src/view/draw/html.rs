@@ -147,6 +147,11 @@ const ROW: [Write; 6] = [
     Write::Defer,
 ];
 
+/// What marks the entry a page opens on: open as it is drawn, which the
+/// page's script leaves to the reader from then on, and passed over by the
+/// first Escape, which closes the bead as it would on any other page.
+const OPEN_AT_REST: &str = " open data-open-at-rest";
+
 /// The key that opens each write's entry on a writable bead's page, which is
 /// the key the terminal makes the same write with.
 pub const PAGE_KEYS: [(Write, char); 7] = [
@@ -205,20 +210,32 @@ fn form_for(class: Option<&str>, action: &str, token: &str) -> String {
     )
 }
 
+/// The opening of the element holding `write`'s entry, which its key
+/// opens. Its id names the write, so a page kept current keeps each entry
+/// open or shut as the reader left it, and the script opens it by its key.
+fn entry_named(write: Write, class: Option<&str>) -> String {
+    format!(
+        "<details id=\"write-{}\"{} name=\"write\" data-key=\"{}\"",
+        segment(write),
+        class.map_or_else(String::new, |class| format!(" class=\"{class}\"")),
+        page_key(write)
+    )
+}
+
 /// The entry in the row at the end of a writable bead's page that makes
 /// `write`, posting to `action` with `token`: a button naming the write and
 /// the key that opens it, over the form, shut until the button is pressed
-/// unless `open`. The button only opens the form, and the one inside it
-/// makes the write. A deferral offers days to pick, each a form of its own
-/// posting bd's word for it, beside a field for any other date.
-fn entry(html: &mut String, write: Write, action: &str, token: &str, open: bool) {
-    let key = page_key(write);
+/// unless it is the one the page opens on. The button only opens the form,
+/// and the one inside it makes the write. A deferral offers days to pick,
+/// each a form of its own posting bd's word for it, beside a field for any
+/// other date.
+fn entry(html: &mut String, write: Write, action: &str, token: &str, opens_on: bool) {
     html.push_str(&format!(
-        "<details name=\"write\" data-write=\"{}\" data-key=\"{key}\"{}>\
-         <summary>{}<kbd>{key}</kbd></summary>",
-        segment(write),
-        if open { " open" } else { "" },
+        "{}{}><summary>{}<kbd>{}</kbd></summary>",
+        entry_named(write, None),
+        if opens_on { OPEN_AT_REST } else { "" },
         escaped(phrase::write_named(write)),
+        page_key(write),
     ));
     let label = phrase::words_for(write).unwrap_or_default();
     let made = format!("<button>{}</button>", escaped(phrase::make(write)));
@@ -286,10 +303,8 @@ fn priority_set(current: u8, action: &str, token: &str) -> String {
         })
         .collect();
     format!(
-        "<details class=\"set\" name=\"write\" data-write=\"{}\" data-key=\"{}\">\
-         <summary aria-label=\"{}\">{}</summary>{}{picks}</form></details>",
-        segment(Write::Priority),
-        page_key(Write::Priority),
+        "{}><summary aria-label=\"{}\">{}</summary>{}{picks}</form></details>",
+        entry_named(Write::Priority, Some("set")),
         escaped(&phrase::change_priority(&said)),
         escaped(&said),
         form_for(None, action, token),
@@ -371,7 +386,7 @@ fn head(title: &str, version: Option<&str>) -> String {
         Some(version) => (
             format!("{VERSION}{version}\""),
             format!(
-                "<script>{IN_READERS_ZONE}{SHORTENS}{KEPT_CURRENT}{ESCAPE_CLOSES}{COPIES}</script>"
+                "<script>{IN_READERS_ZONE}{SHORTENS}{KEPT_CURRENT}{ESCAPE_CLOSES}{WRITES_BY_KEY}{COPIES}</script>"
             ),
         ),
         None => (String::new(), String::new()),
@@ -2362,10 +2377,13 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
   const reconcile = (now, next) => {
     if (now.isEqualNode(next)) return;
     if (now.nodeType !== Node.ELEMENT_NODE) return void (now.nodeValue = next.nodeValue);
+    const leftToTheReader = (name) => name === "open" && now.matches("details");
     for (const { name } of [...now.attributes]) {
-      if (!next.hasAttribute(name) && !(name === "open" && now.matches("details"))) now.removeAttribute(name);
+      if (!next.hasAttribute(name) && !leftToTheReader(name)) now.removeAttribute(name);
     }
-    for (const { name, value } of next.attributes) if (now.getAttribute(name) !== value) now.setAttribute(name, value);
+    for (const { name, value } of next.attributes) {
+      if (now.getAttribute(name) !== value && !leftToTheReader(name)) now.setAttribute(name, value);
+    }
     const wanted = new Set([...next.children].map(key).filter(Boolean));
     const kept = new Map([...now.children].filter((child) => wanted.has(key(child))).map((child) => [key(child), child]));
     let at = now.firstChild;
@@ -2409,11 +2427,19 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 });"##;
 
 /// The part of the page's script that closes an open bead on Escape, as
-/// its close link does. Escape is left to a field being typed in, and closes
-/// an open menu before the bead.
+/// its close link does. Escape is left to a field being typed in, but for
+/// an empty one in a write's entry, which it closes. It closes an open menu
+/// or entry before the bead, though not the entry the page opened on.
 const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || event.defaultPrevented || event.target.matches?.("input,textarea,select")) return;
-  const menu = document.querySelector("details[open]");
+  if (event.key !== "Escape" || event.defaultPrevented) return;
+  if (event.target.matches?.("input,textarea,select")) {
+    const entry = event.target.closest("details");
+    if (!entry || event.target.value) return;
+    entry.open = false;
+    entry.querySelector("summary").focus();
+    return;
+  }
+  const menu = document.querySelector("details[open]:not([data-open-at-rest])");
   if (menu) {
     menu.open = false;
     menu.querySelector("summary").focus();
@@ -2422,6 +2448,37 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
   const close = document.querySelector("aside>a.close");
   if (close) location.assign(close.href);
 });"##;
+
+/// The part of the page's script that opens a write's entry by the key the
+/// terminal makes it with, while the cursor is in no field, and puts the
+/// cursor in the entry's field, as pressing its button does. On a touch
+/// screen a deferral's entry leaves the keyboard down, so its days to pick
+/// stay in view. Ctrl+Enter makes the write a text area is typed for,
+/// where Enter starts a new line.
+const WRITES_BY_KEY: &str = r##"{
+  const cursorInto = (entry) => {
+    if (entry.id === "write-defer" && matchMedia("(pointer:coarse)").matches) return;
+    (entry.querySelector("textarea,input:not([type=hidden])") ?? entry.querySelector("button:not([disabled])"))?.focus();
+  };
+  addEventListener("keydown", (event) => {
+    const { target, key } = event;
+    if (event.defaultPrevented) return;
+    if (key === "Enter" && (event.ctrlKey || event.metaKey) && target.matches?.("textarea") && target.form) {
+      event.preventDefault();
+      return target.form.requestSubmit();
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey || target.matches?.("input,textarea,select")) return;
+    const entry = key.length === 1 && document.querySelector(`aside details[data-key="${CSS.escape(key)}"]`);
+    if (!entry) return;
+    event.preventDefault();
+    entry.open = true;
+    cursorInto(entry);
+  });
+  addEventListener("click", (event) => {
+    const entry = event.target.closest?.("aside details[data-key]>summary")?.parentElement;
+    if (entry) setTimeout(() => entry.open && cursorInto(entry));
+  });
+}"##;
 
 /// The part of the page's script that copies a bead's id when its copy
 /// button is pressed, and says so on the button for a moment. A browser
@@ -4459,7 +4516,7 @@ mod tests {
             .map(|entry| {
                 let tag = &entry[..entry.find('>').expect("the tag ends")];
                 let write = tag
-                    .split("data-write=\"")
+                    .split("id=\"write-")
                     .nth(1)
                     .and_then(|named| named.split_once('"'))
                     .map(|(named, _)| named.to_string())
@@ -4537,7 +4594,9 @@ mod tests {
             assert_eq!(the_row(&html), expected, "a bead {bead}");
             let fields = inside(aside_of(&html), "fields");
             assert!(
-                fields.contains("<details class=\"set\" name=\"write\" data-write=\"priority\" data-key=\"p\">"),
+                fields.contains(
+                    "<details id=\"write-priority\" class=\"set\" name=\"write\" data-key=\"p\">"
+                ),
                 "every bead's priority is set from its cell, on a bead {bead}: {fields}"
             );
             assert!(!html.contains("/release"), "{html}");
@@ -4594,7 +4653,7 @@ mod tests {
                 .map(|(_, named)| *named)
                 .expect("the page offers the write");
             let entry = bead
-                .split_once(&format!("data-write=\"{named}\""))
+                .split_once(&format!("id=\"write-{named}\""))
                 .map(|(_, entry)| &entry[..entry.find("</details>").expect("the entry ends")])
                 .expect("the bead's page offers the write");
             let summary = &entry[entry.find("<summary").expect("its button")..];
@@ -4715,7 +4774,9 @@ mod tests {
             ".writes details[open]>summary{border-color:transparent;background:var(--accent-soft);\
              color:var(--accent);font-weight:600}"
         ));
-        let phone = &STYLE[STYLE.find("@media (max-width:720px){").expect("a phone layout")..];
+        let phone = &STYLE[STYLE
+            .find("@media (max-width:720px){")
+            .expect("a phone layout")..];
         assert!(phone.contains(".writes summary{height:44px;"), "{phone}");
         assert!(
             phone.contains(".writes :is(textarea,input){font-size:var(--size-field)}"),
@@ -6700,7 +6761,10 @@ mod tests {
                 .match_indices("var(--code)")
                 .map(|(at, _)| &STYLE[STYLE[..at].rfind('}').map_or(0, |end| end + 1)..at])
                 .collect::<Vec<_>>(),
-            [".code{font-family:", ".writes kbd{font:500 var(--size-label) "],
+            [
+                ".code{font-family:",
+                ".writes kbd{font:500 var(--size-label) "
+            ],
             "{STYLE}"
         );
         assert!(

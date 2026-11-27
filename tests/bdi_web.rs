@@ -546,10 +546,145 @@ fn opening_a_page_that_takes_writes_sends_it_once() {
     let relay = Relay::to(&address);
     let (mut page, _) = opened_once(&home, &relay, "/arkham/dun-0tp");
     assert_eq!(
-        page.evaluate("document.querySelectorAll('input[name=token]').length"),
-        serde_json::json!(beady_eye::view::address::OFFERED.len()),
-        "the page is the bead's, with a form for each write it offers"
+        page.evaluate(
+            "[...document.querySelectorAll('details[name=write]')].map((entry) => entry.id)"
+        ),
+        serde_json::json!([
+            "write-priority",
+            "write-comment",
+            "write-close",
+            "write-defer"
+        ]),
+        "the page is the bead's, with an entry for each write it offers an open bead"
     );
+}
+
+/// Each write's entry on a writable bead's page opens from the keyboard:
+/// by the key the terminal makes the write with, or by Enter on its button,
+/// and either puts the cursor in its field. Escape in the empty field shuts
+/// the entry and goes back to its button, and in a field holding words it
+/// does nothing, so no words are lost. Ctrl+Enter makes the write a text
+/// area is typed for.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
+    let home = a_home_naming_one_project_settled("web-write-by-key", WRITES_AS_CARTER);
+    let tracker = a_tracker_taking_the_comment(&home);
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    until_it_has_read(&address);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    let in_the_comment = "document.querySelector('#write-comment').open \
+         && document.activeElement === document.querySelector('#write-comment textarea')";
+    let on_its_button = "!document.querySelector('#write-comment').open \
+         && document.activeElement === document.querySelector('#write-comment>summary')";
+
+    page.press("m", false);
+    page.until(in_the_comment, GIVING_UP);
+    page.press("Escape", false);
+    page.until(on_its_button, GIVING_UP);
+    page.press("Enter", false);
+    page.until(in_the_comment, GIVING_UP);
+
+    page.type_text("the gate is shut");
+    page.press("Escape", false);
+    assert_eq!(
+        page.evaluate(&format!(
+            "[{in_the_comment}, document.activeElement.value, location.pathname]"
+        )),
+        serde_json::json!([true, "the gate is shut", format!("/arkham/{}", THE_ROOT.0)]),
+        "Escape leaves words typed where they are"
+    );
+    page.press("Enter", true);
+    let giving_up = Instant::now() + GIVING_UP;
+    while !tracker
+        .acted_calls()
+        .contains(&format!("carter {COMMENTED}"))
+    {
+        assert!(
+            Instant::now() < giving_up,
+            "Ctrl+Enter never made the comment: {:?}",
+            tracker.acted_calls()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A bead that needs a human opens on its response, with its entry open.
+/// Once the reader shuts it, it stays shut as the page is kept current, and
+/// the first Escape on a page left as it opened closes the bead, as it does
+/// on any other bead's page.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_page_opening_on_its_response_leaves_it_to_the_reader() {
+    let home = a_home_naming_one_project_settled(
+        "web-opens-on-the-response",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let opened = format!("http://{address}/arkham/{}", THE_ROOT.0);
+    let mut page = browser::Browser::open(&home, &opened, 1200, 800);
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(
+            "[...document.querySelectorAll('details[name=write][open]')].map((entry) => entry.id)"
+        ),
+        serde_json::json!(["write-respond"]),
+        "the page opens on the response alone"
+    );
+
+    page.evaluate("document.querySelector('#write-respond>summary').click()");
+    page.until("!document.querySelector('#write-respond').open", GIVING_UP);
+    tracker.holds(&with_the_root_changed(&needing_a_human, |root| {
+        root["priority"] = 0.into();
+    }));
+    page.until(
+        "document.querySelector('#write-priority>summary').textContent === 'P0'",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate("document.querySelector('#write-respond').open"),
+        serde_json::json!(false),
+        "the redraw leaves the response shut"
+    );
+
+    page.evaluate("location.reload()");
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.activeElement.blur()");
+    page.press("Escape", false);
+    page.until(
+        &format!("location.pathname !== '/arkham/{}'", THE_ROOT.0),
+        GIVING_UP,
+    );
+}
+
+/// `capture`, with dun-0tp as `change` leaves it.
+fn with_the_root_changed(capture: &str, change: impl Fn(&mut serde_json::Value)) -> String {
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(capture).expect("a capture of bd list --json");
+    for row in &mut rows {
+        if row["id"] == THE_ROOT.0 {
+            change(row);
+        }
+    }
+    serde_json::to_string(&rows).expect("rows serialise")
 }
 
 /// Open `path` through `relay`, and see that the browser fetched the page
@@ -783,11 +918,13 @@ fn after_a_write_the_beads_page_shows_it_as_it_now_stands() {
     let shown_at = |priority: &str| {
         get(&address, "/arkham/dun-0tp")
             .1
-            .contains(&format!("<dt>Priority</dt><dd>{priority}</dd>"))
+            .contains(&format!(">{priority}</summary>"))
     };
     assert!(shown_at("P1"), "the bead is drawn as first read");
 
-    tracker.holds(&with_the_roots_priority(THE_DESCRIBED_SUBTREE, 0));
+    tracker.holds(&with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["priority"] = 0.into();
+    }));
     assert!(shown_at("P1"), "nothing reads the tracker again on its own");
     assert_eq!(
         posted_from_the_beads_page(&address, "priority", "text=0"),
@@ -806,18 +943,6 @@ fn after_a_write_the_beads_page_shows_it_as_it_now_stands() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-/// `capture`, with dun-0tp at `priority`.
-fn with_the_roots_priority(capture: &str, priority: u8) -> String {
-    let mut rows: Vec<serde_json::Value> =
-        serde_json::from_str(capture).expect("a capture of bd list --json");
-    for row in &mut rows {
-        if row["id"] == THE_ROOT.0 {
-            row["priority"] = priority.into();
-        }
-    }
-    serde_json::to_string(&rows).expect("rows serialise")
 }
 
 /// A writable `bdi web` with no actor would write as whoever runs it, so it
