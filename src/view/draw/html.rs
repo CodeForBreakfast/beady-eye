@@ -2450,11 +2450,14 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 });"##;
 
 /// The part of the page's script that opens a write's entry by the key the
-/// terminal makes it with, while the cursor is in no field, and puts the
-/// cursor in the entry's field, as pressing its button does. On a touch
-/// screen a deferral's entry leaves the keyboard down, so its days to pick
-/// stay in view. Ctrl+Enter makes the write a text area is typed for,
-/// where Enter starts a new line.
+/// terminal makes it with, and puts the cursor in the entry's field, as
+/// pressing its button does. A key opens an entry only while the focus is
+/// in the bead's panel or nowhere, so a letter typed elsewhere on the page,
+/// or by speech input, opens nothing. On a touch screen a deferral's entry
+/// leaves the keyboard down, so its days to pick stay in view. Ctrl+Enter
+/// makes the write a text area is typed for, where Enter starts a new line.
+/// Enter held down makes no write: the press that opened an entry and moved
+/// to its button is not also the press that writes.
 const WRITES_BY_KEY: &str = r##"{
   const cursorInto = (entry) => {
     if (entry.id === "write-defer" && matchMedia("(pointer:coarse)").matches) return;
@@ -2463,11 +2466,16 @@ const WRITES_BY_KEY: &str = r##"{
   addEventListener("keydown", (event) => {
     const { target, key } = event;
     if (event.defaultPrevented) return;
+    const typingLines = target.matches?.("textarea") && !(event.ctrlKey || event.metaKey);
+    if (event.repeat && key === "Enter" && target.closest?.("aside details[data-key]") && !typingLines) {
+      return event.preventDefault();
+    }
     if (key === "Enter" && (event.ctrlKey || event.metaKey) && target.matches?.("textarea") && target.form) {
       event.preventDefault();
       return target.form.requestSubmit();
     }
     if (event.ctrlKey || event.metaKey || event.altKey || target.matches?.("input,textarea,select")) return;
+    if (target !== document.body && !target.closest?.("aside")) return;
     const entry = key.length === 1 && document.querySelector(`aside details[data-key="${CSS.escape(key)}"]`);
     if (!entry) return;
     event.preventDefault();

@@ -4734,24 +4734,26 @@ tracker answered, because a tracker that fails is drawn as failing. No reader
 signs in, and it takes no write unless `--writes` starts it.
 
 **A writable page offers each light-touch write on a bead's page where it
-applies to the bead.** Every bead takes a comment and a priority. A bead that
-is not closed takes a close and a deferral, and a closed one a reopen. A bead
-that is not closed and carries bd's `human` label takes a response and a
-dismissal, and its page opens with the response's form open. The page reads
-the bead's status and labels alone, never where it sits in a tree, and the
-server takes any write it is sent whatever the page offered. The page never
-offers to release a claim, because it reads no agents and so flags no claim
-with no live agent. Each write rests as a button in a row at the end of the
-page, and the priority as a button in its cell. Pressing one opens its form,
-and only the button inside the form writes, so a stray tap on a phone writes
-nothing. The terminal's key for a write opens its form. Each write is made as the one actor `[web] actor` names, passed to
-bd as `--actor`, and a run started with `--writes` and no actor refuses to
-start. A write that lands sends the reader back to the bead's page with `303
-See Other`, and asks for the project to be read again without waiting for that
-read. So the page the reader lands on can still show the bead as it stood, and
-an open page redraws it once the read answers. A refused one says what bdi
-made of bd's failure, as a read's failure is said, and never shows bd's own
-stderr, which can name the tracker's credentials.
+applies to the bead.** Every bead takes a comment and a priority. A bead
+that is not closed takes a close and a deferral, and a closed one a reopen. A
+bead that is not closed and carries bd's `human` label takes a response and
+a dismissal, and its page opens with the response's form open. The page
+reads the bead's status and labels alone, never where it sits in a tree,
+and the server takes any write it is sent whatever the page offered. The
+page never offers to release a claim, because it reads no agents and so
+flags no claim with no live agent. Each write rests as a button in a row at
+the end of the page, and the priority as a button in its cell. Pressing one
+opens its form, and only the button inside the form writes, so a stray tap
+on a phone writes nothing. The terminal's key for a write opens its form,
+while the focus is on the bead or nowhere, so a letter typed elsewhere on
+the page opens nothing. Each write is made as the one actor `[web] actor`
+names, passed to bd as `--actor`, and a run started with `--writes` and
+no actor refuses to start. A write that lands sends the reader back to the
+bead's page with `303 See Other`, and asks for the project to be read again
+without waiting for that read. So the page the reader lands on can still show
+the bead as it stood, and an open page redraws it once the read answers. A
+refused one says what bdi made of bd's failure, as a read's failure is said,
+and never shows bd's own stderr, which can name the tracker's credentials.
 
 **It answers only the names it was told it serves.** With no sign-in, a page
 elsewhere could point a name of its own at the listener and have a visitor's

@@ -131,6 +131,17 @@ impl Browser {
     /// focus, holding Ctrl where `with_ctrl`. `key` is a letter, which a
     /// capital names with Shift held, or `Enter`, `Escape` or `Tab`.
     pub fn press(&mut self, key: &str, with_ctrl: bool) {
+        self.stroke(key, with_ctrl, 0);
+    }
+
+    /// Hold `key` down long enough for the keyboard to repeat it, then let
+    /// it go.
+    pub fn hold(&mut self, key: &str) {
+        self.stroke(key, false, 3);
+    }
+
+    /// `key` down, `repeats` times more as the keyboard repeats it, then up.
+    fn stroke(&mut self, key: &str, with_ctrl: bool, repeats: usize) {
         let (code, keycode, text) = match key {
             "Enter" => ("Enter".to_string(), 13, "\r".to_string()),
             "Escape" => ("Escape".to_string(), 27, String::new()),
@@ -144,13 +155,15 @@ impl Browser {
         let shift = key.len() == 1 && key.chars().all(|letter| letter.is_ascii_uppercase());
         let modifiers = if with_ctrl { 2 } else { 0 } | if shift { 8 } else { 0 };
         let text = if with_ctrl { String::new() } else { text };
-        for kind in ["keyDown", "keyUp"] {
+        let down = (0..=repeats).map(|repeated| ("keyDown", repeated > 0));
+        for (kind, repeated) in down.chain([("keyUp", false)]) {
             let mut event = json!({
                 "type": kind,
                 "key": key,
                 "code": code,
                 "windowsVirtualKeyCode": keycode,
                 "modifiers": modifiers,
+                "autoRepeat": repeated,
             });
             if kind == "keyDown" && !text.is_empty() {
                 event["text"] = json!(text);

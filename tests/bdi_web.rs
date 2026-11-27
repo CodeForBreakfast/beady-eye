@@ -560,8 +560,10 @@ fn opening_a_page_that_takes_writes_sends_it_once() {
 }
 
 /// Each write's entry on a writable bead's page opens from the keyboard:
-/// by the key the terminal makes the write with, or by Enter on its button,
-/// and either puts the cursor in its field. Escape in the empty field shuts
+/// by the key the terminal makes the write with, while the focus is in the
+/// bead's panel or nowhere, or by Enter on its button, and either puts the
+/// cursor in its field. A letter typed while the focus is in the forest
+/// opens nothing. Escape in the empty field shuts
 /// the entry and goes back to its button, and in a field holding words it
 /// does nothing, so no words are lost. Ctrl+Enter makes the write a text
 /// area is typed for.
@@ -587,6 +589,14 @@ fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
     let on_its_button = "!document.querySelector('#write-comment').open \
          && document.activeElement === document.querySelector('#write-comment>summary')";
 
+    page.evaluate("document.querySelector('.forest a[href]').focus()");
+    page.press("m", false);
+    assert_eq!(
+        page.evaluate("document.querySelector('details[name=write][open]')"),
+        serde_json::Value::Null,
+        "a letter typed in the forest opens no write"
+    );
+    page.evaluate("document.activeElement.blur()");
     page.press("m", false);
     page.until(in_the_comment, GIVING_UP);
     page.press("Escape", false);
@@ -612,6 +622,55 @@ fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
         assert!(
             Instant::now() < giving_up,
             "Ctrl+Enter never made the comment: {:?}",
+            tracker.acted_calls()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Holding Enter on the button of a write made with no words opens its
+/// entry and moves to the button that makes it, and writes nothing: a
+/// repeated Enter is not a second press. Pressing Enter again makes it.
+#[cfg(target_os = "linux")]
+#[test]
+fn holding_enter_on_a_writes_button_writes_nothing() {
+    let home = a_home_naming_one_project_settled("web-write-held-enter", WRITES_AS_CARTER);
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-dismiss')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-dismiss>summary').focus()");
+    page.hold("Enter");
+    page.until(
+        "document.querySelector('#write-dismiss').open \
+         && document.activeElement === document.querySelector('#write-dismiss button')",
+        GIVING_UP,
+    );
+    let dismissed = || {
+        tracker
+            .acted_calls()
+            .iter()
+            .any(|call| call.contains("human dismiss"))
+    };
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(!dismissed(), "{:?}", tracker.acted_calls());
+
+    page.press("Enter", false);
+    let giving_up = Instant::now() + GIVING_UP;
+    while !dismissed() {
+        assert!(
+            Instant::now() < giving_up,
+            "Enter on the button never dismissed: {:?}",
             tracker.acted_calls()
         );
         std::thread::sleep(Duration::from_millis(50));
