@@ -1227,6 +1227,37 @@ fn a_redraw_taking_the_focused_control_gives_the_focus_to_the_panel() {
     );
 }
 
+/// A bead's page opened before the first read has no panel to give the
+/// focus to. Once the read draws the bead and its writes, the panel takes
+/// the focus, so the keys its buttons name answer.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_bead_arriving_after_the_page_opens_takes_the_focus() {
+    let home = a_home_naming_one_project_settled("web-bead-arrives-late", WRITES_AS_CARTER);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.hang();
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until("document.readyState === 'complete'", GIVING_UP);
+    assert_eq!(
+        page.evaluate("!!document.querySelector('aside')"),
+        serde_json::json!(false),
+        "the page opened before the read"
+    );
+    tracker.let_go();
+    page.until("document.querySelector('#write-comment')", GIVING_UP);
+    assert_eq!(
+        page.evaluate("document.activeElement === document.querySelector('aside')"),
+        serde_json::json!(true),
+    );
+}
+
 /// A bead's page that takes no writes has no keys to answer, so its panel
 /// leaves the focus where the browser puts it.
 #[cfg(target_os = "linux")]

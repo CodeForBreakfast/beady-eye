@@ -2444,10 +2444,12 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
     if (focused) focused.push(alike(...focused).indexOf(focus));
     const inThePanel = !focus && document.activeElement?.closest("aside") && document.activeElement;
     const typedTo = inThePanel && inThePanel.matches("textarea,input") && [inThePanel.selectionStart, inThePanel.selectionEnd];
+    const hadWrites = !!document.querySelector("aside details[data-key]");
     inReadersZone(drawn);
     document.title = drawn.title;
     reconcile(document.body, drawn.body);
     shorten();
+    if (!hadWrites) focusThePanel();
     const again = kept && (kept[0].isConnected ? kept[0] : document.getElementById(kept[1]));
     if (again) scrollBy(0, again.getBoundingClientRect().top - kept[2]);
     if (focused) {
@@ -2512,10 +2514,11 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// first day to pick, which leaves a phone's keyboard down so the days stay
 /// in view. A key opens an entry only while the focus is in the bead's
 /// panel, which takes the focus as a page offering writes opens, so a
-/// letter typed
-/// elsewhere on the page, or by speech input, opens nothing. The panel takes
-/// it again once the page has loaded, because the browser's move to the
-/// address's fragment drops the focus.
+/// letter typed elsewhere on the page, or by speech input, opens nothing.
+/// The panel takes it again once the page has loaded, because the browser's
+/// move to the address's fragment drops the focus, and when a redraw first
+/// brings it writes, as it does for a page opened before the first read.
+/// It takes the focus only from no element at all.
 ///
 /// Ctrl+Enter makes the write a text area is typed for, where Enter starts
 /// a new line, unless the write's button is disabled or an input method is
@@ -2523,11 +2526,11 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
 /// that opened an entry and moved to its button is not also the press that
 /// writes. Nor does the key that opened an entry, held down, type itself
 /// into the field.
-const WRITES_BY_KEY: &str = r##"{
-  const focusThePanel = () =>
-    document.activeElement === document.body &&
-    document.querySelector("aside details[data-key]") &&
-    document.querySelector("aside").focus({ preventScroll: true });
+const WRITES_BY_KEY: &str = r##"const focusThePanel = () =>
+  document.activeElement === document.body &&
+  document.querySelector("aside details[data-key]") &&
+  document.querySelector("aside").focus({ preventScroll: true });
+{
   addEventListener("DOMContentLoaded", focusThePanel);
   addEventListener("load", focusThePanel);
   const cursorInto = (entry) =>
