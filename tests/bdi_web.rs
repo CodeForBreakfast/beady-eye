@@ -259,7 +259,7 @@ fn a_beads_address_answers_with_that_bead_shown() {
     let (_web, address) = a_web_over_the_tracker("web-bead", &[]);
     let (status, body) = get(&address, &format!("/arkham/{}", A_BEAD_BENEATH.0));
     assert_eq!(status, "HTTP/1.1 200 OK");
-    let aside = &body[body.find("<aside>").expect("the bead view is drawn")..];
+    let aside = &body[body.find("<aside").expect("the bead view is drawn")..];
     assert!(aside.contains(A_BEAD_BENEATH.1), "{aside}");
     // The root rests shut, so the page opened it to reach the bead, and the
     // link keeps it open.
@@ -546,10 +546,749 @@ fn opening_a_page_that_takes_writes_sends_it_once() {
     let relay = Relay::to(&address);
     let (mut page, _) = opened_once(&home, &relay, "/arkham/dun-0tp");
     assert_eq!(
-        page.evaluate("document.querySelectorAll('input[name=token]').length"),
-        serde_json::json!(beady_eye::view::address::OFFERED.len()),
-        "the page is the bead's, with a form for each write it offers"
+        page.evaluate(
+            "[...document.querySelectorAll('details[name=write]')].map((entry) => entry.id)"
+        ),
+        serde_json::json!([
+            "write-priority",
+            "write-comment",
+            "write-close",
+            "write-defer"
+        ]),
+        "the page is the bead's, with an entry for each write it offers an open bead"
     );
+}
+
+/// Each write's entry on a writable bead's page opens from the keyboard:
+/// by the key the terminal makes the write with, as soon as the page opens,
+/// or by Enter on its button, and either moves to its first control: the
+/// field it is typed in, or a deferral's first day to pick. The key held
+/// down types nothing into the field, and Escape held down shuts the entry
+/// and goes no further. A
+/// letter typed while the focus is in the forest, or nowhere, opens
+/// nothing. Escape in the empty field shuts
+/// the entry and goes back to its button, and in a field holding words it
+/// does nothing, so no words are lost. Ctrl+Enter makes the write a text
+/// area is typed for.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_writable_beads_page_makes_a_write_from_the_keyboard() {
+    let home = a_home_naming_one_project_settled("web-write-by-key", WRITES_AS_CARTER);
+    let tracker = a_tracker_taking_the_comment(&home);
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    until_it_has_read(&address);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    let in_the_comment = "document.querySelector('#write-comment').open \
+         && document.activeElement === document.querySelector('#write-comment textarea')";
+    let on_its_button = "!document.querySelector('#write-comment').open \
+         && document.activeElement === document.querySelector('#write-comment>summary')";
+
+    page.press("m", false);
+    page.until(in_the_comment, GIVING_UP);
+    page.press("Escape", false);
+    page.until(on_its_button, GIVING_UP);
+    page.press("Enter", false);
+    page.until(in_the_comment, GIVING_UP);
+
+    page.type_text("the gate is shut");
+    page.press("Escape", false);
+    assert_eq!(
+        page.evaluate(&format!(
+            "[{in_the_comment}, document.activeElement.value, location.pathname]"
+        )),
+        serde_json::json!([true, "the gate is shut", format!("/arkham/{}", THE_ROOT.0)]),
+        "Escape leaves words typed where they are"
+    );
+    page.press("Enter", true);
+    let giving_up = Instant::now() + GIVING_UP;
+    while !tracker
+        .acted_calls()
+        .contains(&format!("carter {COMMENTED}"))
+    {
+        assert!(
+            Instant::now() < giving_up,
+            "Ctrl+Enter never made the comment: {:?}",
+            tracker.acted_calls()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment') \
+         && !document.querySelector('#write-comment textarea').value",
+        GIVING_UP,
+    );
+    page.press("m", false);
+    page.until(in_the_comment, GIVING_UP);
+    page.hold("Escape");
+    page.until(on_its_button, GIVING_UP);
+    assert_eq!(
+        page.evaluate("location.pathname"),
+        serde_json::json!(format!("/arkham/{}", THE_ROOT.0)),
+        "Escape held down shuts the entry and stays on the bead"
+    );
+    page.hold("m");
+    page.until(in_the_comment, GIVING_UP);
+    assert_eq!(
+        page.evaluate("document.activeElement.value"),
+        serde_json::json!(""),
+        "the key held down to open the comment types nothing into it"
+    );
+    page.press("Escape", false);
+    page.press("z", false);
+    page.until(
+        "document.querySelector('#write-defer').open \
+         && document.activeElement === document.querySelector('#write-defer .pick')",
+        GIVING_UP,
+    );
+    page.press("Escape", false);
+    for (focus, said) in [
+        (
+            "document.querySelector('.forest a[href]').focus()",
+            "in the forest",
+        ),
+        ("document.activeElement.blur()", "with the focus nowhere"),
+    ] {
+        page.evaluate(focus);
+        page.press("m", false);
+        assert_eq!(
+            page.evaluate("document.querySelector('details[name=write][open]')"),
+            serde_json::Value::Null,
+            "a letter typed {said} opens no write"
+        );
+    }
+}
+
+/// Holding Enter on the button of a write made with no words opens its
+/// entry and moves to the button that makes it, and writes nothing: a
+/// repeated Enter is not a second press. Pressing Enter again makes it.
+#[cfg(target_os = "linux")]
+#[test]
+fn holding_enter_on_a_writes_button_writes_nothing() {
+    let home = a_home_naming_one_project_settled("web-write-held-enter", WRITES_AS_CARTER);
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-dismiss')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-dismiss>summary').focus()");
+    page.hold("Enter");
+    page.until(
+        "document.querySelector('#write-dismiss').open \
+         && document.activeElement === document.querySelector('#write-dismiss button')",
+        GIVING_UP,
+    );
+    let dismissed = || {
+        tracker
+            .acted_calls()
+            .iter()
+            .any(|call| call.contains("human dismiss"))
+    };
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(!dismissed(), "{:?}", tracker.acted_calls());
+
+    page.press("Enter", false);
+    let giving_up = Instant::now() + GIVING_UP;
+    while !dismissed() {
+        assert!(
+            Instant::now() < giving_up,
+            "Enter on the button never dismissed: {:?}",
+            tracker.acted_calls()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A bead that needs a human opens on its response, with its entry open.
+/// Once the reader shuts it, it stays shut as the page is kept current, and
+/// the first Escape on a page left as it opened closes the bead, as it does
+/// on any other bead's page.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_page_opening_on_its_response_leaves_it_to_the_reader() {
+    let home = a_home_naming_one_project_settled(
+        "web-opens-on-the-response",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let opened = format!("http://{address}/arkham/{}", THE_ROOT.0);
+    let mut page = browser::Browser::open(&home, &opened, 1200, 800);
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(
+            "[...document.querySelectorAll('details[name=write][open]')].map((entry) => entry.id)"
+        ),
+        serde_json::json!(["write-respond"]),
+        "the page opens on the response alone"
+    );
+
+    page.evaluate("document.querySelector('#write-respond>summary').click()");
+    page.until("!document.querySelector('#write-respond').open", GIVING_UP);
+    tracker.holds(&with_the_root_changed(&needing_a_human, |root| {
+        root["priority"] = 0.into();
+    }));
+    page.until(
+        "document.querySelector('#write-priority>summary').textContent === 'P0'",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate("document.querySelector('#write-respond').open"),
+        serde_json::json!(false),
+        "the redraw leaves the response shut"
+    );
+
+    page.evaluate("location.reload()");
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.activeElement.blur()");
+    page.press("Escape", false);
+    page.until(
+        &format!("location.pathname !== '/arkham/{}'", THE_ROOT.0),
+        GIVING_UP,
+    );
+}
+
+/// Escape never takes the reader away from words they typed into a write.
+/// With a response typed and the focus moved on to its button, Escape shuts
+/// the response's entry, though the page opened on it, and goes back to its
+/// button. Another Escape leaves the bead's page where it is, words and all.
+#[cfg(target_os = "linux")]
+#[test]
+fn escape_never_takes_the_reader_away_from_words_typed() {
+    let home = a_home_naming_one_project_settled("web-escape-keeps-words", WRITES_AS_CARTER);
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, _tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let opened = format!("/arkham/{}", THE_ROOT.0);
+    let mut page = browser::Browser::open(&home, &format!("http://{address}{opened}"), 1200, 800);
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+    page.press("Tab", false);
+    page.until(
+        "document.activeElement === document.querySelector('#write-respond .foot button')",
+        GIVING_UP,
+    );
+    page.press("Escape", false);
+    page.until(
+        "!document.querySelector('#write-respond').open \
+         && document.activeElement === document.querySelector('#write-respond>summary')",
+        GIVING_UP,
+    );
+    page.press("Escape", false);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        page.evaluate(
+            "[location.pathname, document.querySelector('#write-respond textarea').value]"
+        ),
+        serde_json::json!([opened, "carbide"]),
+        "the bead's page stays, with the words typed"
+    );
+}
+
+/// A write's entry holding words stays as the page is kept current, though
+/// the bead has changed so the page no longer offers that write, and it
+/// makes no write until the bead takes it again. An entry holding no words
+/// goes.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_redraw_keeps_an_entry_holding_words() {
+    let home = a_home_naming_one_project_settled(
+        "web-redraw-keeps-words",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+
+    tracker.holds(&with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["priority"] = 0.into();
+    }));
+    page.until(
+        "document.querySelector('#write-priority>summary').textContent === 'P0'",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-respond textarea')?.value, \
+              !!document.querySelector('#write-dismiss'), \
+              document.querySelector('#write-respond .foot button').disabled]"
+        ),
+        serde_json::json!(["carbide", false, true]),
+        "the response keeps its words and makes no write, and the dismissal goes"
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.press("Enter", true);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        !tracker
+            .acted_calls()
+            .iter()
+            .any(|call| call.contains("human respond")),
+        "Ctrl+Enter sent a response the bead no longer takes: {:?}",
+        tracker.acted_calls()
+    );
+
+    tracker.holds(&with_the_root_changed(&needing_a_human, |root| {
+        root["priority"] = 2.into();
+    }));
+    page.until(
+        "document.querySelector('#write-priority>summary').textContent === 'P2' \
+         && !document.querySelector('#write-respond .foot button').disabled",
+        GIVING_UP,
+    );
+}
+
+/// A response a redraw brings, because the bead has come to need a human,
+/// does not open over an entry the reader has open: the comment being typed
+/// stays open with its words, and the response waits shut. The browser
+/// shuts an open entry inserted beside another open one of the same name.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_response_a_redraw_brings_leaves_the_open_entry_open() {
+    let home = a_home_naming_one_project_settled(
+        "web-redraw-brings-a-response",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    page.press("m", false);
+    page.until(
+        "document.activeElement === document.querySelector('#write-comment textarea')",
+        GIVING_UP,
+    );
+    page.type_text("the gate is shut");
+
+    tracker.holds(&with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    }));
+    page.until("document.querySelector('#write-respond')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-comment').open, \
+              document.querySelector('#write-comment textarea').value, \
+              document.querySelector('#write-respond').open]"
+        ),
+        serde_json::json!([true, "the gate is shut", false]),
+    );
+}
+
+/// Words typed into a write survive a redraw that finds the bead gone:
+/// the entry stays beside the notice that says so, making no write. Once the
+/// bead is back, the entry holding the words is the one its page shows,
+/// open, and it writes again, though the bead now needs a human and its page
+/// would otherwise open on the response. Through both, the cursor stays
+/// where the reader left it, so what they type next goes on the end of the
+/// words.
+#[cfg(target_os = "linux")]
+#[test]
+fn words_typed_survive_the_bead_going_and_coming_back() {
+    let home = a_home_naming_one_project_settled(
+        "web-bead-goes-and-comes-back",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let (_web, address, tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", A_BEAD_BENEATH.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    page.press("m", false);
+    page.until(
+        "document.activeElement === document.querySelector('#write-comment textarea')",
+        GIVING_UP,
+    );
+    page.type_text("the gate is shut");
+    let the_comment = "[...document.querySelectorAll('#write-comment')].map((entry) => \
+         [entry.querySelector('textarea').value, entry.querySelector('.foot button').disabled, \
+          !!entry.closest('.writes'), entry.open, \
+          document.activeElement === entry.querySelector('textarea') \
+            && document.activeElement.selectionStart === document.activeElement.value.length])";
+
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+    rows.retain(|row| row["id"] != A_BEAD_BENEATH.0);
+    tracker.holds(&serde_json::to_string(&rows).expect("rows serialise"));
+    page.until("document.querySelector('aside>p.missing')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(the_comment),
+        serde_json::json!([["the gate is shut", true, false, true, true]]),
+        "the words stay beside the notice, and make no write"
+    );
+
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+    for row in &mut rows {
+        if row["id"] == A_BEAD_BENEATH.0 {
+            row["labels"] = serde_json::json!(["human"]);
+        }
+    }
+    tracker.holds(&serde_json::to_string(&rows).expect("rows serialise"));
+    page.until(
+        "document.querySelector('aside .page #write-respond')",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(&format!(
+            "[{the_comment}, document.querySelector('#write-respond').open]"
+        )),
+        serde_json::json!([[["the gate is shut", false, true, true, true]], false]),
+        "the bead's page shows the entry holding the words, and it writes again"
+    );
+}
+
+/// A response kept through the bead going stays kept while the bead is
+/// back but needs no human, and is the one the page offers, with its words,
+/// once the bead needs a human again.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_kept_response_returns_with_its_write() {
+    let home = a_home_naming_one_project_settled(
+        "web-kept-response-returns",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let labelled = |labels: serde_json::Value| {
+        let mut rows: Vec<serde_json::Value> =
+            serde_json::from_str(THE_DESCRIBED_SUBTREE).expect("the fixture is JSON");
+        for row in &mut rows {
+            if row["id"] == A_BEAD_BENEATH.0 {
+                row["labels"] = labels.clone();
+            }
+        }
+        rows
+    };
+    let holding = |rows: &[serde_json::Value]| serde_json::to_string(rows).expect("rows serialise");
+    let needing_a_human = labelled(serde_json::json!(["human"]));
+    let (_web, address, tracker) = serving(&home, &holding(&needing_a_human), &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", A_BEAD_BENEATH.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+    let the_response = "[...document.querySelectorAll('#write-respond')].map((entry) => \
+         [entry.querySelector('textarea').value, entry.querySelector('.foot button').disabled, \
+          !!entry.closest('.writes')])";
+
+    let gone: Vec<serde_json::Value> = needing_a_human
+        .iter()
+        .filter(|row| row["id"] != A_BEAD_BENEATH.0)
+        .cloned()
+        .collect();
+    tracker.holds(&holding(&gone));
+    page.until("document.querySelector('aside>p.missing')", GIVING_UP);
+    tracker.holds(&holding(&labelled(serde_json::json!([]))));
+    page.until("document.querySelector('aside .page')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(the_response),
+        serde_json::json!([["carbide", true, false]]),
+        "the response stays kept while the bead needs no human"
+    );
+
+    tracker.holds(&holding(&needing_a_human));
+    page.until(
+        "document.querySelector('.writes #write-respond')",
+        GIVING_UP,
+    );
+    assert_eq!(
+        page.evaluate(the_response),
+        serde_json::json!([["carbide", false, true]]),
+        "the kept response is the one the page offers"
+    );
+}
+
+/// Ctrl+Enter or Escape pressed while an input method is still composing
+/// what it types is the input method's: it makes no write, and leaves the
+/// entry open.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_key_pressed_while_composing_is_the_input_methods() {
+    let home = a_home_naming_one_project_settled("web-write-composing", WRITES_AS_CARTER);
+    let tracker = a_tracker_taking_the_comment(&home);
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    until_it_has_read(&address);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-comment')",
+        GIVING_UP,
+    );
+    page.evaluate(
+        "const entry = document.querySelector('#write-comment'); entry.open = true; \
+         const field = entry.querySelector('textarea'); field.value = 'the gate is shut'; \
+         field.focus(); field.dispatchEvent(new KeyboardEvent('keydown', \
+           { key: 'Enter', ctrlKey: true, isComposing: true, bubbles: true, cancelable: true }))",
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        (
+            tracker
+                .acted_calls()
+                .contains(&format!("carter {COMMENTED}")),
+            page.evaluate("document.querySelector('#write-comment textarea')?.value")
+        ),
+        (false, serde_json::json!("the gate is shut")),
+    );
+
+    page.evaluate(
+        "const empty = document.querySelector('#write-comment textarea'); empty.value = ''; \
+         empty.dispatchEvent(new KeyboardEvent('keydown', \
+           { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }))",
+    );
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-comment').open, \
+              document.activeElement === document.querySelector('#write-comment textarea')]"
+        ),
+        serde_json::json!([true, true]),
+    );
+}
+
+/// Escape shuts the open entry the focus is in, though the menu of lists is
+/// open too, and goes back to the entry's button.
+#[cfg(target_os = "linux")]
+#[test]
+fn escape_shuts_the_entry_the_focus_is_in_first() {
+    let home = a_home_naming_one_project_settled("web-escape-the-focused-entry", WRITES_AS_CARTER);
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-priority')",
+        GIVING_UP,
+    );
+    page.press("p", false);
+    page.until(
+        "document.activeElement?.closest('#write-priority form')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('details.lists').open = true");
+    page.press("Escape", false);
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-priority').open, \
+              document.querySelector('details.lists').open, \
+              document.activeElement === document.querySelector('#write-priority>summary')]"
+        ),
+        serde_json::json!([false, true, true]),
+    );
+}
+
+/// The priority's choices and a deferral's days to pick fit the narrowest
+/// phone, so opening them moves nothing off the screen and every day's name
+/// fits its button.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_writes_fit_the_narrowest_phone() {
+    let home = a_home_naming_one_project_settled("web-priority-on-a-phone", WRITES_AS_CARTER);
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        280,
+        640,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-priority')",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-priority').open = true");
+    assert_eq!(
+        page.evaluate(
+            "[document.querySelector('#write-priority form').getBoundingClientRect().right <= innerWidth, \
+              document.documentElement.scrollWidth <= innerWidth]"
+        ),
+        serde_json::json!([true, true]),
+    );
+    page.evaluate("document.querySelector('#write-defer').open = true");
+    assert_eq!(
+        page.evaluate(
+            "[...document.querySelectorAll('#write-defer .pick')] \
+               .map((pick) => pick.scrollWidth <= pick.clientWidth)"
+        ),
+        serde_json::json!([true, true, true]),
+    );
+}
+
+/// A redraw that takes away the control the focus is on, as a bead that no
+/// longer needs a human loses its dismissal, gives the focus to the bead's
+/// panel, so its keys still answer. So does one that disables it, as it
+/// disables the button of a response kept for its words.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_redraw_taking_the_focused_control_gives_the_focus_to_the_panel() {
+    let home = a_home_naming_one_project_settled(
+        "web-redraw-takes-the-focus",
+        &format!("[tui]\nrefresh_seconds = 1\n{WRITES_AS_CARTER}"),
+    );
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-dismiss')",
+        GIVING_UP,
+    );
+    let on_the_panel = "document.activeElement === document.querySelector('aside')";
+    page.evaluate("document.querySelector('#write-dismiss>summary').focus()");
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    page.until("!document.querySelector('#write-dismiss')", GIVING_UP);
+    assert_eq!(page.evaluate(on_the_panel), serde_json::json!(true));
+
+    tracker.holds(&needing_a_human);
+    page.until("document.querySelector('#write-dismiss')", GIVING_UP);
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+    page.evaluate("document.querySelector('#write-respond .foot button').focus()");
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    page.until("!document.querySelector('#write-dismiss')", GIVING_UP);
+    assert_eq!(
+        page.evaluate(&format!(
+            "[document.querySelector('#write-respond .foot button').disabled, {on_the_panel}]"
+        )),
+        serde_json::json!([true, true]),
+    );
+}
+
+/// A bead's page opened before the first read has no panel to give the
+/// focus to. Once the read draws the bead and its writes, the panel takes
+/// the focus, so the keys its buttons name answer.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_bead_arriving_after_the_page_opens_takes_the_focus() {
+    let home = a_home_naming_one_project_settled("web-bead-arrives-late", WRITES_AS_CARTER);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.hang();
+    let (_web, address) = bdi_web(&home, &tracker, &["--writes"], Some(&home), &[]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until("document.readyState === 'complete'", GIVING_UP);
+    assert_eq!(
+        page.evaluate("!!document.querySelector('aside')"),
+        serde_json::json!(false),
+        "the page opened before the read"
+    );
+    tracker.let_go();
+    page.until("document.querySelector('#write-comment')", GIVING_UP);
+    assert_eq!(
+        page.evaluate("document.activeElement === document.querySelector('aside')"),
+        serde_json::json!(true),
+    );
+}
+
+/// A bead's page that takes no writes has no keys to answer, so its panel
+/// leaves the focus where the browser puts it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_page_taking_no_writes_leaves_the_focus_alone() {
+    let home = a_home_naming_one_project_settled("web-read-only-focus", "");
+    let (_web, address, _tracker) = serving(&home, THE_DESCRIBED_SUBTREE, &[]);
+    let mut page = browser::Browser::open(
+        &home,
+        &format!("http://{address}/arkham/{}", THE_ROOT.0),
+        1200,
+        800,
+    );
+    page.until("document.readyState === 'complete'", GIVING_UP);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        page.evaluate("document.activeElement === document.body"),
+        serde_json::json!(true),
+    );
+}
+
+/// `capture`, with dun-0tp as `change` leaves it.
+fn with_the_root_changed(capture: &str, change: impl Fn(&mut serde_json::Value)) -> String {
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_str(capture).expect("a capture of bd list --json");
+    for row in &mut rows {
+        if row["id"] == THE_ROOT.0 {
+            change(row);
+        }
+    }
+    serde_json::to_string(&rows).expect("rows serialise")
 }
 
 /// Open `path` through `relay`, and see that the browser fetched the page
@@ -783,11 +1522,13 @@ fn after_a_write_the_beads_page_shows_it_as_it_now_stands() {
     let shown_at = |priority: &str| {
         get(&address, "/arkham/dun-0tp")
             .1
-            .contains(&format!("<dt>Priority</dt><dd>{priority}</dd>"))
+            .contains(&format!(">{priority}</summary>"))
     };
     assert!(shown_at("P1"), "the bead is drawn as first read");
 
-    tracker.holds(&with_the_roots_priority(THE_DESCRIBED_SUBTREE, 0));
+    tracker.holds(&with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["priority"] = 0.into();
+    }));
     assert!(shown_at("P1"), "nothing reads the tracker again on its own");
     assert_eq!(
         posted_from_the_beads_page(&address, "priority", "text=0"),
@@ -806,18 +1547,6 @@ fn after_a_write_the_beads_page_shows_it_as_it_now_stands() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-/// `capture`, with dun-0tp at `priority`.
-fn with_the_roots_priority(capture: &str, priority: u8) -> String {
-    let mut rows: Vec<serde_json::Value> =
-        serde_json::from_str(capture).expect("a capture of bd list --json");
-    for row in &mut rows {
-        if row["id"] == THE_ROOT.0 {
-            row["priority"] = priority.into();
-        }
-    }
-    serde_json::to_string(&rows).expect("rows serialise")
 }
 
 /// A writable `bdi web` with no actor would write as whoever runs it, so it

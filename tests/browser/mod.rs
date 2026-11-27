@@ -127,6 +127,56 @@ impl Browser {
         answer["result"]["value"].clone()
     }
 
+    /// Press `key` as a keyboard does, down then up, to whatever has the
+    /// focus, holding Ctrl where `with_ctrl`. `key` is a letter, which a
+    /// capital names with Shift held, or `Enter`, `Escape` or `Tab`.
+    pub fn press(&mut self, key: &str, with_ctrl: bool) {
+        self.stroke(key, with_ctrl, 0);
+    }
+
+    /// Hold `key` down long enough for the keyboard to repeat it, then let
+    /// it go.
+    pub fn hold(&mut self, key: &str) {
+        self.stroke(key, false, 3);
+    }
+
+    /// `key` down, `repeats` times more as the keyboard repeats it, then up.
+    fn stroke(&mut self, key: &str, with_ctrl: bool, repeats: usize) {
+        let (code, keycode, text) = match key {
+            "Enter" => ("Enter".to_string(), 13, "\r".to_string()),
+            "Escape" => ("Escape".to_string(), 27, String::new()),
+            "Tab" => ("Tab".to_string(), 9, "\t".to_string()),
+            letter => {
+                let upper = letter.to_ascii_uppercase();
+                let keycode = upper.chars().next().expect("a letter") as u32;
+                (format!("Key{upper}"), keycode, letter.to_string())
+            }
+        };
+        let shift = key.len() == 1 && key.chars().all(|letter| letter.is_ascii_uppercase());
+        let modifiers = if with_ctrl { 2 } else { 0 } | if shift { 8 } else { 0 };
+        let text = if with_ctrl { String::new() } else { text };
+        let down = (0..=repeats).map(|repeated| ("keyDown", repeated > 0));
+        for (kind, repeated) in down.chain([("keyUp", false)]) {
+            let mut event = json!({
+                "type": kind,
+                "key": key,
+                "code": code,
+                "windowsVirtualKeyCode": keycode,
+                "modifiers": modifiers,
+                "autoRepeat": repeated,
+            });
+            if kind == "keyDown" && !text.is_empty() {
+                event["text"] = json!(text);
+            }
+            self.on_page("Input.dispatchKeyEvent", event);
+        }
+    }
+
+    /// Type `text` into whatever has the focus, as a keyboard would.
+    pub fn type_text(&mut self, text: &str) {
+        self.on_page("Input.insertText", json!({ "text": text }));
+    }
+
     /// Wait until `expression` comes to true on the page, failing once
     /// `giving_up` passes.
     pub fn until(&mut self, expression: &str, giving_up: Duration) {

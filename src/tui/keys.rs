@@ -698,6 +698,25 @@ pub(super) mod tests {
         }
     }
 
+    /// A writable web page opens each write with the key the terminal makes
+    /// it with, so there is one set of keys to learn.
+    #[test]
+    fn a_web_page_opens_each_write_with_the_terminals_key_for_it() {
+        for (write, key) in crate::view::draw::html::PAGE_KEYS {
+            let binding = BINDINGS
+                .iter()
+                .find(|binding| binding.action == Action::Write(write))
+                .unwrap_or_else(|| panic!("{write:?} is bound to a key"));
+            assert!(
+                binding
+                    .keys
+                    .iter()
+                    .any(|bound| bound.code == KeyCode::Char(key) && !bound.control),
+                "the page opens {write:?} with {key}, which the terminal does not"
+            );
+        }
+    }
+
     /// Graeme could not tell what `⏎` was, let alone press it. A key named
     /// with anything but the characters on a keyboard is that bug again.
     #[test]

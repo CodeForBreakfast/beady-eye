@@ -1293,6 +1293,10 @@ fn writing(
     Ok((argv, env))
 }
 
+/// The label bd gives a bead that needs a human: the beads `bd human list`
+/// lists, and `bd human respond` and `bd human dismiss` close.
+pub const NEEDS_A_HUMAN: &str = "human";
+
 /// One of the light-touch writes a person makes to a bead from the terminal,
 /// each spelled as `bdi bd` is asked for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
