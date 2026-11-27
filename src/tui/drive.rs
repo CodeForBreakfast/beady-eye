@@ -67,7 +67,9 @@ pub(super) enum Event {
 impl From<Heard> for Event {
     fn from(heard: Heard) -> Self {
         match heard {
-            Heard::Changed(project) => Event::Changed(Wanted::Project(project)),
+            Heard::Changed(project) | Heard::Written(project) => {
+                Event::Changed(Wanted::Project(project))
+            }
             Heard::Covered(project) => Event::Covered(project),
         }
     }

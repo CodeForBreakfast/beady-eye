@@ -320,9 +320,15 @@ impl ShimmedTracker {
             .collect()
     }
 
-    /// Stop answering. Every `bd` call from here waits until this is dropped.
+    /// Stop answering. Every `bd` call from here waits until this is dropped
+    /// or `let_go` is called.
     pub fn hang(&self) {
         self.hang_on("");
+    }
+
+    /// Answer again, letting go of whichever call is held.
+    pub fn let_go(&self) {
+        let _ = std::fs::remove_file(&self.hangs_while);
     }
 
     /// Stop answering the calls that open with these words, and go on
@@ -674,6 +680,6 @@ impl Drop for ShimmedTracker {
     /// Let go of whatever is held. The shim is `bdi`'s child rather than the
     /// test's, so killing `bdi` does not end it; lowering the flag does.
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.hangs_while);
+        self.let_go();
     }
 }

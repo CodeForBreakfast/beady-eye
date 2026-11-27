@@ -2046,7 +2046,7 @@ mod tests {
             let (wanted, wanted_told) = if read_again {
                 (
                     vec![Heard::Changed("arkham".to_string())],
-                    vec!["arkham".to_string()],
+                    vec!["written arkham".to_string()],
                 )
             } else {
                 (Vec::new(), Vec::new())

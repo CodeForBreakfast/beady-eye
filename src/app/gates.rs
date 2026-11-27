@@ -259,14 +259,14 @@ impl Kept {
 
     /// Take what a producer said, `now`.
     pub fn heard(&mut self, heard: &Heard, now: Instant) {
-        let (Heard::Changed(project) | Heard::Covered(project)) = heard;
+        let (Heard::Changed(project) | Heard::Covered(project) | Heard::Written(project)) = heard;
         let Some(at) = self.projects.iter().position(|each| each.name == *project) else {
             return;
         };
         let kept = &mut self.kept[at];
         kept.vouched = Some(now);
         match heard {
-            Heard::Changed(_) => kept.stale = true,
+            Heard::Changed(_) | Heard::Written(_) => kept.stale = true,
             Heard::Covered(_) => {
                 kept.cover.covered();
             }

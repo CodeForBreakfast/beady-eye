@@ -128,6 +128,10 @@ pub enum Heard {
     /// tracker nobody touches it has nothing to say — and without this it
     /// reads exactly like a producer that has died.
     Covered(String),
+    /// `bdi` has just written to it, so it is read again as a change is, and
+    /// the watcher answers for it only once that read is in. [`WRITTEN`] and
+    /// the name say this.
+    Written(String),
 }
 
 /// Where what a writer said goes. A writer is answered only once its report
@@ -146,7 +150,7 @@ impl Report for Sender<Heard> {
 impl Heard {
     fn project(&self) -> &str {
         match self {
-            Heard::Changed(project) | Heard::Covered(project) => project,
+            Heard::Changed(project) | Heard::Covered(project) | Heard::Written(project) => project,
         }
     }
 
@@ -155,6 +159,7 @@ impl Heard {
         match self {
             Heard::Changed(project) => project.clone(),
             Heard::Covered(project) => format!("{COVERED} {project}"),
+            Heard::Written(project) => format!("{WRITTEN} {project}"),
         }
     }
 }
@@ -167,6 +172,10 @@ impl Heard {
 /// talking to an older `bdi` is told `unknown covered <project>`, which is
 /// how it can tell.
 const COVERED: &str = "covered";
+
+/// The word `bdi` puts before a project's name to say it has just written to
+/// the project, for the same reasons as [`COVERED`].
+const WRITTEN: &str = "written";
 
 impl fmt::Display for Answer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -234,6 +243,7 @@ impl Reported {
         let watching = Arc::clone(&self.held());
         let heard = match named.split_once(char::is_whitespace) {
             Some((COVERED, project)) => Heard::Covered(project.trim_start().to_string()),
+            Some((WRITTEN, project)) => Heard::Written(project.trim_start().to_string()),
             _ => Heard::Changed(named.to_string()),
         };
         if watching.contains(heard.project()) {
@@ -864,7 +874,7 @@ pub fn answered(
     message: Option<&str>,
     reported: &Reported,
     changed: &impl Report,
-) -> Option<String> {
+) -> Option<Answer> {
     let answer = message.map_or(Answer::Malformed, |message| reported.take(message));
 
     // The name goes with the signal: what a writer said changed is what the
@@ -872,7 +882,7 @@ pub fn answered(
     if let Answer::Watched(heard) = &answer {
         changed.report(heard.clone()).then_some(())?;
     }
-    Some(answer.to_string())
+    Some(answer)
 }
 
 /// Where a test puts a socket it binds, and a stand-in for the watcher there.
@@ -1144,6 +1154,16 @@ mod tests {
 
         assert_eq!(reported.take("covered arkham\n"), covered("arkham"));
         assert_eq!(reported.take("covered\tarkham"), covered("arkham"));
+    }
+
+    /// How `bdi` says it has just written to a project, in the words it
+    /// writes them in.
+    #[test]
+    fn a_line_saying_a_watched_project_was_written_is_taken_as_written() {
+        let reported = watching(["arkham", "ferry"]);
+        let written = Heard::Written("arkham".to_string());
+
+        assert_eq!(reported.take(&written.line()), Answer::Watched(written));
     }
 
     /// The writer is told which name it got wrong, exactly as for a bare one,

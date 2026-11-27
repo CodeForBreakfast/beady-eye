@@ -493,11 +493,13 @@ impl Collection {
                     self.answered.insert(project.clone(), differing);
                     said
                 }
-                Err(failure) => (found == Some(Found::Moved))
-                    .then(|| watcher::Said::Unreachable(failure.clone())),
+                Err(failure) => (found == Some(Found::Moved)).then(|| watcher::Said::Unreachable {
+                    at: read.at,
+                    failure: failure.clone(),
+                }),
             };
             let said = said.or_else(|| {
-                (found == Some(Found::Unmoved)).then_some(watcher::Said::Vouched { at: read.at })
+                (found == Some(Found::Unmoved)).then_some(watcher::Said::Unmoved { at: read.at })
             });
             if let Some(said) = said {
                 answers.push(Answer {
@@ -522,7 +524,7 @@ impl Collection {
             .filter_map(|(project, _)| {
                 Some(Answer {
                     project: project.clone(),
-                    said: watcher::Said::Vouched {
+                    said: watcher::Said::Unmoved {
                         at: self.read.get(project)?.at,
                     },
                     journal: None,
@@ -4331,7 +4333,10 @@ prefix = "kad"
         assert_eq!(said, [("dunwich", false), ("ferry", true)]);
         assert!(matches!(
             answers[0].said,
-            watcher::Said::Unreachable(TrackerFailure::Auth)
+            watcher::Said::Unreachable {
+                failure: TrackerFailure::Auth,
+                ..
+            }
         ));
     }
 
@@ -4357,7 +4362,8 @@ prefix = "kad"
         collection.watched(&two_projects(), &no_panes(), trackers, wanted, now())
     }
 
-    /// What each answer said, by project: read, vouched for or unreachable.
+    /// What each answer said, by project: read, vouched for, found unmoved or
+    /// unreachable.
     fn said_of(watched: &Watched) -> Vec<(&str, &'static str)> {
         watched
             .answers
@@ -4366,7 +4372,8 @@ prefix = "kad"
                 let said = match answer.said {
                     watcher::Said::Read { .. } => "read",
                     watcher::Said::Vouched { .. } => "vouched",
-                    watcher::Said::Unreachable(_) => "unreachable",
+                    watcher::Said::Unmoved { .. } => "unmoved",
+                    watcher::Said::Unreachable { .. } => "unreachable",
                     watcher::Said::Lapsed => "lapsed",
                 };
                 (answer.project.as_str(), said)
@@ -4399,7 +4406,7 @@ prefix = "kad"
 
         let again = watched(&mut collection, &trackers, &dunwich_alone());
 
-        assert_eq!(said_of(&again), [("dunwich", "vouched")]);
+        assert_eq!(said_of(&again), [("dunwich", "unmoved")]);
         assert_eq!(
             crate::model::tree::nestings_on_this_thread() - nested,
             0,
@@ -4503,7 +4510,7 @@ prefix = "kad"
 
         assert!(matches!(
             again.answers[0].said,
-            watcher::Said::Vouched { at } if at == later
+            watcher::Said::Unmoved { at } if at == later
         ));
     }
 
