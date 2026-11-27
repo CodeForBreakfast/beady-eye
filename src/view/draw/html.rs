@@ -2429,7 +2429,9 @@ const KEPT_CURRENT: &str = r##"addEventListener("DOMContentLoaded", () => {
 /// The part of the page's script that closes an open bead on Escape, as
 /// its close link does. Escape is left to a field being typed in, but for
 /// an empty one in a write's entry, which it closes. It closes an open menu
-/// or entry before the bead, though not the entry the page opened on.
+/// or entry before the bead, though not the entry the page opened on unless
+/// the focus is in it. It never closes a bead while a write's field holds
+/// words, so no words typed are lost.
 const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || event.defaultPrevented) return;
   if (event.target.matches?.("input,textarea,select")) {
@@ -2439,12 +2441,14 @@ const ESCAPE_CLOSES: &str = r##"addEventListener("keydown", (event) => {
     entry.querySelector("summary").focus();
     return;
   }
-  const menu = document.querySelector("details[open]:not([data-open-at-rest])");
+  const menu = document.querySelector("details[open]:is(:not([data-open-at-rest]),:focus-within)");
   if (menu) {
     menu.open = false;
     menu.querySelector("summary").focus();
     return;
   }
+  const fields = document.querySelectorAll("aside details[data-key] :is(textarea,input:not([type=hidden]))");
+  if ([...fields].some((field) => field.value)) return;
   const close = document.querySelector("aside>a.close");
   if (close) location.assign(close.href);
 });"##;

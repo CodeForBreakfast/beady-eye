@@ -734,6 +734,48 @@ fn a_page_opening_on_its_response_leaves_it_to_the_reader() {
     );
 }
 
+/// Escape never takes the reader away from words they typed into a write.
+/// With a response typed and the focus moved on to its button, Escape shuts
+/// the response's entry, though the page opened on it, and goes back to its
+/// button. Another Escape leaves the bead's page where it is, words and all.
+#[cfg(target_os = "linux")]
+#[test]
+fn escape_never_takes_the_reader_away_from_words_typed() {
+    let home = a_home_naming_one_project_settled("web-escape-keeps-words", WRITES_AS_CARTER);
+    let needing_a_human = with_the_root_changed(THE_DESCRIBED_SUBTREE, |root| {
+        root["labels"] = serde_json::json!(["human"]);
+    });
+    let (_web, address, _tracker) = serving(&home, &needing_a_human, &["--writes"]);
+    let opened = format!("/arkham/{}", THE_ROOT.0);
+    let mut page = browser::Browser::open(&home, &format!("http://{address}{opened}"), 1200, 800);
+    page.until(
+        "document.readyState === 'complete' && document.querySelector('#write-respond')?.open",
+        GIVING_UP,
+    );
+    page.evaluate("document.querySelector('#write-respond textarea').focus()");
+    page.type_text("carbide");
+    page.press("Tab", false);
+    page.until(
+        "document.activeElement === document.querySelector('#write-respond .foot button')",
+        GIVING_UP,
+    );
+    page.press("Escape", false);
+    page.until(
+        "!document.querySelector('#write-respond').open \
+         && document.activeElement === document.querySelector('#write-respond>summary')",
+        GIVING_UP,
+    );
+    page.press("Escape", false);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        page.evaluate(
+            "[location.pathname, document.querySelector('#write-respond textarea').value]"
+        ),
+        serde_json::json!([opened, "carbide"]),
+        "the bead's page stays, with the words typed"
+    );
+}
+
 /// `capture`, with dun-0tp as `change` leaves it.
 fn with_the_root_changed(capture: &str, change: impl Fn(&mut serde_json::Value)) -> String {
     let mut rows: Vec<serde_json::Value> =
