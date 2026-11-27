@@ -160,8 +160,8 @@ pub fn address(key: &BeadKey) -> String {
 /// The last segment of the address a bead's comment form posts to.
 pub const COMMENT: &str = "comment";
 
-/// The writes a writable page offers on a bead's page, in the order it draws
-/// their forms, each with the last segment of the address its form posts to.
+/// The writes a writable page can offer on a bead's page, each with the last
+/// segment of the address its form posts to.
 /// Release is left to the terminal: bdi offers it only where it flags a
 /// claim whose agent is gone, and `bdi web` asks no agent provider, so it
 /// never flags one.

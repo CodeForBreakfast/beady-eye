@@ -15,6 +15,7 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::app::Awaited;
+use crate::collect::bd::NEEDS_A_HUMAN;
 use crate::config::Colour;
 use crate::model::edges::Related;
 use crate::model::join::BeadKey;
@@ -134,48 +135,165 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     }
 }
 
-/// The form on a writable page's bead view that makes `write` to `node`,
-/// posting it to `action` with `token`. A write given words has a field for
-/// them, which a write made only with words requires.
-fn writing(html: &mut String, write: Write, node: &Node, action: &str, token: &str) {
-    html.push_str(&format!(
-        "<form class=\"write\" action=\"{}\" method=\"post\">\
+/// The writes the row at the end of a writable bead's page can hold, in the
+/// order it draws them: the response a bead needing a human waits on first,
+/// then what any bead takes.
+const ROW: [Write; 6] = [
+    Write::Respond,
+    Write::Dismiss,
+    Write::Comment,
+    Write::Reopen,
+    Write::Close,
+    Write::Defer,
+];
+
+/// The key that opens each write's entry on a writable bead's page, which is
+/// the key the terminal makes the same write with.
+pub const PAGE_KEYS: [(Write, char); 7] = [
+    (Write::Comment, 'm'),
+    (Write::Close, 'x'),
+    (Write::Reopen, 'o'),
+    (Write::Respond, 'R'),
+    (Write::Dismiss, 'X'),
+    (Write::Defer, 'z'),
+    (Write::Priority, 'p'),
+];
+
+/// Whether a bead's page offers `write` to `node`, read from the bead's
+/// status and labels alone, never from where it sits in a tree. A response
+/// and its dismissal are for a bead bd says needs a human.
+fn applies(write: Write, node: &Node) -> bool {
+    let closed = node.status == Status::Closed;
+    match write {
+        Write::Comment | Write::Priority => true,
+        Write::Close | Write::Defer => !closed,
+        Write::Reopen => closed,
+        Write::Respond | Write::Dismiss => {
+            !closed && node.labels.iter().any(|label| label == NEEDS_A_HUMAN)
+        }
+        Write::Release => false,
+    }
+}
+
+/// The last segment of the address `write`'s form posts to.
+fn segment(write: Write) -> &'static str {
+    OFFERED
+        .iter()
+        .find(|(offered, _)| *offered == write)
+        .map(|(_, named)| *named)
+        .expect("a page offers each write it draws")
+}
+
+/// The key that opens `write`'s entry.
+fn page_key(write: Write) -> char {
+    PAGE_KEYS
+        .iter()
+        .find(|(keyed, _)| *keyed == write)
+        .map(|(_, key)| *key)
+        .expect("each write a page offers has a key")
+}
+
+/// The opening of a form that makes a write, posted to `action` with
+/// `token`, with `class` where it has one.
+fn form_for(class: Option<&str>, action: &str, token: &str) -> String {
+    format!(
+        "<form{} action=\"{}\" method=\"post\">\
          <input type=\"hidden\" name=\"{TOKEN}\" value=\"{}\">",
+        class.map_or_else(String::new, |class| format!(" class=\"{class}\"")),
         escaped(action),
         escaped(token),
+    )
+}
+
+/// The entry in the row at the end of a writable bead's page that makes
+/// `write`, posting to `action` with `token`: a button naming the write and
+/// the key that opens it, over the form, shut until the button is pressed
+/// unless `open`. The button only opens the form, and the one inside it
+/// makes the write. A deferral offers days to pick, each a form of its own
+/// posting bd's word for it, beside a field for any other date.
+fn entry(html: &mut String, write: Write, action: &str, token: &str, open: bool) {
+    let key = page_key(write);
+    html.push_str(&format!(
+        "<details name=\"write\" data-write=\"{}\" data-key=\"{key}\"{}>\
+         <summary>{}<kbd>{key}</kbd></summary>",
+        segment(write),
+        if open { " open" } else { "" },
+        escaped(phrase::write_named(write)),
     ));
+    let label = phrase::words_for(write).unwrap_or_default();
+    let made = format!("<button>{}</button>", escaped(phrase::make(write)));
+    if write == Write::Defer {
+        html.push_str(&format!(
+            "<div class=\"entry\"><span class=\"label\">{}</span><span class=\"picks\">",
+            escaped(label)
+        ));
+        for (said, word) in phrase::DEFER_PICKS {
+            html.push_str(&form_for(None, action, token));
+            html.push_str(&format!(
+                "<input type=\"hidden\" name=\"{TEXT}\" value=\"{}\">\
+                 <button class=\"pick\">{}</button></form>",
+                escaped(word),
+                escaped(said)
+            ));
+        }
+        html.push_str("</span>");
+        html.push_str(&form_for(Some("foot along"), action, token));
+        html.push_str(&format!(
+            "<input name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\" autocomplete=\"off\" required \
+             placeholder=\"{}\" aria-label=\"{}\">{made}</form></div></details>",
+            escaped(phrase::defer_placeholder()),
+            escaped(label)
+        ));
+        return;
+    }
+    html.push_str(&form_for(Some("entry"), action, token));
     let required = if write.needs_words() { " required" } else { "" };
     let field = match write {
         Write::Comment | Write::Respond => Some(format!(
             "<textarea name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\"{required}></textarea>"
         )),
-        Write::Close | Write::Defer => Some(format!(
-            "<input name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\"{required}>"
+        Write::Close => Some(format!(
+            "<input name=\"{TEXT}\" maxlength=\"{LONGEST_COMMENT}\" autocomplete=\"off\"{required}>"
         )),
-        Write::Priority => Some(priorities(node.priority)),
-        Write::Reopen | Write::Dismiss | Write::Release => None,
+        _ => None,
     };
-    if let (Some(field), Some(label)) = (field, phrase::words_for(write)) {
-        html.push_str(&format!("<label>{}{field}</label>", escaped(label)));
+    if let Some(field) = field {
+        html.push_str(&format!(
+            "<label><span>{}</span>{field}</label>",
+            escaped(label)
+        ));
     }
-    html.push_str(&format!(
-        "<button>{}</button></form>",
-        escaped(phrase::make(write))
-    ));
+    html.push_str("<div class=\"foot\">");
+    if let Some(hint) = phrase::write_hint(write) {
+        html.push_str(&format!("<p class=\"hint\">{}</p>", escaped(hint)));
+    }
+    html.push_str(&format!("{made}</div></form></details>"));
 }
 
-/// The priorities bd takes, to pick from, with `current` picked.
-fn priorities(current: u8) -> String {
-    let options: String = (0..=4)
+/// The priority cell of a writable bead's page: the bead's priority, which
+/// opens a choice of every priority bd takes, posting to `action` with
+/// `token`. The bead's own is shown and cannot be picked.
+fn priority_set(current: u8, action: &str, token: &str) -> String {
+    let said = phrase::priority(current);
+    let picks: String = (0..=4)
         .map(|priority| {
-            let picked = if priority == current { " selected" } else { "" };
-            format!(
-                "<option value=\"{priority}\"{picked}>{}</option>",
-                phrase::priority(priority)
-            )
+            let named = phrase::priority(priority);
+            if priority == current {
+                format!("<button aria-current=\"true\" disabled>{named}</button>")
+            } else {
+                format!("<button name=\"{TEXT}\" value=\"{priority}\">{named}</button>")
+            }
         })
         .collect();
-    format!("<select name=\"{TEXT}\">{options}</select>")
+    format!(
+        "<details class=\"set\" name=\"write\" data-write=\"{}\" data-key=\"{}\">\
+         <summary aria-label=\"{}\">{}</summary>{}{picks}</form></details>",
+        segment(Write::Priority),
+        page_key(Write::Priority),
+        escaped(&phrase::change_priority(&said)),
+        escaped(&said),
+        form_for(None, action, token),
+    )
 }
 
 /// What the band over a page says of one root the page asks to be drawn with.
@@ -983,15 +1101,21 @@ impl Drawing<'_> {
         }
         if let Some(tokens) = &self.writes {
             let key = node.key();
-            for (write, named) in OFFERED {
-                writing(
+            html.push_str(&format!(
+                "<div class=\"writes\" role=\"group\" aria-label=\"{}\">",
+                escaped(phrase::write_to_this_bead())
+            ));
+            for write in ROW.into_iter().filter(|&write| applies(write, node)) {
+                let named = segment(write);
+                entry(
                     html,
                     write,
-                    node,
                     &self.asked.writing(&key, named),
                     &tokens.issue(&key, named),
+                    write == Write::Respond,
                 );
             }
+            html.push_str("</div>");
         }
         html.push_str("</div>");
     }
@@ -1073,7 +1197,21 @@ impl Drawing<'_> {
             }
         };
         html.push_str("<dl class=\"fields\">");
-        cell(html, field::PRIORITY, &phrase::priority(node.priority));
+        match &self.writes {
+            Some(tokens) if applies(Write::Priority, node) => {
+                let (key, named) = (node.key(), segment(Write::Priority));
+                html.push_str(&format!(
+                    "<div><dt>{}</dt><dd>{}</dd></div>",
+                    escaped(field::PRIORITY),
+                    priority_set(
+                        node.priority,
+                        &self.asked.writing(&key, named),
+                        &tokens.issue(&key, named)
+                    )
+                ));
+            }
+            _ => cell(html, field::PRIORITY, &phrase::priority(node.priority)),
+        }
         cell(html, field::TYPE, &node.issue_type);
         if let Some(assignee) = &node.assignee {
             cell(html, field::ASSIGNEE, assignee);
@@ -1714,8 +1852,57 @@ border-radius:8px;background:none;color:var(--muted);font:500 var(--size-detail)
 .acts>:hover{background:var(--sunk);color:var(--fg)}\
 .acts>:focus-visible,aside>.close:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}\
 aside>:not(.acts,.close){grid-column:1/-1;padding:18px 24px 28px}\
-.write{margin:0 0 12px}.write:not(:has(label)){display:inline-block;margin-right:8px}.write label{display:block}\
-.write label>*{display:block;box-sizing:border-box;width:100%;margin:6px 0}.write textarea{min-height:6em}.write select{width:auto}\
+.writes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:18px;padding-top:14px;\
+border-top:1px solid var(--line);white-space:normal;font-family:var(--body)}\
+.writes>details{display:contents}.writes>details::details-content{display:contents}\
+.writes>details:not([open])>.entry{display:none}\
+.writes summary{order:1;list-style:none;cursor:pointer;user-select:none;display:inline-flex;\
+align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 10px;\
+border:1px solid var(--line);border-radius:8px;\
+font:500 var(--size-detail) var(--body);color:var(--fg);white-space:nowrap}\
+.writes summary::-webkit-details-marker{display:none}\
+@media (hover:hover){.writes summary:hover{background:var(--sunk)}}\
+.writes summary:focus-visible,.writes button:focus-visible,.fields .set>summary:focus-visible,\
+.fields .set button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}\
+.writes details[open]>summary{border-color:transparent;background:var(--accent-soft);\
+color:var(--accent);font-weight:600}\
+.writes kbd{font:500 var(--size-label) var(--code);color:var(--muted)}.writes details[open] kbd{color:inherit}\
+.writes .entry{order:2;flex:0 0 100%;min-width:0;display:grid;gap:8px;margin:2px 0 0}\
+.writes label{display:block}\
+.writes label>span,.writes .label{display:block;color:var(--muted)}\
+.writes :is(textarea,input){display:block;box-sizing:border-box;width:100%;margin:6px 0 0;padding:9px 12px;\
+border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--fg);\
+font:var(--size-row)/1.5 var(--body);outline:0}\
+.writes input[type=hidden]{display:none}\
+.writes textarea{min-height:5.6em;resize:vertical}\
+.writes ::placeholder{color:var(--muted);opacity:1}\
+.writes :is(textarea,input):focus-visible{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}\
+.writes .foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}\
+.writes .hint{flex:1 1 12em;margin:0;font-size:var(--size-detail);color:var(--muted)}\
+.writes .picks{display:flex;flex-wrap:wrap;gap:6px}.writes .picks>form{display:contents}\
+.writes .along{flex-wrap:nowrap;align-items:stretch}.writes .along input{flex:1;min-width:0;margin:0}\
+.writes .along button{height:auto}\
+.writes button{height:32px;box-sizing:border-box;padding:0 14px;border:1px solid transparent;border-radius:8px;\
+background:var(--accent);color:var(--on-accent);font:600 var(--size-detail) var(--body);white-space:nowrap;cursor:pointer}\
+.writes button.pick{border-color:var(--line);background:none;color:var(--fg);font-weight:500}\
+@media (hover:hover){.writes button.pick:hover{background:var(--sunk)}}\
+@supports not selector(::details-content){.writes>details{display:block;flex:0 0 100%}\
+.writes .entry{margin:8px 0 4px}}\
+.fields .set{position:relative;display:inline-block}\
+.fields .set>summary{list-style:none;cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:4px;\
+margin:-3px -8px;padding:3px 6px 3px 8px;border-radius:6px}\
+.fields .set>summary::-webkit-details-marker{display:none}\
+.fields .set>summary::after{content:\"\";flex:none;width:13px;height:13px;background:var(--muted);\
+-webkit-mask:var(--chevron) center/contain no-repeat;mask:var(--chevron) center/contain no-repeat}\
+@media (hover:hover){.fields .set>summary:hover{background:var(--sunk)}}\
+.fields .set[open]>summary{background:var(--accent-soft);color:var(--accent)}\
+.fields .set[open]>summary::after{background:currentColor;transform:rotate(180deg)}\
+.fields .set>form{position:absolute;top:calc(100% + 8px);left:-8px;z-index:4;display:flex;gap:2px;margin:0;padding:6px;\
+background:var(--raised);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}\
+.fields .set button{width:40px;height:32px;padding:0;border:0;border-radius:8px;background:none;color:var(--fg);\
+font:500 var(--size-row) var(--body);cursor:pointer}\
+@media (hover:hover){.fields .set button:not([aria-current]):hover{background:var(--sunk)}}\
+.fields .set button[aria-current]{background:var(--accent-soft);color:var(--accent);font-weight:600;cursor:default}\
 @media (width>=1100px){main.open .line .flag>span{position:absolute;width:1px;height:1px;\
 overflow:hidden;clip-path:inset(50%);white-space:nowrap}\
 main.open .line .bead>.project{display:none}}\
@@ -1750,8 +1937,8 @@ border-radius:999px;font:600 var(--size-detail) var(--body);color:var(--fg);back
 .page .head h2{margin:0;font:600 var(--size-title)/1.25 var(--display);white-space:pre-wrap;text-wrap:balance;overflow-wrap:anywhere}\
 .waits{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;\
 background:var(--sunk);border:1px solid var(--line)}\
-.waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2{font:600 var(--size-label) var(--body);letter-spacing:.07em;\
-text-transform:uppercase}\
+.waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2,.writes label>span,.writes .label\
+{font:600 var(--size-label) var(--body);letter-spacing:.07em;text-transform:uppercase}\
 .line.section{min-height:0;padding-block:16px 6px}.line.section>h2{margin:0;color:var(--muted);white-space:normal}\
 .waits>p{margin:0;color:var(--muted)}\
 .page section{margin-top:18px;white-space:normal}\
@@ -1966,7 +2153,19 @@ white-space:normal;align-items:baseline;width:calc(100% - 2ch)}\
 .page .bead .title{grid-area:1/2;font-size:var(--size-row-phone);line-height:1.35;overflow-wrap:anywhere}\
 .page .bead .id{grid-area:2/2;font-size:var(--size-detail);font-family:var(--body)}\
 .waits>.bead{width:100%}.waits>.bead>.g{align-self:start;margin-top:4px}.waits>.bead>.title{line-height:20px}\
-.fields{grid-template-columns:repeat(2,minmax(0,1fr))}.prose{font-size:var(--size-row-phone)}}\
+.fields{grid-template-columns:repeat(2,minmax(0,1fr))}.prose{font-size:var(--size-row-phone)}\
+.writes{gap:8px}\
+.writes summary{height:44px;padding:0 16px;border-radius:12px;font-size:var(--size-row-phone)}\
+.writes kbd{display:none}\
+.writes :is(textarea,input){font-size:var(--size-field)}\
+.writes .hint{flex-basis:100%}\
+.writes .picks{flex:1 0 100%;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}\
+.writes button{height:48px;border-radius:12px;font-size:var(--size-row-phone)}\
+.writes button.pick{padding:0 6px;font-size:var(--size-row)}\
+.writes .along{flex-wrap:wrap}.writes .along input{flex:1 0 100%}.writes .along button{height:48px}\
+.writes .foot>button{flex:1 0 100%}\
+.fields .set>summary{margin:-10px -8px;padding:10px 6px 10px 8px}\
+.fields .set button{width:52px;height:44px;font-size:var(--size-row-phone)}}\
 :is(.bead,.status) .g:is(.open,.in-progress,.blocked,.closed,.deferred){display:inline-block;position:relative;\
 box-sizing:border-box;width:12px;height:12px;border:1.75px solid currentColor;border-radius:50%;\
 font-size:0;overflow:hidden;vertical-align:-1px;justify-self:center}\
@@ -4239,34 +4438,147 @@ mod tests {
         );
     }
 
-    /// A bead's page on a page that takes writes ends with a form for each
-    /// write the web offers, in the order it offers them, each posted to the
-    /// bead's own address for it with the token issued for that form. A page
-    /// that takes none draws no form that posts.
-    #[test]
-    fn only_a_writable_page_offers_the_light_touch_writes_on_the_bead() {
+    /// smt-4kd3p.6's page as a page that takes writes draws it from
+    /// `snapshot`, asked for with a query its forms carry back.
+    fn writable_page(snapshot: Snapshot) -> String {
         let asked = Asked::of(&format!("{}?shut=gate", address(&key("smt-4kd3p.6"))))
             .expect("a bead's page");
-        let tokens = Tokens::keyed([7; 32]);
         let writable = Drawn {
-            writes: Some(tokens),
+            writes: Some(Tokens::keyed([7; 32])),
             ..drawing()
         };
-        let html = page(ground(), &Layout::default(), &asked, writable).html;
+        page(snapshot, &Layout::default(), &asked, writable).html
+    }
+
+    /// Each write the row at the end of a bead's page offers, in its order,
+    /// and whether its entry is open.
+    fn the_row(html: &str) -> Vec<(String, bool)> {
+        let row = inside(inside(aside_of(html), "page"), "writes");
+        row.split("<details ")
+            .skip(1)
+            .map(|entry| {
+                let tag = &entry[..entry.find('>').expect("the tag ends")];
+                let write = tag
+                    .split("data-write=\"")
+                    .nth(1)
+                    .and_then(|named| named.split_once('"'))
+                    .map(|(named, _)| named.to_string())
+                    .expect("an entry names its write");
+                (write, tag.split(' ').any(|attribute| attribute == "open"))
+            })
+            .collect()
+    }
+
+    /// A bead's page offers a write only where it applies, read from the
+    /// bead's status and labels: a comment on every bead, a close and a
+    /// deferral on any bead not closed, a reopen on a closed one, and a
+    /// response and its dismissal on a bead not closed that carries bd's
+    /// label for one that needs a human. The response leads, open, so the
+    /// page opens on it.
+    #[test]
+    fn a_beads_page_offers_each_write_only_where_it_applies() {
+        let human = || vec![NEEDS_A_HUMAN.to_string()];
+        let cases: [(&str, Box<dyn Fn(&mut Node)>, &[(&str, bool)]); 6] = [
+            (
+                "open",
+                Box::new(|_| {}),
+                &[("comment", false), ("close", false), ("defer", false)],
+            ),
+            (
+                "deferred",
+                Box::new(|bead| bead.status = Status::Deferred),
+                &[("comment", false), ("close", false), ("defer", false)],
+            ),
+            (
+                "closed",
+                Box::new(|bead| bead.status = Status::Closed),
+                &[("comment", false), ("reopen", false)],
+            ),
+            (
+                "needing a human",
+                Box::new(move |bead| bead.labels = human()),
+                &[
+                    ("respond", true),
+                    ("dismiss", false),
+                    ("comment", false),
+                    ("close", false),
+                    ("defer", false),
+                ],
+            ),
+            (
+                "in progress, needing a human",
+                Box::new(move |bead| {
+                    bead.status = Status::InProgress;
+                    bead.labels = human();
+                }),
+                &[
+                    ("respond", true),
+                    ("dismiss", false),
+                    ("comment", false),
+                    ("close", false),
+                    ("defer", false),
+                ],
+            ),
+            (
+                "closed, once needing a human",
+                Box::new(move |bead| {
+                    bead.status = Status::Closed;
+                    bead.labels = human();
+                }),
+                &[("comment", false), ("reopen", false)],
+            ),
+        ];
+        for (bead, change, offered) in cases {
+            let html = writable_page(with_the_bead_changed(change));
+            let expected: Vec<(String, bool)> = offered
+                .iter()
+                .map(|(write, open)| (write.to_string(), *open))
+                .collect();
+            assert_eq!(the_row(&html), expected, "a bead {bead}");
+            let fields = inside(aside_of(&html), "fields");
+            assert!(
+                fields.contains("<details class=\"set\" name=\"write\" data-write=\"priority\" data-key=\"p\">"),
+                "every bead's priority is set from its cell, on a bead {bead}: {fields}"
+            );
+            assert!(!html.contains("/release"), "{html}");
+        }
+    }
+
+    /// Each form on a writable bead's page posts what bd takes for its
+    /// write to the bead's own address for it, with the token issued for
+    /// that write. Pressing a write's button in the row only opens its
+    /// entry: the button that posts is inside the entry, under the hint that
+    /// says what the write does where its name alone does not.
+    #[test]
+    fn each_form_on_a_writable_beads_page_posts_its_write_with_its_token() {
+        let html = writable_page(with_the_bead_changed(|bead| {
+            bead.labels = vec![NEEDS_A_HUMAN.to_string()];
+        }));
         let bead = inside(aside_of(&html), "page");
-        let forms: Vec<&str> = bead
+        let tokens = Tokens::keyed([7; 32]);
+        let forms: Vec<(&str, &str)> = bead
             .split("<form ")
             .skip(1)
-            .map(|form| &form[..form.find("</form>").expect("the form ends")])
+            .map(|form| {
+                let form = &form[..form.find("</form>").expect("the form ends")];
+                let action = form
+                    .split_once("action=\"/summit-works/smt-4kd3p.6/")
+                    .and_then(|(_, rest)| rest.split_once("?shut=gate\" method=\"post\">"))
+                    .map(|(named, _)| named)
+                    .unwrap_or_else(|| panic!("a form posts to the bead: {form}"));
+                (action, form)
+            })
             .collect();
-        assert_eq!(forms.len(), OFFERED.len(), "{bead}");
-        for (form, (write, named)) in forms.iter().zip(OFFERED) {
-            assert!(
-                form.starts_with(&format!(
-                    "class=\"write\" action=\"/summit-works/smt-4kd3p.6/{named}?shut=gate\" method=\"post\">"
-                )),
-                "{form}"
-            );
+        let posted: Vec<&str> = forms.iter().map(|(named, _)| *named).collect();
+        assert_eq!(
+            posted,
+            [
+                "priority", "respond", "dismiss", "comment", "close", "defer", "defer", "defer",
+                "defer"
+            ],
+            "{bead}"
+        );
+        for (named, form) in &forms {
             let token = tokens.issue(&key("smt-4kd3p.6"), named);
             assert!(
                 form.contains(&format!(
@@ -4274,36 +4586,142 @@ mod tests {
                 )),
                 "{form}"
             );
-            let text = text_of(&format!("<form {form}"));
+        }
+        let entry = |write: Write| {
+            let named = OFFERED
+                .iter()
+                .find(|(offered, _)| *offered == write)
+                .map(|(_, named)| *named)
+                .expect("the page offers the write");
+            let entry = bead
+                .split_once(&format!("data-write=\"{named}\""))
+                .map(|(_, entry)| &entry[..entry.find("</details>").expect("the entry ends")])
+                .expect("the bead's page offers the write");
+            let summary = &entry[entry.find("<summary").expect("its button")..];
+            let summary = &summary[..summary.find("</summary>").expect("its button ends")];
+            (text_of(summary), text_of(entry))
+        };
+        for (write, key, field) in [
+            (
+                Write::Respond,
+                'R',
+                "<textarea name=\"text\" maxlength=\"7000\" required>",
+            ),
+            (Write::Dismiss, 'X', ""),
+            (
+                Write::Comment,
+                'm',
+                "<textarea name=\"text\" maxlength=\"7000\" required>",
+            ),
+            (
+                Write::Close,
+                'x',
+                "<input name=\"text\" maxlength=\"7000\" autocomplete=\"off\">",
+            ),
+        ] {
+            let (button, said) = entry(write);
+            assert_eq!(button, format!("{}{key}", phrase::write_named(write)));
+            let hint = phrase::write_hint(write).unwrap_or_default();
+            let label = phrase::words_for(write).unwrap_or_default();
             assert!(
-                text.starts_with(phrase::words_for(write).unwrap_or_default()),
-                "{form}"
+                said.ends_with(&format!("{label}{hint}{}", phrase::make(write))),
+                "{said}"
             );
-            assert!(text.ends_with(phrase::make(write)), "{form}");
-            assert_eq!(
-                form.contains(" required"),
-                write.needs_words() && write != Write::Priority,
-                "{form}"
+            assert!(bead.contains(field), "{bead}");
+        }
+        let (button, said) = entry(Write::Defer);
+        assert_eq!(button, format!("{}z", phrase::write_named(Write::Defer)));
+        let picked: String = phrase::DEFER_PICKS.iter().map(|(said, _)| *said).collect();
+        assert!(
+            said.ends_with(&format!(
+                "{}{picked}{}",
+                phrase::words_for(Write::Defer).unwrap_or_default(),
+                phrase::make(Write::Defer)
+            )),
+            "{said}"
+        );
+        for (said, word) in phrase::DEFER_PICKS {
+            assert!(
+                bead.contains(&format!(
+                    "<input type=\"hidden\" name=\"text\" value=\"{word}\"><button class=\"pick\">{said}</button>"
+                )),
+                "a quick pick posts bd's word for its day: {bead}"
             );
         }
         assert!(
-            forms[0].contains("<textarea name=\"text\" maxlength=\"7000\" required>"),
-            "{}",
-            forms[0]
+            bead.contains(&format!(
+                "<input name=\"text\" maxlength=\"7000\" autocomplete=\"off\" required \
+                 placeholder=\"{}\" aria-label=\"{}\">",
+                phrase::defer_placeholder(),
+                phrase::words_for(Write::Defer).unwrap_or_default()
+            )),
+            "{bead}"
         );
+
         let priority = forms
             .iter()
-            .find(|form| form.contains("/priority?"))
+            .find(|(named, _)| *named == "priority")
+            .map(|(_, form)| *form)
             .expect("a priority form");
         assert!(
-            priority.contains("<option value=\"2\" selected>P2</option>"),
-            "the bead's own priority is the one the form holds: {priority}"
+            priority.contains("<button aria-current=\"true\" disabled>P2</button>"),
+            "the bead's own priority is the one it has: {priority}"
         );
-        assert!(!bead.contains("/release"), "{bead}");
+        for other in [0, 1, 3, 4] {
+            assert!(
+                priority.contains(&format!(
+                    "<button name=\"text\" value=\"{other}\">P{other}</button>"
+                )),
+                "{priority}"
+            );
+        }
+        assert!(
+            bead.contains(&format!(
+                "<summary aria-label=\"{}\">P2</summary>",
+                phrase::change_priority("P2")
+            )),
+            "{bead}"
+        );
+    }
 
+    /// A page that takes no writes draws no form that posts, and its
+    /// priority cell says the priority and nothing more.
+    #[test]
+    fn a_page_taking_no_writes_offers_none() {
+        let asked = Asked::of(&format!("{}?shut=gate", address(&key("smt-4kd3p.6"))))
+            .expect("a bead's page");
         let read_only = page(ground(), &Layout::default(), &asked, drawing()).html;
         assert!(!read_only.contains("method=\"post\""), "{read_only}");
-        assert!(!read_only.contains("<textarea"), "{read_only}");
+        assert!(!read_only.contains("class=\"writes\""), "{read_only}");
+        assert!(!read_only.contains("<details class=\"set\""), "{read_only}");
+        assert!(
+            read_only.contains("<dt>Priority</dt><dd>P2</dd>"),
+            "{read_only}"
+        );
+    }
+
+    /// The row's buttons are drawn as the list menu's button, and an open
+    /// one as the menu's picked entry, so the row belongs to the panel. On a
+    /// phone they are tall enough to tap, and a field is set large enough
+    /// that iOS does not zoom into it.
+    #[test]
+    fn the_rows_buttons_are_drawn_in_the_panels_own_style() {
+        assert!(STYLE.contains(
+            ".writes summary{order:1;list-style:none;cursor:pointer;user-select:none;display:inline-flex;\
+             align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 10px;\
+             border:1px solid var(--line);border-radius:8px;"
+        ));
+        assert!(STYLE.contains(
+            ".writes details[open]>summary{border-color:transparent;background:var(--accent-soft);\
+             color:var(--accent);font-weight:600}"
+        ));
+        let phone = &STYLE[STYLE.find("@media (max-width:720px){").expect("a phone layout")..];
+        assert!(phone.contains(".writes summary{height:44px;"), "{phone}");
+        assert!(
+            phone.contains(".writes :is(textarea,input){font-size:var(--size-field)}"),
+            "{phone}"
+        );
+        assert!(!STYLE.contains(".write{"), "{STYLE}");
     }
 
     /// A page names its own referrer policy, which a proxy's header cannot
@@ -4970,6 +5388,7 @@ mod tests {
         pages.extend(beads.iter().map(|bead| address(&key(&bead.id))));
         for target in &pages {
             let html = page_at(target).html;
+            let html = html[html.find("<body>").expect("a body")..].to_string();
             let html = match html.find("<p class=\"state\">") {
                 Some(state) => format!("{}{}", &html[..state], &html[element_end(&html, state)..]),
                 None => html,
@@ -6266,7 +6685,8 @@ mod tests {
     }
 
     /// The page reads as a web page, in a proportional face and the page's
-    /// own colours, and only code is set in the code face.
+    /// own colours, and only code and the key a write's button names are
+    /// set in the code face.
     #[test]
     fn the_page_is_set_in_a_proportional_face_in_its_own_colours() {
         let html = page_at(&address(&key("smt-4kd3p.6"))).html;
@@ -6280,7 +6700,7 @@ mod tests {
                 .match_indices("var(--code)")
                 .map(|(at, _)| &STYLE[STYLE[..at].rfind('}').map_or(0, |end| end + 1)..at])
                 .collect::<Vec<_>>(),
-            [".code{font-family:"],
+            [".code{font-family:", ".writes kbd{font:500 var(--size-label) "],
             "{STYLE}"
         );
         assert!(
@@ -6461,8 +6881,9 @@ mod tests {
 
     /// The page's text is set in the review's five sizes, named once at the
     /// head of the stylesheet, with a phone's rows a little larger, and
-    /// every size of text the stylesheet sets names one of them. A search
-    /// field is the one exception, since iOS zooms into a smaller one.
+    /// every size of text the stylesheet sets names one of them. A field a
+    /// person types into on a phone, the search's or a write's, is set at
+    /// the field size, since iOS zooms into a smaller one.
     #[test]
     fn the_pages_text_is_set_in_five_named_sizes() {
         assert!(
@@ -6503,15 +6924,16 @@ mod tests {
         }
         assert_eq!(
             STYLE.matches("--size-field)").count(),
-            1,
-            "only the search field: {STYLE}"
+            2,
+            "only the search field and a write's field: {STYLE}"
         );
     }
 
     /// Every small capitals label on the page is set by one rule at the
     /// label size: a section's heading on a bead's page, a field's name in
-    /// its grid, what a bead waits on, a heading in the menu of lists, and
-    /// the heading over each of a list's sections.
+    /// its grid, what a bead waits on, a heading in the menu of lists, the
+    /// heading over each of a list's sections, and what a write's entry
+    /// asks for.
     #[test]
     fn every_small_capitals_label_is_set_alike() {
         assert_eq!(
@@ -6521,7 +6943,8 @@ mod tests {
         );
         assert!(
             STYLE.contains(
-                ".waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2\
+                ".waits>p,.page section>h3,.fields dt,.lists .hd,.line.section>h2,\
+                 .writes label>span,.writes .label\
                  {font:600 var(--size-label) var(--body);letter-spacing:.07em;text-transform:uppercase}"
             ),
             "{STYLE}"
@@ -6538,6 +6961,7 @@ mod tests {
             ".fields dt",
             ".lists .hd",
             ".line.section>h2",
+            ".writes label>span,.writes .label",
         ] {
             let rule = STYLE
                 .split('}')

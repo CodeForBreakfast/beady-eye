@@ -1285,6 +1285,59 @@ pub fn words_for(write: Write) -> Option<&'static str> {
     }
 }
 
+/// The button in the row at the end of a writable web page's bead view that
+/// opens a write's entry.
+pub fn write_named(write: Write) -> &'static str {
+    match write {
+        Write::Comment => "Comment",
+        Write::Close => "Close",
+        Write::Reopen => "Reopen",
+        Write::Respond => "Respond",
+        Write::Dismiss => "Dismiss",
+        Write::Defer => "Defer",
+        Write::Release => "Release",
+        Write::Priority => "Priority",
+    }
+}
+
+/// What a write's entry on a writable web page says it does, where its name
+/// alone does not say.
+pub fn write_hint(write: Write) -> Option<&'static str> {
+    match write {
+        Write::Close => Some("The reason is optional."),
+        Write::Reopen => Some("Sets the bead back to open."),
+        Write::Respond => Some("Adds the response as a comment and closes the bead."),
+        Write::Dismiss => Some("Closes the bead without a response."),
+        Write::Comment | Write::Defer | Write::Release | Write::Priority => None,
+    }
+}
+
+/// What the row of writes at the end of a writable web page's bead view is
+/// called to a reader that cannot see it.
+pub fn write_to_this_bead() -> &'static str {
+    "Write to this bead"
+}
+
+/// The days a writable web page's deferral offers to pick rather than type,
+/// each with bd's word for it, which is what the pick posts.
+pub const DEFER_PICKS: [(&str, &str); 3] = [
+    ("Tomorrow", "tomorrow"),
+    ("Next monday", "next monday"),
+    ("In a week", "+1w"),
+];
+
+/// What the field a date is typed into on a writable web page's deferral
+/// says while it is empty, under the days it offers to pick.
+pub fn defer_placeholder() -> &'static str {
+    "or a date, such as 2026-12-14"
+}
+
+/// What a writable web page's priority cell, showing `priority`, says it
+/// does to a reader that cannot see it.
+pub fn change_priority(priority: &str) -> String {
+    format!("Priority {priority}, change it")
+}
+
 /// The button on a writable web page's bead view that makes a write, in
 /// beads' word for it.
 pub fn make(write: Write) -> &'static str {
@@ -1542,7 +1595,13 @@ mod tests {
             }));
             said.extend(words_for(write).map(str::to_string));
             said.push(make(write).to_string());
+            said.push(write_named(write).to_string());
+            said.extend(write_hint(write).map(str::to_string));
         }
+        said.extend(DEFER_PICKS.iter().map(|(pick, _)| pick.to_string()));
+        said.push(defer_placeholder().to_string());
+        said.push(change_priority("P2"));
+        said.push(write_to_this_bead().to_string());
         said.push(not_configured("summit-works"));
         said.push(NOTHING_TYPED.to_string());
 
