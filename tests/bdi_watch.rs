@@ -394,10 +394,11 @@ fn a_watcher_that_stops_closes_its_consumers_and_takes_no_more() {
 }
 
 /// What a session whose connection dropped relies on: a watcher that runs
-/// out of descriptors takes it back once one is free, without a restart.
+/// out of descriptors takes it back once it has room again, without a
+/// restart.
 #[cfg(target_os = "linux")]
 #[test]
-fn a_watcher_out_of_descriptors_answers_a_new_watch_once_one_is_free() {
+fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
     let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors");
     let room = open_files(watcher.pid()).rlim_cur;
     let mut untaken = a_watch_out_of_descriptors(&home, &watcher);
