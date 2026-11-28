@@ -3164,9 +3164,12 @@ empty-by-omission — a filtered tree is reported, not dropped. A reason is
 the ones that know more are found by their extra keys. `parse`
 carries `read` and `cause` beside its kind: `read` is
 the bd subcommand whose answer would not parse, and `cause` is the shape that
-did not match and where in the answer it was. Every reason that came from a
-run of bd carries `command`, the arguments `bdi` gave bd, quoted as a shell
-needs them and kept on one line. `unavailable` also carries `said` where bd
+did not match and where in the answer it was. Every reason a failed run of
+bd gives carries `command`, the arguments `bdi` gave bd, quoted as a shell
+needs them and kept on one line. An argument holding a line break or a
+character that moves a terminal is written with escapes inside `$'…'`, so
+the command still runs again when pasted after `bd`. A `parse` reason comes
+from a run that succeeded, and its `read` names the subcommand. `unavailable` also carries `said` where bd
 exited non-zero for a reason `bdi` cannot place, and `said` is bd's stderr,
 cut at a thousand characters. `unstartable` and `installed-unstartable`
 carry `error`, the error the operating system refused to start bd with, such
@@ -3178,7 +3181,8 @@ out of `command`, `said` and `error` wherever it appears. bd can also find a
 password `bdi` never sees, in its credentials file, and nothing can say where
 such a password ends. So where `said` names a password anywhere or holds an
 `@`, as a connection string's `user:secret@` does, all of it is withheld and
-only `command` is kept. A control character other than a line break is kept
+only `command` is kept. MySQL's `'user'@'host'` names an account and holds
+no password, so it does not count as an `@`. A control character other than a line break is kept
 as its escape, and so is a character that breaks a line or turns text round
 without being one. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.

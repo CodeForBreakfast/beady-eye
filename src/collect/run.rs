@@ -623,22 +623,9 @@ fn cut_short(said: &str) -> String {
 /// characters are escaped too, so what a reader sees is what bd wrote, in
 /// the order it wrote it.
 fn printable(said: &str) -> String {
-    let unseen = |glyph: char| {
-        (glyph.is_control() && glyph != '\n')
-            || matches!(
-                glyph,
-                '\u{061c}'
-                    | '\u{200e}'
-                    | '\u{200f}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202a}'..='\u{202e}'
-                    | '\u{2066}'..='\u{2069}'
-            )
-    };
     let mut out = String::with_capacity(said.len());
     for glyph in said.chars() {
-        if unseen(glyph) {
+        if glyph != '\n' && moves_the_text(glyph) {
             out.extend(glyph.escape_default());
         } else {
             out.push(glyph);
@@ -647,24 +634,36 @@ fn printable(said: &str) -> String {
     out
 }
 
+/// Whether `glyph` breaks a line, moves a terminal or turns text round.
+fn moves_the_text(glyph: char) -> bool {
+    glyph.is_control()
+        || matches!(
+            glyph,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 /// The command line `args` as a failure keeps it: with the handed password
-/// taken out of each argument, quoted as a shell needs it, and on one line.
+/// taken out of each argument, and quoted as a shell needs it.
 fn the_command(args: &[&str], env: &Env) -> String {
     let args: Vec<String> = args
         .iter()
         .map(|arg| without_the_handed_password(arg, env))
         .collect();
-    on_one_line(&printable(&spelled(&args)))
-}
-
-/// `text` with each line break written as its escape, so a command line
-/// that holds one is still shown on one line.
-fn on_one_line(text: &str) -> String {
-    text.replace('\n', r"\n")
+    spelled(&args)
 }
 
 /// `args` as a shell needs them typed, so the command runs again when pasted
-/// after the program's name.
+/// after the program's name. It is one line, and moves no terminal it is
+/// shown in, because an argument holding a character that would is written
+/// with that character's escape, inside the `$'…'` quotes bash and zsh read
+/// escapes in.
 fn spelled(args: &[String]) -> String {
     let plain = |arg: &str| {
         !arg.is_empty()
@@ -676,12 +675,38 @@ fn spelled(args: &[String]) -> String {
         .map(|arg| {
             if plain(arg) {
                 arg.clone()
+            } else if arg.chars().any(moves_the_text) {
+                with_escapes(arg)
             } else {
                 format!("'{}'", arg.replace('\'', r"'\''"))
             }
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `arg` in `$'…'` quotes, with each character that moves the text written
+/// as the escape of each byte it is made of, which reads back the same
+/// whatever the shell's locale.
+fn with_escapes(arg: &str) -> String {
+    let mut out = String::from("$'");
+    for glyph in arg.chars() {
+        match glyph {
+            '\\' => out.push_str(r"\\"),
+            '\'' => out.push_str(r"\'"),
+            '\n' => out.push_str(r"\n"),
+            '\t' => out.push_str(r"\t"),
+            '\r' => out.push_str(r"\r"),
+            glyph if moves_the_text(glyph) => {
+                for byte in glyph.to_string().bytes() {
+                    out.push_str(&format!(r"\x{byte:02x}"));
+                }
+            }
+            glyph => out.push(glyph),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// What stands in for the password the child was handed.
@@ -709,14 +734,19 @@ fn without_the_handed_password(text: &str, env: &Env) -> String {
 /// names a password anywhere, or holds an `@` as a connection string's
 /// `user:secret@` does, all of it is withheld. That costs the reader bd's
 /// words and never the password, and the command line is still kept.
+///
+/// The test reads `said` as bd wrote it, because the handed password can
+/// itself be a word that names one. MySQL's `'user'@'host'` is passed over,
+/// because it names an account and holds no password.
 fn without_password(said: &str, env: &Env) -> String {
     static MAY_HOLD_A_PASSWORD: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)passw|pwd|@").expect("the pattern compiles"));
-    let said = without_the_handed_password(said, env);
-    if MAY_HOLD_A_PASSWORD.is_match(&said) {
+    static AN_ACCOUNT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"'[^':]*'@'[^']*'").expect("the pattern compiles"));
+    if MAY_HOLD_A_PASSWORD.is_match(&AN_ACCOUNT.replace_all(said, "")) {
         WITHHELD.to_string()
     } else {
-        said.trim().to_string()
+        without_the_handed_password(said, env).trim().to_string()
     }
 }
 
@@ -1575,6 +1605,33 @@ mod tests {
         );
     }
 
+    /// The handed password can itself be a word that marks a password, and
+    /// taking it out leaves the mark that shows another may be there.
+    #[test]
+    fn a_handed_password_that_marks_a_password_still_withholds_the_words() {
+        let env = Env::from([(CREDENTIAL_VAR.to_string(), "pwd".to_string())]);
+        assert_eq!(without_password("Error: bad pwd=s3cret\n", &env), WITHHELD);
+    }
+
+    /// MySQL names an account as `'user'@'host'`, which holds no password,
+    /// and a privilege error that names one keeps its words. A connection
+    /// string beside it still withholds them.
+    #[test]
+    fn an_account_named_as_mysql_names_it_keeps_the_words() {
+        let denied = "Error 1142 (42000): SELECT command denied to user 'arkham'@'192.0.2.7' for table 'issues'";
+        assert_eq!(
+            without_password(&format!("{denied}\n"), &Env::new()),
+            denied
+        );
+        assert_eq!(
+            without_password(
+                &format!("{denied} over arkham:s3s4me@tcp(db.example.invalid:3306)\n"),
+                &Env::new()
+            ),
+            WITHHELD
+        );
+    }
+
     /// bd is handed the tracker's password in its environment, and can find
     /// one in its credentials file that `bdi` never sees. Neither reaches what
     /// an unplaced failure keeps, from the words or from the command line,
@@ -1633,17 +1690,34 @@ mod tests {
     }
 
     /// A command line is shown on one line, in a terminal row and in the
-    /// watcher's log, even where an argument holds a line break.
+    /// watcher's log, and pasted into a shell it runs with the arguments the
+    /// program was given, even where one holds a line break, a quote or a
+    /// character that moves the terminal or turns text round.
     #[test]
-    fn an_unplaced_failure_keeps_its_command_on_one_line() {
+    fn an_unplaced_failure_keeps_its_command_on_one_line_as_a_shell_reads_it() {
+        let args = [
+            "-c",
+            "exit 1",
+            "the\nledger",
+            "it's\tan\u{1b}[2J",
+            "\u{202e}gnp.exe",
+            r"\x41",
+        ];
         let failure = RealRunner
-            .run("sh", &["-c", "exit 1", "the\nledger"], None, &Env::new())
+            .run("sh", &args, None, &Env::new())
             .expect_err("the command exits non-zero");
+        let command = failure.ran.expect("the failure names its command").command;
 
         assert_eq!(
-            failure.ran.expect("the failure names its command").command,
-            r"-c 'exit 1' 'the\nledger'"
+            command,
+            r"-c 'exit 1' $'the\nledger' $'it\'s\tan\x1b[2J' $'\xe2\x80\xaegnp.exe' '\x41'"
         );
+        let pasted = std::process::Command::new("bash")
+            .args(["-c", &format!(r"printf '%s\0' {command}")])
+            .output()
+            .expect("bash runs");
+        let read = String::from_utf8(pasted.stdout).expect("bash wrote the arguments back");
+        assert_eq!(read.split_terminator('\0').collect::<Vec<_>>(), args);
     }
 
     /// What bd said reaches a terminal row and two logs, and could quote a

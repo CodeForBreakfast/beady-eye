@@ -2520,7 +2520,7 @@ dunwich = ["dun-404"]
         );
     }
 
-    /// Every failure that came from a run of bd keeps the command it ran. A
+    /// Every failed run of bd keeps the command it ran. A
     /// failure bd gave and `bdi` cannot place keeps what bd said too, and a
     /// bd that never started keeps the system's error, because each is all
     /// its reader has.
