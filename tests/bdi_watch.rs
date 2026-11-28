@@ -453,12 +453,53 @@ fn a_watcher_out_of_descriptors_that_cannot_say_so_answers_once_it_has_room_agai
         .write(true)
         .open("/dev/full")
         .expect("a device every write to fails");
-    let (home, _tracker, watcher) = a_watcher_saying_into(
+    a_watcher_out_of_descriptors_saying_into_answers_once_it_has_room_again(
         "watch-out-of-descriptors-unsaid",
-        NOT_POLLED,
-        |_| {},
         Stdio::from(full),
     );
+}
+
+/// The same for a watcher whose stderr is a pipe nobody reads, so that
+/// saying it cannot take connections waits for ever.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_watcher_out_of_descriptors_that_nobody_hears_answers_once_it_has_room_again() {
+    let (_unread, full) = a_full_pipe();
+    a_watcher_out_of_descriptors_saying_into_answers_once_it_has_room_again(
+        "watch-out-of-descriptors-unheard",
+        Stdio::from(full),
+    );
+}
+
+/// A pipe with no room left in it, whose next write waits until its reader
+/// reads.
+#[cfg(target_os = "linux")]
+fn a_full_pipe() -> (std::io::PipeReader, std::io::PipeWriter) {
+    use std::os::fd::AsRawFd;
+    let (reader, mut writer) = std::io::pipe().expect("a pipe");
+    let fd = writer.as_raw_fd();
+    let blocking = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    assert!(blocking >= 0, "{}", std::io::Error::last_os_error());
+    let set = unsafe { libc::fcntl(fd, libc::F_SETFL, blocking | libc::O_NONBLOCK) };
+    assert_eq!(set, 0, "{}", std::io::Error::last_os_error());
+    loop {
+        match writer.write(&[b'x'; 4096]) {
+            Ok(_) => {}
+            Err(why) if why.kind() == ErrorKind::WouldBlock => break,
+            Err(why) => panic!("the pipe takes writes until it is full: {why}"),
+        }
+    }
+    let set = unsafe { libc::fcntl(fd, libc::F_SETFL, blocking) };
+    assert_eq!(set, 0, "{}", std::io::Error::last_os_error());
+    (reader, writer)
+}
+
+#[cfg(target_os = "linux")]
+fn a_watcher_out_of_descriptors_saying_into_answers_once_it_has_room_again(
+    named: &str,
+    stderr: Stdio,
+) {
+    let (home, _tracker, watcher) = a_watcher_saying_into(named, NOT_POLLED, |_| {}, stderr);
     let room = open_files(watcher.pid()).rlim_cur;
     let mut untaken = a_watch_past_the_limit(&home, &watcher);
 

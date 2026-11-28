@@ -904,14 +904,20 @@ fn not_taking_connections(
     holder: &'static str,
     at: PathBuf,
 ) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
-    // `eprintln!` would panic where stderr cannot be written, and end the
-    // accept loop that is telling.
+    // A write to stderr can fail or wait for ever, and the accept loop doing
+    // the telling has to go on trying either way. So a thread of its own
+    // writes, and a report is dropped while another still waits to be written.
+    let (telling, told) = std::sync::mpsc::sync_channel::<String>(1);
+    std::thread::spawn(move || {
+        for report in told {
+            eprintln!("{report}");
+        }
+    });
     move |why| {
-        let _ = writeln!(
-            std::io::stderr(),
+        let _ = telling.try_send(format!(
             "{holder} cannot take connections on {}, and keeps trying: {why}",
             at.display()
-        );
+        ));
     }
 }
 
