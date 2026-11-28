@@ -904,8 +904,11 @@ fn not_taking_connections(
     holder: &'static str,
     at: PathBuf,
 ) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
+    // `eprintln!` would panic where stderr cannot be written, and end the
+    // accept loop that is telling.
     move |why| {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "{holder} cannot take connections on {}, and keeps trying: {why}",
             at.display()
         );
