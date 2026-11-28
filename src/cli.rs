@@ -865,10 +865,34 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let reads: Reads =
         Box::new(move |wanted, now| collection.watched(&cfg, &Unasked, &trackers, wanted, now));
     let mut source = ReadingTrackers::new(reads, heard, outstanding, reading);
-    std::thread::spawn(move || hold(&mut source, &held));
+    std::thread::spawn(move || {
+        let log = watcher_log();
+        hold(&mut source, &held, &mut |project, failure| {
+            let line = crate::view::phrase::tracker_reached(project, failure);
+            let _ = log.try_send(format!("bdi watch: {line}"));
+        });
+    });
 
     asked_to_stop.forever().next();
     Ok(ExitCode::SUCCESS)
+}
+
+/// The most lines the watcher's log holds unwritten. Past it a line is lost
+/// rather than wait, since the log is written while the watcher holds what
+/// every consumer reads.
+const LOG_LINES_UNWRITTEN: usize = 64;
+
+/// Where the watcher sends a line for its stderr. A thread of its own writes
+/// each one, so a supervisor that stops reading stderr, or closes it, costs
+/// lines and never stops the watcher.
+fn watcher_log() -> mpsc::SyncSender<String> {
+    let (log, logged) = mpsc::sync_channel::<String>(LOG_LINES_UNWRITTEN);
+    std::thread::spawn(move || {
+        for line in logged {
+            let _ = writeln!(std::io::stderr(), "{line}");
+        }
+    });
+    log
 }
 
 /// Why a socket `holder` takes reports on could not be opened, and what to

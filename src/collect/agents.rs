@@ -140,6 +140,7 @@ mod tests {
             program: THE_FAKE.to_string(),
             detail: "the pane is not there".to_string(),
             unreadable: None,
+            ran: None,
         });
         let shared: Arc<dyn Agents> = Arc::new(refusing);
 
@@ -304,6 +305,7 @@ pub mod testing {
             program: THE_FAKE.to_string(),
             detail: format!("no test staged a read of {} in {}", pane.id, pane.session),
             unreadable: None,
+            ran: None,
         }
     }
 

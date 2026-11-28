@@ -5524,7 +5524,10 @@ mod tests {
             vec![Tree::tracker_unreachable(
                 PROJECT,
                 "smt-4kd3p",
-                crate::model::snapshot::TrackerFailure::Unavailable,
+                crate::model::snapshot::TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             )],
             Vec::new(),
             ProviderState::Absent,
@@ -5545,7 +5548,10 @@ mod tests {
             vec![Tree::tracker_unreachable(
                 PROJECT,
                 "smt-4kd3p",
-                crate::model::snapshot::TrackerFailure::Unavailable,
+                crate::model::snapshot::TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             )],
             Vec::new(),
             ProviderState::Absent,
@@ -6102,14 +6108,20 @@ mod tests {
         ground.read_at.insert("dunwich".to_string(), drawn_at());
         ground.failed_projects = vec![crate::model::snapshot::FailedProject {
             project: "dunwich".to_string(),
-            tracker: crate::model::snapshot::TrackerFailure::Unavailable,
+            tracker: crate::model::snapshot::TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
         }];
         ground
     }
 
     /// What dunwich's tracker said when it would not be read.
     fn dunwich_said() -> String {
-        phrase::tracker_failure(&crate::model::snapshot::TrackerFailure::Unavailable)
+        phrase::tracker_failure(&crate::model::snapshot::TrackerFailure::Unavailable {
+            command: None,
+            said: None,
+        })
     }
 
     /// A project whose tracker could not be read has no heading, and the
@@ -6195,7 +6207,7 @@ mod tests {
             .failed_projects
             .push(crate::model::snapshot::FailedProject {
                 project: PROJECT.to_string(),
-                tracker: crate::model::snapshot::TrackerFailure::Auth,
+                tracker: crate::model::snapshot::TrackerFailure::Auth { command: None },
             });
         let ready = Asked::default().listing(listed(None, true));
         let html = page_of(unread, &ready);
@@ -6219,7 +6231,10 @@ mod tests {
         let html = page_of(beside_unread_dunwich(), "/");
         let failed = crate::model::snapshot::FailedProject {
             project: "dunwich".to_string(),
-            tracker: crate::model::snapshot::TrackerFailure::Unavailable,
+            tracker: crate::model::snapshot::TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
         };
         assert!(
             lines_html(&html)

@@ -237,7 +237,7 @@ mod tests {
     fn a_failed_project_leaves_its_box_drawing_in_the_terminals_own_colour() {
         let failed = Item::Failed(FailedProject {
             project: "summit-works".into(),
-            tracker: TrackerFailure::Auth,
+            tracker: TrackerFailure::Auth { command: None },
         });
         let painted = Painted::of(item_line(LAST, &failed), 96, 1).row(0);
 

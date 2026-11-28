@@ -433,6 +433,7 @@ pub fn repository(repo: &str) -> Result<Repository<'_>, RunFailure> {
             "{repo} is not OWNER/REPO or HOST/OWNER/REPO, so GitHub has no such repository"
         ),
         unreadable: None,
+        ran: None,
     })
 }
 
@@ -539,8 +540,7 @@ mod tests {
     const RATE_LIMIT: &str = "gh api rate_limit";
 
     const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
-    const COMMIT_PULLS: &str =
-        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls?per_page=100";
+    const COMMIT_PULLS: &str = "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls?per_page=100";
 
     /// #7 open with the commit as its head, #8 open with the commit only in
     /// its history, #9 closed with the commit as its head.
@@ -762,6 +762,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh exited 1".to_string(),
             unreadable: None,
+            ran: None,
         }
     }
 
@@ -999,8 +1000,7 @@ mod tests {
     }
 
     const RUNS_OF_SHA: &str = "gh api repos/example/ark/actions/runs?head_sha=5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff&per_page=100";
-    const STATUSES_OF_SHA: &str =
-        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/status?per_page=100";
+    const STATUSES_OF_SHA: &str = "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/status?per_page=100";
 
     /// `runs` as Actions lists a commit's workflow runs, cut to a few of the
     /// fields GitHub answers with.

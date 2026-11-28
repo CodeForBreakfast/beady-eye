@@ -238,7 +238,10 @@ fn a_forest_holding_any_one_thing_does_not_say_it_holds_nothing() {
                     trees: Vec::new(),
                     failed_projects: vec![FailedProject {
                         project: "lunar".into(),
-                        tracker: TrackerFailure::Unstartable,
+                        tracker: TrackerFailure::Unstartable {
+                            command: None,
+                            error: None,
+                        },
                     }],
                     read_at: every_project_read(),
                     speaks_until: BTreeMap::new(),

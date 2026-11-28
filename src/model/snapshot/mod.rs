@@ -158,13 +158,17 @@ pub enum Filter {
 
 /// Why a tracker could not be read, in `bdi`'s own words rather than bd's:
 /// bd names the database and the SQL user when it refuses a credential, so
-/// nothing it wrote is carried this far.
+/// nothing it wrote about a failure `bdi` can name is carried this far.
 ///
-/// `Parse` is the one kind that carries anything more, and what it carries is
-/// not bd's account of anything. bd names the database and the user on
-/// *stderr*, when it refuses a credential and exits non-zero; a parse failure
-/// is a run that succeeded, so what would not read is bd's stdout — the
-/// tracker's own rows, which `bdi` draws.
+/// `Parse` carries more, and what it carries is not bd's account of anything.
+/// bd names the database and the user on *stderr*, when it refuses a
+/// credential and exits non-zero; a parse failure is a run that succeeded, so
+/// what would not read is bd's stdout — the tracker's own rows, which `bdi`
+/// draws.
+///
+/// `Unavailable` carries bd's own words only where `bdi` cannot name the
+/// failure, because then they are all the reader has. They go to whoever runs
+/// `bdi`, whose database and user they are, with the password taken out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum TrackerFailure {
@@ -196,23 +200,89 @@ pub enum TrackerFailure {
     /// tracker refused a credential it was never offered.
     NoCredential,
     /// The tracker refused the credential it was given.
-    Auth,
-    /// The tracker did not answer.
-    Unavailable,
+    ///
+    /// This and every kind after it but `Parse` carries the `command` bd
+    /// failed on: the arguments `bdi` gave it, quoted as a shell needs them,
+    /// with the password taken out. A failure that did not come from a run
+    /// of bd has none.
+    Auth {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
+    /// The tracker did not answer, or bd failed for a reason `bdi` cannot
+    /// place. Only the second carries what bd `said`, with the password
+    /// taken out, which is all a reader has to go on.
+    Unavailable {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        said: Option<String>,
+    },
     /// Nothing is installed under bd's name for the tracker to be read with.
-    NotInstalled,
+    NotInstalled {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
     /// bd never ran, and whether bd is there was not established: a `PATH`
     /// entry nothing may search hides bd and a machine with no bd alike.
-    Unstartable,
-    /// bd is there and never ran: no execute bit, a dangling symlink, or a
-    /// project directory that is not there to run it in.
-    InstalledUnstartable,
+    /// It carries the `error` the operating system refused to start bd with.
+    Unstartable {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// bd is there and never ran: no execute bit, a dangling symlink, a
+    /// project directory that is not there to run it in, or a `bdi` out of
+    /// file descriptors. It carries what `Unstartable` does.
+    InstalledUnstartable {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// bd answered with something `bdi` cannot read, and where in the answer
     /// the reader will find it.
     Parse(Unreadable),
     /// bd does not know a flag `bdi` uses, so it refused the command line
     /// before reading anything: a bd below the floor README states.
-    UnknownFlag,
+    UnknownFlag {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
+}
+
+impl TrackerFailure {
+    /// Whether `self` fails the way `other` does, whichever command it came
+    /// from and whatever bd or the system said of it. A tracker polled while
+    /// it fails fails from whichever read failed first, in words that can
+    /// name the moment, and is still failing the same way.
+    pub fn fails_as(&self, other: &Self) -> bool {
+        self.as_failed() == other.as_failed()
+    }
+
+    /// `self` without its command or what was said of it, keeping whether bd
+    /// said anything, which tells a failure `bdi` cannot place from a tracker
+    /// that did not answer.
+    fn as_failed(&self) -> Self {
+        let mut failed = self.clone();
+        match &mut failed {
+            Self::NoEnvironment | Self::NoCredential | Self::Parse(_) => {}
+            Self::Auth { command }
+            | Self::NotInstalled { command }
+            | Self::UnknownFlag { command } => *command = None,
+            Self::Unavailable { command, said } => {
+                *command = None;
+                *said = said.as_ref().map(|_| String::new());
+            }
+            Self::Unstartable { command, error }
+            | Self::InstalledUnstartable { command, error } => {
+                *command = None;
+                *error = None;
+            }
+        }
+        failed
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1005,7 +1075,7 @@ render = "⏸ waiting"
                 trees: vec![Tree::tracker_unreachable(
                     "ferry",
                     "fry-3",
-                    TrackerFailure::Auth,
+                    TrackerFailure::Auth { command: None },
                 )],
                 failed_projects: vec![FailedProject {
                     project: "dunwich".to_string(),

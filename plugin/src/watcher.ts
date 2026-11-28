@@ -131,6 +131,20 @@ const EventRecord = Schema.Struct({
   comment: Schema.optional(Schema.Struct({ author: Schema.String, text: Schema.String })),
 }).check(Schema.makeFilter(({ op, comment }) => (op === 'comment') === (comment !== undefined)))
 
+/** Why the watcher could not read a tracker. A failure that came from a run
+ * of bd carries the command line it failed on. A failure bdi cannot place
+ * also carries what bd said, and a bd that never started carries the
+ * operating system's error. Each has the password already taken out. */
+const Unreachable = Schema.Struct({
+  reason: Schema.String,
+  command: Schema.optional(Schema.String),
+  said: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+})
+
+/** Why the watcher could not read a tracker. */
+export type Unreachable = typeof Unreachable.Type
+
 /** Each kind of line about a watch that the plugin reads, with the fields it
  * reads. The watcher's alive lines are not among them: a connection that
  * stops carrying any line has wedged, whatever the line. */
@@ -146,10 +160,7 @@ const SaidLine = Schema.Union([
     line: Schema.Literal('freshness'),
     project: ProjectName,
     protocol: Schema.Literal(PROTOCOL),
-    tracker: Schema.Union([
-      Schema.Literal('ok'),
-      Schema.Struct({ unreachable: Schema.Struct({ reason: Schema.String }) }),
-    ]),
+    tracker: Schema.Union([Schema.Literal('ok'), Schema.Struct({ unreachable: Unreachable })]),
   }),
   Schema.Struct({ line: Schema.Literal('event'), project: ProjectName, event: EventRecord }),
   Schema.Struct({ line: Schema.Literal('refused'), asked: Schema.String, reason: Schema.String }),

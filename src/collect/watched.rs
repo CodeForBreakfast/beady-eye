@@ -24,7 +24,7 @@ use serde::Deserialize;
 
 use crate::collect::bd::{bead_of, Fields};
 use crate::collect::changes::{self, Heard};
-use crate::collect::run::{FailureKind, RunFailure};
+use crate::collect::run::{FailureKind, Ran, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers, Watches};
 use crate::config::{Project, Reach};
 use crate::model::snapshot::{TrackerFailure, TrackerState};
@@ -700,26 +700,37 @@ impl Tracker for Answered {
 /// The failure a read of its own would have met, as the watcher reported
 /// it: each kind back to the one that is drawn as it.
 fn reached_as(failure: &TrackerFailure) -> OpenFailure {
-    let kind = match failure {
+    let (kind, command, why) = match failure {
         TrackerFailure::NoEnvironment => return OpenFailure::NoEnvironment,
         TrackerFailure::NoCredential => return OpenFailure::NoCredential,
-        TrackerFailure::Auth => FailureKind::Auth,
-        TrackerFailure::Unavailable => FailureKind::Unavailable,
-        TrackerFailure::NotInstalled => FailureKind::NotInstalled,
-        TrackerFailure::Unstartable => FailureKind::Unstartable,
-        TrackerFailure::InstalledUnstartable => FailureKind::InstalledUnstartable,
-        TrackerFailure::Parse(_) => FailureKind::Parse,
-        TrackerFailure::UnknownFlag => FailureKind::UnknownFlag,
+        TrackerFailure::Auth { command } => (FailureKind::Auth, command, &None),
+        TrackerFailure::Unavailable { command, said } => (FailureKind::Unavailable, command, said),
+        TrackerFailure::NotInstalled { command } => (FailureKind::NotInstalled, command, &None),
+        TrackerFailure::Unstartable { command, error } => {
+            (FailureKind::Unstartable, command, error)
+        }
+        TrackerFailure::InstalledUnstartable { command, error } => {
+            (FailureKind::InstalledUnstartable, command, error)
+        }
+        TrackerFailure::Parse(_) => (FailureKind::Parse, &None, &None),
+        TrackerFailure::UnknownFlag { command } => (FailureKind::UnknownFlag, command, &None),
     };
     let unreadable = match failure {
-        TrackerFailure::Parse(unreadable) => Some(unreadable.clone()),
+        TrackerFailure::Parse(unreadable) => Some(Box::new(unreadable.clone())),
         _ => None,
     };
+    let ran = command.as_ref().map(|command| {
+        Box::new(Ran {
+            command: command.clone(),
+            why: why.clone(),
+        })
+    });
     OpenFailure::Refused(RunFailure {
         kind,
         program: "bd".to_string(),
         detail: "the watcher could not read the tracker".to_string(),
         unreadable,
+        ran,
     })
 }
 
@@ -737,6 +748,7 @@ mod tests {
     use crate::collect::changes::testing::socket_temp_dir;
     use crate::collect::tracker::testing::{Fake, Fakes};
     use crate::config::Config;
+    use crate::model::types::testing::{an_unplaced, an_unstarted, A_COMMAND};
 
     /// Long enough that a watcher which was going to answer has, and short
     /// enough that a test waiting in vain is not a hang.
@@ -1471,16 +1483,41 @@ path = "/srv/work/ferry"
         let every = [
             TrackerFailure::NoEnvironment,
             TrackerFailure::NoCredential,
-            TrackerFailure::Auth,
-            TrackerFailure::Unavailable,
-            TrackerFailure::NotInstalled,
-            TrackerFailure::Unstartable,
-            TrackerFailure::InstalledUnstartable,
+            TrackerFailure::Auth { command: None },
+            TrackerFailure::Auth {
+                command: Some(A_COMMAND.to_string()),
+            },
+            TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
+            TrackerFailure::Unavailable {
+                command: Some(A_COMMAND.to_string()),
+                said: None,
+            },
+            an_unplaced(),
+            TrackerFailure::NotInstalled { command: None },
+            TrackerFailure::NotInstalled {
+                command: Some(A_COMMAND.to_string()),
+            },
+            TrackerFailure::Unstartable {
+                command: None,
+                error: None,
+            },
+            TrackerFailure::Unstartable {
+                command: Some(A_COMMAND.to_string()),
+                error: Some("Permission denied (os error 13)".to_string()),
+            },
+            TrackerFailure::InstalledUnstartable {
+                command: None,
+                error: None,
+            },
+            an_unstarted(),
             TrackerFailure::Parse(crate::model::types::Unreadable {
                 read: "list".to_string(),
                 cause: "invalid type: null, expected a string at line 1 column 25".to_string(),
             }),
-            TrackerFailure::UnknownFlag,
+            TrackerFailure::UnknownFlag { command: None },
         ];
         let cfg = Config::from_toml(
             r#"
