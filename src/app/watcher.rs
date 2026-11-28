@@ -552,7 +552,7 @@ pub fn raise_the_open_files_limit() -> io::Result<()> {
     if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    limit.rlim_cur = highest_soft_limit(limit.rlim_max);
+    limit.rlim_cur = limit.rlim_cur.max(highest_soft_limit(limit.rlim_max));
     // SAFETY: `setrlimit` only reads the struct it is handed.
     if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
         return Err(io::Error::last_os_error());
