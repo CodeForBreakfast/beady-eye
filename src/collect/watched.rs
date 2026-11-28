@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::collect::bd::{Fields, bead_of};
+use crate::collect::bd::{bead_of, Fields};
 use crate::collect::changes::{self, Heard};
 use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
@@ -1312,13 +1312,11 @@ path = "/srv/work/ferry"
     fn a_watcher_that_does_not_say_how_it_reaches_a_tracker_is_read_around() {
         let at = a_watcher_saying(
             "watched-unsaid",
-            vec![
-                json!({
-                    "line": "freshness", "project": "dunwich", "as_of": null,
-                    "tracker": "ok", "events": "off", "protocol": 1,
-                })
-                .to_string(),
-            ],
+            vec![json!({
+                "line": "freshness", "project": "dunwich", "as_of": null,
+                "tracker": "ok", "events": "off", "protocol": 1,
+            })
+            .to_string()],
         );
         let own = own_trackers();
         let cfg = projects();

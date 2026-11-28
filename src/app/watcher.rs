@@ -23,7 +23,7 @@ use crate::config::Reach;
 use crate::model::snapshot::TrackerFailure;
 use crate::model::types::Bead;
 
-use super::watching::{self, ALIVE_LINE, Events, Interest, Refusal, Watch};
+use super::watching::{self, Events, Interest, Refusal, Watch, ALIVE_LINE};
 
 /// One bead as the watcher holds it: the bead its tracker's row was read
 /// into, and the readiness `bdi --beads` gives it.
