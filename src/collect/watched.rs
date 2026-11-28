@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::collect::bd::{bead_of, Fields};
+use crate::collect::bd::{Fields, bead_of};
 use crate::collect::changes::{self, Heard};
 use crate::collect::run::{FailureKind, RunFailure};
 use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
@@ -192,7 +192,8 @@ impl<O: Trackers> Trackers for Through<O> {
 
     fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
         let said = self.watcher.said();
-        let answering = said.current.contains_key(project) && !said.around.contains(project);
+        let told_first = said.current.get(project).is_some_and(|told| told.watching);
+        let answering = told_first && !said.around.contains(project);
         answering.then(|| said.watches.get(project).cloned().unwrap_or_default())
     }
 }
@@ -242,6 +243,9 @@ struct Told {
     unreachable: Option<TrackerFailure>,
     /// How the watcher's config reaches the tracker, where it said.
     reach: Option<Reach>,
+    /// Whether the watcher said it sent who watches the project's beads
+    /// ahead of this answer.
+    watching: bool,
 }
 
 /// One bead as the watcher sent it, with the readiness bd gives it.
@@ -277,6 +281,8 @@ enum Line {
         tracker: TrackerState,
         protocol: Option<u32>,
         reach: Option<Reach>,
+        #[serde(default)]
+        watching: bool,
     },
     Refused {
         asked: String,
@@ -421,6 +427,7 @@ impl Watcher {
                 tracker,
                 protocol,
                 reach,
+                watching,
             } => {
                 if protocol != Some(PROTOCOL) {
                     return None;
@@ -438,6 +445,7 @@ impl Watcher {
                 };
                 told.as_of = as_of;
                 told.reach = reach;
+                told.watching = watching;
                 told.unreachable = match tracker {
                     TrackerState::Unreachable(failure) => Some(failure),
                     _ => None,
@@ -792,6 +800,7 @@ mod tests {
             "tracker": tracker,
             "events": "off",
             "protocol": 1,
+            "watching": true,
             "reach": reach,
         })
         .to_string()
@@ -992,6 +1001,35 @@ path = "/srv/work/ferry"
                 sessions(&["4f1c-keeper", "9a2e-ferryman"])
             )]))
         );
+    }
+
+    /// A watcher whose freshness line does not say it sent who watches ahead
+    /// of the answer may still be about to send it, so who watches is unknown.
+    #[test]
+    fn who_watches_is_unknown_where_the_answer_does_not_say_it_came_first() {
+        let mut silent = serde_json::from_str::<serde_json::Value>(&fresh("dunwich", json!("ok")))
+            .expect("JSON");
+        silent
+            .as_object_mut()
+            .expect("an object")
+            .remove("watching");
+        let at = a_watcher_saying(
+            "watched-watching-after",
+            vec![
+                silent.to_string(),
+                watching("dunwich", "dun-1", &["4f1c-keeper"]),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, A_MOMENT);
+
+        for _ in 0..2 {
+            assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        }
+        through.of(project(&cfg, "dunwich")).expect("answered");
+
+        assert_eq!(through.watches("dunwich"), None);
     }
 
     /// Who watches a bead is the watcher's to say, so a project this run
@@ -1274,11 +1312,13 @@ path = "/srv/work/ferry"
     fn a_watcher_that_does_not_say_how_it_reaches_a_tracker_is_read_around() {
         let at = a_watcher_saying(
             "watched-unsaid",
-            vec![json!({
-                "line": "freshness", "project": "dunwich", "as_of": null,
-                "tracker": "ok", "events": "off", "protocol": 1,
-            })
-            .to_string()],
+            vec![
+                json!({
+                    "line": "freshness", "project": "dunwich", "as_of": null,
+                    "tracker": "ok", "events": "off", "protocol": 1,
+                })
+                .to_string(),
+            ],
         );
         let own = own_trackers();
         let cfg = projects();

@@ -2461,7 +2461,7 @@ watch is answered by the freshness line alone.
 **A freshness line** says how current a project's beads are:
 
 ```json
-{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "lapsed": false, "events": "ok", "protocol": 1, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
+{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "lapsed": false, "events": "ok", "protocol": 1, "watching": true, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
 ```
 
 It closes every answer the source gives for the project. It follows the beads
@@ -2510,7 +2510,10 @@ each connection with a `watch-all` on its project:
 
 A `watch-all` is sent one for each bead an agent session is watching when it
 starts, ahead of the project's answer, so a consumer that holds the answer
-holds who watches its beads too. It is sent one more whenever that set of agent
+holds who watches its beads too. The freshness line says so by `watching`,
+which is `true` on a connection with a `watch-all` on the project. A watcher
+from before `watching` sends these lines after the answer, so a consumer that
+finds it missing takes who watches as unknown. It is sent one more whenever that set of agent
 sessions changes. An agent
 session stops watching when the last connection naming it on that bead
 closes, so the line after it has `"agent_sessions": []`. It says nothing a

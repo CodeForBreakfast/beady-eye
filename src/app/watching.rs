@@ -297,7 +297,9 @@ pub enum Events {
 /// How current `project`'s beads are: as of `as_of`, and whether the last
 /// attempt to reach its tracker failed, which the watcher reaches as
 /// `reach` says, and whether its event records are sent. It carries the
-/// protocol every line about a watch is written in.
+/// protocol every line about a watch is written in, and whether the
+/// consumer it goes to has been sent who watches the project's beads ahead
+/// of it.
 pub fn freshness_line(
     project: &str,
     reach: &Reach,
@@ -305,6 +307,7 @@ pub fn freshness_line(
     unreachable: Option<&TrackerFailure>,
     lapsed: bool,
     events: &Events,
+    watching: bool,
 ) -> String {
     let tracker = unreachable.map_or(TrackerState::Ok, |failure| {
         TrackerState::Unreachable(failure.clone())
@@ -317,6 +320,7 @@ pub fn freshness_line(
         "lapsed": lapsed,
         "events": events,
         "protocol": PROTOCOL,
+        "watching": watching,
         "reach": reach,
     })
     .to_string()
@@ -761,12 +765,13 @@ mod tests {
             None,
             false,
             &Events::Off,
+            true,
         ))
         .expect("JSON");
 
         assert_eq!(
             line,
-            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "lapsed": false, "events": "off", "protocol": 1, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
+            json!({ "line": "freshness", "project": "dunwich", "as_of": null, "tracker": "ok", "lapsed": false, "events": "off", "protocol": 1, "watching": true, "reach": { "path": "/srv/work/dunwich", "environment_command": ["direnv", "exec", "."] } })
         );
     }
 

@@ -23,7 +23,7 @@ use crate::config::Reach;
 use crate::model::snapshot::TrackerFailure;
 use crate::model::types::Bead;
 
-use super::watching::{self, Events, Interest, Refusal, Watch, ALIVE_LINE};
+use super::watching::{self, ALIVE_LINE, Events, Interest, Refusal, Watch};
 
 /// One bead as the watcher holds it: the bead its tracker's row was read
 /// into, and the readiness `bdi --beads` gives it.
@@ -167,6 +167,7 @@ impl Standing {
             self.unreachable.as_ref(),
             self.lapsed,
             &self.events,
+            interest.watches_all(),
         ));
         Some(lines)
     }
@@ -1282,6 +1283,34 @@ mod tests {
         let watching = told.iter().position(|kind| kind == "watching");
         let freshness = told.iter().position(|kind| kind == "freshness");
         assert!(watching.is_some() && watching < freshness, "got: {told:?}");
+    }
+
+    /// A consumer can tell this watcher from one that sends who watches after
+    /// the answer, which it would otherwise take for nobody watching.
+    #[test]
+    fn the_answer_to_a_view_says_who_watches_came_first() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        let project = connected(&mut hold, 4);
+        hold.watch(project.consumer, &watching_dunwich(), now())
+            .expect("dunwich is read");
+        let view = connected(&mut hold, 4);
+
+        hold.watch(view.consumer, &watching_all_of_dunwich(), now())
+            .expect("dunwich is read");
+
+        assert_eq!(said_watching_first(&project.told), [false]);
+        assert_eq!(said_watching_first(&view.told), [true]);
+    }
+
+    fn said_watching_first(told: &Receiver<Vec<String>>) -> Vec<bool> {
+        told.try_iter()
+            .flatten()
+            .filter_map(|line| {
+                let line: serde_json::Value = serde_json::from_str(&line).expect("JSON");
+                (line["line"] == "freshness").then(|| line["watching"] == true)
+            })
+            .collect()
     }
 
     /// A watch on the whole project, or on every project, is not a view's,
