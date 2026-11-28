@@ -208,6 +208,7 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
 /// What a reader of a server's stderr relies on: a report that its socket
 /// cannot take connections, waiting on a stderr nobody reads, leaves the
 /// server saying the rest of what it has to say, and reading on after it.
+/// Once the pipe is read, the report follows.
 ///
 /// The pipe has room for the config's notice but not for the report, so the
 /// report waits on the pipe while the notice is said. A check of the config
@@ -280,6 +281,39 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+
+    let said = read_until_it_says(unread, &report);
+    assert_eq!(
+        said.trim_start_matches('x').replace(THE_NOTICE, ""),
+        report,
+        "bdi web said on stderr only the config's notice and the report"
+    );
+}
+
+/// What `unread`'s pipe holds and is then sent, read until it holds `wanted`.
+#[cfg(target_os = "linux")]
+fn read_until_it_says(mut unread: std::io::PipeReader, wanted: &str) -> String {
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut chunk = [0; PAGE];
+        while let Ok(read @ 1..) = unread.read(&mut chunk) {
+            if sent.send(chunk[..read].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let giving_up = Instant::now() + GIVING_UP;
+    let mut said = Vec::new();
+    while !String::from_utf8_lossy(&said).contains(wanted) {
+        match received.recv_timeout(giving_up.saturating_duration_since(Instant::now())) {
+            Ok(chunk) => said.extend(chunk),
+            Err(_) => panic!(
+                "bdi web never said {wanted:?} once its stderr was read, only {:?}",
+                String::from_utf8_lossy(&said).trim_start_matches('x')
+            ),
+        }
+    }
+    String::from_utf8(said).expect("bdi web says text on stderr")
 }
 
 /// A runtime directory under `home` putting the socket at a path
