@@ -192,9 +192,14 @@ impl<O: Trackers> Trackers for Through<O> {
 
     fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
         let said = self.watcher.said();
-        let told_first = said.current.get(project).is_some_and(|told| told.watching);
-        let answering = told_first && !said.around.contains(project);
+        let answering = said.current.contains_key(project) && !said.around.contains(project);
         answering.then(|| said.watches.get(project).cloned().unwrap_or_default())
+    }
+
+    fn said_who_watches_first(&self, project: &str) -> bool {
+        let said = self.watcher.said();
+        let told_first = said.current.get(project).is_some_and(|told| told.watching);
+        told_first && !said.around.contains(project)
     }
 }
 
@@ -1001,12 +1006,14 @@ path = "/srv/work/ferry"
                 sessions(&["4f1c-keeper", "9a2e-ferryman"])
             )]))
         );
+        assert!(through.said_who_watches_first("dunwich"));
     }
 
     /// A watcher whose freshness line does not say it sent who watches ahead
-    /// of the answer may still be about to send it, so who watches is unknown.
+    /// of the answer may still be about to send it. What it has said stands,
+    /// but a bead it has not named may yet be watched.
     #[test]
-    fn who_watches_is_unknown_where_the_answer_does_not_say_it_came_first() {
+    fn who_watches_is_partial_where_the_answer_does_not_say_it_came_first() {
         let mut silent = serde_json::from_str::<serde_json::Value>(&fresh("dunwich", json!("ok")))
             .expect("JSON");
         silent
@@ -1029,7 +1036,14 @@ path = "/srv/work/ferry"
         }
         through.of(project(&cfg, "dunwich")).expect("answered");
 
-        assert_eq!(through.watches("dunwich"), None);
+        assert!(!through.said_who_watches_first("dunwich"));
+        assert_eq!(
+            through.watches("dunwich"),
+            Some(BTreeMap::from([(
+                "dun-1".to_string(),
+                sessions(&["4f1c-keeper"])
+            )]))
+        );
     }
 
     /// Who watches a bead is the watcher's to say, so a project this run
@@ -1058,6 +1072,7 @@ path = "/srv/work/ferry"
 
         assert_eq!(through.watches("ferry"), None);
         assert_eq!(through.watches("dunwich"), None);
+        assert!(!through.said_who_watches_first("dunwich"));
         let unwatched = Through::watcher_at(None, ["dunwich"], &own);
         assert_eq!(unwatched.watches("dunwich"), None);
     }

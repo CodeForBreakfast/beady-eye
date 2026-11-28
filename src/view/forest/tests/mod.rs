@@ -1511,6 +1511,7 @@ fn harbour_and_dunwich_ready(
                     waiting: waiting.get(*project),
                     elsewhere: elsewhere.get(*project),
                     watching: None,
+                    watching_is_whole: false,
                 },
             )
         })

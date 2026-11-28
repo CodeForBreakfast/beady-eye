@@ -2512,8 +2512,9 @@ A `watch-all` is sent one for each bead an agent session is watching when it
 starts, ahead of the project's answer, so a consumer that holds the answer
 holds who watches its beads too. The freshness line says so by `watching`,
 which is `true` on a connection with a `watch-all` on the project. A watcher
-from before `watching` sends these lines after the answer, so a consumer that
-finds it missing takes who watches as unknown. It is sent one more whenever that set of agent
+from before `watching` sends these lines after the answer. A consumer that
+finds the field missing still believes each watching line, but cannot take a
+bead that no line names as watched by nobody. It is sent one more whenever that set of agent
 sessions changes. An agent
 session stops watching when the last connection naming it on that bead
 closes, so the line after it has `"agent_sessions": []`. It says nothing a

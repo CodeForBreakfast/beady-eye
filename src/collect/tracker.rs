@@ -152,6 +152,13 @@ pub trait Trackers: Sync {
     fn watches(&self, _project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
         None
     }
+
+    /// Whether the running watcher said who watches `project`'s beads ahead
+    /// of its answer, so that a bead `watches` leaves out is watched by
+    /// nobody.
+    fn said_who_watches_first(&self, _project: &str) -> bool {
+        false
+    }
 }
 
 impl<T: Trackers + ?Sized> Trackers for &T {
@@ -165,6 +172,10 @@ impl<T: Trackers + ?Sized> Trackers for &T {
 
     fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
         (**self).watches(project)
+    }
+
+    fn said_who_watches_first(&self, project: &str) -> bool {
+        (**self).said_who_watches_first(project)
     }
 }
 

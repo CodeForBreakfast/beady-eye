@@ -812,6 +812,7 @@ impl Collection {
                         waiting: self.reached.waiting.get(*project),
                         elsewhere: self.reached.elsewhere.get(*project),
                         watching: watching.get(*project),
+                        watching_is_whole: trackers.said_who_watches_first(project),
                     },
                 )
             })
@@ -1546,6 +1547,10 @@ mod tests {
 
         fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
             (project == "dunwich").then(|| self.watches.clone())
+        }
+
+        fn said_who_watches_first(&self, project: &str) -> bool {
+            project == "dunwich"
         }
     }
 

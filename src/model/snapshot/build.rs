@@ -42,6 +42,9 @@ pub struct Said<'a> {
     /// no watcher answered for the project, which leaves who watches them
     /// unknown.
     pub watching: Option<&'a BTreeMap<String, Watchers>>,
+    /// Whether `watching` holds every watcher the watcher has, so that a bead
+    /// it leaves out is watched by nobody.
+    pub watching_is_whole: bool,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -59,6 +62,7 @@ pub fn said_by<'a>(
             waiting: None,
             elsewhere: None,
             watching: None,
+            watching_is_whole: false,
         },
     )])
 }
@@ -144,7 +148,11 @@ pub fn build_tree(
             anomalies.extend(anomaly::unwatched(
                 own,
                 bead,
-                watching::anyone_watches(watched_by, &bead.id),
+                watching::anyone_watches(
+                    watched_by,
+                    &bead.id,
+                    said.is_some_and(|said| said.watching_is_whole),
+                ),
                 &cfg.anomalies,
             ));
             Node {

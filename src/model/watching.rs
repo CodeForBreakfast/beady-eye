@@ -82,9 +82,19 @@ impl Watching {
 
 /// Whether any agent session watches bead `id`, of the watchers of each bead
 /// in its project, the agent on its claim among them, since it too is woken
-/// when the bead moves. Nothing where nothing could say who watches.
-pub fn anyone_watches(project: Option<&BTreeMap<String, Watchers>>, id: &str) -> Option<bool> {
-    project.map(|project| project.get(id).is_some_and(|watchers| !watchers.is_empty()))
+/// when the bead moves. `whole` is whether those watchers are every one the
+/// watcher has, so that a bead they leave out is watched by nobody. Nothing
+/// where nothing could say who watches, and where `id` has no watcher yet
+/// the watchers may not be whole.
+pub fn anyone_watches(
+    project: Option<&BTreeMap<String, Watchers>>,
+    id: &str,
+    whole: bool,
+) -> Option<bool> {
+    let watched = project?
+        .get(id)
+        .is_some_and(|watchers| !watchers.is_empty());
+    (watched || whole).then_some(watched)
 }
 
 /// Each bead's watchers, found among `panes`. herdr keeps a pane's agent
@@ -213,10 +223,23 @@ mod tests {
     fn anyone_watching_counts_every_agent_session_the_watcher_names() {
         let found = in_panes(watched_by(&["4f1c-keeper"]), &[]);
 
-        assert_eq!(anyone_watches(Some(&found), "dun-7"), Some(true));
-        assert_eq!(anyone_watches(Some(&found), "dun-8"), Some(false));
-        assert_eq!(anyone_watches(None, "dun-7"), None);
+        assert_eq!(anyone_watches(Some(&found), "dun-7", WHOLE), Some(true));
+        assert_eq!(anyone_watches(Some(&found), "dun-8", WHOLE), Some(false));
+        assert_eq!(anyone_watches(None, "dun-7", WHOLE), None);
     }
+
+    /// A watcher that may send who watches after its answer can show a bead
+    /// is watched, but not that nobody watches it.
+    #[test]
+    fn nobody_watching_is_unknown_where_the_watcher_may_say_more() {
+        let found = in_panes(watched_by(&["4f1c-keeper"]), &[]);
+
+        assert_eq!(anyone_watches(Some(&found), "dun-7", PARTIAL), Some(true));
+        assert_eq!(anyone_watches(Some(&found), "dun-8", PARTIAL), None);
+    }
+
+    const WHOLE: bool = true;
+    const PARTIAL: bool = false;
 
     #[test]
     fn who_watches_is_unknown_where_nothing_could_say() {
