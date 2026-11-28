@@ -323,7 +323,9 @@ fn read_until_it_says(mut unread: std::io::PipeReader, wanted: &str) -> String {
 #[cfg(target_os = "linux")]
 fn a_runtime_directory_naming_a_long_socket(home: &Path) -> std::path::PathBuf {
     let socket = the_socket_under(home).as_os_str().len();
-    let padding = A_LONG_SOCKET_PATH.saturating_sub(socket + 1).max(1);
+    let Some(padding @ 1..) = A_LONG_SOCKET_PATH.checked_sub(socket + 1) else {
+        return home.to_path_buf();
+    };
     let runtime = home.join("r".repeat(padding));
     std::fs::create_dir_all(&runtime).expect("the directory is ours to make");
     runtime
