@@ -735,15 +735,30 @@ fn without_the_handed_password(text: &str, env: &Env) -> String {
 /// `user:secret@` does, all of it is withheld. That costs the reader bd's
 /// words and never the password, and the command line is still kept.
 ///
-/// The test reads `said` as bd wrote it, because the handed password can
-/// itself be a word that names one. MySQL's `'user'@'host'` is passed over,
-/// because it names an account and holds no password.
+/// The tests read `said` as bd wrote it, because the handed password can
+/// itself be a word that names one. The `@` in MySQL's `'user'@'host'` is
+/// passed over, because it names an account and holds no password.
+///
+/// bd can write the handed password with its awkward characters as escapes,
+/// which taking it out as handed would not find. So where it holds such a
+/// character, words holding an escape are withheld too.
 fn without_password(said: &str, env: &Env) -> String {
-    static MAY_HOLD_A_PASSWORD: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)passw|pwd|@").expect("the pattern compiles"));
-    static AN_ACCOUNT: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"'[^':]*'@'[^']*'").expect("the pattern compiles"));
-    if MAY_HOLD_A_PASSWORD.is_match(&AN_ACCOUNT.replace_all(said, "")) {
+    static NAMES_A_PASSWORD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)passw|pwd").expect("the pattern compiles"));
+    static AN_ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(^|[^:\w])'[A-Za-z0-9_.$-]+'@'[A-Za-z0-9_.%:-]+'")
+            .expect("the pattern compiles")
+    });
+    let written_as_an_escape =
+        |glyph: char| !(glyph.is_ascii_graphic() || glyph == ' ') || "\"\\<>&".contains(glyph);
+    let may_be_escaped = env
+        .get(CREDENTIAL_VAR)
+        .is_some_and(|password| password.chars().any(written_as_an_escape))
+        && said.contains('\\');
+    if NAMES_A_PASSWORD.is_match(said)
+        || AN_ACCOUNT.replace_all(said, "${1}").contains('@')
+        || may_be_escaped
+    {
         WITHHELD.to_string()
     } else {
         without_the_handed_password(said, env).trim().to_string()
@@ -1613,9 +1628,24 @@ mod tests {
         assert_eq!(without_password("Error: bad pwd=s3cret\n", &env), WITHHELD);
     }
 
+    /// bd can write the handed password with its awkward characters as
+    /// escapes, where taking out the password as it was handed finds
+    /// nothing. Words that hold an escape are then withheld, and a password
+    /// with no such character leaves them be.
+    #[test]
+    fn a_handed_password_bd_may_write_escaped_withholds_words_holding_an_escape() {
+        let handed =
+            |password: &str| Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())]);
+        let said = "Error: bad value \"tab\\there\" in C:\\ledger\n";
+        assert_eq!(without_password(said, &handed("tab\there")), WITHHELD);
+        assert_eq!(without_password(said, &handed("quo\"te")), WITHHELD);
+        assert_eq!(without_password(said, &handed("hunter2")), said.trim());
+    }
+
     /// MySQL names an account as `'user'@'host'`, which holds no password,
     /// and a privilege error that names one keeps its words. A connection
-    /// string beside it still withholds them.
+    /// string beside it still withholds them, and so does one quoted to look
+    /// like an account.
     #[test]
     fn an_account_named_as_mysql_names_it_keeps_the_words() {
         let denied = "Error 1142 (42000): SELECT command denied to user 'arkham'@'192.0.2.7' for table 'issues'";
@@ -1623,13 +1653,21 @@ mod tests {
             without_password(&format!("{denied}\n"), &Env::new()),
             denied
         );
-        assert_eq!(
-            without_password(
-                &format!("{denied} over arkham:s3s4me@tcp(db.example.invalid:3306)\n"),
-                &Env::new()
-            ),
-            WITHHELD
-        );
+        for unseen in [
+            "over arkham:s3s4me@tcp(db.example.invalid:3306)",
+            "over mysql://arkham:'s3s4me'@'db.example.invalid'",
+            "over 'arkham s3s4me'@'db.example.invalid'",
+            "over 'open\nsesame'@'db.example.invalid'",
+            "over 'arkham'@'s3s4me@db.example.invalid'",
+            "over 'arkham_pwd_s3s4me'@'db.example.invalid'",
+        ] {
+            let said = format!("{denied} {unseen}\n");
+            assert_eq!(
+                without_password(&said, &Env::new()),
+                WITHHELD,
+                "on {said:?}"
+            );
+        }
     }
 
     /// bd is handed the tracker's password in its environment, and can find

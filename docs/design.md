@@ -3177,7 +3177,9 @@ as `Too many open files (os error 24)`. Those are all such a reader has to go
 on, so they are kept, and every other failure keeps nothing bd wrote. bd
 names the database and the SQL user in what it writes, and those go to
 whoever runs `bdi`. The password does not. The one bd was handed is taken
-out of `command`, `said` and `error` wherever it appears. bd can also find a
+out of `command`, `said` and `error` wherever it appears. Where it holds a
+character bd may write as an escape, such as a tab or a quote, a `said`
+holding a backslash is withheld, because the password may be in it escaped. bd can also find a
 password `bdi` never sees, in its credentials file, and nothing can say where
 such a password ends. So where `said` names a password anywhere or holds an
 `@`, as a connection string's `user:secret@` does, all of it is withheld and
