@@ -525,6 +525,9 @@ impl RunFailure {
     fn exited(program: &str, args: &[&str], env: &Env, code: Option<i32>, stderr: &str) -> Self {
         match Self::placed(program, stderr) {
             Some(placed) => placed.ran_as(args, env, None),
+            None if stderr.trim().is_empty() => {
+                Self::unplaced(program, code).ran_as(args, env, Some(&said_nothing(code)))
+            }
             None => Self::unplaced(program, code).ran_as(args, env, Some(stderr)),
         }
     }
@@ -709,6 +712,15 @@ fn with_escapes(arg: &str) -> String {
     out
 }
 
+/// What stands in for what a command said where it said nothing: how it
+/// ended, which is all there is to go on.
+fn said_nothing(code: Option<i32>) -> String {
+    match code {
+        Some(code) => format!("<nothing, and exited {code}>"),
+        None => "<nothing, and was killed by a signal>".to_string(),
+    }
+}
+
 /// What stands in for the password the child was handed.
 const TAKEN_OUT: &str = "<redacted>";
 
@@ -739,30 +751,45 @@ fn without_the_handed_password(text: &str, env: &Env) -> String {
 /// itself be a word that names one. The `@` in MySQL's `'user'@'host'` is
 /// passed over, because it names an account and holds no password.
 ///
-/// bd can write the handed password with its awkward characters as escapes,
-/// which taking it out as handed would not find. So where it holds such a
-/// character, words holding an escape are withheld too.
+/// bd can write the handed password with some of its characters encoded,
+/// which taking it out as handed would not find, so words that may hold it
+/// encoded are withheld too.
 fn without_password(said: &str, env: &Env) -> String {
     static NAMES_A_PASSWORD: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)passw|pwd").expect("the pattern compiles"));
     static AN_ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(^|[^:\w])'[A-Za-z0-9_.$-]+'@'[A-Za-z0-9_.%:-]+'")
+        Regex::new(r"(^|\s)'[A-Za-z0-9_.$-]+'@'[A-Za-z0-9_.%:-]+'($|[\s,.;)])")
             .expect("the pattern compiles")
     });
-    let written_as_an_escape =
-        |glyph: char| !(glyph.is_ascii_graphic() || glyph == ' ') || "\"\\<>&".contains(glyph);
-    let may_be_escaped = env
+    let kept = without_the_handed_password(said, env);
+    let may_hold_it_encoded = env
         .get(CREDENTIAL_VAR)
-        .is_some_and(|password| password.chars().any(written_as_an_escape))
-        && said.contains('\\');
+        .is_some_and(|password| may_hold_encoded(&kept, password));
     if NAMES_A_PASSWORD.is_match(said)
-        || AN_ACCOUNT.replace_all(said, "${1}").contains('@')
-        || may_be_escaped
+        || AN_ACCOUNT.replace_all(said, "${1}${2}").contains('@')
+        || may_hold_it_encoded
     {
         WITHHELD.to_string()
     } else {
-        without_the_handed_password(said, env).trim().to_string()
+        kept.trim().to_string()
     }
+}
+
+/// Whether `said` may hold `password` with some of its characters encoded,
+/// as a quoted string, JSON, SQL, a URL or HTML would write them. Each of
+/// those keeps the password's runs of ASCII letters and digits as they
+/// stand, so `said` may hold it where it holds a long run, and a password
+/// with no long run cannot be told from what is around it.
+fn may_hold_encoded(said: &str, password: &str) -> bool {
+    const LONG_RUN: usize = 4;
+    if password.chars().all(|glyph| glyph.is_ascii_alphanumeric()) {
+        return false;
+    }
+    let mut runs = password
+        .split(|glyph: char| !glyph.is_ascii_alphanumeric())
+        .filter(|run| run.len() >= LONG_RUN)
+        .peekable();
+    runs.peek().is_none() || runs.any(|run| said.contains(run))
 }
 
 impl fmt::Display for RunFailure {
@@ -1553,19 +1580,28 @@ mod tests {
         );
     }
 
-    /// A command that wrote nothing still says which command it was.
+    /// A command that wrote nothing still says which command it was, and
+    /// how it ended stands in for what it said.
     #[test]
-    fn a_silent_failure_bdi_cannot_place_still_names_its_command() {
-        let failure = RealRunner
-            .run("sh", &["-c", "exit 1"], None, &Env::new())
-            .expect_err("the command exits non-zero");
+    fn a_silent_failure_bdi_cannot_place_still_names_its_command_and_how_it_ended() {
+        let ran = |script: &str| {
+            RealRunner
+                .run("sh", &["-c", script], None, &Env::new())
+                .expect_err("the command fails")
+                .ran
+                .map(|ran| *ran)
+        };
 
         assert_eq!(
-            failure.ran,
-            Some(Box::new(Ran {
-                command: "-c 'exit 1'".to_string(),
-                why: Some(String::new()),
-            }))
+            ran("exit 3"),
+            Some(Ran {
+                command: "-c 'exit 3'".to_string(),
+                why: Some("<nothing, and exited 3>".to_string()),
+            })
+        );
+        assert_eq!(
+            ran("kill -9 $$").and_then(|ran| ran.why),
+            Some("<nothing, and was killed by a signal>".to_string())
         );
     }
 
@@ -1628,18 +1664,39 @@ mod tests {
         assert_eq!(without_password("Error: bad pwd=s3cret\n", &env), WITHHELD);
     }
 
-    /// bd can write the handed password with its awkward characters as
-    /// escapes, where taking out the password as it was handed finds
-    /// nothing. Words that hold an escape are then withheld, and a password
-    /// with no such character leaves them be.
+    /// bd can write the handed password with its other characters encoded,
+    /// where taking out the password as it was handed finds nothing. Every
+    /// encoding keeps the password's runs of letters and digits, so words
+    /// holding a long one are withheld, and a password with no long one
+    /// withholds them all. A password of letters and digits alone is
+    /// written as handed, and leaves the words be.
     #[test]
-    fn a_handed_password_bd_may_write_escaped_withholds_words_holding_an_escape() {
+    fn a_handed_password_bd_may_write_encoded_withholds_words_holding_part_of_it() {
         let handed =
             |password: &str| Env::from([(CREDENTIAL_VAR.to_string(), password.to_string())]);
-        let said = "Error: bad value \"tab\\there\" in C:\\ledger\n";
-        assert_eq!(without_password(said, &handed("tab\there")), WITHHELD);
-        assert_eq!(without_password(said, &handed("quo\"te")), WITHHELD);
-        assert_eq!(without_password(said, &handed("hunter2")), said.trim());
+        for (password, said) in [
+            ("tab\there", "Error: bad value \"tab\\there\""),
+            ("quo\"te4", "Error: bad value \"quo\\\"te4\""),
+            ("ledger's4fe", "Error: near 'ledger''s4fe'"),
+            ("ledger's4fe", "Error: bad query ledger%27s4fe"),
+            ("ledger's4fe", "Error: bad value ledger&#39;s4fe"),
+            ("a!b?c", "Error: the ledger is sealed"),
+        ] {
+            assert_eq!(
+                without_password(&format!("{said}\n"), &handed(password)),
+                WITHHELD,
+                "on {said:?} with {password:?}"
+            );
+        }
+        let sealed = "Error: the ledger is sealed in C:\\ledger";
+        assert_eq!(without_password(sealed, &handed("hunter2")), sealed);
+        assert_eq!(
+            without_password(
+                "Error: ping failed as ledger's4fe\n",
+                &handed("ledger's4fe")
+            ),
+            "Error: ping failed as <redacted>"
+        );
     }
 
     /// MySQL names an account as `'user'@'host'`, which holds no password,
@@ -1660,6 +1717,8 @@ mod tests {
             "over 'open\nsesame'@'db.example.invalid'",
             "over 'arkham'@'s3s4me@db.example.invalid'",
             "over 'arkham_pwd_s3s4me'@'db.example.invalid'",
+            "over secret='s3s4me'@'db.example.invalid'",
+            "over 'arkham'@'db.example.invalid'/s3s4me",
         ] {
             let said = format!("{denied} {unseen}\n");
             assert_eq!(

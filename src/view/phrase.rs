@@ -92,10 +92,26 @@ fn one_line(said: &str) -> String {
 /// What the watcher logs when `project`'s tracker stops answering, fails
 /// another way, or answers again.
 pub fn tracker_reached(project: &str, failure: Option<&TrackerFailure>) -> String {
+    let project = spelled_out(project);
     match failure {
         Some(failure) => format!("{project}: {}", tracker_failure(failure)),
         None => format!("{project}: the tracker answers again"),
     }
+}
+
+/// `line` with each control character written as its escape. A name from
+/// config and an id, repo or await id a tracker's writers chose, printed raw,
+/// could move the terminal or start a log line of its own.
+pub fn spelled_out(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for glyph in line.chars() {
+        if glyph.is_control() {
+            out.extend(glyph.escape_default());
+        } else {
+            out.push(glyph);
+        }
+    }
+    out
 }
 
 /// The sentence every failure gets, and the whole of what a failure says
@@ -2378,6 +2394,10 @@ mod tests {
         assert_eq!(
             tracker_reached("arkham", None),
             "arkham: the tracker answers again"
+        );
+        assert_eq!(
+            tracker_reached("ark\nham\u{1b}[2J", None),
+            r"ark\nham\u{1b}[2J: the tracker answers again"
         );
     }
 

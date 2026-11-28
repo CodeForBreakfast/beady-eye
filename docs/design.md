@@ -3171,7 +3171,8 @@ character that moves a terminal is written with escapes inside `$'…'`, so
 the command still runs again when pasted after `bd`. A `parse` reason comes
 from a run that succeeded, and its `read` names the subcommand. `unavailable` also carries `said` where bd
 exited non-zero for a reason `bdi` cannot place, and `said` is bd's stderr,
-cut at a thousand characters. `unstartable` and `installed-unstartable`
+cut at a thousand characters. Where bd wrote nothing, `said` is how it
+ended instead, such as `<nothing, and exited 3>`. `unstartable` and `installed-unstartable`
 carry `error`, the error the operating system refused to start bd with, such
 as `Too many open files (os error 24)`. Those are all such a reader has to go
 on, so they are kept, and every other failure keeps nothing bd wrote. bd

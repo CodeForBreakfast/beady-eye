@@ -275,7 +275,11 @@ impl Hold {
             }
             Said::Lapsed => standing.lapsed = true,
         }
-        if standing.unreachable != was {
+        let fails_as_it_did = match (&standing.unreachable, &was) {
+            (Some(failure), Some(failed)) => failure.fails_as(failed),
+            (now, then) => now.is_none() && then.is_none(),
+        };
+        if !fails_as_it_did {
             reached(&answer.project, standing.unreachable.as_ref());
         }
         let records = match answer.journal {
@@ -825,10 +829,15 @@ mod tests {
 
     /// The watcher's log is told each time a tracker is lost, fails another
     /// way, or comes back, and not each time it fails the same way again,
-    /// which a polled tracker does on every poll.
+    /// which a polled tracker does on every poll, from whichever read failed
+    /// first and in words that can name the moment.
     #[test]
     fn a_tracker_is_said_to_be_reached_differently_only_when_it_is() {
         let unplaced = crate::model::types::testing::an_unplaced();
+        let unplaced_again = TrackerFailure::Unavailable {
+            command: Some("--readonly query --json".to_string()),
+            said: Some("Error: the ledger is sealed at 12:00:20".to_string()),
+        };
         let unreachable = |at, failure: &TrackerFailure| {
             said(
                 "dunwich",
@@ -842,7 +851,7 @@ mod tests {
             vec![
                 read("dunwich", now(), &["dun-1"]),
                 unreachable(later(10), &unplaced),
-                unreachable(later(20), &unplaced),
+                unreachable(later(20), &unplaced_again),
                 unreachable(later(30), &TrackerFailure::Auth { command: None }),
                 read("dunwich", later(40), &["dun-1"]),
                 read("dunwich", later(50), &["dun-1"]),

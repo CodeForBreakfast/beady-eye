@@ -252,6 +252,39 @@ pub enum TrackerFailure {
     },
 }
 
+impl TrackerFailure {
+    /// Whether `self` fails the way `other` does, whichever command it came
+    /// from and whatever bd or the system said of it. A tracker polled while
+    /// it fails fails from whichever read failed first, in words that can
+    /// name the moment, and is still failing the same way.
+    pub fn fails_as(&self, other: &Self) -> bool {
+        self.as_failed() == other.as_failed()
+    }
+
+    /// `self` without its command or what was said of it, keeping whether bd
+    /// said anything, which tells a failure `bdi` cannot place from a tracker
+    /// that did not answer.
+    fn as_failed(&self) -> Self {
+        let mut failed = self.clone();
+        match &mut failed {
+            Self::NoEnvironment | Self::NoCredential | Self::Parse(_) => {}
+            Self::Auth { command }
+            | Self::NotInstalled { command }
+            | Self::UnknownFlag { command } => *command = None,
+            Self::Unavailable { command, said } => {
+                *command = None;
+                *said = said.as_ref().map(|_| String::new());
+            }
+            Self::Unstartable { command, error }
+            | Self::InstalledUnstartable { command, error } => {
+                *command = None;
+                *error = None;
+            }
+        }
+        failed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrackerState {
