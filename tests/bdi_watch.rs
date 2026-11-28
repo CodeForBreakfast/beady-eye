@@ -346,9 +346,11 @@ fn a_tracker_failing_for_a_reason_bdi_cannot_place_says_what_bd_said_and_never_t
         READ_IN_FULL,
         "Error: the ledger is sealed\n(asked as arkham with hunter2)\n",
     );
+    let log = home.join("watcher.log");
     let watcher = Watcher(Some(
         bdi_watch(&home, &tracker)
             .env("BEADS_DOLT_PASSWORD", "hunter2")
+            .stderr(std::fs::File::create(&log).expect("the log is ours to make"))
             .spawn()
             .expect("bdi watch starts"),
     ));
@@ -358,7 +360,10 @@ fn a_tracker_failing_for_a_reason_bdi_cannot_place_says_what_bd_said_and_never_t
     let answer = Consumer::connected_to(&watching_at(&home))
         .sends("watch arkham")
         .hears_an_answer();
-    let out = stopped(watcher);
+    let logged = || std::fs::read_to_string(&log).expect("the log is ours to read");
+    until(|| logged().ends_with('\n'), "the log line");
+    stopped(watcher);
+    let logged = logged();
 
     let freshness = answer.last().expect("an answer ends");
     let unreachable = &freshness["tracker"]["unreachable"];
@@ -369,12 +374,11 @@ fn a_tracker_failing_for_a_reason_bdi_cannot_place_says_what_bd_said_and_never_t
     assert!(command.ends_with(READ_IN_FULL), "{command}");
     assert_eq!(
         unreachable["unplaced"]["said"],
-        "Error: the ledger is sealed\n(asked as arkham with <password>)"
+        "Error: the ledger is sealed\n(asked as arkham with <redacted>)"
     );
-    let logged = String::from_utf8_lossy(&out.stderr);
     assert!(
         logged.contains(command)
-            && logged.contains("Error: the ledger is sealed (asked as arkham with <password>)"),
+            && logged.contains("Error: the ledger is sealed (asked as arkham with <redacted>)"),
         "the log says what bd said: {logged}"
     );
     for told in answer

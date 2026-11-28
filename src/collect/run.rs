@@ -489,11 +489,15 @@ impl RunFailure {
 
     /// As [`from_exit`](Self::from_exit), but a failure no phrase places
     /// keeps the command line `args` and what the command said, each with
-    /// the password `env` handed it taken out.
+    /// no password left in it.
     fn exited(program: &str, args: &[&str], env: &Env, code: Option<i32>, stderr: &str) -> Self {
         Self::placed(program, stderr).unwrap_or_else(|| {
+            let args: Vec<String> = args
+                .iter()
+                .map(|arg| without_the_handed_password(arg, env))
+                .collect();
             let unplaced = Unplaced {
-                command: printable(&without_password(&spelled(args), env)),
+                command: printable(&spelled(&args)),
                 said: cut_short(&printable(&without_password(stderr.trim(), env))),
             };
             Self::unplaced(program, code, Some(Box::new(unplaced)))
@@ -620,7 +624,7 @@ fn printable(said: &str) -> String {
 
 /// `args` as a shell needs them typed, so the command runs again when pasted
 /// after the program's name.
-fn spelled(args: &[&str]) -> String {
+fn spelled(args: &[String]) -> String {
     let plain = |arg: &str| {
         !arg.is_empty()
             && arg
@@ -630,7 +634,7 @@ fn spelled(args: &[&str]) -> String {
     args.iter()
         .map(|arg| {
             if plain(arg) {
-                (*arg).to_string()
+                arg.clone()
             } else {
                 format!("'{}'", arg.replace('\'', r"'\''"))
             }
@@ -639,33 +643,46 @@ fn spelled(args: &[&str]) -> String {
         .join(" ")
 }
 
-/// What stands in for a password taken out of what a command said.
-const TAKEN_OUT: &str = "<password>";
+/// What stands in for the password the child was handed.
+const TAKEN_OUT: &str = "<redacted>";
 
-/// `said` with the tracker's password taken out.
+/// What stands in for a line that may hold a password `bdi` cannot see.
+const WITHHELD: &str = "<a line that may hold a password was withheld>";
+
+/// `text` with the password the child was handed taken out, wherever it
+/// appears.
+fn without_the_handed_password(text: &str, env: &Env) -> String {
+    match env.get(CREDENTIAL_VAR) {
+        Some(password) if !password.is_empty() => text.replace(password.as_str(), TAKEN_OUT),
+        _ => text.to_string(),
+    }
+}
+
+/// `said` with no password left in it.
 ///
-/// The password the child was handed goes wherever it appears. bd can also
-/// find one `bdi` never sees, in its credentials file, so anything in the two
-/// shapes a password is written in goes too: the secret of a
-/// `user:secret@host` connection string, up to its last `@` as the MySQL
-/// driver reads one, and a value given for a key named password, quoted or
-/// not. Either can take more than the password with it, which costs the
-/// reader a few words and never the password.
+/// The password the child was handed is taken out wherever it appears. bd
+/// can also find one `bdi` never sees, in its credentials file, and nothing
+/// can say where such a password ends once it is quoted, escaped or holds a
+/// space. So each line shaped like one that carries a password is withheld
+/// whole: one naming a password, or one holding a connection string's
+/// `user:secret@` or a MySQL driver's `@tcp(` or `@unix(`. That costs the
+/// reader a line and never the password.
 fn without_password(said: &str, env: &Env) -> String {
-    static USERINFO: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"([A-Za-z0-9._%+-]+):\S+@").expect("the pattern compiles"));
-    static KEYED: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?i)((?:password|passwd|pwd)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)"#)
+    static MAY_HOLD_A_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)passw|pwd|[A-Za-z0-9._%+-]:\S*@|@(?:tcp|unix)\(")
             .expect("the pattern compiles")
     });
-    let handed = match env.get(CREDENTIAL_VAR) {
-        Some(password) if !password.is_empty() => said.replace(password.as_str(), TAKEN_OUT),
-        _ => said.to_string(),
-    };
-    let unkeyed = KEYED.replace_all(&handed, format!("${{1}}{TAKEN_OUT}"));
-    USERINFO
-        .replace_all(&unkeyed, format!("${{1}}:{TAKEN_OUT}@"))
-        .into_owned()
+    without_the_handed_password(said, env)
+        .lines()
+        .map(|line| {
+            if MAY_HOLD_A_PASSWORD.is_match(line) {
+                WITHHELD
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl fmt::Display for RunFailure {
@@ -1487,30 +1504,33 @@ mod tests {
     /// bd is handed the tracker's password in its environment, and can find
     /// one in its credentials file that `bdi` never sees. Neither reaches what
     /// an unplaced failure keeps, from the words or from the command line,
-    /// whatever form the password takes there.
+    /// whatever form the password takes there. The handed one is taken out
+    /// where it stands, and a line that may hold the other goes whole.
     #[test]
     fn no_password_survives_into_what_an_unplaced_failure_keeps() {
         let words = nothing_holds("unplaced-words");
         std::fs::write(
             &words,
             concat!(
-                "Error: ping failed as hunter2\n",
+                "Error: ping failed as hunter'2\n",
                 "dsn arkham:tr0ub4dor@tcp(db.example.invalid:3306)/arkham\n",
                 "url mysql://arkham:s3s4me@db.example.invalid/arkham\n",
                 "password=correcthorse PASSWORD: batterystaple\n",
-                "dsn arkham:p@ss/w0rd:x@tcp(db.example.invalid:3306)/arkham\n",
+                "dsn arkham:p@ss w0rd@tcp(db.example.invalid:3306)/arkham\n",
                 "pwd = \"open sesame\" and passwd: 'swordfish fortune'\n",
+                "{\"Password\": \"esc\\\"aped value\"}\n",
+                "Error: the ledger is sealed\n",
             ),
         )
         .expect("the words are ours to write");
-        let env = Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())]);
+        let env = Env::from([(CREDENTIAL_VAR.to_string(), "hunter'2".to_string())]);
         let failure = RealRunner
             .run(
                 "sh",
                 &[
                     "-c",
                     r#"cat "$1" >&2; exit 1"#,
-                    "hunter2",
+                    "hunter'2",
                     &words.display().to_string(),
                 ],
                 None,
@@ -1522,29 +1542,35 @@ mod tests {
         let kept = failure.unplaced.expect("the failure is unplaced");
         let shown = format!("{kept:?}");
         for secret in [
-            "hunter2",
+            "hunter",
             "tr0ub4dor",
             "s3s4me",
             "correcthorse",
             "batterystaple",
-            "ss/w0rd",
+            "w0rd",
             "sesame",
             "fortune",
+            "aped value",
         ] {
             assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
         }
         assert!(
             kept.command
-                .contains(r#"'cat "$1" >&2; exit 1' <password> "#),
+                .contains(r#"'cat "$1" >&2; exit 1' '<redacted>' "#),
             "the command line is kept around the password: {shown}"
         );
-        assert!(
-            kept.said.starts_with("Error: ping failed as <password>\n"),
-            "what was said around the password is kept: {shown}"
-        );
-        assert!(
-            kept.said.contains("arkham:") && kept.said.contains("@tcp(db.example.invalid:3306)"),
-            "the user and the host are kept: {shown}"
+        assert_eq!(
+            kept.said.lines().collect::<Vec<_>>(),
+            [
+                "Error: ping failed as <redacted>",
+                WITHHELD,
+                WITHHELD,
+                WITHHELD,
+                WITHHELD,
+                WITHHELD,
+                WITHHELD,
+                "Error: the ledger is sealed",
+            ]
         );
     }
 
@@ -1559,7 +1585,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    r"printf 'Error: \033[31msealed\r\n\tat the \342\200\256ledger\342\200\250kept' >&2; exit 1",
+                    r"printf 'Error: \033[31mseal\red\n\tat the \342\200\256ledger\342\200\250kept' >&2; exit 1",
                 ],
                 None,
                 &Env::new(),
@@ -1568,7 +1594,7 @@ mod tests {
 
         assert_eq!(
             failure.unplaced.expect("the failure is unplaced").said,
-            "Error: \\u{1b}[31msealed\\r\n\\tat the \\u{202e}ledger\\u{2028}kept"
+            "Error: \\u{1b}[31mseal\\red\n\\tat the \\u{202e}ledger\\u{2028}kept"
         );
     }
 

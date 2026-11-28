@@ -2319,7 +2319,7 @@ mod tests {
 
         says(&said, "cannot place");
         says(&said, "bd --readonly list --json");
-        says(&said, "Error: the ledger is sealed (asked with <password>)");
+        says(&said, "Error: the ledger is sealed (asked with <redacted>)");
         assert!(!said.contains('\n'), "{said:?}");
     }
 

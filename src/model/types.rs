@@ -432,7 +432,7 @@ pub mod testing {
     pub fn an_unplaced() -> Unplaced {
         Unplaced {
             command: "--readonly list --json".to_string(),
-            said: "Error: the ledger is sealed\n(asked with <password>)".to_string(),
+            said: "Error: the ledger is sealed\n(asked with <redacted>)".to_string(),
         }
     }
 

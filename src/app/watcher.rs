@@ -243,8 +243,8 @@ impl Hold {
 
     /// As [`take`](Self::take), handing `reached` the project first where
     /// its tracker stopped answering, failed another way, or answered again,
-    /// with how it now fails. A consumer is told after that, so whatever
-    /// `reached` writes is written before any consumer can act on the news.
+    /// with how it now fails. `reached` is called with the hold locked, so it
+    /// must not wait on anything.
     fn taking(&mut self, answer: Answer, reached: &mut dyn FnMut(&str, Option<&TrackerFailure>)) {
         let standing = self.projects.entry(answer.project.clone()).or_default();
         let was = standing.unreachable.clone();
@@ -513,7 +513,8 @@ fn locked(hold: &Mutex<Hold>) -> MutexGuard<'_, Hold> {
 
 /// Hold everything `source` says until it stops, and hand `reached` each
 /// project whose tracker stops answering, fails another way, or answers
-/// again, with how it now fails.
+/// again, with how it now fails. `reached` runs with the hold locked, so it
+/// must not wait on anything.
 pub fn hold(
     source: &mut dyn ChangeSource,
     into: &Mutex<Hold>,

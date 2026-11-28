@@ -1708,7 +1708,7 @@ const unplaced = {
       reason: 'unavailable',
       unplaced: {
         command: '--readonly list --json',
-        said: 'Error: the ledger is sealed\n(asked with <password>)',
+        said: 'Error: the ledger is sealed\n(asked with <redacted>)',
       },
     },
   },
@@ -1717,7 +1717,7 @@ const unplaced = {
 const toldUnplaced = {
   content: [
     'The watcher cannot reach the tracker of summit-works: unavailable.',
-    'bd was run as "bd --readonly list --json", and said "Error: the ledger is sealed\\n(asked with <password>)".',
+    'bd was run as "bd --readonly list --json", and said "Error: the ledger is sealed\\n(asked with <redacted>)".',
     'These beads keep their last known status until it can:',
     '- smt-4kd3p.20 in summit-works',
     'This session will be told when it can.',

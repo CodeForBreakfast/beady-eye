@@ -3168,10 +3168,11 @@ did not match and where in the answer it was. `unavailable` carries
 `said` is bd's stderr, cut at a thousand characters. That is all such a
 reader has to go on, so it is kept, and every other failure keeps nothing bd
 wrote. bd names the database and the SQL user in what it writes, and those go
-to whoever runs `bdi`. The password does not: the one bd was handed is taken
-out of both, as is anything written as the secret of a `user:secret@host`
-connection string or as the value of a key named password, since bd can also
-find a password `bdi` never sees. A control character other than a line
+to whoever runs `bdi`. The password does not. The one bd was handed is taken
+out of both wherever it appears. bd can also find a password `bdi` never
+sees, in its credentials file, so a line of `said` that names a password or
+holds a connection string's `user:secret@`, `@tcp(` or `@unix(` is withheld
+whole, since nothing can say where an unseen password ends. A control character other than a line
 break is kept as its escape, and so is a character that breaks a line or
 turns text round without being one. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
