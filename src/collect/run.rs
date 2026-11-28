@@ -589,11 +589,27 @@ fn cut_short(said: &str) -> String {
 }
 
 /// `said` with each control character but a line break written as its
-/// escape, so it cannot move the terminal or the log it is shown in.
+/// escape, so it cannot move the terminal or the log it is shown in. The
+/// characters that break a line or turn text round without being control
+/// characters are escaped too, so what a reader sees is what bd wrote, in
+/// the order it wrote it.
 fn printable(said: &str) -> String {
+    let unseen = |glyph: char| {
+        (glyph.is_control() && glyph != '\n')
+            || matches!(
+                glyph,
+                '\u{061c}'
+                    | '\u{200e}'
+                    | '\u{200f}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202a}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}'
+            )
+    };
     let mut out = String::with_capacity(said.len());
     for glyph in said.chars() {
-        if glyph.is_control() && glyph != '\n' {
+        if unseen(glyph) {
             out.extend(glyph.escape_default());
         } else {
             out.push(glyph);
@@ -631,14 +647,17 @@ const TAKEN_OUT: &str = "<password>";
 /// The password the child was handed goes wherever it appears. bd can also
 /// find one `bdi` never sees, in its credentials file, so anything in the two
 /// shapes a password is written in goes too: the secret of a
-/// `user:secret@host` connection string, and a value given for a key named
-/// password.
+/// `user:secret@host` connection string, up to its last `@` as the MySQL
+/// driver reads one, and a value given for a key named password, quoted or
+/// not. Either can take more than the password with it, which costs the
+/// reader a few words and never the password.
 fn without_password(said: &str, env: &Env) -> String {
-    static USERINFO: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"([A-Za-z0-9._%+-]+):[^\s@/:]+@").expect("the pattern compiles")
+    static USERINFO: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"([A-Za-z0-9._%+-]+):\S+@").expect("the pattern compiles"));
+    static KEYED: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)((?:password|passwd|pwd)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)"#)
+            .expect("the pattern compiles")
     });
-    static KEYED: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)(password\s*[=:]\s*)\S+").expect("the pattern compiles"));
     let handed = match env.get(CREDENTIAL_VAR) {
         Some(password) if !password.is_empty() => said.replace(password.as_str(), TAKEN_OUT),
         _ => said.to_string(),
@@ -1465,28 +1484,40 @@ mod tests {
         }
     }
 
-    /// bd is handed the tracker's password in its environment, and the
-    /// connection string it builds from it carries it too. Neither reaches
-    /// what an unplaced failure keeps, from the words or from the command
-    /// line, whatever form the password takes there.
+    /// bd is handed the tracker's password in its environment, and can find
+    /// one in its credentials file that `bdi` never sees. Neither reaches what
+    /// an unplaced failure keeps, from the words or from the command line,
+    /// whatever form the password takes there.
     #[test]
     fn no_password_survives_into_what_an_unplaced_failure_keeps() {
+        let words = nothing_holds("unplaced-words");
+        std::fs::write(
+            &words,
+            concat!(
+                "Error: ping failed as hunter2\n",
+                "dsn arkham:tr0ub4dor@tcp(db.example.invalid:3306)/arkham\n",
+                "url mysql://arkham:s3s4me@db.example.invalid/arkham\n",
+                "password=correcthorse PASSWORD: batterystaple\n",
+                "dsn arkham:p@ss/w0rd:x@tcp(db.example.invalid:3306)/arkham\n",
+                "pwd = \"open sesame\" and passwd: 'swordfish fortune'\n",
+            ),
+        )
+        .expect("the words are ours to write");
         let env = Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())]);
         let failure = RealRunner
             .run(
                 "sh",
                 &[
                     "-c",
-                    r#"echo "Error: ping failed as $BEADS_DOLT_PASSWORD" >&2
-                       echo "dsn arkham:tr0ub4dor@tcp(db.example.invalid:3306)/arkham" >&2
-                       echo "url mysql://arkham:s3s4me@db.example.invalid/arkham" >&2
-                       echo "password=correcthorse PASSWORD: batterystaple" >&2
-                       exit 1"#,
+                    r#"cat "$1" >&2; exit 1"#,
+                    "hunter2",
+                    &words.display().to_string(),
                 ],
                 None,
                 &env,
             )
             .expect_err("the command exits non-zero");
+        let _ = std::fs::remove_file(&words);
 
         let kept = failure.unplaced.expect("the failure is unplaced");
         let shown = format!("{kept:?}");
@@ -1496,11 +1527,19 @@ mod tests {
             "s3s4me",
             "correcthorse",
             "batterystaple",
+            "ss/w0rd",
+            "sesame",
+            "fortune",
         ] {
             assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
         }
         assert!(
-            kept.said.starts_with("Error: ping failed as "),
+            kept.command
+                .contains(r#"'cat "$1" >&2; exit 1' <password> "#),
+            "the command line is kept around the password: {shown}"
+        );
+        assert!(
+            kept.said.starts_with("Error: ping failed as <password>\n"),
             "what was said around the password is kept: {shown}"
         );
         assert!(
@@ -1520,7 +1559,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    r"printf 'Error: \033[31msealed\r\n\tat the ledger' >&2; exit 1",
+                    r"printf 'Error: \033[31msealed\r\n\tat the \342\200\256ledger\342\200\250kept' >&2; exit 1",
                 ],
                 None,
                 &Env::new(),
@@ -1529,7 +1568,7 @@ mod tests {
 
         assert_eq!(
             failure.unplaced.expect("the failure is unplaced").said,
-            "Error: \\u{1b}[31msealed\\r\n\\tat the ledger"
+            "Error: \\u{1b}[31msealed\\r\n\\tat the \\u{202e}ledger\\u{2028}kept"
         );
     }
 

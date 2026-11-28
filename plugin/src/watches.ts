@@ -363,10 +363,7 @@ const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'>
 const whatBdSaid = ({ unplaced }: Unreachable): readonly string[] =>
   unplaced === undefined
     ? []
-    : [
-        `bd ${unplaced.command} failed, saying:`,
-        ...unplaced.said.split('\n').map((line) => `> ${line}`),
-      ]
+    : [`bd was run as ${quoted(`bd ${unplaced.command}`)}, and said ${quoted(unplaced.said)}.`]
 
 const trackerUnreachable = (
   project: ProjectName,
@@ -650,7 +647,10 @@ export const makeWatches: Effect.Effect<
         if (known?.told) yield* tell(trackerBack(project))
         return
       }
-      if (known !== undefined) return
+      if (known !== undefined) {
+        known.why = why
+        return
+      }
       const outage = { why, due: false, told: false }
       unreachable.set(project, outage)
       yield* inAMinute(

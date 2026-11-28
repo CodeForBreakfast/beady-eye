@@ -236,6 +236,7 @@ impl Hold {
     }
 
     /// Take what a source said of one project, and tell everyone watching it.
+    #[cfg(test)]
     pub fn take(&mut self, answer: Answer) {
         self.taking(answer, &mut |_, _| {});
     }

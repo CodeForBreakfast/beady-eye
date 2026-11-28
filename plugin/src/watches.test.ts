@@ -1701,36 +1701,45 @@ test('a tracker the watcher cannot reach for a minute wakes the session, and aga
   expect(await use.nextMessage()).toEqual(started)
 })
 
+const unplaced = {
+  ...freshness('summit-works'),
+  tracker: {
+    unreachable: {
+      reason: 'unavailable',
+      unplaced: {
+        command: '--readonly list --json',
+        said: 'Error: the ledger is sealed\n(asked with <password>)',
+      },
+    },
+  },
+}
+
+const toldUnplaced = {
+  content: [
+    'The watcher cannot reach the tracker of summit-works: unavailable.',
+    'bd was run as "bd --readonly list --json", and said "Error: the ledger is sealed\\n(asked with <password>)".',
+    'These beads keep their last known status until it can:',
+    '- smt-4kd3p.20 in summit-works',
+    'This session will be told when it can.',
+  ].join('\n'),
+  meta: { project: 'summit-works', tracker: 'unreachable' },
+}
+
 test('a tracker bd fails for a reason bdi cannot place says which command failed and what bd said', async () => {
   const { use, connection } = await aWatchedBead()
 
-  connection.write(
-    said({
-      ...freshness('summit-works'),
-      tracker: {
-        unreachable: {
-          reason: 'unavailable',
-          unplaced: {
-            command: '--readonly list --json',
-            said: 'Error: the ledger is sealed\n(asked with <password>)',
-          },
-        },
-      },
-    }),
-  )
+  connection.write(said(unplaced))
 
-  expect(await use.nextMessage()).toEqual({
-    content: [
-      'The watcher cannot reach the tracker of summit-works: unavailable.',
-      'bd --readonly list --json failed, saying:',
-      '> Error: the ledger is sealed',
-      '> (asked with <password>)',
-      'These beads keep their last known status until it can:',
-      '- smt-4kd3p.20 in summit-works',
-      'This session will be told when it can.',
-    ].join('\n'),
-    meta: { project: 'summit-works', tracker: 'unreachable' },
-  })
+  expect(await use.nextMessage()).toEqual(toldUnplaced)
+})
+
+test('a tracker whose failure changes before the minute is up is told as it last failed', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(unreachable))
+  connection.write(said(unplaced))
+
+  expect(await use.nextMessage()).toEqual(toldUnplaced)
 })
 
 test('a watch restored from disk is the same as the bead heard from the watcher, and is not kept again', async () => {

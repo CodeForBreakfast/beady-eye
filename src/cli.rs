@@ -864,7 +864,10 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let mut source = ReadingTrackers::new(reads, heard, outstanding, reading);
     std::thread::spawn(move || {
         hold(&mut source, &held, &mut |project, failure| {
-            eprintln!(
+            // A supervisor that has closed the watcher's stderr loses the
+            // line, and the watcher goes on holding what it reads.
+            let _ = writeln!(
+                std::io::stderr(),
                 "bdi watch: {}",
                 crate::view::phrase::tracker_reached(project, failure)
             );

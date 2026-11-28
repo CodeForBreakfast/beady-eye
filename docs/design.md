@@ -3171,8 +3171,9 @@ wrote. bd names the database and the SQL user in what it writes, and those go
 to whoever runs `bdi`. The password does not: the one bd was handed is taken
 out of both, as is anything written as the secret of a `user:secret@host`
 connection string or as the value of a key named password, since bd can also
-find a password `bdi` never sees. A control character but a line break is
-kept as its escape. `failed_projects`
+find a password `bdi` never sees. A control character other than a line
+break is kept as its escape, and so is a character that breaks a line or
+turns text round without being one. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
 Two of those reasons are not about bd, and they are the two ways opening a
 tracker fails. `no-environment` is a project that asked to be read in a captured
