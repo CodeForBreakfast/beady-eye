@@ -140,6 +140,9 @@ pub struct Shown {
     /// What was asked, with the folds opened to reach the bead pointed open,
     /// so the next page keeps them open as the terminal does.
     pub asked: Asked,
+    /// Where the list or the root asked for leaves the bead out though a
+    /// tree holds it: every tree, with the selection on the bead.
+    pub unhidden: Option<Unhidden>,
     /// What was asked, as a step through the search's matches carries it
     /// on: without the folds the search opened, which the next step shuts
     /// as `n` does. Every other link carries them, as every other key keeps
@@ -148,6 +151,13 @@ pub struct Shown {
     /// Where the search asked for came to, with the selection on the match
     /// where it found one.
     pub landed: Option<Landed>,
+}
+
+/// The forest drawn with every tree, for a bead the view asked for hides,
+/// and what is asked of the page that draws the bead among every tree.
+pub struct Unhidden {
+    pub forest: Forest,
+    pub asked: Asked,
 }
 
 /// Where the page shows one bead: its project's name as the config gives it,
@@ -422,8 +432,29 @@ impl Asked {
     /// where what this took from the start leaves the bead out, the start
     /// gives way as little as shows the bead: its list, then its roots, then
     /// both. Where none of that shows it, the page stays as the start draws
-    /// it.
+    /// it, and so does a list or a root the address names, with the bead
+    /// drawn among every tree beside it as [`Shown::unhidden`].
     pub fn forest(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
+        let mut shown = self.widened(snapshot, layout);
+        let held = |key: &BeadKey| shown.forest.snapshot().node(key).is_some();
+        if shown.bead == Some(false) && self.bead.as_ref().is_some_and(held) {
+            let asked = Self {
+                list: None,
+                list_from_start: false,
+                root: Root::Whole,
+                ..self.clone()
+            };
+            let every_tree = asked.drawn(shown.forest.snapshot().clone(), layout);
+            shown.unhidden = (every_tree.bead == Some(true)).then(|| Unhidden {
+                forest: every_tree.forest,
+                asked: every_tree.asked,
+            });
+        }
+        shown
+    }
+
+    /// [`Asked::forest`] before it looks among every tree.
+    fn widened(&self, snapshot: Snapshot, layout: &Layout) -> Shown {
         let shown = self.drawn(snapshot, layout);
         let unstarted = self.without_the_starts_list().without_the_starts_roots();
         let held = |key: &BeadKey| shown.forest.snapshot().node(key).is_some();
@@ -529,6 +560,7 @@ impl Asked {
             asked,
             searched,
             landed,
+            unhidden: None,
         }
     }
 
