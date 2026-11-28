@@ -775,9 +775,9 @@ fn a_watcher_out_of_descriptors_says_so_once() {
     assert_eq!(
         untaken.told,
         format!(
-            "bdi watch cannot take connections on {}, and keeps trying: \
-             Too many open files (os error 24)",
-            watching_at(&home).display()
+            "bdi watch cannot take connections on {}, and keeps trying: {}",
+            watching_at(&home).display(),
+            std::io::Error::from_raw_os_error(libc::EMFILE)
         )
     );
     assert_eq!(

@@ -1224,8 +1224,10 @@ mod tests {
                 .collect();
         assert_eq!(
             String::from_utf8(said).expect("the report is text"),
-            "bdi watch cannot take connections on /run/user/1000/bdi/watcher.sock, \
-             and keeps trying: Too many open files (os error 24)\n"
+            format!(
+                "bdi watch cannot take connections on /run/user/1000/bdi/watcher.sock, \
+                 and keeps trying: {out_of_descriptors}\n"
+            )
         );
     }
 

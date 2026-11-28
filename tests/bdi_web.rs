@@ -241,9 +241,9 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
     let room = open_files(pid).rlim_cur;
     let socket = the_socket_under(&runtime);
     let report = format!(
-        "bdi web cannot take connections on {}, and keeps trying: \
-         Too many open files (os error 24)\n",
-        socket.display()
+        "bdi web cannot take connections on {}, and keeps trying: {}\n",
+        socket.display(),
+        std::io::Error::from_raw_os_error(libc::EMFILE)
     );
     assert!(
         report.len() > ROOM_FOR_THE_NOTICES,
@@ -262,7 +262,7 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
     let config = home.join(".config/beady-eye/config.toml");
     std::fs::write(&config, "[[projects]\n").expect("the config is ours to write");
     let giving_up = Instant::now() + GIVING_UP;
-    while held_by(&unread) == before {
+    while held_by(&unread) < before + THE_NOTICE.len() {
         assert!(
             Instant::now() < giving_up,
             "bdi web never said the config will not load while the report waited"
