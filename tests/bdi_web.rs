@@ -216,7 +216,12 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
-    let home = a_home_naming_one_project_settled("web-report-waiting", "poll = false\n");
+    // Named at length, because the report names the socket under it and has
+    // to be longer than the room the pipe has, wherever the home is made.
+    let home = a_home_naming_one_project_settled(
+        "web-report-waiting-on-a-stderr-nobody-reads",
+        "poll = false\n",
+    );
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
     let (unread, stderr) = a_pipe_with_room_for(ROOM_FOR_THE_NOTICES);
