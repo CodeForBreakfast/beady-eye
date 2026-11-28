@@ -820,8 +820,8 @@ fn is_a_socket(at: &Path) -> bool {
 /// once and spin a core until a descriptor is free.
 const UNTIL_ACCEPTING_AGAIN: Duration = Duration::from_millis(100);
 
-/// Take connections for as long as the run holds the socket, each on a
-/// thread of its own.
+/// Take connections for as long as the run lasts, each on a thread of its
+/// own.
 ///
 /// An accept that fails is tried again rather than ending the channel. A run
 /// holding as many files as it may fails every accept, and takes connections
