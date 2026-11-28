@@ -46,6 +46,7 @@ import {
   type Said,
   type SessionId,
   StatusWord,
+  type Unreachable,
   WatchedProjects,
   type WatcherLocation,
   WatcherTiming,
@@ -357,13 +358,24 @@ const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'>
   block: { is: 'watcher', watcher: 'answering' },
 })
 
+/** Which bd command failed and what bd said, quoted, where bdi could not
+ * place the failure. */
+const whatBdSaid = ({ unplaced }: Unreachable): readonly string[] =>
+  unplaced === undefined
+    ? []
+    : [
+        `bd ${unplaced.command} failed, saying:`,
+        ...unplaced.said.split('\n').map((line) => `> ${line}`),
+      ]
+
 const trackerUnreachable = (
   project: ProjectName,
-  why: string,
+  why: Unreachable,
   beads: readonly Bead[],
 ): Omit<News, 'told'> => ({
   content: [
-    `The watcher cannot reach the tracker of ${project}: ${why}.`,
+    `The watcher cannot reach the tracker of ${project}: ${why.reason}.`,
+    ...whatBdSaid(why),
     'These beads keep their last known status until it can:',
     ...listed(beads),
     'This session will be told when it can.',
@@ -607,7 +619,7 @@ export const makeWatches: Effect.Effect<
 
   /** Each project whose tracker the watcher cannot reach, why, whether it
    * has been a minute, and whether the session has been told. */
-  const unreachable = new Map<string, { why: string; due: boolean; told: boolean }>()
+  const unreachable = new Map<string, { why: Unreachable; due: boolean; told: boolean }>()
 
   /** Tell the session of the outage in `project` once it has been a minute
    * and the session keeps a watch there, where it has not been told. */
@@ -631,7 +643,7 @@ export const makeWatches: Effect.Effect<
 
   const trackerIn = (freshness: Freshness, project: ProjectName) =>
     Effect.gen(function* () {
-      const why = freshness.tracker === 'ok' ? undefined : freshness.tracker.unreachable.reason
+      const why = freshness.tracker === 'ok' ? undefined : freshness.tracker.unreachable
       const known = unreachable.get(project)
       if (why === undefined) {
         unreachable.delete(project)

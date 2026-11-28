@@ -493,8 +493,8 @@ impl RunFailure {
     fn exited(program: &str, args: &[&str], env: &Env, code: Option<i32>, stderr: &str) -> Self {
         Self::placed(program, stderr).unwrap_or_else(|| {
             let unplaced = Unplaced {
-                command: without_password(&spelled(args), env),
-                said: cut_short(&without_password(stderr.trim(), env)),
+                command: printable(&without_password(&spelled(args), env)),
+                said: cut_short(&printable(&without_password(stderr.trim(), env))),
             };
             Self::unplaced(program, code, Some(Box::new(unplaced)))
         })
@@ -586,6 +586,20 @@ fn cut_short(said: &str) -> String {
         Some((cut, _)) => format!("{}…", &said[..cut]),
         None => said.to_string(),
     }
+}
+
+/// `said` with each control character but a line break written as its
+/// escape, so it cannot move the terminal or the log it is shown in.
+fn printable(said: &str) -> String {
+    let mut out = String::with_capacity(said.len());
+    for glyph in said.chars() {
+        if glyph.is_control() && glyph != '\n' {
+            out.extend(glyph.escape_default());
+        } else {
+            out.push(glyph);
+        }
+    }
+    out
 }
 
 /// `args` as a shell needs them typed, so the command runs again when pasted
@@ -1492,6 +1506,30 @@ mod tests {
         assert!(
             kept.said.contains("arkham:") && kept.said.contains("@tcp(db.example.invalid:3306)"),
             "the user and the host are kept: {shown}"
+        );
+    }
+
+    /// What bd said reaches a terminal row and two logs, and could quote a
+    /// tracker's own text back. A control character in it is kept as its
+    /// escape, so it cannot move a terminal or start a log line of its own.
+    /// The lines it said on stay lines.
+    #[test]
+    fn an_unplaced_failure_keeps_a_control_character_as_its_escape() {
+        let failure = RealRunner
+            .run(
+                "sh",
+                &[
+                    "-c",
+                    r"printf 'Error: \033[31msealed\r\n\tat the ledger' >&2; exit 1",
+                ],
+                None,
+                &Env::new(),
+            )
+            .expect_err("the command exits non-zero");
+
+        assert_eq!(
+            failure.unplaced.expect("the failure is unplaced").said,
+            "Error: \\u{1b}[31msealed\\r\n\\tat the ledger"
         );
     }
 
