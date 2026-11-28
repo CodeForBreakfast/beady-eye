@@ -904,13 +904,22 @@ fn not_taking_connections(
     holder: &'static str,
     at: PathBuf,
 ) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
+    not_taking_connections_into(std::io::stderr(), holder, at)
+}
+
+/// The same, said into `out`.
+fn not_taking_connections_into(
+    mut out: impl Write + Send + 'static,
+    holder: &'static str,
+    at: PathBuf,
+) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
     // A write to stderr can fail or wait for ever, and the accept loop doing
     // the telling has to go on trying either way. So a thread of its own
     // writes, and a report is dropped while another still waits to be written.
     let (telling, told) = std::sync::mpsc::sync_channel::<String>(1);
     std::thread::spawn(move || {
         for report in told {
-            eprintln!("{report}");
+            let _ = writeln!(out, "{report}");
         }
     });
     move |why| {
@@ -1114,6 +1123,63 @@ mod tests {
     use crate::config::Scope;
     use clap::CommandFactory;
     use std::collections::BTreeMap;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A stderr that refuses its first write, as a full disk does, and hands
+    /// on what it is given after that.
+    struct RefusingOnce {
+        refused: Option<mpsc::Sender<()>>,
+        written: mpsc::Sender<Vec<u8>>,
+    }
+
+    impl Write for RefusingOnce {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if let Some(refused) = self.refused.take() {
+                refused.send(()).expect("the test is listening");
+                return Err(std::io::Error::from_raw_os_error(libc::ENOSPC));
+            }
+            self.written
+                .send(bytes.to_vec())
+                .expect("the test is listening");
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_report_after_one_stderr_refused_is_still_written() {
+        let (refusing, refused) = mpsc::channel();
+        let (writing, written) = mpsc::channel();
+        let telling = not_taking_connections_into(
+            RefusingOnce {
+                refused: Some(refusing),
+                written: writing,
+            },
+            "bdi watch",
+            PathBuf::from("/run/user/1000/bdi/watcher.sock"),
+        );
+        let out_of_descriptors = std::io::Error::from_raw_os_error(libc::EMFILE);
+
+        telling(&out_of_descriptors);
+        refused
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first report is tried");
+        telling(&out_of_descriptors);
+
+        let said: Vec<u8> =
+            std::iter::from_fn(|| written.recv_timeout(Duration::from_secs(1)).ok())
+                .flatten()
+                .collect();
+        assert_eq!(
+            String::from_utf8(said).expect("the report is text"),
+            "bdi watch cannot take connections on /run/user/1000/bdi/watcher.sock, \
+             and keeps trying: Too many open files (os error 24)\n"
+        );
+    }
 
     /// A config file naming one project, and git's answer for where that
     /// project's repository is worked in.
