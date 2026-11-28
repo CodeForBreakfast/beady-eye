@@ -824,7 +824,7 @@ fn listened_on(at: &Path) -> bool {
 /// A connection to the socket at `at`, refused rather than waited for where
 /// its queue is full.
 fn connected_without_waiting(at: &Path) -> io::Result<std::os::fd::OwnedFd> {
-    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
     let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
     address.sun_family = libc::AF_UNIX as libc::sa_family_t;
@@ -835,11 +835,39 @@ fn connected_without_waiting(at: &Path) -> io::Result<std::os::fd::OwnedFd> {
     for (to, from) in address.sun_path.iter_mut().zip(path) {
         *to = *from as libc::c_char;
     }
+    let connection = a_socket_that_does_not_wait()?;
+    let made = connection.as_raw_fd();
+    let length = std::mem::size_of_val(&address) as libc::socklen_t;
+    if unsafe { libc::connect(made, (&raw const address).cast(), length) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(connection)
+}
+
+/// A socket for a connection to a `bdi`, whose connect does not wait, and
+/// which no program this run starts inherits, even one started by another
+/// thread while the socket is made.
+#[cfg(target_os = "linux")]
+fn a_socket_that_does_not_wait() -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let how = libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC;
+    let made = unsafe { libc::socket(libc::AF_UNIX, how, 0) };
+    if made < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(made) })
+}
+
+/// The same, where the system cannot make a socket so in one call, so it is
+/// set straight after.
+#[cfg(not(target_os = "linux"))]
+fn a_socket_that_does_not_wait() -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
     let made = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
     if made < 0 {
         return Err(io::Error::last_os_error());
     }
-    let connection = unsafe { OwnedFd::from_raw_fd(made) };
+    let socket = unsafe { std::os::fd::OwnedFd::from_raw_fd(made) };
     let set = unsafe {
         libc::fcntl(made, libc::F_SETFD, libc::FD_CLOEXEC) == 0
             && libc::fcntl(made, libc::F_SETFL, libc::O_NONBLOCK) == 0
@@ -847,11 +875,7 @@ fn connected_without_waiting(at: &Path) -> io::Result<std::os::fd::OwnedFd> {
     if !set {
         return Err(io::Error::last_os_error());
     }
-    let length = std::mem::size_of_val(&address) as libc::socklen_t;
-    if unsafe { libc::connect(made, (&raw const address).cast(), length) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(connection)
+    Ok(socket)
 }
 
 /// The socket at the path put aside for this run's own, whether anything is
