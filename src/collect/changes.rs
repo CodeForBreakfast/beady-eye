@@ -15,7 +15,7 @@
 //! the loop or the terminal being put back.
 
 use std::collections::BTreeSet;
-use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::io::{self, BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -477,13 +477,16 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
 
 /// Open the channel and start watching it, reporting what stopped it
 /// rather than failing: a `bdi` nothing can reach still draws, just polled.
+/// `taking` is told each time the channel stops taking connections, and why,
+/// and each time it takes them again.
 pub fn watch(
     at: Option<PathBuf>,
     reported: &Reported,
     changed: impl Report,
+    taking: impl Fn(Taking<'_>) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let reported = reported.clone();
-    serve(at, move |writer| hear(writer, &reported, &changed))
+    serve(at, move |writer| hear(writer, &reported, &changed), taking)
 }
 
 /// The channel a view `opened`, or the refusal worth saying where it could
@@ -505,13 +508,16 @@ pub fn opened_unless_a_watcher_holds_it(
 }
 
 /// Open a socket and hand each connection to `each` on a thread of its own,
-/// reporting what stopped it rather than failing.
+/// reporting what stopped it rather than failing. `taking` is told each time
+/// the socket stops taking connections, and why, and each time it takes them
+/// again.
 pub fn serve(
     at: Option<PathBuf>,
     each: impl Fn(UnixStream) + Send + Sync + 'static,
+    taking: impl Fn(Taking<'_>) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
-    listening(at, reclaim, Arc::new(each))
+    listening(at, reclaim, Arc::new(each), Arc::new(taking))
 }
 
 /// What to do with a name some other socket already holds.
@@ -521,6 +527,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     at: PathBuf,
     in_use: InUse,
     each: Arc<F>,
+    taking: Arc<impl Fn(Taking<'_>) + Send + Sync + 'static>,
 ) -> Result<Socket, Refused> {
     let channel = bind(&at, in_use)?;
     // Read before anything else this run does, so the name has had as little
@@ -528,8 +535,9 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     // instead: a bound socket's descriptor stats as its own inode on sockfs,
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
+    hold_a_spare();
 
-    thread::spawn(move || accept(&channel, &each));
+    thread::spawn(move || accept(queued(&channel), &each, &*taking));
 
     Ok(Socket { at, bound })
 }
@@ -537,8 +545,10 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
 /// The inbound channel at `at`, taken from whatever socket holds it, live or
 /// not. Every `every` after that, for as long as `holding` says, it is taken
 /// back where the name has gone or what holds it now is dead. Each time it
-/// cannot be taken, `lost` is told why, once until it is taken again. Nothing
-/// where there is no path, as there is none for a view either.
+/// cannot be taken, `lost` is told why, once until it is taken again, and
+/// `taking` is told each time a socket taken stops taking connections, and
+/// each time it takes them again. Nothing where there is no path, as there is
+/// none for a view either.
 ///
 /// For `bdi watch`, which every view reads through, so a change pushed to
 /// any view's socket is one it has to hear. A view holding the name can pass
@@ -554,6 +564,7 @@ pub fn keep(
     every: Duration,
     holding: impl Fn() -> bool + Send + 'static,
     lost: impl Fn(&Refused) + Send + 'static,
+    taking: impl Fn(Taking<'_>) + Send + Sync + 'static,
 ) -> Kept {
     let kept = Arc::new(Mutex::new(None));
     let Some(at) = at else {
@@ -561,7 +572,8 @@ pub fn keep(
     };
     let reported = reported.clone();
     let each = Arc::new(move |writer| hear(writer, &reported, &changed));
-    let take = move |in_use| listening(at.clone(), in_use, Arc::clone(&each));
+    let taking = Arc::new(taking);
+    let take = move |in_use| listening(at.clone(), in_use, Arc::clone(&each), Arc::clone(&taking));
 
     let mut said = match take(take_over) {
         Ok(socket) => {
@@ -641,6 +653,10 @@ fn bind(at: &Path, in_use: InUse) -> Result<UnixListener, Refused> {
     };
 
     fs::set_permissions(at, fs::Permissions::from_mode(OWNER_ONLY))
+        .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
+    // So that `queued` can try an accept that waits for nothing.
+    channel
+        .set_nonblocking(true)
         .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
 
     Ok(channel)
@@ -786,10 +802,81 @@ fn others_may_take_a_name_in(how: u32, owner: u32, this_user: u32) -> bool {
 /// is refused exactly as a dead socket's is — so what is there has to be
 /// looked at rather than inferred from either of them.
 fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
-    if UnixStream::connect(at).is_ok() {
+    if listened_on(at) {
         return Err(Refused::AlreadyWatching(at.to_path_buf()));
     }
     take_over(at)
+}
+
+/// Whether a run listens on the socket at `at`.
+///
+/// A run out of descriptors takes no connections, so its queue can fill, and
+/// a connect that waited for a place in it would wait as long as the run
+/// does. So the connect does not wait, and a full queue is a run listening.
+fn listened_on(at: &Path) -> bool {
+    match connected_without_waiting(at) {
+        Ok(_connection) => true,
+        Err(why) => {
+            why.kind() == ErrorKind::WouldBlock || why.raw_os_error() == Some(libc::EINPROGRESS)
+        }
+    }
+}
+
+/// A connection to the socket at `at`, refused rather than waited for where
+/// its queue is full.
+fn connected_without_waiting(at: &Path) -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    let path = at.as_os_str().as_bytes();
+    if path.len() >= address.sun_path.len() {
+        return Err(ErrorKind::InvalidInput.into());
+    }
+    for (to, from) in address.sun_path.iter_mut().zip(path) {
+        *to = *from as libc::c_char;
+    }
+    let connection = a_socket_that_does_not_wait()?;
+    let made = connection.as_raw_fd();
+    let length = std::mem::size_of_val(&address) as libc::socklen_t;
+    if unsafe { libc::connect(made, (&raw const address).cast(), length) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(connection)
+}
+
+/// A socket for a connection to a `bdi`, whose connect does not wait, and
+/// which no program this run starts inherits, even one started by another
+/// thread while the socket is made.
+#[cfg(target_os = "linux")]
+fn a_socket_that_does_not_wait() -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let how = libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC;
+    let made = unsafe { libc::socket(libc::AF_UNIX, how, 0) };
+    if made < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(made) })
+}
+
+/// The same, where the system cannot make a socket so in one call, so it is
+/// set straight after.
+#[cfg(not(target_os = "linux"))]
+fn a_socket_that_does_not_wait() -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    let made = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if made < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let socket = unsafe { std::os::fd::OwnedFd::from_raw_fd(made) };
+    let set = unsafe {
+        libc::fcntl(made, libc::F_SETFD, libc::FD_CLOEXEC) == 0
+            && libc::fcntl(made, libc::F_SETFL, libc::O_NONBLOCK) == 0
+    };
+    if !set {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(socket)
 }
 
 /// The socket at the path put aside for this run's own, whether anything is
@@ -813,18 +900,161 @@ fn is_a_socket(at: &Path) -> bool {
     fs::symlink_metadata(at).is_ok_and(|what| what.file_type().is_socket())
 }
 
-/// Take connections until the socket stops giving them, each on a thread of
-/// its own.
+/// How long the channel waits after an accept fails, and no connection could
+/// be turned away, before it tries again.
 ///
-/// An accept that fails ends the channel rather than being retried: there is
-/// no error here a retry would clear, and the poll is what the view falls
-/// back to.
-fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(channel: &UnixListener, each: &Arc<F>) {
-    for connection in channel.incoming() {
-        let Ok(connection) = connection else { return };
+/// The connection it was taking is then still waiting, so the next try would
+/// fail at once and spin a core until a descriptor is free.
+const UNTIL_ACCEPTING_AGAIN: Duration = Duration::from_millis(100);
 
-        let each = Arc::clone(each);
-        thread::spawn(move || each(connection));
+/// What came of taking the next connection on a socket.
+#[derive(Debug)]
+enum Accepted {
+    /// The connection, to be served.
+    Taken(UnixStream),
+    /// The run had no descriptor free for it, so it was taken on the spare
+    /// and closed unread.
+    TurnedAway(io::Error),
+    /// It could not be taken, and it waits for another try.
+    Failed(io::Error),
+}
+
+/// What a socket says of the connections it takes, each time that changes.
+#[derive(Debug)]
+pub enum Taking<'a> {
+    /// It has stopped taking them, and this is why.
+    Stopped(&'a io::Error),
+    /// It serves them again.
+    Again,
+}
+
+/// Serve connections for as long as the run lasts, each on a thread of its
+/// own.
+///
+/// An accept that fails is tried again rather than ending the channel. A run
+/// holding as many files as it may fails every accept, and serves
+/// connections again once it closes one. `taking` is told why the first
+/// accept of each run of failures failed, and told when a connection is
+/// served after it, because nobody else will be: a writer whose connection is
+/// never served has nothing to read the reason from. A connection turned
+/// away is not served.
+fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
+    connections: impl IntoIterator<Item = Accepted>,
+    each: &Arc<F>,
+    taking: &impl Fn(Taking<'_>),
+) {
+    let mut failing = false;
+    for accepted in connections {
+        let (why, still_waiting) = match accepted {
+            Accepted::Taken(connection) => {
+                if std::mem::replace(&mut failing, false) {
+                    taking(Taking::Again);
+                }
+                let each = Arc::clone(each);
+                thread::spawn(move || each(connection));
+                continue;
+            }
+            Accepted::TurnedAway(why) => (why, false),
+            Accepted::Failed(why) => (why, true),
+        };
+        if !std::mem::replace(&mut failing, true) {
+            taking(Taking::Stopped(&why));
+        }
+        if still_waiting {
+            thread::sleep(UNTIL_ACCEPTING_AGAIN);
+        }
+    }
+}
+
+/// Each connection `channel` takes, accepted only once one is waiting.
+///
+/// An accept that waits holds the descriptor for the connection it will
+/// take, from the moment it starts waiting. A run listening on two sockets
+/// with a single descriptor free would leave it with whichever socket waited
+/// first, while a connection waited on the other. `channel` is nonblocking,
+/// so nothing holds a descriptor until a connection is there to take.
+///
+/// A run with no descriptor free turns the connection away on its spare, so
+/// the queue does not fill while the run waits for one. A full queue would
+/// leave every connect waiting, and on some systems refused as a dead
+/// socket's is, so another `bdi` would take the name of a live one.
+fn queued(channel: &UnixListener) -> impl Iterator<Item = Accepted> + '_ {
+    std::iter::repeat_with(move || loop {
+        if let Err(why) = until_one_waits(channel) {
+            return Accepted::Failed(why);
+        }
+        match channel.accept() {
+            // A connection takes its listener's nonblocking flag on some
+            // systems, and is read and written as one that waits.
+            Ok((connection, _)) => {
+                hold_a_spare();
+                return match connection.set_nonblocking(false) {
+                    Ok(()) => Accepted::Taken(connection),
+                    Err(why) => Accepted::Failed(why),
+                };
+            }
+            Err(why) if why.kind() == ErrorKind::WouldBlock => continue,
+            Err(why) if no_descriptor_free(&why) && turned_one_away(channel) => {
+                return Accepted::TurnedAway(why)
+            }
+            Err(why) => return Accepted::Failed(why),
+        }
+    })
+}
+
+/// Whether `why` is the run, or the system, holding as many files as it may.
+fn no_descriptor_free(why: &io::Error) -> bool {
+    matches!(why.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
+}
+
+/// A descriptor held for the whole run, so that a run with no other free
+/// can still take a connection to close it. One serves every socket the run
+/// listens on.
+static SPARE: Mutex<Option<fs::File>> = Mutex::new(None);
+
+/// Hold the spare, where the run does not hold it already.
+fn hold_a_spare() {
+    let mut spare = locked(&SPARE);
+    if spare.is_none() {
+        *spare = a_spare();
+    }
+}
+
+fn a_spare() -> Option<fs::File> {
+    fs::File::open("/dev/null").ok()
+}
+
+/// Whether a connection waiting on `channel` was taken on the spare and
+/// closed. Another thread can take the descriptor the spare gives up before
+/// the accept does, and the spare is then held again once a connection is
+/// taken.
+fn turned_one_away(channel: &UnixListener) -> bool {
+    let mut spare = locked(&SPARE);
+    let Some(given_up) = spare.take().or_else(a_spare) else {
+        return false;
+    };
+    drop(given_up);
+    let turned = channel.accept().is_ok();
+    *spare = a_spare();
+    turned
+}
+
+/// Wait until a connection is queued on `channel`, without a descriptor.
+fn until_one_waits(channel: &UnixListener) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut waiting = libc::pollfd {
+        fd: channel.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        if unsafe { libc::poll(&mut waiting, 1, -1) } >= 0 {
+            return Ok(());
+        }
+        let why = io::Error::last_os_error();
+        if why.kind() != ErrorKind::Interrupted {
+            return Err(why);
+        }
     }
 }
 
@@ -833,11 +1063,12 @@ fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(channel: &UnixListener, eac
 /// A thread of its own because a producer that connects once and speaks
 /// whenever it has something to say is the shape this channel is for, and a
 /// long quiet stretch on such a connection is not a wedge to be timed out.
+///
+/// Reading and answering share the one descriptor the connection was taken
+/// on, so a run with a single descriptor free can hear it.
 fn hear(writer: UnixStream, reported: &Reported, changed: &impl Report) {
-    let Ok(mut answering) = writer.try_clone() else {
-        return;
-    };
-    each_line(writer, |message| {
+    let mut answering = &writer;
+    each_line(&writer, |message| {
         answered(message, reported, changed)
             .is_some_and(|answer| writeln!(answering, "{answer}").is_ok())
     });
@@ -846,7 +1077,7 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &impl Report) {
 /// Each line a connection sends until it goes away, handed to `take` as
 /// text, or as nothing where it is not text or never ended. `take` answering
 /// false ends the reading.
-pub fn each_line(from: UnixStream, mut take: impl FnMut(Option<&str>) -> bool) {
+pub fn each_line(from: impl Read, mut take: impl FnMut(Option<&str>) -> bool) {
     let mut reading = BufReader::new(from);
     let mut line = Vec::new();
 
@@ -1049,7 +1280,8 @@ mod tests {
     /// An open channel, and the end of it the loop would be reading.
     fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<Heard>) {
         let (changed, changes) = mpsc::channel();
-        let socket = watch(Some(at.to_path_buf()), reported, changed).expect("the socket opens");
+        let socket =
+            watch(Some(at.to_path_buf()), reported, changed, |_| {}).expect("the socket opens");
         (socket, changes)
     }
 
@@ -1273,7 +1505,7 @@ mod tests {
     fn without_a_runtime_directory_there_is_no_inbound_channel() {
         let (changed, _changes) = mpsc::channel();
 
-        let refused = watch(None, &watching(["arkham", "ferry"]), changed);
+        let refused = watch(None, &watching(["arkham", "ferry"]), changed, |_| {});
 
         assert!(matches!(refused, Err(Refused::NoRuntimeDirectory)));
     }
@@ -1506,7 +1738,7 @@ mod tests {
         let at = a_socket_in_a_directory_moded("open-directory", 0o777);
 
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed, |_| {});
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1560,7 +1792,7 @@ mod tests {
         let at = shared.join("mine").join("changes.sock");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed, |_| {});
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1592,7 +1824,7 @@ mod tests {
 
         let at = shared.join("link").join("changes.sock");
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at), &watching(["arkham"]), changed);
+        let refused = watch(Some(at), &watching(["arkham"]), changed, |_| {});
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1719,7 +1951,7 @@ mod tests {
         std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed, |_| {});
 
         assert!(
             matches!(refused, Err(Refused::NotASocket(_))),
@@ -1741,10 +1973,40 @@ mod tests {
         let (_first, _changes) = open(&at, &reported);
 
         let (changed, _changes) = mpsc::channel();
-        let second = watch(Some(at.clone()), &reported, changed);
+        let second = watch(Some(at.clone()), &reported, changed, |_| {});
 
         assert!(matches!(second, Err(Refused::AlreadyWatching(_))));
         say(&at, &[("arkham\n", "ok arkham")]);
+    }
+
+    /// A run out of descriptors takes no connections, so its queue can fill.
+    /// A second `bdi` still finds the socket held, and finds it without
+    /// waiting for a place in the queue.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_socket_whose_queue_is_full_is_left_alone_at_once() {
+        use std::os::fd::AsRawFd;
+        let at = a_socket_path("queue-full");
+        std::fs::create_dir_all(at.parent().expect("the socket has a directory"))
+            .expect("the socket's directory is ours to make");
+        let first = UnixListener::bind(&at).expect("the socket binds");
+        // Listening again sets how long the queue is, and on Linux a queue
+        // of none holds one connection.
+        assert_eq!(unsafe { libc::listen(first.as_raw_fd(), 0) }, 0);
+        let _queued = UnixStream::connect(&at).expect("one connection is queued");
+
+        let (answered, answer) = mpsc::channel();
+        let asked = at.clone();
+        thread::spawn(move || {
+            let held = matches!(reclaim(&asked), Err(Refused::AlreadyWatching(_)));
+            let _ = answered.send(held);
+        });
+
+        assert_eq!(
+            answer.recv_timeout(Duration::from_secs(1)),
+            Ok(true),
+            "a second bdi finds the socket held without waiting"
+        );
     }
 
     /// The line that reaches the primary screen carries the half no notice
@@ -1851,6 +2113,7 @@ mod tests {
             move |refused| {
                 let _ = said.send(refused.to_string());
             },
+            |_| {},
         );
         (kept, changes, refusals)
     }
@@ -1985,5 +2248,79 @@ mod tests {
         let told = PathBuf::from("/var/folders/T/bdi/changes.sock");
 
         assert_eq!(where_writers_find_bdi(Some(told.clone())), Some(told));
+    }
+
+    /// A run out of descriptors fails every accept until it closes one. Its
+    /// operator is told once for each run of failures, and the connection
+    /// taken between two runs is still handed on.
+    #[test]
+    fn a_run_of_failed_accepts_is_told_once_and_the_connection_ending_it_is_taken_and_told() {
+        let out_of_descriptors = || std::io::Error::from_raw_os_error(libc::EMFILE);
+        let (connection, _other_end) = UnixStream::pair().expect("a connection");
+        let (handing, handed) = mpsc::channel();
+        let (telling, told) = mpsc::channel();
+
+        accept(
+            [
+                Accepted::Failed(out_of_descriptors()),
+                Accepted::Failed(out_of_descriptors()),
+                Accepted::Taken(connection),
+                Accepted::Failed(out_of_descriptors()),
+            ],
+            &Arc::new(move |connection| handing.send(connection).expect("the test is listening")),
+            &telling_into(telling),
+        );
+
+        assert!(
+            handed.recv_timeout(A_MOMENT).is_ok(),
+            "the connection is handed on"
+        );
+        assert_eq!(
+            told.try_iter().collect::<Vec<_>>(),
+            [Some(libc::EMFILE), None, Some(libc::EMFILE)]
+        );
+    }
+
+    /// A connection turned away for want of a descriptor is not served, so
+    /// the operator is still told the socket takes none until one is.
+    #[test]
+    fn a_connection_turned_away_is_told_as_a_failure_and_not_as_taking_again() {
+        let out_of_descriptors = || std::io::Error::from_raw_os_error(libc::EMFILE);
+        let (connection, _other_end) = UnixStream::pair().expect("a connection");
+        let (handing, handed) = mpsc::channel();
+        let (telling, told) = mpsc::channel();
+
+        accept(
+            [
+                Accepted::TurnedAway(out_of_descriptors()),
+                Accepted::Failed(out_of_descriptors()),
+                Accepted::TurnedAway(out_of_descriptors()),
+                Accepted::Taken(connection),
+            ],
+            &Arc::new(move |connection| handing.send(connection).expect("the test is listening")),
+            &telling_into(telling),
+        );
+
+        assert!(
+            handed.recv_timeout(A_MOMENT).is_ok(),
+            "the connection is handed on"
+        );
+        assert_eq!(
+            told.try_iter().collect::<Vec<_>>(),
+            [Some(libc::EMFILE), None]
+        );
+    }
+
+    /// What the accept loop tells, sent on as the error's number, or as
+    /// nothing where it takes connections again.
+    fn telling_into(telling: mpsc::Sender<Option<i32>>) -> impl Fn(Taking<'_>) {
+        move |taking| {
+            telling
+                .send(match taking {
+                    Taking::Stopped(why) => why.raw_os_error(),
+                    Taking::Again => None,
+                })
+                .expect("the test is listening")
+        }
     }
 }

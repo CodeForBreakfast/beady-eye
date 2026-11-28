@@ -1,0 +1,149 @@
+//! A run's open-files limit, read and lowered from outside it, and a report
+//! sent until the run turns one away, for a test of what `bdi` does once it
+//! holds as many files as it may.
+//!
+//! Linux only, because the descriptors a run holds are read off `/proc`.
+
+/// The limits on how many files `pid` may hold open.
+pub fn open_files(pid: u32) -> libc::rlimit {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let read = unsafe {
+        libc::prlimit(
+            pid as libc::pid_t,
+            libc::RLIMIT_NOFILE,
+            std::ptr::null(),
+            &mut limit,
+        )
+    };
+    assert_eq!(read, 0, "{}", std::io::Error::last_os_error());
+    limit
+}
+
+/// Set the soft limit on how many files `pid` may hold open, leaving its
+/// hard limit as it was.
+pub fn limit_open_files(pid: u32, soft: libc::rlim_t) {
+    let limit = libc::rlimit {
+        rlim_cur: soft,
+        ..open_files(pid)
+    };
+    let set = unsafe {
+        libc::prlimit(
+            pid as libc::pid_t,
+            libc::RLIMIT_NOFILE,
+            &limit,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(set, 0, "{}", std::io::Error::last_os_error());
+}
+
+/// The descriptor `pid` would be given next. A soft limit at it refuses the
+/// next one, since a descriptor has to be below the limit.
+pub fn lowest_free_descriptor(pid: u32) -> libc::rlim_t {
+    let held: std::collections::BTreeSet<libc::rlim_t> =
+        std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .expect("the run is ours to read")
+            .map(|entry| {
+                let entry = entry.expect("the run is ours to read");
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .parse()
+                    .expect("a descriptor is a number")
+            })
+            .collect();
+    (0..)
+        .find(|descriptor| !held.contains(descriptor))
+        .expect("a descriptor is free")
+}
+
+/// What a run did with a report sent to it.
+#[derive(Debug, PartialEq)]
+pub enum Answered {
+    With(String),
+    /// It closed the connection unanswered.
+    Dropped,
+    /// It has done nothing with it yet.
+    Waiting,
+}
+
+/// The reports the run at the socket `at` answered once its limit was
+/// lowered, sent one at a time until it turned one away. Each is sent on its
+/// own, so the run runs out of room before the one it turns away.
+pub fn a_report_turned_away(at: &std::path::Path) -> Vec<std::os::unix::net::UnixStream> {
+    let mut taken_past_the_limit = Vec::new();
+    loop {
+        let reporting =
+            std::os::unix::net::UnixStream::connect(at).expect("the socket queues the connection");
+        match reported_on(&reporting) {
+            Answered::Dropped => return taken_past_the_limit,
+            Answered::With(_) => taken_past_the_limit.push(reporting),
+            Answered::Waiting => panic!("the run left a report waiting rather than turn it away"),
+        }
+        assert!(
+            taken_past_the_limit.len() < PAST_THE_LIMIT,
+            "the run kept taking connections past its limit"
+        );
+    }
+}
+
+/// What the run did with a report sent on `reporting`, read for
+/// [`UNTAKEN_AFTER`]. A run that turns the connection away can close it
+/// before the report is sent.
+fn reported_on(mut reporting: &std::os::unix::net::UnixStream) -> Answered {
+    use std::io::{ErrorKind, Write};
+    match writeln!(reporting, "arkham") {
+        Ok(()) => answered_within(reporting, UNTAKEN_AFTER),
+        Err(why)
+            if matches!(
+                why.kind(),
+                ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+            ) =>
+        {
+            Answered::Dropped
+        }
+        Err(why) => panic!("the report is ours to send ({why})"),
+    }
+}
+
+/// What the run at the socket `at` answers to a report sent on a new
+/// connection, read for `quiet`.
+pub fn a_new_report_answered(at: &std::path::Path, quiet: std::time::Duration) -> Answered {
+    use std::io::Write;
+    let mut reporting =
+        std::os::unix::net::UnixStream::connect(at).expect("the socket queues the connection");
+    writeln!(reporting, "arkham").expect("the report is ours to send");
+    answered_within(&reporting, quiet)
+}
+
+/// What the run answered on `reporting`, read for `quiet`.
+pub fn answered_within(
+    reporting: &std::os::unix::net::UnixStream,
+    quiet: std::time::Duration,
+) -> Answered {
+    use std::io::{BufRead, ErrorKind};
+    reporting
+        .set_read_timeout(Some(quiet))
+        .expect("a read nothing answers is ours to give up on");
+    let mut line = String::new();
+    match std::io::BufReader::new(reporting).read_line(&mut line) {
+        Ok(0) => Answered::Dropped,
+        Ok(_) => Answered::With(line),
+        Err(why) if why.kind() == ErrorKind::ConnectionReset => Answered::Dropped,
+        Err(why) if why.kind() == ErrorKind::WouldBlock => Answered::Waiting,
+        Err(why) => panic!("the connection is ours to read ({why})"),
+    }
+}
+
+/// Long enough for a run that is going to take a connection to have taken
+/// it.
+const UNTAKEN_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// More connections than a run with no descriptor free takes before it turns
+/// one away. A collection or a check of the config can hold a descriptor
+/// for a moment as the limit is lowered, and the run takes a connection on
+/// each one that closes.
+const PAST_THE_LIMIT: usize = 16;

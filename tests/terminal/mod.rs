@@ -29,7 +29,9 @@
 //!   about what scrolls — [`over_the_loose_roots`] and [`THE_LOOSE_ROOTS`];
 //! * the screen put back together from what reached the wire, as the row a
 //!   word is on or as every row's text — [`row_of`], [`rows_of`],
-//!   [`rows_drawn`].
+//!   [`rows_drawn`];
+//! * a run brought to its open-files limit from outside it —
+//!   [`descriptors`].
 //!
 //! The size is why this is a harness rather than a shell one-liner: `script
 //! -T` with stdout to a file gives a 0x0 pty, and ratatui then draws an empty
@@ -40,6 +42,8 @@
 // here is not a dead one.
 #![allow(dead_code)]
 
+#[cfg(target_os = "linux")]
+pub mod descriptors;
 pub mod driver;
 pub mod shims;
 
@@ -343,6 +347,45 @@ fn a_path_with_no_herdr_on_it() -> String {
 
 pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|at| at == needle)
+}
+
+/// Whole frames until every one of `gone` is off one, handed back either
+/// way, so an assertion has a frame that still holds one to fail against. `rows` is the
+/// height the terminal is at. The height alternates between `tall` and a row
+/// less, because a resize to the height it already is is no resize at all
+/// and is answered by no whole frame.
+pub fn whole_frames_until_gone(
+    bdi: &mut driver::Driven,
+    rows: &mut u16,
+    tall: u16,
+    cols: u16,
+    gone: &[&[u8]],
+    patience: Duration,
+) -> Vec<u8> {
+    whole_frames_until(bdi, rows, tall, cols, patience, |frame| {
+        !gone.iter().any(|said| contains(frame, said))
+    })
+}
+
+/// Whole frames until one is `done`, handed back either way, as
+/// [`whole_frames_until_gone`] hands them back.
+pub fn whole_frames_until(
+    bdi: &mut driver::Driven,
+    rows: &mut u16,
+    tall: u16,
+    cols: u16,
+    patience: Duration,
+    done: impl Fn(&[u8]) -> bool,
+) -> Vec<u8> {
+    let giving_up = std::time::Instant::now() + patience;
+    loop {
+        *rows = if *rows == tall { tall - 1 } else { tall };
+        let whole = bdi.resize(*rows, cols);
+        let frame = bdi.answer_to(whole, driver::GIVING_UP);
+        if done(&frame) || std::time::Instant::now() >= giving_up {
+            return frame;
+        }
+    }
 }
 
 /// The row of the screen `bdi` drew some text on, counted from zero.

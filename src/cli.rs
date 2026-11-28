@@ -821,10 +821,14 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let producing = heard_by.clone();
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
-    let _socket = match changes::serve(at.clone(), move |connection| {
-        let (held, reported) = &serving;
-        serve(connection, held, reported, &heard_by);
-    }) {
+    let _socket = match changes::serve(
+        at.clone(),
+        move |connection| {
+            let (held, reported) = &serving;
+            serve(connection, held, reported, &heard_by);
+        },
+        not_taking_connections("bdi watch", at.clone().unwrap_or_default()),
+    ) {
         Ok(socket) => socket,
         Err(refused) => {
             eprintln!(
@@ -841,6 +845,8 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let views_at = changes::where_writers_find_bdi(cfg.changes.socket.clone())
         .filter(|views_at| !_socket.is_at(views_at));
     let watcher_at = at.unwrap_or_default();
+    let not_taking_producers =
+        not_taking_connections("bdi watch", views_at.clone().unwrap_or_default());
     let _changes = changes::keep(
         views_at,
         &reported,
@@ -854,6 +860,7 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
                 socket_refused(refused, "bdi watch", CHOOSING_THE_VIEWS_SOCKET)
             );
         },
+        not_taking_producers,
     );
 
     let reading = crate::app::Reading::of(armed, reported).unread(armed_unread(&arms, &cfg));
@@ -914,6 +921,60 @@ fn socket_refused(refused: &changes::Refused, holder: &str, choose: &str) -> Str
             directory.display()
         ),
         Refused::Unopenable(at, error) => format!("{} could not be opened: {error}", at.display()),
+    }
+}
+
+/// What `holder` says each time the socket at `at` starts failing to take
+/// connections. Nothing else would say it: a writer whose connection is never
+/// taken has nobody to ask why.
+fn not_taking_connections(
+    holder: &'static str,
+    at: PathBuf,
+) -> impl Fn(changes::Taking<'_>) + Send + Sync + 'static {
+    not_taking_connections_into(StderrUnlocked, holder, at)
+}
+
+/// Stderr written through its descriptor rather than through `Stderr`, which
+/// holds a lock across each write that every other line said on stderr waits
+/// for. A write waiting on a pipe nobody reads then holds none of them.
+struct StderrUnlocked;
+
+impl Write for StderrUnlocked {
+    fn write(&mut self, said: &[u8]) -> std::io::Result<usize> {
+        // SAFETY: `said` is readable for its whole length, and a write to a
+        // descriptor that is not open fails rather than touching memory.
+        let written = unsafe { libc::write(libc::STDERR_FILENO, said.as_ptr().cast(), said.len()) };
+        usize::try_from(written).map_err(|_| std::io::Error::last_os_error())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The same, said into `out`.
+fn not_taking_connections_into(
+    mut out: impl Write + Send + 'static,
+    holder: &'static str,
+    at: PathBuf,
+) -> impl Fn(changes::Taking<'_>) + Send + Sync + 'static {
+    // A write to stderr can fail or wait for ever, and the accept loop doing
+    // the telling has to go on trying either way. So a thread of its own
+    // writes, and a report is dropped while another still waits to be written.
+    let (telling, told) = std::sync::mpsc::sync_channel::<String>(1);
+    std::thread::spawn(move || {
+        for report in told {
+            let _ = out.write_all(report.as_bytes());
+        }
+    });
+    move |taking| {
+        let changes::Taking::Stopped(why) = taking else {
+            return;
+        };
+        let _ = telling.try_send(format!(
+            "{holder} cannot take connections on {}, and keeps trying: {why}\n",
+            at.display()
+        ));
     }
 }
 
@@ -1110,6 +1171,65 @@ mod tests {
     use crate::config::Scope;
     use clap::CommandFactory;
     use std::collections::BTreeMap;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A stderr that refuses its first write, as a full disk does, and hands
+    /// on what it is given after that.
+    struct RefusingOnce {
+        refused: Option<mpsc::Sender<()>>,
+        written: mpsc::Sender<Vec<u8>>,
+    }
+
+    impl Write for RefusingOnce {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if let Some(refused) = self.refused.take() {
+                refused.send(()).expect("the test is listening");
+                return Err(std::io::Error::from_raw_os_error(libc::ENOSPC));
+            }
+            self.written
+                .send(bytes.to_vec())
+                .expect("the test is listening");
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_report_after_one_stderr_refused_is_still_written() {
+        let (refusing, refused) = mpsc::channel();
+        let (writing, written) = mpsc::channel();
+        let telling = not_taking_connections_into(
+            RefusingOnce {
+                refused: Some(refusing),
+                written: writing,
+            },
+            "bdi watch",
+            PathBuf::from("/run/user/1000/bdi/watcher.sock"),
+        );
+        let out_of_descriptors = std::io::Error::from_raw_os_error(libc::EMFILE);
+
+        telling(changes::Taking::Stopped(&out_of_descriptors));
+        refused
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first report is tried");
+        telling(changes::Taking::Stopped(&out_of_descriptors));
+
+        let said: Vec<u8> =
+            std::iter::from_fn(|| written.recv_timeout(Duration::from_secs(1)).ok())
+                .flatten()
+                .collect();
+        assert_eq!(
+            String::from_utf8(said).expect("the report is text"),
+            format!(
+                "bdi watch cannot take connections on /run/user/1000/bdi/watcher.sock, \
+                 and keeps trying: {out_of_descriptors}\n"
+            )
+        );
+    }
 
     /// A config file naming one project, and git's answer for where that
     /// project's repository is worked in.

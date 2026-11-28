@@ -479,6 +479,23 @@ impl Shown {
         true
     }
 
+    /// Take what the inbound channel says of the connections it takes, which
+    /// is why it stopped or nothing where it takes them again, reporting
+    /// whether the screen is any different for it.
+    fn taking(&mut self, stopped: Option<String>) -> bool {
+        let standing = self.standing.len();
+        self.standing
+            .retain(|notice| !matches!(notice, Notice::ReportsNotTaken(_)));
+        let taken_off = self.standing.len() != standing;
+        match stopped {
+            Some(why) => {
+                self.standing.push(Notice::ReportsNotTaken(why));
+                true
+            }
+            None => taken_off,
+        }
+    }
+
     /// Draw to what the config the reader has just written settles, reporting
     /// whether the screen is any different for it.
     ///
@@ -1374,6 +1391,10 @@ impl<B: PutBack> View for Screen<B> {
 
     fn reloaded(&mut self, reloaded: Reloaded<'_>, now: DateTime<Utc>) -> bool {
         self.shown.reloaded(reloaded, now)
+    }
+
+    fn taking(&mut self, stopped: Option<String>) -> bool {
+        self.shown.taking(stopped)
     }
 
     fn rereads_in(&self, now: DateTime<Utc>) -> Option<Duration> {
@@ -4016,6 +4037,17 @@ mod tests {
             shown.reloaded(Reloaded::Unchanged, an_instant()),
             "the foot has changed"
         );
+        assert_eq!(shown.standing, []);
+    }
+
+    #[test]
+    fn a_channel_that_stops_taking_reports_says_so_until_it_takes_one_again() {
+        let mut shown = shown(a_staffed_grove(6));
+        let why = "Too many open files (os error 24)".to_string();
+
+        assert!(shown.taking(Some(why.clone())), "the foot has changed");
+        assert_eq!(shown.standing, [Notice::ReportsNotTaken(why)]);
+        assert!(shown.taking(None), "the foot has changed again");
         assert_eq!(shown.standing, []);
     }
 

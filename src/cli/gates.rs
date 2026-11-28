@@ -28,7 +28,7 @@ use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
 use crate::view::phrase::{self, spelled_out};
 
-use super::{read_config, socket_refused, Launch, Polling, Reading};
+use super::{not_taking_connections, read_config, socket_refused, Launch, Polling, Reading};
 
 /// Where the secret GitHub signs deliveries with is read from, where no file
 /// is named for it.
@@ -92,7 +92,13 @@ pub(super) fn settle(
     // returns.
     let _socket = match socket.as_ref() {
         Some(at) => Some(
-            changes::watch(Some(at.clone()), &covering, heard_by).map_err(|refused| {
+            changes::watch(
+                Some(at.clone()),
+                &covering,
+                heard_by,
+                not_taking_connections("bdi gates", at.clone()),
+            )
+            .map_err(|refused| {
                 anyhow::anyhow!(
                     "bdi gates cannot take reports: {}",
                     socket_refused(&refused, "bdi gates", "with --socket")

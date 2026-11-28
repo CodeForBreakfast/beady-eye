@@ -278,11 +278,10 @@ pub enum Notice {
     /// defaults: what the reader sees is still every project they
     /// configured.
     ///
-    /// The only notice here that comes and goes. It goes up on a read that
-    /// failed and comes off on the next that did not, whether or not that
-    /// one brought anything new — a reader who undoes the edit has fixed the
-    /// file, and a screen that went on saying otherwise would leave them
-    /// changing a config that was already right.
+    /// It goes up on a read that failed and comes off on the next that did
+    /// not, whether or not that one brought anything new — a reader who
+    /// undoes the edit has fixed the file, and a screen that went on saying
+    /// otherwise would leave them changing a config that was already right.
     ///
     /// Why it would not load is not said. The reader wrote the file a moment
     /// ago and their editor is where the line and the column are; what this
@@ -307,6 +306,11 @@ pub enum Notice {
     /// reports, while the watcher reads the rest. A view under a config other
     /// than the watcher's is the usual cause.
     UnansweredByTheWatcher(Vec<String>),
+    /// The inbound channel has stopped taking connections, for the reason
+    /// given, so a change something reports does not reach this run. It
+    /// comes off when the channel takes a connection again, because the
+    /// channel goes on trying and a run out of descriptors gets them back.
+    ReportsNotTaken(String),
 }
 
 /// How fresh one project's rows are, said beside its name.
@@ -572,7 +576,10 @@ mod tests {
             Notice::ProjectNamedWithoutGit => {
                 Some(Notice::UnansweredByTheWatcher(vec!["dunwich".to_string()]))
             }
-            Notice::UnansweredByTheWatcher(_) => None,
+            Notice::UnansweredByTheWatcher(_) => Some(Notice::ReportsNotTaken(
+                "Too many open files (os error 24)".to_string(),
+            )),
+            Notice::ReportsNotTaken(_) => None,
         })
     }
 

@@ -179,6 +179,9 @@ pub fn notice(notice: &Notice) -> String {
                 projects.join(", ")
             )
         }
+        Notice::ReportsNotTaken(why) => {
+            format!("bdi cannot take reports of changes · {why} · it keeps trying")
+        }
     }
 }
 
@@ -213,6 +216,9 @@ pub fn brief_notice(notice: &Notice) -> String {
         Notice::UnansweredByTheWatcher(projects) => {
             format!("reading {} itself", projects.join(", "))
         }
+        // What survives the cut is that changes are not reaching the view.
+        // Why is in the full phrase, and too long to keep here.
+        Notice::ReportsNotTaken(_) => "reports not taken".to_string(),
     }
 }
 
