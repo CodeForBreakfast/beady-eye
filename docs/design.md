@@ -3170,11 +3170,13 @@ reader has to go on, so it is kept, and every other failure keeps nothing bd
 wrote. bd names the database and the SQL user in what it writes, and those go
 to whoever runs `bdi`. The password does not. The one bd was handed is taken
 out of both wherever it appears. bd can also find a password `bdi` never
-sees, in its credentials file, so a line of `said` that names a password or
-holds a connection string's `user:secret@`, `@tcp(` or `@unix(` is withheld
-whole, since nothing can say where an unseen password ends. A control character other than a line
-break is kept as its escape, and so is a character that breaks a line or
-turns text round without being one. `failed_projects`
+sees, in its credentials file, and nothing can say where such a password
+ends. So where `said` names a password anywhere or holds an `@`, as a
+connection string's `user:secret@` does, all of it is withheld and only
+`command` is kept. A control character other than a line break is kept as
+its escape, and so is a character that breaks a line or turns text round
+without being one. `command` keeps a line break as its escape too, so it
+stays on one line. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
 Two of those reasons are not about bd, and they are the two ways opening a
 tracker fails. `no-environment` is a project that asked to be read in a captured

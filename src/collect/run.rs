@@ -497,8 +497,8 @@ impl RunFailure {
                 .map(|arg| without_the_handed_password(arg, env))
                 .collect();
             let unplaced = Unplaced {
-                command: printable(&spelled(&args)),
-                said: cut_short(&printable(&without_password(stderr.trim(), env))),
+                command: on_one_line(&printable(&spelled(&args))),
+                said: cut_short(&printable(&without_password(stderr, env))),
             };
             Self::unplaced(program, code, Some(Box::new(unplaced)))
         })
@@ -622,6 +622,12 @@ fn printable(said: &str) -> String {
     out
 }
 
+/// `text` with each line break written as its escape, so a command line
+/// that holds one is still shown on one line.
+fn on_one_line(text: &str) -> String {
+    text.replace('\n', r"\n")
+}
+
 /// `args` as a shell needs them typed, so the command runs again when pasted
 /// after the program's name.
 fn spelled(args: &[String]) -> String {
@@ -646,8 +652,9 @@ fn spelled(args: &[String]) -> String {
 /// What stands in for the password the child was handed.
 const TAKEN_OUT: &str = "<redacted>";
 
-/// What stands in for a line that may hold a password `bdi` cannot see.
-const WITHHELD: &str = "<a line that may hold a password was withheld>";
+/// What stands in for everything a command said that may hold a password
+/// `bdi` cannot see.
+const WITHHELD: &str = "<withheld, because it may hold a password>";
 
 /// `text` with the password the child was handed taken out, wherever it
 /// appears.
@@ -658,31 +665,24 @@ fn without_the_handed_password(text: &str, env: &Env) -> String {
     }
 }
 
-/// `said` with no password left in it.
+/// `said`, trimmed, with no password left in it.
 ///
-/// The password the child was handed is taken out wherever it appears. bd
-/// can also find one `bdi` never sees, in its credentials file, and nothing
-/// can say where such a password ends once it is quoted, escaped or holds a
-/// space. So each line shaped like one that carries a password is withheld
-/// whole: one naming a password, or one holding a connection string's
-/// `user:secret@` or a MySQL driver's `@tcp(` or `@unix(`. That costs the
-/// reader a line and never the password.
+/// The password the child was handed is taken out wherever it appears,
+/// before anything trims it. bd can also find one `bdi` never sees, in its
+/// credentials file, and nothing can say where such a password ends once it
+/// is quoted, escaped, holds a space or runs over a line. So where `said`
+/// names a password anywhere, or holds an `@` as a connection string's
+/// `user:secret@` does, all of it is withheld. That costs the reader bd's
+/// words and never the password, and the command line is still kept.
 fn without_password(said: &str, env: &Env) -> String {
-    static MAY_HOLD_A_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)passw|pwd|[A-Za-z0-9._%+-]:\S*@|@(?:tcp|unix)\(")
-            .expect("the pattern compiles")
-    });
-    without_the_handed_password(said, env)
-        .lines()
-        .map(|line| {
-            if MAY_HOLD_A_PASSWORD.is_match(line) {
-                WITHHELD
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    static MAY_HOLD_A_PASSWORD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)passw|pwd|@").expect("the pattern compiles"));
+    let said = without_the_handed_password(said, env);
+    if MAY_HOLD_A_PASSWORD.is_match(&said) {
+        WITHHELD.to_string()
+    } else {
+        said.trim().to_string()
+    }
 }
 
 impl fmt::Display for RunFailure {
@@ -1505,72 +1505,67 @@ mod tests {
     /// one in its credentials file that `bdi` never sees. Neither reaches what
     /// an unplaced failure keeps, from the words or from the command line,
     /// whatever form the password takes there. The handed one is taken out
-    /// where it stands, and a line that may hold the other goes whole.
+    /// where it stands, even where it ends in a space bd's words would lose.
+    /// Words that may hold the other are withheld, all of them, however the
+    /// password is spaced or split over lines.
     #[test]
     fn no_password_survives_into_what_an_unplaced_failure_keeps() {
-        let words = nothing_holds("unplaced-words");
-        std::fs::write(
-            &words,
-            concat!(
-                "Error: ping failed as hunter'2\n",
-                "dsn arkham:tr0ub4dor@tcp(db.example.invalid:3306)/arkham\n",
-                "url mysql://arkham:s3s4me@db.example.invalid/arkham\n",
-                "password=correcthorse PASSWORD: batterystaple\n",
-                "dsn arkham:p@ss w0rd@tcp(db.example.invalid:3306)/arkham\n",
-                "pwd = \"open sesame\" and passwd: 'swordfish fortune'\n",
-                "{\"Password\": \"esc\\\"aped value\"}\n",
-                "Error: the ledger is sealed\n",
-            ),
-        )
-        .expect("the words are ours to write");
-        let env = Env::from([(CREDENTIAL_VAR.to_string(), "hunter'2".to_string())]);
-        let failure = RealRunner
-            .run(
-                "sh",
-                &[
-                    "-c",
-                    r#"cat "$1" >&2; exit 1"#,
-                    "hunter'2",
-                    &words.display().to_string(),
-                ],
-                None,
-                &env,
-            )
-            .expect_err("the command exits non-zero");
-        let _ = std::fs::remove_file(&words);
+        let handed = "hunter'2 ";
+        let env = Env::from([(CREDENTIAL_VAR.to_string(), handed.to_string())]);
+        let kept = |said: &str| {
+            let words = nothing_holds("unplaced-words");
+            std::fs::write(&words, said).expect("the words are ours to write");
+            let failure = RealRunner
+                .run(
+                    "sh",
+                    &[
+                        "-c",
+                        r#"cat "$1" >&2; exit 1"#,
+                        handed,
+                        &words.display().to_string(),
+                    ],
+                    None,
+                    &env,
+                )
+                .expect_err("the command exits non-zero");
+            let _ = std::fs::remove_file(&words);
+            *failure.unplaced.expect("the failure is unplaced")
+        };
 
-        let kept = failure.unplaced.expect("the failure is unplaced");
-        let shown = format!("{kept:?}");
-        for secret in [
-            "hunter",
-            "tr0ub4dor",
-            "s3s4me",
-            "correcthorse",
-            "batterystaple",
-            "w0rd",
-            "sesame",
-            "fortune",
-            "aped value",
-        ] {
-            assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
-        }
+        let handed_back = kept("Error: ping failed as hunter'2 \n");
+        assert_eq!(handed_back.said, "Error: ping failed as <redacted>");
         assert!(
-            kept.command
+            handed_back
+                .command
                 .contains(r#"'cat "$1" >&2; exit 1' '<redacted>' "#),
-            "the command line is kept around the password: {shown}"
+            "the command line is kept around the password: {handed_back:?}"
         );
+
+        for unseen in [
+            "dsn arkham:tr0ub4dor@tcp(db.example.invalid:3306)/arkham",
+            "url mysql://arkham:s3s4me@db.example.invalid/arkham",
+            "url mysql://arkham:open sesame@db.example.invalid/arkham",
+            "dsn arkham:correct\nhorse@tcp(db.example.invalid:3306)/arkham",
+            "password=batterystaple",
+            "pwd = \"w0rd\" and passwd: 'swordfish fortune'",
+            "{\"Password\":\n  \"esc\\\"aped value\"}",
+        ] {
+            let said = format!("Error: the ledger is sealed\n{unseen}\n");
+            assert_eq!(kept(&said).said, WITHHELD, "on {said:?}");
+        }
+    }
+
+    /// A command line is shown on one line, in a terminal row and in the
+    /// watcher's log, even where an argument holds a line break.
+    #[test]
+    fn an_unplaced_failure_keeps_its_command_on_one_line() {
+        let failure = RealRunner
+            .run("sh", &["-c", "exit 1", "the\nledger"], None, &Env::new())
+            .expect_err("the command exits non-zero");
+
         assert_eq!(
-            kept.said.lines().collect::<Vec<_>>(),
-            [
-                "Error: ping failed as <redacted>",
-                WITHHELD,
-                WITHHELD,
-                WITHHELD,
-                WITHHELD,
-                WITHHELD,
-                WITHHELD,
-                "Error: the ledger is sealed",
-            ]
+            failure.unplaced.expect("the failure is unplaced").command,
+            r"-c 'exit 1' 'the\nledger'"
         );
     }
 
