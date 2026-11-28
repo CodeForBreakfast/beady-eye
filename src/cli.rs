@@ -13,8 +13,8 @@ use clap::builder::Resettable;
 use clap::{Args, Parser, Subcommand};
 
 use crate::app::{
-    allocate_from_one_arena, armed_unread, hold, serve, Armed, Arming, Hold, Outstanding, Parses,
-    ReadingTrackers, Reads, Reload, CHECKED_EVERY,
+    allocate_from_one_arena, armed_unread, hold, raise_the_open_files_limit, serve, Armed, Arming,
+    Hold, Outstanding, Parses, ReadingTrackers, Reads, Reload, CHECKED_EVERY,
 };
 use crate::app::{Asked, Wanted};
 use crate::collect::agents::{Agents, Unasked};
@@ -776,6 +776,9 @@ fn arming(polling: Polling) -> Arming {
 /// The config is read once. Replacing what the watcher reads is a restart.
 fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     allocate_from_one_arena();
+    if let Err(why) = raise_the_open_files_limit() {
+        eprintln!("bdi watch keeps the open-files limit it was started with: {why}");
+    }
     let cwd = std::env::current_dir().context("finding the current directory")?;
     let cfg = read_config(
         &RealRunner,
