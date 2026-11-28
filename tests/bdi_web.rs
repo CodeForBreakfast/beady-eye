@@ -238,7 +238,14 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
 
     let config = home.join(".config/beady-eye/config.toml");
     std::fs::write(&config, "[[projects]\n").expect("the config is ours to write");
-    std::thread::sleep(UNTIL_THE_CONFIG_IS_CHECKED);
+    let giving_up = Instant::now() + GIVING_UP;
+    while held_by(&unread) == full {
+        assert!(
+            Instant::now() < giving_up,
+            "bdi web never said the config will not load while the report waited"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let called = tracker.calls().len();
     assert_eq!(Producer::connected_to(&socket).says("arkham"), "ok arkham");
 
@@ -257,10 +264,6 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
 /// connections, which names the socket's path as well.
 #[cfg(target_os = "linux")]
 const ROOM_FOR_THE_NOTICE: usize = 80;
-
-/// Longer than the config is left between checks.
-#[cfg(target_os = "linux")]
-const UNTIL_THE_CONFIG_IS_CHECKED: Duration = Duration::from_secs(3);
 
 /// A pipe holding as much as it can but `room` bytes, with the room left in
 /// the page it filled last, so a write of up to `room` bytes goes in and a

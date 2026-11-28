@@ -904,15 +904,27 @@ fn not_taking_connections(
     holder: &'static str,
     at: PathBuf,
 ) -> impl Fn(changes::Taking<'_>) + Send + Sync + 'static {
-    // `Stderr` holds a lock across each write that every other line said on
-    // stderr waits for, so a report waiting on a pipe nobody reads would hold
-    // them all. A descriptor of its own writes without the lock.
-    let out: Box<dyn Write + Send> =
-        match std::os::fd::AsFd::as_fd(&std::io::stderr()).try_clone_to_owned() {
-            Ok(own) => Box::new(std::fs::File::from(own)),
-            Err(_) => Box::new(std::io::stderr()),
-        };
-    not_taking_connections_into(out, holder, at)
+    not_taking_connections_into(StderrUnlocked, holder, at)
+}
+
+/// Stderr written through its descriptor rather than through `Stderr`, which
+/// holds a lock across each write that every other line said on stderr waits
+/// for. A write waiting on a pipe nobody reads then holds none of them.
+struct StderrUnlocked;
+
+impl Write for StderrUnlocked {
+    fn write(&mut self, said: &[u8]) -> std::io::Result<usize> {
+        use std::os::fd::FromRawFd;
+        // Stderr's descriptor is the process's for its whole life, so it is
+        // borrowed here and never closed.
+        let mut stderr =
+            std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(libc::STDERR_FILENO) });
+        stderr.write(said)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// The same, said into `out`.
@@ -927,7 +939,7 @@ fn not_taking_connections_into(
     let (telling, told) = std::sync::mpsc::sync_channel::<String>(1);
     std::thread::spawn(move || {
         for report in told {
-            let _ = writeln!(out, "{report}");
+            let _ = out.write_all(report.as_bytes());
         }
     });
     move |taking| {
@@ -935,7 +947,7 @@ fn not_taking_connections_into(
             return;
         };
         let _ = telling.try_send(format!(
-            "{holder} cannot take connections on {}, and keeps trying: {why}",
+            "{holder} cannot take connections on {}, and keeps trying: {why}\n",
             at.display()
         ));
     }
