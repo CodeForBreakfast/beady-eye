@@ -186,8 +186,7 @@ fn a_second_watcher_on_the_same_socket_will_not_start_and_says_where() {
     assert_eq!(reads_in_full(&tracker), 1, "the second read nothing");
 }
 
-/// Below the hard limit of any host that runs these tests, and above what a
-/// watcher of one project holds open.
+/// Above what a watcher of one project holds open.
 #[cfg(target_os = "linux")]
 const A_LOW_OPEN_FILES_LIMIT: libc::rlim_t = 128;
 
@@ -218,8 +217,7 @@ fn a_watcher_started_under_a_low_open_files_limit_raises_it_to_the_hard_one() {
     tracker.holds(THE_DESCRIBED_SUBTREE);
     let mut command = bdi_watch(&home, &tracker);
     let mut inherited = open_files_limit_of(std::process::id());
-    assert!(inherited.rlim_max > A_LOW_OPEN_FILES_LIMIT);
-    inherited.rlim_cur = A_LOW_OPEN_FILES_LIMIT;
+    inherited.rlim_cur = A_LOW_OPEN_FILES_LIMIT.min(inherited.rlim_max / 2);
     unsafe {
         command.pre_exec(
             move || match libc::setrlimit(libc::RLIMIT_NOFILE, &inherited) {
