@@ -1,4 +1,5 @@
-//! The rules that say a bead's claim and the pane behind it have come apart.
+//! The rules that say a bead's claim and the pane behind it have come apart,
+//! or that a bead waits with nobody watching it.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -24,6 +25,9 @@ pub enum Anomaly {
     },
     /// Closed, but its pane is still there.
     StalePane,
+    /// Not closed, selected as wanting an agent to watch it, and watched by
+    /// none, so nothing is woken when it moves.
+    Unwatched,
 }
 
 /// Every anomaly rule that fires on one bead, in a fixed order.
@@ -89,6 +93,22 @@ pub fn detect(
     }
 
     fired
+}
+
+/// The `unwatched` rule on `bead`, which `project`'s tracker holds.
+///
+/// `anyone_watching` is what [`crate::model::watching::anyone_watches`] says
+/// of the bead, which counts the agent on its claim. Where nothing could say
+/// who watches, the rule cannot say nobody does.
+pub fn unwatched(
+    project: &str,
+    bead: &Bead,
+    anyone_watching: Option<bool>,
+    cfg: &Anomalies,
+) -> Option<Anomaly> {
+    let nobody_watches = anyone_watching == Some(false);
+    (nobody_watches && !bead.status.is_closed() && cfg.wants_watched(project, bead))
+        .then_some(Anomaly::Unwatched)
 }
 
 #[cfg(test)]
@@ -421,6 +441,7 @@ mod tests {
     fn the_window_is_configurable() {
         let wide = Anomalies {
             stale_claim_days: 90,
+            ..Anomalies::default()
         };
         let got = detect(
             &bead("in_progress", SIXTY_DAYS_AGO),
@@ -436,6 +457,7 @@ mod tests {
 
         let narrow = Anomalies {
             stale_claim_days: 7,
+            ..Anomalies::default()
         };
         let got = detect(
             &bead("in_progress", SIXTY_DAYS_AGO),
@@ -547,5 +569,111 @@ mod tests {
         assert_eq!(got, Vec::new());
     }
 
+    // ---- beads that want watching: unwatched ----------------------------
+
+    /// Every bead labelled `human`, and every gate labelled `human-move`.
+    fn waiting_on_someone() -> Anomalies {
+        crate::config::Config::from_toml(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "/srv/work/dunwich"
+
+[[anomalies.unwatched]]
+when = { labels = "human" }
+
+[[anomalies.unwatched]]
+when = { labels = "human-move", issue_type = "gate" }
+"#,
+        )
+        .expect("the config parses")
+        .anomalies
+    }
+
+    fn labelled(issue_type: &str, status: &str, label: &str) -> Bead {
+        parse_beads(&format!(
+            r#"[{{"id":"dun-4","title":"which dish","status":"{status}",
+                  "issue_type":"{issue_type}","labels":["{label}"],
+                  "updated_at":"{YESTERDAY}"}}]"#
+        ))
+        .expect("the row parses")
+        .remove(0)
+    }
+
+    fn question() -> Bead {
+        labelled("task", "open", "human")
+    }
+
+    fn merge_gate() -> Bead {
+        labelled("gate", "open", "human-move")
+    }
+
+    /// What `watching::anyone_watches` says of a bead nobody watches, of one
+    /// some agent watches, and where nothing could say.
+    const NOBODY: Option<bool> = Some(false);
+    const SOMEONE: Option<bool> = Some(true);
+    const UNKNOWN: Option<bool> = None;
+
+    #[test]
+    fn a_bead_the_config_selects_that_nobody_watches_is_unwatched() {
+        let got = unwatched("dunwich", &question(), NOBODY, &waiting_on_someone());
+        assert_eq!(got, Some(Anomaly::Unwatched));
+    }
+
+    #[test]
+    fn a_gate_the_config_selects_that_nobody_watches_is_unwatched() {
+        let got = unwatched("dunwich", &merge_gate(), NOBODY, &waiting_on_someone());
+        assert_eq!(got, Some(Anomaly::Unwatched));
+    }
+
+    #[test]
+    fn a_selected_bead_an_agent_watches_is_not_unwatched() {
+        let config = waiting_on_someone();
+        assert_eq!(unwatched("dunwich", &question(), SOMEONE, &config), None);
+        assert_eq!(unwatched("dunwich", &merge_gate(), SOMEONE, &config), None);
+    }
+
+    /// Where no watcher answered, nothing can say the bead is unwatched.
+    #[test]
+    fn a_selected_bead_whose_watches_are_unknown_is_not_flagged() {
+        let got = unwatched("dunwich", &question(), UNKNOWN, &waiting_on_someone());
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn a_bead_the_config_does_not_select_is_never_unwatched() {
+        let config = waiting_on_someone();
+        let unlabelled = labelled("task", "open", "chore");
+        assert_eq!(unwatched("dunwich", &unlabelled, NOBODY, &config), None);
+        let plain = labelled("task", "open", "human-move");
+        assert_eq!(
+            unwatched("dunwich", &plain, NOBODY, &config),
+            None,
+            "the gate rule selects gates alone"
+        );
+    }
+
+    #[test]
+    fn with_no_rule_configured_no_bead_is_unwatched() {
+        let got = unwatched("dunwich", &question(), NOBODY, &Anomalies::default());
+        assert_eq!(got, None);
+    }
+
+    /// A closed bead waits on nobody, so nobody need watch it.
+    #[test]
+    fn a_closed_bead_the_config_selects_is_never_unwatched() {
+        let answered = labelled("task", "closed", "human");
+        let got = unwatched("dunwich", &answered, NOBODY, &waiting_on_someone());
+        assert_eq!(got, None);
+    }
+
     // ---- the wire ------------------------------------------------------
+
+    #[test]
+    fn unwatched_is_written_as_its_rule_alone() {
+        assert_eq!(
+            serde_json::to_value(Anomaly::Unwatched).expect("an anomaly serialises"),
+            serde_json::json!({ "rule": "unwatched" })
+        );
+    }
 }

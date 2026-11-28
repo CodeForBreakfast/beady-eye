@@ -25,7 +25,7 @@ use serde::Deserialize;
 use crate::collect::bd::{bead_of, Fields};
 use crate::collect::changes::{self, Heard};
 use crate::collect::run::{FailureKind, RunFailure};
-use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
+use crate::collect::tracker::{OpenFailure, Tracker, Trackers, Watches};
 use crate::config::{Project, Reach};
 use crate::model::snapshot::{TrackerFailure, TrackerState};
 use crate::model::types::Bead;
@@ -190,10 +190,13 @@ impl<O: Trackers> Trackers for Through<O> {
         self.watcher.said().around.clone()
     }
 
-    fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    fn watches(&self, project: &str) -> Option<Watches> {
         let said = self.watcher.said();
-        let answering = said.current.contains_key(project) && !said.around.contains(project);
-        answering.then(|| said.watches.get(project).cloned().unwrap_or_default())
+        let told = said.current.get(project)?;
+        (!said.around.contains(project)).then(|| Watches {
+            agent_sessions: said.watches.get(project).cloned().unwrap_or_default(),
+            whole: told.watching,
+        })
     }
 }
 
@@ -242,6 +245,9 @@ struct Told {
     unreachable: Option<TrackerFailure>,
     /// How the watcher's config reaches the tracker, where it said.
     reach: Option<Reach>,
+    /// Whether the watcher said it sent who watches the project's beads
+    /// ahead of this answer.
+    watching: bool,
 }
 
 /// One bead as the watcher sent it, with the readiness bd gives it.
@@ -277,6 +283,8 @@ enum Line {
         tracker: TrackerState,
         protocol: Option<u32>,
         reach: Option<Reach>,
+        #[serde(default)]
+        watching: bool,
     },
     Refused {
         asked: String,
@@ -421,6 +429,7 @@ impl Watcher {
                 tracker,
                 protocol,
                 reach,
+                watching,
             } => {
                 if protocol != Some(PROTOCOL) {
                     return None;
@@ -438,6 +447,7 @@ impl Watcher {
                 };
                 told.as_of = as_of;
                 told.reach = reach;
+                told.watching = watching;
                 told.unreachable = match tracker {
                     TrackerState::Unreachable(failure) => Some(failure),
                     _ => None,
@@ -792,6 +802,7 @@ mod tests {
             "tracker": tracker,
             "events": "off",
             "protocol": 1,
+            "watching": true,
             "reach": reach,
         })
         .to_string()
@@ -987,10 +998,49 @@ path = "/srv/work/ferry"
 
         assert_eq!(
             through.watches("dunwich"),
-            Some(BTreeMap::from([(
-                "dun-1".to_string(),
-                sessions(&["4f1c-keeper", "9a2e-ferryman"])
-            )]))
+            Some(Watches {
+                agent_sessions: BTreeMap::from([(
+                    "dun-1".to_string(),
+                    sessions(&["4f1c-keeper", "9a2e-ferryman"])
+                )]),
+                whole: true,
+            })
+        );
+    }
+
+    /// A watcher whose freshness line does not say it sent who watches ahead
+    /// of the answer may still be about to send it. What it has said stands,
+    /// but a bead it has not named may yet be watched.
+    #[test]
+    fn who_watches_is_partial_where_the_answer_does_not_say_it_came_first() {
+        let mut silent = serde_json::from_str::<serde_json::Value>(&fresh("dunwich", json!("ok")))
+            .expect("JSON");
+        silent
+            .as_object_mut()
+            .expect("an object")
+            .remove("watching");
+        let at = a_watcher_saying(
+            "watched-watching-after",
+            vec![
+                silent.to_string(),
+                watching("dunwich", "dun-1", &["4f1c-keeper"]),
+            ],
+        );
+        let own = own_trackers();
+        let cfg = projects();
+        let (through, told) = staying(&at, &own, A_MOMENT);
+
+        for _ in 0..2 {
+            assert_eq!(told.recv_timeout(A_MOMENT), Ok(changed("dunwich")));
+        }
+        through.of(project(&cfg, "dunwich")).expect("answered");
+
+        assert_eq!(
+            through.watches("dunwich"),
+            Some(Watches {
+                agent_sessions: BTreeMap::from([("dun-1".to_string(), sessions(&["4f1c-keeper"]))]),
+                whole: false,
+            })
         );
     }
 

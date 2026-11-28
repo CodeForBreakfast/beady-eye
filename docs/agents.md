@@ -95,6 +95,12 @@ Two rows are drawn as anomalies from the facts above alone.
   it: a status, a metadata key. The window is `stale_claim_days` under
   `[anomalies]`.
 
+A setup can also have `bdi` flag a bead that nobody watches.
+
+- `unwatched`: a bead that `[[anomalies.unwatched]]` selects is not closed,
+  and no agent is watching it through the watcher. Any agent watching it ends
+  the flag, the one on its claim included.
+
 ## Anything else goes in metadata
 
 Whatever else you want visible on the row — a review link, a topic name, a

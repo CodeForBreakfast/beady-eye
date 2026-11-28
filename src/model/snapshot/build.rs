@@ -13,7 +13,7 @@ use crate::model::edges::{Elsewhere, Named, Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
-use crate::model::watching::{Watchers, Watching};
+use crate::model::watching::{self, ProjectWatchers, Watching};
 
 use super::filter::{in_flight_first, partition};
 use super::{
@@ -41,7 +41,7 @@ pub struct Said<'a> {
     /// The watchers of each of this project's beads, by id. Nothing where
     /// no watcher answered for the project, which leaves who watches them
     /// unknown.
-    pub watching: Option<&'a BTreeMap<String, Watchers>>,
+    pub watching: Option<&'a ProjectWatchers>,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -130,6 +130,23 @@ pub fn build_tree(
                     .iter()
                     .any(|orphan| orphan.id == *id && orphan.why.is_unread())
             });
+            let watched_by = said.and_then(|said| said.watching);
+            let mut anomalies = anomaly::detect(
+                bead,
+                agent.as_ref(),
+                refused,
+                agents,
+                out_of_reach,
+                joined.under_a_seat.contains(&key),
+                &cfg.anomalies,
+                now,
+            );
+            anomalies.extend(anomaly::unwatched(
+                own,
+                bead,
+                watching::anyone_watches(watched_by, &bead.id),
+                &cfg.anomalies,
+            ));
             Node {
                 project: own.to_string(),
                 id: bead.id.clone(),
@@ -143,18 +160,9 @@ pub fn build_tree(
                 closed_at: bead.closed_at,
                 badges: badged.drawn,
                 undrawn: badged.undrawn,
-                anomalies: anomaly::detect(
-                    bead,
-                    agent.as_ref(),
-                    refused,
-                    agents,
-                    out_of_reach,
-                    joined.under_a_seat.contains(&key),
-                    &cfg.anomalies,
-                    now,
-                ),
+                anomalies,
                 watching: Watching::of(
-                    said.and_then(|said| said.watching),
+                    watched_by,
                     &bead.id,
                     agent
                         .as_ref()

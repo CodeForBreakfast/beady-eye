@@ -111,6 +111,7 @@ coin one — and say so.**
 | **watcher** | *coined* | `bdi watch`, the one process per machine that holds each project's beads as last read and sends them, and each change to them, to whoever watches. Neither project names it: bd's events journal records changes, and nothing in either project routes them to whoever asked. |
 | **change source** | *coined* | what hands the watcher each project's beads, how current they are, and bd's event records where the project keeps them. The first reads trackers, and another can replace it. Distinct from a *producer*, which only says a project changed. |
 | **watching** | *coined* | an `agent_session` named on a watch of one bead, for as long as a connection naming it on that bead stays open. The watcher tells views which agent sessions are watching each bead. Neither project names it: herdr knows nothing of beads, and bd keeps no record of who is waiting on one. |
+| **unwatched** | *coined* | a bead the config says some agent should be watching, which is not closed and which no agent session is watching, the one on its claim included. Nobody is woken when it moves. Neither project names it, for the reason neither names *watching*. |
 | gate, resolve | beads (`bd gate`) | a bead that blocks another until something outside the tracker happens, and closing one. A gh:pr gate waits on a pull request, a gh:issue gate on an issue closing, a gh:release gate on a repository publishing a release, a gh:run gate on a workflow run finishing, a timer gate on its timeout running out after it was made, and a bead gate on the bead its await id names closing, and `bdi gates` is named for these. bd accepts any gate type, and its own `bd gate check` passes over gh:issue and gh:release |
 | delivery | GitHub (webhooks) | one webhook request GitHub sends, with its event and signature in headers. `bdi gates --listen` takes a `pull_request` delivery as a trigger to settle the pull request it names, and nothing more |
 | **settle** | *coined* | act on a gh:pr gate once GitHub says its pull request has done what the gate waits for: resolve the gate on a merge, or on leaving draft for a gate with `awaits=ready_for_review`, or on approval for a gate with `awaits=approved`, and on a close without a merge, or on failing or passing checks or a conflict with the base on the head commit, or on a submitted review, or on a comment on its conversation, comment on the beads it holds back, once each. Act on a gh:issue gate once its issue closes, on a gh:release gate once its repository publishes a release after the gate was made, on a gh:run gate once its run succeeds or is skipped, on a timer gate once its deadline passes, and on a bead gate once its bead closes, in its own tracker or another the config names, by resolving the gate. beads has `bd gate check`, which resolves a gh:pr gate on a merge alone and acts on a close through an escalation `bdi` does not make |
@@ -893,7 +894,8 @@ id another tracker happens to reuse says nothing about that tracker's bead.
 
 ## Anomaly rules
 
-All computed in the pure model. The first needs bd alone; the rest need herdr.
+All computed in the pure model. The first needs bd alone, `unwatched` needs the
+watcher, and the rest need herdr.
 
 | rule | condition | reading |
 |---|---|---|
@@ -902,6 +904,15 @@ All computed in the pure model. The first needs bd alone; the rest need herdr.
 | `stale-pane` | bead is closed, its agent's pane is alive | agent finished and did not exit |
 | `unattributed` | pane alive in a configured project, no bead resolves | a pane nobody can account for |
 | `unconfigured` | pane alive in a directory no `[[projects]]` entry covers | a project `bdi` was never told about; the fix is a config entry |
+| `unwatched` | not closed, selected by `[[anomalies.unwatched]]`, and the watcher names no agent session watching it | something waits on this bead and nobody will be woken when it moves |
+
+**`unwatched` fires only on what the config selects.** Which beads wait on
+someone is how a setup organises its agents, so `bdi` selects none by default,
+and a setup names them by label, type or any other field, gates included. The
+agent on the bead's claim counts as watching it, since it is woken when the bead
+moves, though the row's watched mark leaves it out. Where no watcher answers for
+the bead's project, nobody can say who watches, so the rule does not fire and
+the bead window says the watches are unknown.
 
 `stale-claim` is `bd stale` restricted to `in_progress`. Its window defaults to
 **30 days, matching `bd stale --days`** — not a number of our own. Two names stay
@@ -2450,7 +2461,7 @@ watch is answered by the freshness line alone.
 **A freshness line** says how current a project's beads are:
 
 ```json
-{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "lapsed": false, "events": "ok", "protocol": 1, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
+{ "line": "freshness", "project": "summit-works", "as_of": "2026-08-30T10:22:14Z", "tracker": "ok", "lapsed": false, "events": "ok", "protocol": 1, "watching": true, "reach": { "path": "/home/mira/summit-works", "environment_command": ["direnv", "exec", "."] } }
 ```
 
 It closes every answer the source gives for the project. It follows the beads
@@ -2498,7 +2509,13 @@ each connection with a `watch-all` on its project:
 ```
 
 A `watch-all` is sent one for each bead an agent session is watching when it
-starts, and one more whenever that set of agent sessions changes. An agent
+starts, ahead of the project's answer, so a consumer that holds the answer
+holds who watches its beads too. The freshness line says so by `watching`,
+which is `true` on a connection with a `watch-all` on the project. A watcher
+from before `watching` sends these lines after the answer. A consumer that
+finds the field missing still believes each watching line, but cannot take a
+bead that no line names as watched by nobody. It is sent one more whenever that set of agent
+sessions changes. An agent
 session stops watching when the last connection naming it on that bead
 closes, so the line after it has `"agent_sessions": []`. It says nothing a
 tracker holds, so it waits for no read and no freshness line follows it.

@@ -700,6 +700,20 @@ impl<'de> Deserialize<'de> for Pattern {
 #[serde(default, deny_unknown_fields)]
 pub struct Anomalies {
     pub stale_claim_days: i64,
+    /// The beads some agent should be watching: those any one of these
+    /// selects. A setup names them, because which beads wait on someone is
+    /// how its agents are organised. None by default.
+    pub unwatched: Vec<Select>,
+}
+
+impl Anomalies {
+    /// Whether some agent should be watching `bead`, which `project`'s
+    /// tracker holds.
+    pub fn wants_watched(&self, project: &str, bead: &Bead) -> bool {
+        self.unwatched
+            .iter()
+            .any(|select| select.selects(project, bead))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1004,6 +1018,7 @@ impl Default for Anomalies {
     fn default() -> Self {
         Self {
             stale_claim_days: 30,
+            unwatched: Vec::new(),
         }
     }
 }
@@ -1224,6 +1239,19 @@ impl Config {
             }
         }
         cfg.refuse_views_that_cannot_list()?;
+        if let Some(unknown) = cfg
+            .anomalies
+            .unwatched
+            .iter()
+            .flat_map(|select| &select.projects)
+            .find(|named| !cfg.is_configured(named))
+        {
+            anyhow::bail!(
+                "[[anomalies.unwatched]] selects from {unknown}, but there is no project called \
+                 {unknown}; the configured projects are {}",
+                names_of(&cfg.projects).join(", ")
+            );
+        }
         let mut named: HashSet<&Cell> = HashSet::new();
         if let Some(twice) = cfg.row.cells().find(|cell| !named.insert(cell)) {
             anyhow::bail!("[row] names {twice} twice; name it in only one list");
@@ -1449,6 +1477,31 @@ impl Config {
 
 fn names_of(projects: &[Project]) -> Vec<&str> {
     projects.iter().map(|p| p.name.as_str()).collect()
+}
+
+/// One set of conditions a bead can meet to be chosen, by a view or by an
+/// anomaly rule.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Select {
+    /// The projects whose beads this selects. Every project where it names
+    /// none.
+    #[serde(default)]
+    pub projects: Vec<String>,
+    /// Read as a badge's `when` is read.
+    #[serde(default)]
+    pub when: BTreeMap<String, Pattern>,
+    /// Read as a badge's `unless` is read.
+    #[serde(default)]
+    pub unless: BTreeMap<String, Pattern>,
+}
+
+impl Select {
+    /// Whether this selects `bead`, which `project`'s tracker holds.
+    pub fn selects(&self, project: &str, bead: &Bead) -> bool {
+        (self.projects.is_empty() || self.projects.iter().any(|p| p == project))
+            && conditions_hold(&self.when, &self.unless, bead)
+    }
 }
 
 /// Whether every one of `when` matches `bead` and none of `unless` does.
@@ -1918,6 +1971,64 @@ title = ["title", "badge.metadata.jira", "badges"]
         .to_string();
 
         assert!(err.contains("stale_claim_day"), "got: {err}");
+    }
+
+    /// One setup's rule: every bead labelled `human`, and every gate
+    /// labelled `human-move`, should have an agent watching it.
+    const WATCHED_BY_SOMEONE: &str = r#"
+[[anomalies.unwatched]]
+when = { labels = "human" }
+
+[[anomalies.unwatched]]
+when = { labels = "human-move", issue_type = "gate" }
+"#;
+
+    fn row(fields: &str) -> Bead {
+        crate::collect::bd::parse_beads(&format!(
+            r#"[{{"id":"kad-1","title":"a bead","status":"open",{fields}}}]"#
+        ))
+        .expect("the row parses")
+        .remove(0)
+    }
+
+    #[test]
+    fn the_beads_that_want_watching_are_those_a_rule_selects_gates_among_them() {
+        let cfg = Config::from_toml(&format!("{ONE_PROJECT}{WATCHED_BY_SOMEONE}")).expect("parses");
+        let wants = |fields: &str| cfg.anomalies.wants_watched("kadath", &row(fields));
+
+        assert!(wants(r#""issue_type":"task","labels":["human"]"#));
+        assert!(wants(
+            r#""issue_type":"gate","labels":["outcome","human-move"]"#
+        ));
+        assert!(
+            !wants(r#""issue_type":"task","labels":["human-move"]"#),
+            "the second rule selects gates alone"
+        );
+        assert!(!wants(r#""issue_type":"gate","labels":["outcome"]"#));
+    }
+
+    #[test]
+    fn no_bead_wants_watching_where_the_config_names_none() {
+        let cfg = Config::from_toml(ONE_PROJECT).expect("parses");
+
+        assert!(!cfg
+            .anomalies
+            .wants_watched("kadath", &row(r#""labels":["human"]"#)));
+    }
+
+    #[test]
+    fn a_watch_rule_naming_a_project_that_is_not_configured_refuses_the_config() {
+        let refused = Config::from_toml(&format!(
+            "{ONE_PROJECT}\n[[anomalies.unwatched]]\nprojects = [\"celephais\"]\n"
+        ))
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            refused,
+            "[[anomalies.unwatched]] selects from celephais, but there is no project called \
+             celephais; the configured projects are kadath"
+        );
     }
 
     #[test]

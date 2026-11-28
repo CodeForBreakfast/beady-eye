@@ -380,8 +380,11 @@ pub fn anomaly(anomaly: &Anomaly) -> String {
         ),
         Anomaly::StalePane => "closed · its pane is still open".to_string(),
         Anomaly::StaleClaim { days } => format!("claimed · {}", untouched_for(*days)),
+        Anomaly::Unwatched => UNWATCHED.to_string(),
     }
 }
+
+const UNWATCHED: &str = "nobody watches it";
 
 /// Every rule that fired on a bead, said as one sentence on a web page's row,
 /// where the terminal says each rule apart. `None` where none fired.
@@ -404,7 +407,14 @@ pub fn flag(anomalies: &[Anomaly]) -> Option<String> {
         _ => None,
     });
     let said: Vec<String> = untouched.into_iter().chain(orphaned).collect();
-    (!said.is_empty()).then(|| format!("Claimed, {}", said.join(", ")))
+    let claimed = (!said.is_empty()).then(|| format!("Claimed, {}", said.join(", ")));
+    if !anomalies.contains(&Anomaly::Unwatched) {
+        return claimed;
+    }
+    Some(match claimed {
+        Some(claimed) => format!("{claimed}, and {UNWATCHED}"),
+        None => "Nobody watches it".to_string(),
+    })
 }
 
 fn untouched_for(days: i64) -> String {
@@ -1738,7 +1748,8 @@ mod tests {
             |rule| match rule {
                 Anomaly::OrphanClaim { .. } => Some(Anomaly::StalePane),
                 Anomaly::StalePane => Some(Anomaly::StaleClaim { days: 1 }),
-                Anomaly::StaleClaim { .. } => None,
+                Anomaly::StaleClaim { .. } => Some(Anomaly::Unwatched),
+                Anomaly::Unwatched => None,
             },
         )
     }
@@ -2600,6 +2611,20 @@ mod tests {
         assert_eq!(
             flag(&[Anomaly::StalePane]).as_deref(),
             Some("Closed, but its pane is still open")
+        );
+    }
+
+    /// A bead nobody watches says so on its own, and after what is wrong with
+    /// its claim where something is.
+    #[test]
+    fn a_web_flag_says_nobody_watches_alone_and_after_a_claim() {
+        assert_eq!(
+            flag(&[Anomaly::Unwatched]).as_deref(),
+            Some("Nobody watches it")
+        );
+        assert_eq!(
+            flag(&[Anomaly::OrphanClaim { refused: None }, Anomaly::Unwatched]).as_deref(),
+            Some("Claimed, no agent on it, and nobody watches it")
         );
     }
 

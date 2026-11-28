@@ -20,6 +20,16 @@ pub struct WatchingAgent {
 /// agent where herdr reports the session in a live pane.
 pub type Watchers = BTreeMap<String, Option<WatchingAgent>>;
 
+/// The watchers of each of one project's beads, by id, as far as the watcher
+/// has said.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectWatchers {
+    pub by_bead: BTreeMap<String, Watchers>,
+    /// Whether `by_bead` holds every watcher the watcher has, so that a bead
+    /// it leaves out is watched by nobody.
+    pub whole: bool,
+}
+
 /// Who watches a bead, besides the agent on its claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Watching {
@@ -46,16 +56,14 @@ impl Watching {
     /// Who watches bead `id`, of the watchers of each bead in its project,
     /// leaving out `claimed_by`, the agent session of the agent on its
     /// claim. Unknown where nothing could say who watches the project's
-    /// beads.
-    pub fn of(
-        project: Option<&BTreeMap<String, Watchers>>,
-        id: &str,
-        claimed_by: Option<&str>,
-    ) -> Self {
+    /// beads, and where none but the claim is known to watch it and the
+    /// watchers are not whole.
+    pub fn of(project: Option<&ProjectWatchers>, id: &str, claimed_by: Option<&str>) -> Self {
         let Some(project) = project else {
             return Watching::Unknown;
         };
         let others = project
+            .by_bead
             .get(id)
             .into_iter()
             .flatten()
@@ -68,6 +76,9 @@ impl Watching {
                 None => unreported += 1,
             }
         }
+        if agents.is_empty() && unreported == 0 && !project.whole {
+            return Watching::Unknown;
+        }
         Watching::Known { agents, unreported }
     }
 
@@ -78,6 +89,19 @@ impl Watching {
             Watching::Known { agents, unreported } => !agents.is_empty() || *unreported > 0,
         }
     }
+}
+
+/// Whether any agent session watches bead `id`, of the watchers of each bead
+/// in its project, the agent on its claim among them, since it too is woken
+/// when the bead moves. Nothing where nothing could say who watches, and
+/// where `id` has no watcher and the watchers are not whole.
+pub fn anyone_watches(project: Option<&ProjectWatchers>, id: &str) -> Option<bool> {
+    let project = project?;
+    let watched = project
+        .by_bead
+        .get(id)
+        .is_some_and(|watchers| !watchers.is_empty());
+    (watched || project.whole).then_some(watched)
 }
 
 /// Each bead's watchers, found among `panes`. herdr keeps a pane's agent
@@ -174,10 +198,27 @@ mod tests {
         assert_eq!(found["dun-7"]["9a2e-ferryman"], None);
     }
 
+    /// Every watcher of each bead, as a watcher that has said them all.
+    fn whole(watches: BTreeMap<String, BTreeSet<String>>, panes: &[Pane]) -> ProjectWatchers {
+        ProjectWatchers {
+            by_bead: in_panes(watches, panes),
+            whole: true,
+        }
+    }
+
+    /// The watchers of each bead a watcher has said so far, which may not
+    /// be all of them.
+    fn partial(watches: BTreeMap<String, BTreeSet<String>>) -> ProjectWatchers {
+        ProjectWatchers {
+            by_bead: in_panes(watches, &[]),
+            whole: false,
+        }
+    }
+
     #[test]
     fn the_agent_on_the_claim_is_not_counted_among_the_watchers() {
         let panes = [pane_of("4f1c-keeper", Some("claude"), "dish crew")];
-        let found = in_panes(watched_by(&["4f1c-keeper"]), &panes);
+        let found = whole(watched_by(&["4f1c-keeper"]), &panes);
 
         let watching = Watching::of(Some(&found), "dun-7", Some("4f1c-keeper"));
 
@@ -187,7 +228,7 @@ mod tests {
 
     #[test]
     fn a_watcher_herdr_reports_in_no_pane_still_watches() {
-        let found = in_panes(watched_by(&["4f1c-keeper", "9a2e-ferryman"]), &[]);
+        let found = whole(watched_by(&["4f1c-keeper", "9a2e-ferryman"]), &[]);
 
         let watching = Watching::of(Some(&found), "dun-7", Some("4f1c-keeper"));
 
@@ -199,6 +240,51 @@ mod tests {
             }
         );
         assert!(watching.is_watched());
+    }
+
+    /// The agent on the claim and one herdr reports in no pane both watch.
+    #[test]
+    fn anyone_watching_counts_every_agent_session_the_watcher_names() {
+        let found = whole(watched_by(&["4f1c-keeper"]), &[]);
+
+        assert_eq!(anyone_watches(Some(&found), "dun-7"), Some(true));
+        assert_eq!(anyone_watches(Some(&found), "dun-8"), Some(false));
+        assert_eq!(anyone_watches(None, "dun-7"), None);
+    }
+
+    /// A watcher that may send who watches after its answer can show a bead
+    /// is watched, but not that nobody watches it.
+    #[test]
+    fn nobody_watching_is_unknown_where_the_watcher_may_say_more() {
+        let found = partial(watched_by(&["4f1c-keeper", "9a2e-ferryman"]));
+
+        assert_eq!(anyone_watches(Some(&found), "dun-7"), Some(true));
+        assert_eq!(anyone_watches(Some(&found), "dun-8"), None);
+        assert_eq!(
+            Watching::of(Some(&found), "dun-7", Some("4f1c-keeper")),
+            Watching::Known {
+                agents: Vec::new(),
+                unreported: 1
+            }
+        );
+        assert_eq!(
+            Watching::of(Some(&found), "dun-7", Some("9a2e-ferryman")),
+            Watching::Known {
+                agents: Vec::new(),
+                unreported: 1
+            }
+        );
+        assert_eq!(Watching::of(Some(&found), "dun-8", None), Watching::Unknown);
+    }
+
+    #[test]
+    fn only_the_claim_watching_is_unknown_where_the_watcher_may_say_more() {
+        let found = partial(watched_by(&["4f1c-keeper"]));
+
+        assert_eq!(
+            Watching::of(Some(&found), "dun-7", Some("4f1c-keeper")),
+            Watching::Unknown
+        );
     }
 
     #[test]
