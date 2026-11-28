@@ -446,7 +446,7 @@ mod tests {
     use crate::collect::run::{FailureKind, Retained};
     use crate::model::join::JoinSource;
     use crate::model::snapshot::TrackerFailure;
-    use crate::model::types::testing::an_unreadable;
+    use crate::model::types::testing::{an_unplaced, an_unreadable};
     use chrono::{TimeDelta, TimeZone};
     use pretty_assertions::assert_eq;
 
@@ -536,7 +536,14 @@ mod tests {
                 TrackerFailure::NoEnvironment => Some(TrackerFailure::NoCredential),
                 TrackerFailure::NoCredential => Some(TrackerFailure::Auth),
                 TrackerFailure::Auth => Some(TrackerFailure::Unavailable { unplaced: None }),
-                TrackerFailure::Unavailable { .. } => Some(TrackerFailure::NotInstalled),
+                TrackerFailure::Unavailable { unplaced: None } => {
+                    Some(TrackerFailure::Unavailable {
+                        unplaced: Some(an_unplaced()),
+                    })
+                }
+                TrackerFailure::Unavailable { unplaced: Some(_) } => {
+                    Some(TrackerFailure::NotInstalled)
+                }
                 TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
                 TrackerFailure::Unstartable => Some(TrackerFailure::InstalledUnstartable),
                 TrackerFailure::InstalledUnstartable => {

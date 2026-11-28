@@ -712,11 +712,11 @@ fn reached_as(failure: &TrackerFailure) -> OpenFailure {
         TrackerFailure::UnknownFlag => FailureKind::UnknownFlag,
     };
     let unreadable = match failure {
-        TrackerFailure::Parse(unreadable) => Some(unreadable.clone()),
+        TrackerFailure::Parse(unreadable) => Some(Box::new(unreadable.clone())),
         _ => None,
     };
     let unplaced = match failure {
-        TrackerFailure::Unavailable { unplaced } => unplaced.clone(),
+        TrackerFailure::Unavailable { unplaced } => unplaced.clone().map(Box::new),
         _ => None,
     };
     OpenFailure::Refused(RunFailure {

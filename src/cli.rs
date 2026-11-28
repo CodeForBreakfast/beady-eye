@@ -862,7 +862,14 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let reads: Reads =
         Box::new(move |wanted, now| collection.watched(&cfg, &Unasked, &trackers, wanted, now));
     let mut source = ReadingTrackers::new(reads, heard, outstanding, reading);
-    std::thread::spawn(move || hold(&mut source, &held));
+    std::thread::spawn(move || {
+        hold(&mut source, &held, &mut |project, failure| {
+            eprintln!(
+                "bdi watch: {}",
+                crate::view::phrase::tracker_reached(project, failure)
+            );
+        });
+    });
 
     asked_to_stop.forever().next();
     Ok(ExitCode::SUCCESS)

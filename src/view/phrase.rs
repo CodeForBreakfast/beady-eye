@@ -38,31 +38,55 @@ macro_rules! bd_floor {
     };
 }
 
-/// Why a tracker could not be read, and for the one failure that knows more
-/// than its kind, what else it knows.
+/// Why a tracker could not be read, and for the two failures that know more
+/// than their kind, what else they know.
 ///
-/// Only `Parse` says anything beyond `redacted`, and what it adds is `bdi`'s
-/// own command line and the parser's account of `bdi`'s own structs. Both are
-/// how a reader gets from this line to the row that broke the read, which is
-/// the whole of what they can do about one.
+/// `Parse` adds `bdi`'s own command line and the parser's account of `bdi`'s
+/// own structs, which is how a reader gets from this line to the row that
+/// broke the read. A failure `bdi` cannot place adds the command line and
+/// what bd said, with the password already taken out, which is all its
+/// reader has to go on. Everything else says `redacted` alone.
 pub fn tracker_failure(failure: &TrackerFailure) -> String {
-    let TrackerFailure::Parse(unreadable) = failure else {
-        return redacted(failure).to_string();
+    // A half missing is a failure built without one, which nothing in `bdi`
+    // does but a parse failure built by hand.
+    let (command, account) = match failure {
+        TrackerFailure::Parse(unreadable) => (&unreadable.read, unreadable.cause.clone()),
+        TrackerFailure::Unavailable {
+            unplaced: Some(unplaced),
+        } => (&unplaced.command, one_line(&unplaced.said)),
+        _ => return redacted(failure).to_string(),
     };
-    // Either half missing is a failure built without one, which nothing in
-    // `bdi` does.
     let mut said = vec![redacted(failure).to_string()];
-    if !unreadable.read.is_empty() {
-        said.push(format!("bd {}", unreadable.read));
+    if !command.is_empty() {
+        said.push(format!("bd {command}"));
     }
-    if !unreadable.cause.is_empty() {
-        said.push(unreadable.cause.clone());
+    if !account.is_empty() {
+        said.push(account);
     }
     said.join(" · ")
 }
 
-/// The sentence every failure gets, and the whole of what eight of the nine
-/// ever say.
+/// `said` with its lines run together, as a terminal row and a log line
+/// each need it.
+fn one_line(said: &str) -> String {
+    said.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// What the watcher logs when `project`'s tracker stops answering, fails
+/// another way, or answers again.
+pub fn tracker_reached(project: &str, failure: Option<&TrackerFailure>) -> String {
+    match failure {
+        Some(failure) => format!("{project}: {}", tracker_failure(failure)),
+        None => format!("{project}: the tracker answers again"),
+    }
+}
+
+/// The sentence every failure gets, and the whole of what every one but a
+/// parse failure and an unplaced one ever says.
 ///
 /// `&'static str` is the guarantee: a phrase that cannot hold a `String`
 /// cannot hold anything a tool wrote, and bd names the database and the SQL
@@ -78,7 +102,10 @@ fn redacted(failure: &TrackerFailure) -> &'static str {
             "nothing was read"
         ),
         TrackerFailure::Auth => "the tracker rejected the credential",
-        TrackerFailure::Unavailable { .. } => "the tracker did not answer",
+        TrackerFailure::Unavailable { unplaced: None } => "the tracker did not answer",
+        TrackerFailure::Unavailable { unplaced: Some(_) } => {
+            "bd failed for a reason bdi cannot place"
+        }
         TrackerFailure::NotInstalled => "bd is not installed",
         TrackerFailure::Unstartable => "bd could not be started",
         TrackerFailure::InstalledUnstartable => "bd is installed but could not be started",
@@ -1520,7 +1547,7 @@ fn saying(caption: &str) -> String {
 mod tests {
     use super::*;
     use crate::collect::run::RunFailure;
-    use crate::model::types::testing::{an_unreadable, key as pane_key};
+    use crate::model::types::testing::{an_unplaced, an_unreadable, key as pane_key};
     use crate::model::types::Unreadable;
     use crate::view::fitted::columns;
     use crate::view::tests::{
@@ -2281,18 +2308,56 @@ mod tests {
         says(&said, "line 1 column 25");
     }
 
+    /// A failure `bdi` cannot place says which bd command failed and what bd
+    /// said, because that is all its reader has to go on. It stays one line,
+    /// whatever bd wrote.
+    #[test]
+    fn a_failure_bdi_cannot_place_says_the_command_and_what_bd_said() {
+        let said = tracker_failure(&TrackerFailure::Unavailable {
+            unplaced: Some(an_unplaced()),
+        });
+
+        says(&said, "cannot place");
+        says(&said, "bd --readonly list --json");
+        says(&said, "Error: the ledger is sealed (asked with <password>)");
+        assert!(!said.contains('\n'), "{said:?}");
+    }
+
+    /// The watcher's log names the project whose tracker it lost or got
+    /// back, and says how it was lost in the words the screen uses.
+    #[test]
+    fn a_tracker_the_watcher_loses_and_gets_back_is_said_by_project() {
+        let lost = TrackerFailure::Unavailable {
+            unplaced: Some(an_unplaced()),
+        };
+
+        assert_eq!(
+            tracker_reached("arkham", Some(&lost)),
+            format!("arkham: {}", tracker_failure(&lost))
+        );
+        assert_eq!(
+            tracker_reached("arkham", None),
+            "arkham: the tracker answers again"
+        );
+    }
+
     /// And nothing else says more than its kind.
     ///
     /// The redaction is why the phrases are written here at all: bd names the
     /// database and the SQL user it authenticated as whenever it refuses a
     /// credential, and it writes that on stderr — which is what a failing
-    /// exit is classified from. An answer that would not parse is the one
-    /// case where nothing was on stderr to redact, because the run succeeded
-    /// and what would not read is the tracker's own rows.
+    /// exit is classified from. An answer that would not parse is one case
+    /// where nothing was on stderr to redact, because the run succeeded and
+    /// what would not read is the tracker's own rows. A failure `bdi` cannot
+    /// place is the other, because its words are all the reader has, and the
+    /// password was taken out of them before they were kept.
     #[test]
-    fn no_failure_but_the_unreadable_answer_says_more_than_its_kind() {
+    fn no_failure_but_an_unreadable_answer_or_an_unplaced_one_says_more_than_its_kind() {
         for failure in every_tracker_failure() {
-            if matches!(failure, TrackerFailure::Parse(_)) {
+            if matches!(
+                failure,
+                TrackerFailure::Parse(_) | TrackerFailure::Unavailable { unplaced: Some(_) }
+            ) {
                 continue;
             }
             assert_eq!(

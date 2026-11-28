@@ -655,14 +655,16 @@ pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
         | FailureKind::Unsupported
         | FailureKind::Pruned(_)
         | FailureKind::RateLimited => TrackerFailure::Unavailable {
-            unplaced: failure.unplaced.clone(),
+            unplaced: failure.unplaced.as_deref().cloned(),
         },
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
         // `RunFailure::parse` fills both halves, so the fallback is only
         // reached by a failure built by hand.
-        FailureKind::Parse => TrackerFailure::Parse(failure.unreadable.clone().unwrap_or_default()),
+        FailureKind::Parse => {
+            TrackerFailure::Parse(failure.unreadable.as_deref().cloned().unwrap_or_default())
+        }
         FailureKind::UnknownFlag => TrackerFailure::UnknownFlag,
     }
 }
@@ -2497,7 +2499,7 @@ dunwich = ["dun-404"]
             said: "Error: the ledger is sealed".to_string(),
         };
         let unplaced = RunFailure {
-            unplaced: Some(said.clone()),
+            unplaced: Some(Box::new(said.clone())),
             ..failing(FailureKind::Unavailable)
         };
         let trackers = dunwich_with(dunwich_tracker().failing(Asked::All, unplaced));

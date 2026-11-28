@@ -237,7 +237,16 @@ impl Hold {
 
     /// Take what a source said of one project, and tell everyone watching it.
     pub fn take(&mut self, answer: Answer) {
+        self.taking(answer, &mut |_, _| {});
+    }
+
+    /// As [`take`](Self::take), handing `reached` the project first where
+    /// its tracker stopped answering, failed another way, or answered again,
+    /// with how it now fails. A consumer is told after that, so whatever
+    /// `reached` writes is written before any consumer can act on the news.
+    fn taking(&mut self, answer: Answer, reached: &mut dyn FnMut(&str, Option<&TrackerFailure>)) {
         let standing = self.projects.entry(answer.project.clone()).or_default();
+        let was = standing.unreachable.clone();
         let replaced = matches!(answer.said, Said::Read { .. });
         match answer.said {
             Said::Read { at, beads } => {
@@ -264,6 +273,9 @@ impl Hold {
                 }
             }
             Said::Lapsed => standing.lapsed = true,
+        }
+        if standing.unreachable != was {
+            reached(&answer.project, standing.unreachable.as_ref());
         }
         let records = match answer.journal {
             Some(Journal::Read(records)) => {
@@ -498,10 +510,16 @@ fn locked(hold: &Mutex<Hold>) -> MutexGuard<'_, Hold> {
     hold.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Hold everything `source` says until it stops.
-pub fn hold(source: &mut dyn ChangeSource, into: &Mutex<Hold>) {
+/// Hold everything `source` says until it stops, and hand `reached` each
+/// project whose tracker stops answering, fails another way, or answers
+/// again, with how it now fails.
+pub fn hold(
+    source: &mut dyn ChangeSource,
+    into: &Mutex<Hold>,
+    reached: &mut dyn FnMut(&str, Option<&TrackerFailure>),
+) {
     while let Some(answer) = source.next() {
-        locked(into).take(answer);
+        locked(into).taking(answer, reached);
         give_back_freed_memory();
     }
 }
@@ -737,6 +755,62 @@ mod tests {
         assert_eq!(
             standing.unreachable,
             Some(TrackerFailure::Unavailable { unplaced: None })
+        );
+    }
+
+    /// A source that says each of `answers` in turn, then stops.
+    struct Saying(std::vec::IntoIter<Answer>);
+
+    impl ChangeSource for Saying {
+        fn next(&mut self) -> Option<Answer> {
+            self.0.next()
+        }
+    }
+
+    /// The watcher's log is told each time a tracker is lost, fails another
+    /// way, or comes back, and not each time it fails the same way again,
+    /// which a polled tracker does on every poll.
+    #[test]
+    fn a_tracker_is_said_to_be_reached_differently_only_when_it_is() {
+        let unplaced = TrackerFailure::Unavailable {
+            unplaced: Some(crate::model::types::testing::an_unplaced()),
+        };
+        let unreachable = |at, failure: &TrackerFailure| {
+            said(
+                "dunwich",
+                Said::Unreachable {
+                    at,
+                    failure: failure.clone(),
+                },
+            )
+        };
+        let mut source = Saying(
+            vec![
+                read("dunwich", now(), &["dun-1"]),
+                unreachable(later(10), &unplaced),
+                unreachable(later(20), &unplaced),
+                unreachable(later(30), &TrackerFailure::Auth),
+                read("dunwich", later(40), &["dun-1"]),
+                read("dunwich", later(50), &["dun-1"]),
+            ]
+            .into_iter(),
+        );
+        let mut reached = Vec::new();
+
+        hold(
+            &mut source,
+            &Mutex::new(Hold::default()),
+            &mut |project, failure| reached.push((project.to_string(), failure.cloned())),
+        );
+
+        let dunwich = |failure: Option<&TrackerFailure>| ("dunwich".to_string(), failure.cloned());
+        assert_eq!(
+            reached,
+            vec![
+                dunwich(Some(&unplaced)),
+                dunwich(Some(&TrackerFailure::Auth)),
+                dunwich(None)
+            ]
         );
     }
 

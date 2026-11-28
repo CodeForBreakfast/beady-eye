@@ -93,8 +93,8 @@ pub struct RunFailure {
     pub kind: FailureKind,
     pub program: String,
     pub detail: String,
-    pub unreadable: Option<Unreadable>,
-    pub unplaced: Option<Unplaced>,
+    pub unreadable: Option<Box<Unreadable>>,
+    pub unplaced: Option<Box<Unplaced>>,
 }
 
 /// What bd's client says when the server refuses the credential. Measured
@@ -464,10 +464,10 @@ impl RunFailure {
             kind: FailureKind::Parse,
             program: program.to_string(),
             detail: format!("{program} returned output bdi cannot read: {cause}"),
-            unreadable: Some(Unreadable {
+            unreadable: Some(Box::new(Unreadable {
                 read: String::new(),
                 cause: cause.to_string(),
-            }),
+            })),
             unplaced: None,
         }
     }
@@ -496,11 +496,11 @@ impl RunFailure {
                 command: without_password(&spelled(args), env),
                 said: cut_short(&without_password(stderr.trim(), env)),
             };
-            Self::unplaced(program, code, Some(unplaced))
+            Self::unplaced(program, code, Some(Box::new(unplaced)))
         })
     }
 
-    fn unplaced(program: &str, code: Option<i32>, unplaced: Option<Unplaced>) -> Self {
+    fn unplaced(program: &str, code: Option<i32>, unplaced: Option<Box<Unplaced>>) -> Self {
         let detail = match code {
             Some(code) => format!("{program} exited {code} for a reason bdi cannot place"),
             None => format!("{program} was killed by a signal"),
@@ -1135,22 +1135,10 @@ mod tests {
     const PANE_BUSY: &str = r#"{"error":{"code":"agent_not_idle","message":"cannot read 8 lines while wCW:pM is working: its alternate-screen history can only be captured by scrolling while idle. Wait and retry, or use --source visible"},"id":"cli:agent:read"}"#;
 
     /// The failure of a command that wrote `stderr` and exited non-zero,
-    /// without running one. `RealRunner` hands the command's stderr to
-    /// `from_exit` as lossy UTF-8 and nothing else.
+    /// without running one. `RealRunner` classifies the command's stderr as
+    /// lossy UTF-8, the same way.
     fn classified(stderr: &str) -> RunFailure {
         RunFailure::from_exit("sh", Some(1), stderr)
-    }
-
-    /// A real subprocess writing `stderr` and exiting non-zero.
-    fn failing_command(stderr: &str) -> RunFailure {
-        RealRunner
-            .run(
-                "sh",
-                &["-c", "printf '%s' \"$1\" >&2; exit 1", "sh", stderr],
-                None,
-                &Env::new(),
-            )
-            .expect_err("the command exits non-zero")
     }
 
     /// A path in this process's own scratch space that nothing holds.
@@ -1183,17 +1171,16 @@ mod tests {
     /// As gh does for an answer from GitHub holding an error.
     #[test]
     fn stdout_comes_back_beside_the_failure_of_a_command_that_prints_then_fails() {
+        let args = ["-c", "printf 'partly'; echo 'gh: refused' >&2; exit 1"];
         let printed = RealRunner
-            .run_keeping_stdout(
-                "sh",
-                &["-c", "printf 'partly'; echo 'gh: refused' >&2; exit 1"],
-                None,
-                &Env::new(),
-            )
+            .run_keeping_stdout("sh", &args, None, &Env::new())
             .expect_err("sh exits 1");
 
         assert_eq!(printed.stdout, "partly");
-        assert_eq!(printed.failure, failing_command("gh: refused"));
+        assert_eq!(
+            printed.failure,
+            RunFailure::exited("sh", &args, &Env::new(), Some(1), "gh: refused\n")
+        );
     }
 
     /// The leading risk in the design: a child inherits the parent's
@@ -1230,15 +1217,15 @@ mod tests {
 
     #[test]
     fn a_command_fed_input_that_fails_is_a_failure() {
+        let args = ["-c", "cat >/dev/null; echo 'gh: refused' >&2; exit 1"];
         let failure = RealRunner
-            .run_feeding(
-                "sh",
-                &["-c", "cat >/dev/null; echo 'gh: refused' >&2; exit 1"],
-                "x",
-            )
+            .run_feeding("sh", &args, "x")
             .expect_err("sh exits 1");
 
-        assert_eq!(failure, failing_command("gh: refused"));
+        assert_eq!(
+            failure,
+            RunFailure::exited("sh", &args, &Env::new(), Some(1), "gh: refused\n")
+        );
     }
 
     #[test]
@@ -1428,11 +1415,11 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::Unavailable);
         assert_eq!(
             failure.unplaced,
-            Some(Unplaced {
+            Some(Box::new(Unplaced {
                 command: r#"-c 'echo '\''  Error: the ledger is sealed  '\'' >&2; exit 3'"#
                     .to_string(),
                 said: "Error: the ledger is sealed".to_string(),
-            })
+            }))
         );
     }
 
@@ -1445,10 +1432,10 @@ mod tests {
 
         assert_eq!(
             failure.unplaced,
-            Some(Unplaced {
+            Some(Box::new(Unplaced {
                 command: "-c 'exit 1'".to_string(),
                 said: String::new(),
-            })
+            }))
         );
     }
 

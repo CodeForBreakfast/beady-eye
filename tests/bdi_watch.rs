@@ -333,6 +333,62 @@ fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
     assert!(freshness["reach"]["path"].is_string(), "{freshness}");
 }
 
+/// A tracker bd fails to read for a reason `bdi` cannot place is told to a
+/// watch with the command that failed and what bd said, and written where
+/// whoever supervises the watcher reads it. The password bd was handed
+/// reaches neither.
+#[test]
+fn a_tracker_failing_for_a_reason_bdi_cannot_place_says_what_bd_said_and_never_the_password() {
+    let home = a_home_naming_one_project_settled("watch-unplaced", NOT_POLLED);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.refuses_with(
+        READ_IN_FULL,
+        "Error: the ledger is sealed\n(asked as arkham with hunter2)\n",
+    );
+    let watcher = Watcher(Some(
+        bdi_watch(&home, &tracker)
+            .env("BEADS_DOLT_PASSWORD", "hunter2")
+            .spawn()
+            .expect("bdi watch starts"),
+    ));
+    until(|| reads_in_full(&tracker) == 1, "the first read");
+    until(|| watching_at(&home).exists(), "the socket");
+
+    let answer = Consumer::connected_to(&watching_at(&home))
+        .sends("watch arkham")
+        .hears_an_answer();
+    let out = stopped(watcher);
+
+    let freshness = answer.last().expect("an answer ends");
+    let unreachable = &freshness["tracker"]["unreachable"];
+    assert_eq!(unreachable["reason"], "unavailable", "{freshness}");
+    let command = unreachable["unplaced"]["command"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the command is told: {freshness}"));
+    assert!(command.ends_with(READ_IN_FULL), "{command}");
+    assert_eq!(
+        unreachable["unplaced"]["said"],
+        "Error: the ledger is sealed\n(asked as arkham with <password>)"
+    );
+    let logged = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        logged.contains(command)
+            && logged.contains("Error: the ledger is sealed (asked as arkham with <password>)"),
+        "the log says what bd said: {logged}"
+    );
+    for told in answer
+        .iter()
+        .map(Value::to_string)
+        .chain([logged.to_string()])
+    {
+        assert!(
+            !told.contains("hunter2"),
+            "the password survived into: {told}"
+        );
+    }
+}
+
 /// What a consumer that acts only on what it is told relies on: a watcher
 /// that goes closes the connection, and the next connect is refused.
 #[test]

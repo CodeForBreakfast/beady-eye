@@ -409,7 +409,7 @@ impl Pane {
 /// `tests/`, which is why it sits behind the feature rather than `cfg(test)`.
 #[cfg(feature = "testing")]
 pub mod testing {
-    use super::{PaneKey, Unreadable};
+    use super::{PaneKey, Unplaced, Unreadable};
 
     /// The session a test's panes are in unless it says otherwise: the one
     /// herdr runs where nothing names another.
@@ -424,6 +424,15 @@ pub mod testing {
         Unreadable {
             read: "list".to_string(),
             cause: "invalid type: null, expected a string at line 1 column 25".to_string(),
+        }
+    }
+
+    /// What a bd failing for a reason no phrase places keeps, said over two
+    /// lines, with its password already taken out.
+    pub fn an_unplaced() -> Unplaced {
+        Unplaced {
+            command: "--readonly list --json".to_string(),
+            said: "Error: the ledger is sealed\n(asked with <password>)".to_string(),
         }
     }
 
