@@ -2026,7 +2026,9 @@ setup: a Dolt trigger, a git hook, a bd wrapper, a systemd path unit, a cron
 comparing a head hash, someone typing the line. `bdi` builds in two producers.
 The first is bd's own: `bdi watch` follows the event stream of each tracker
 whose project names its `bd serve`, since that stream is beads' interface for
-exactly this and carries every client's writes.
+exactly this and carries every client's journalled writes. bd journals a
+write only where the process making it asks bd to, so the stream does not
+stand the project's poll down. The poll reads what the stream missed.
 
 **The second is `bdi`'s own light-touch writes.** Once bd has taken a write
 made through `bdi bd`, the terminal or a writable `bdi web`, `bdi` sends

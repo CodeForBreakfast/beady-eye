@@ -3,8 +3,10 @@
 //!
 //! What the stream says goes where a producer's lines go. A record says the
 //! project changed, and the stream opening or sending its heartbeat vouches
-//! that nothing else has. So the debounce, the poll standing down and the
-//! lapse of a project nothing vouches for are the ones a producer gets.
+//! that nothing else has. So the debounce and the lapse of a project nothing
+//! vouches for are the ones a producer gets. The poll stays up, unless the
+//! project says `poll = false`, because the stream carries only the writes bd
+//! journalled.
 //!
 //! Each record carries its journal `seq` as the event id, and `since`
 //! resumes after it, so a dropped stream picks up where it was. A `since` the
