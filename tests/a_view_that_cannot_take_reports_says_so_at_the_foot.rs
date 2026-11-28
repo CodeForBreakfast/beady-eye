@@ -1,7 +1,7 @@
 //! A view whose inbound socket stops taking connections says so at the foot
 //! without writing over the frame, and takes the notice off once the socket
-//! takes one again. A single descriptor free is room enough to answer a
-//! report.
+//! answers a report again. A single descriptor free is room enough to answer
+//! one.
 //!
 //! Driven through the binary because what this shows is where the word goes.
 //! The accept loop's own tests say when it is told, and `Shown`'s say what
@@ -16,8 +16,8 @@
 mod terminal;
 
 use terminal::descriptors::{
-    a_report_past_the_limit, answered_within, limit_open_files, lowest_free_descriptor, open_files,
-    Answered,
+    a_new_report_answered, a_report_turned_away, limit_open_files, lowest_free_descriptor,
+    open_files, Answered,
 };
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::{
@@ -59,7 +59,7 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
     let room = open_files(pid).rlim_cur;
 
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&the_socket_under(&home));
+    let _taken_past_the_limit = a_report_turned_away(&the_socket_under(&home));
     let mut rows = ROWS;
     let frame = whole_frames_until(&mut bdi, &mut rows, ROWS, COLS, GIVING_UP, says_not_taken);
     assert!(
@@ -75,9 +75,9 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
 
     limit_open_files(pid, room);
     assert_eq!(
-        answered_within(&waiting, GIVING_UP),
+        a_new_report_answered(&the_socket_under(&home), GIVING_UP),
         Answered::With("ok arkham\n".to_string()),
-        "the socket takes the report waiting on it\n{}",
+        "the socket answers a report again\n{}",
         bdi.timeline()
     );
     let frame = whole_frames_until_gone(
@@ -113,11 +113,11 @@ fn a_view_out_of_descriptors_answers_a_report_once_it_has_one_free() {
     let pid = bdi.pid() as u32;
 
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&the_socket_under(&home));
+    let _taken_past_the_limit = a_report_turned_away(&the_socket_under(&home));
     limit_open_files(pid, lowest_free_descriptor(pid) + 1);
 
     assert_eq!(
-        answered_within(&waiting, GIVING_UP),
+        a_new_report_answered(&the_socket_under(&home), GIVING_UP),
         Answered::With("ok arkham\n".to_string()),
         "{}",
         bdi.timeline()

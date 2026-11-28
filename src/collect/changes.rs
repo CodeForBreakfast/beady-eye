@@ -535,6 +535,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     // instead: a bound socket's descriptor stats as its own inode on sockfs,
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
+    hold_a_spare();
 
     thread::spawn(move || accept(queued(&channel), &each, &*taking));
 
@@ -899,54 +900,69 @@ fn is_a_socket(at: &Path) -> bool {
     fs::symlink_metadata(at).is_ok_and(|what| what.file_type().is_socket())
 }
 
-/// How long the channel waits after an accept fails before it tries again.
+/// How long the channel waits after an accept fails, and no connection could
+/// be turned away, before it tries again.
 ///
-/// An accept fails where the run holds as many files as it may, and the
-/// connection it was taking is still waiting, so the next try would fail at
-/// once and spin a core until a descriptor is free.
+/// The connection it was taking is then still waiting, so the next try would
+/// fail at once and spin a core until a descriptor is free.
 const UNTIL_ACCEPTING_AGAIN: Duration = Duration::from_millis(100);
+
+/// What came of taking the next connection on a socket.
+#[derive(Debug)]
+enum Accepted {
+    /// The connection, to be served.
+    Taken(UnixStream),
+    /// The run had no descriptor free for it, so it was taken on the spare
+    /// and closed unread.
+    TurnedAway(io::Error),
+    /// It could not be taken, and it waits for another try.
+    Failed(io::Error),
+}
 
 /// What a socket says of the connections it takes, each time that changes.
 #[derive(Debug)]
 pub enum Taking<'a> {
     /// It has stopped taking them, and this is why.
     Stopped(&'a io::Error),
-    /// It takes them again.
+    /// It serves them again.
     Again,
 }
 
-/// Take connections for as long as the run lasts, each on a thread of its
+/// Serve connections for as long as the run lasts, each on a thread of its
 /// own.
 ///
 /// An accept that fails is tried again rather than ending the channel. A run
-/// holding as many files as it may fails every accept, and takes connections
-/// again once it closes one. `taking` is told why the first accept of each
-/// run of failures failed, and told when one succeeds after it, because
-/// nobody else will be: a writer whose connection is never taken has nothing
-/// to read the reason from.
+/// holding as many files as it may fails every accept, and serves
+/// connections again once it closes one. `taking` is told why the first
+/// accept of each run of failures failed, and told when a connection is
+/// served after it, because nobody else will be: a writer whose connection is
+/// never served has nothing to read the reason from. A connection turned
+/// away is not served.
 fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
-    connections: impl IntoIterator<Item = io::Result<UnixStream>>,
+    connections: impl IntoIterator<Item = Accepted>,
     each: &Arc<F>,
     taking: &impl Fn(Taking<'_>),
 ) {
     let mut failing = false;
-    for connection in connections {
-        let connection = match connection {
-            Ok(connection) => connection,
-            Err(why) => {
-                if !std::mem::replace(&mut failing, true) {
-                    taking(Taking::Stopped(&why));
+    for accepted in connections {
+        let (why, still_waiting) = match accepted {
+            Accepted::Taken(connection) => {
+                if std::mem::replace(&mut failing, false) {
+                    taking(Taking::Again);
                 }
-                thread::sleep(UNTIL_ACCEPTING_AGAIN);
+                let each = Arc::clone(each);
+                thread::spawn(move || each(connection));
                 continue;
             }
+            Accepted::TurnedAway(why) => (why, false),
+            Accepted::Failed(why) => (why, true),
         };
-        if std::mem::replace(&mut failing, false) {
-            taking(Taking::Again);
+        if !std::mem::replace(&mut failing, true) {
+            taking(Taking::Stopped(&why));
         }
-
-        let each = Arc::clone(each);
-        thread::spawn(move || each(connection));
+        if still_waiting {
+            thread::sleep(UNTIL_ACCEPTING_AGAIN);
+        }
     }
 }
 
@@ -957,17 +973,70 @@ fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
 /// with a single descriptor free would leave it with whichever socket waited
 /// first, while a connection waited on the other. `channel` is nonblocking,
 /// so nothing holds a descriptor until a connection is there to take.
-fn queued(channel: &UnixListener) -> impl Iterator<Item = io::Result<UnixStream>> + '_ {
+///
+/// A run with no descriptor free turns the connection away on its spare, so
+/// the queue does not fill while the run waits for one. A full queue would
+/// leave every connect waiting, and on some systems refused as a dead
+/// socket's is, so another `bdi` would take the name of a live one.
+fn queued(channel: &UnixListener) -> impl Iterator<Item = Accepted> + '_ {
     std::iter::repeat_with(move || loop {
-        until_one_waits(channel)?;
+        if let Err(why) = until_one_waits(channel) {
+            return Accepted::Failed(why);
+        }
         match channel.accept() {
             // A connection takes its listener's nonblocking flag on some
             // systems, and is read and written as one that waits.
-            Ok((connection, _)) => return connection.set_nonblocking(false).map(|()| connection),
+            Ok((connection, _)) => {
+                hold_a_spare();
+                return match connection.set_nonblocking(false) {
+                    Ok(()) => Accepted::Taken(connection),
+                    Err(why) => Accepted::Failed(why),
+                };
+            }
             Err(why) if why.kind() == ErrorKind::WouldBlock => continue,
-            Err(why) => return Err(why),
+            Err(why) if no_descriptor_free(&why) && turned_one_away(channel) => {
+                return Accepted::TurnedAway(why)
+            }
+            Err(why) => return Accepted::Failed(why),
         }
     })
+}
+
+/// Whether `why` is the run, or the system, holding as many files as it may.
+fn no_descriptor_free(why: &io::Error) -> bool {
+    matches!(why.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
+}
+
+/// A descriptor held for the whole run, so that a run with no other free
+/// can still take a connection to close it. One serves every socket the run
+/// listens on.
+static SPARE: Mutex<Option<fs::File>> = Mutex::new(None);
+
+/// Hold the spare, where the run does not hold it already.
+fn hold_a_spare() {
+    let mut spare = locked(&SPARE);
+    if spare.is_none() {
+        *spare = a_spare();
+    }
+}
+
+fn a_spare() -> Option<fs::File> {
+    fs::File::open("/dev/null").ok()
+}
+
+/// Whether a connection waiting on `channel` was taken on the spare and
+/// closed. Another thread can take the descriptor the spare gives up before
+/// the accept does, and the spare is then held again once a connection is
+/// taken.
+fn turned_one_away(channel: &UnixListener) -> bool {
+    let mut spare = locked(&SPARE);
+    let Some(given_up) = spare.take().or_else(a_spare) else {
+        return false;
+    };
+    drop(given_up);
+    let turned = channel.accept().is_ok();
+    *spare = a_spare();
+    turned
 }
 
 /// Wait until a connection is queued on `channel`, without a descriptor.
@@ -2193,20 +2262,13 @@ mod tests {
 
         accept(
             [
-                Err(out_of_descriptors()),
-                Err(out_of_descriptors()),
-                Ok(connection),
-                Err(out_of_descriptors()),
+                Accepted::Failed(out_of_descriptors()),
+                Accepted::Failed(out_of_descriptors()),
+                Accepted::Taken(connection),
+                Accepted::Failed(out_of_descriptors()),
             ],
             &Arc::new(move |connection| handing.send(connection).expect("the test is listening")),
-            &move |taking: Taking<'_>| {
-                telling
-                    .send(match taking {
-                        Taking::Stopped(why) => why.raw_os_error(),
-                        Taking::Again => None,
-                    })
-                    .expect("the test is listening")
-            },
+            &telling_into(telling),
         );
 
         assert!(
@@ -2217,5 +2279,48 @@ mod tests {
             told.try_iter().collect::<Vec<_>>(),
             [Some(libc::EMFILE), None, Some(libc::EMFILE)]
         );
+    }
+
+    /// A connection turned away for want of a descriptor is not served, so
+    /// the operator is still told the socket takes none until one is.
+    #[test]
+    fn a_connection_turned_away_is_told_as_a_failure_and_not_as_taking_again() {
+        let out_of_descriptors = || std::io::Error::from_raw_os_error(libc::EMFILE);
+        let (connection, _other_end) = UnixStream::pair().expect("a connection");
+        let (handing, handed) = mpsc::channel();
+        let (telling, told) = mpsc::channel();
+
+        accept(
+            [
+                Accepted::TurnedAway(out_of_descriptors()),
+                Accepted::Failed(out_of_descriptors()),
+                Accepted::TurnedAway(out_of_descriptors()),
+                Accepted::Taken(connection),
+            ],
+            &Arc::new(move |connection| handing.send(connection).expect("the test is listening")),
+            &telling_into(telling),
+        );
+
+        assert!(
+            handed.recv_timeout(A_MOMENT).is_ok(),
+            "the connection is handed on"
+        );
+        assert_eq!(
+            told.try_iter().collect::<Vec<_>>(),
+            [Some(libc::EMFILE), None]
+        );
+    }
+
+    /// What the accept loop tells, sent on as the error's number, or as
+    /// nothing where it takes connections again.
+    fn telling_into(telling: mpsc::Sender<Option<i32>>) -> impl Fn(Taking<'_>) {
+        move |taking| {
+            telling
+                .send(match taking {
+                    Taking::Stopped(why) => why.raw_os_error(),
+                    Taking::Again => None,
+                })
+                .expect("the test is listening")
+        }
     }
 }

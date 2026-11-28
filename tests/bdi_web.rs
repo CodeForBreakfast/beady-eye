@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use terminal::descriptors::{
-    a_report_past_the_limit, answered_within, limit_open_files, lowest_free_descriptor, open_files,
-    Answered,
+    a_new_report_answered, a_report_turned_away, limit_open_files, lowest_free_descriptor,
+    open_files, Answered,
 };
 use terminal::shims::ShimmedTracker;
 use terminal::{
@@ -250,10 +250,10 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
         "the report waits on the pipe"
     );
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&socket);
+    let _taken_past_the_limit = a_report_turned_away(&socket);
     limit_open_files(pid, room);
     assert!(
-        matches!(answered_within(&waiting, GIVING_UP), Answered::With(_)),
+        matches!(a_new_report_answered(&socket, GIVING_UP), Answered::With(_)),
         "the socket takes connections again"
     );
 

@@ -281,6 +281,7 @@ struct Consumer {
 
 /// What a watcher did with a connection a consumer made.
 #[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq)]
 enum Taken {
     /// It sent a line.
     Answered,
@@ -660,17 +661,16 @@ fn a_watcher_that_stops_closes_its_consumers_and_takes_no_more() {
 }
 
 /// What a session whose connection dropped relies on: a watcher that runs
-/// out of descriptors takes it back once it has room again, without a
-/// restart.
+/// out of descriptors answers it again once it has room, without a restart.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
     let (home, _tracker, mut watcher) = a_watcher("watch-out-of-descriptors");
     let room = open_files(watcher.pid()).rlim_cur;
-    let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+    let _untaken = a_watch_out_of_descriptors(&home, &mut watcher);
 
     limit_open_files(watcher.pid(), room);
-    let answer = untaken.past.waiting.hears_an_answer();
+    let answer = a_new_watch_answered(&home);
 
     stopped(watcher);
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
@@ -684,10 +684,10 @@ fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
 fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_one_free() {
     let (home, tracker) = a_home_with_a_watcher_configured("watch-out-of-descriptors-one-free");
     let mut watcher = watching_in(&home, &tracker);
-    let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+    let _untaken = a_watch_out_of_descriptors(&home, &mut watcher);
 
     limit_open_files(watcher.pid(), lowest_free_descriptor(watcher.pid()) + 1);
-    let answer = untaken.past.waiting.hears_an_answer();
+    let answer = a_new_watch_answered(&home);
 
     stopped(watcher);
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
@@ -750,26 +750,30 @@ fn a_watcher_out_of_descriptors_saying_into_answers_once_it_has_room_again(
 ) {
     let (home, _tracker, watcher) = a_watcher_saying_into(named, NOT_POLLED, |_| {}, stderr);
     let room = open_files(watcher.pid()).rlim_cur;
-    let mut untaken = a_watch_past_the_limit(&home, &watcher);
+    let _answered = a_watch_past_the_limit(&home, &watcher);
 
     limit_open_files(watcher.pid(), room);
-    let answer = untaken.waiting.hears_an_answer();
+    let answer = a_new_watch_answered(&home);
 
     stopped(watcher);
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
 }
 
 /// What an operator relies on to learn why sessions cannot reach the
-/// watcher: it says so with the error, once however often it tries again.
+/// watcher: it says so with the error, once however many watches it turns
+/// away.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_watcher_out_of_descriptors_says_so_once() {
     let (home, _tracker, mut watcher) = a_watcher("watch-out-of-descriptors-says");
     let room = open_files(watcher.pid()).rlim_cur;
-    let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+    let untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+    for _ in 0..3 {
+        a_watch_turned_away(&home);
+    }
 
     limit_open_files(watcher.pid(), room);
-    untaken.past.waiting.hears_an_answer();
+    a_new_watch_answered(&home);
 
     stopped(watcher);
     assert_eq!(
@@ -786,64 +790,77 @@ fn a_watcher_out_of_descriptors_says_so_once() {
     );
 }
 
-/// What the rest of the machine relies on while a watcher has no descriptor
-/// free: it waits for one rather than spinning a core.
+/// What the rest of the machine relies on while a watcher cannot open a
+/// descriptor at all, not even to turn a watch away: the watch waits, the
+/// watcher waits with it rather than spinning a core, and answers it once it
+/// has room.
 #[cfg(target_os = "linux")]
 #[test]
-fn a_watcher_out_of_descriptors_spends_next_to_no_time_waiting_for_one() {
-    let (home, _tracker, mut watcher) = a_watcher("watch-out-of-descriptors-idles");
+fn a_watcher_with_no_descriptor_to_spare_leaves_a_watch_waiting_without_spinning() {
+    let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors-idles");
+    let room = open_files(watcher.pid()).rlim_cur;
+    let mut answered = Consumer::connected_to(&watching_at(&home));
+    answered.sends("watch arkham").hears_an_answer();
 
-    let untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+    limit_open_files(watcher.pid(), NONE_AT_ALL);
+    let mut waiting = Consumer::connected_to(&watching_at(&home));
+    let before = processor_time(watcher.pid());
+    let taken = waiting.taken_within("watch arkham", UNTAKEN_AFTER);
+    let spent_waiting = processor_time(watcher.pid()) - before;
+    limit_open_files(watcher.pid(), room);
+    let answer = waiting.hears_an_answer();
 
     stopped(watcher);
+    assert_eq!(taken, Taken::Waiting);
     assert!(
-        untaken.past.spent_waiting < UNTAKEN_AFTER / 5,
-        "the watcher spent {:?} of {UNTAKEN_AFTER:?} on the processor",
-        untaken.past.spent_waiting
+        spent_waiting < UNTAKEN_AFTER / 5,
+        "the watcher spent {spent_waiting:?} of {UNTAKEN_AFTER:?} on the processor"
     );
+    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
 }
 
-/// A watch the watcher has not taken because it has no descriptor free.
+/// A limit no descriptor is under, so the watcher can open none, however
+/// many it closes.
+#[cfg(target_os = "linux")]
+const NONE_AT_ALL: libc::rlim_t = 0;
+
+/// What a watcher out of descriptors has said of it, and the watches it
+/// answered before it had none.
 #[cfg(target_os = "linux")]
 struct Untaken {
-    past: PastTheLimit,
-    /// What the watcher said on finding it could not take the watch.
+    /// What the watcher said on finding it could not take a watch.
     told: String,
     /// Every line the watcher says on stderr after that.
     saying: Receiver<String>,
+    _answered: Vec<Consumer>,
 }
 
-/// A watch `watcher` cannot take, once its soft limit is lowered to the
-/// lowest descriptor it has free, as reaching its limit does. Its saying so
-/// is what shows an accept has failed, where silence on the watch would not.
+/// A watcher whose soft limit is lowered to the lowest descriptor it has
+/// free, as reaching its limit does, and what it said of the watch it turned
+/// away.
 #[cfg(target_os = "linux")]
 fn a_watch_out_of_descriptors(home: &Path, watcher: &mut Watcher) -> Untaken {
     let saying = watcher.saying();
-    let past = a_watch_past_the_limit(home, watcher);
+    let _answered = a_watch_past_the_limit(home, watcher);
     let told = saying
         .recv_timeout(GIVING_UP)
         .expect("the watcher says it cannot take the watch");
-    Untaken { past, told, saying }
+    Untaken {
+        told,
+        saying,
+        _answered,
+    }
 }
 
-/// A watch `watcher` has not taken within [`UNTAKEN_AFTER`] of its soft
-/// limit being lowered to the lowest descriptor it has free.
-#[cfg(target_os = "linux")]
-struct PastTheLimit {
-    waiting: Consumer,
-    /// The processor time the watcher spent while the watch waited.
-    spent_waiting: Duration,
-    _taken_past_the_limit: Vec<Consumer>,
-}
-
-/// A watch `watcher` has not taken once its soft limit is lowered to the
-/// lowest descriptor it has free.
+/// The watches `watcher` answered once its soft limit was lowered to the
+/// lowest descriptor it has free, sent one at a time until it turned one
+/// away.
 ///
 /// A read of the tracker can hold a descriptor for a moment as the limit is
-/// lowered, so the watcher can take a connection past the limit, and answer
-/// it or drop it, before it fails to take one.
+/// lowered, so the watcher can take a watch past the limit and answer it
+/// before it turns one away.
 #[cfg(target_os = "linux")]
-fn a_watch_past_the_limit(home: &Path, watcher: &Watcher) -> PastTheLimit {
+fn a_watch_past_the_limit(home: &Path, watcher: &Watcher) -> Vec<Consumer> {
     let mut answered = Consumer::connected_to(&watching_at(home));
     answered.sends("watch arkham").hears_an_answer();
 
@@ -851,24 +868,35 @@ fn a_watch_past_the_limit(home: &Path, watcher: &Watcher) -> PastTheLimit {
     let mut taken_past_the_limit = vec![answered];
     loop {
         let mut consumer = Consumer::connected_to(&watching_at(home));
-        let before = processor_time(watcher.pid());
-        let taken = consumer.taken_within("watch arkham", UNTAKEN_AFTER);
-        let spent_waiting = processor_time(watcher.pid()) - before;
-        match taken {
-            Taken::Waiting => {
-                return PastTheLimit {
-                    waiting: consumer,
-                    spent_waiting,
-                    _taken_past_the_limit: taken_past_the_limit,
-                }
-            }
-            Taken::Answered | Taken::Dropped => taken_past_the_limit.push(consumer),
+        match consumer.taken_within("watch arkham", UNTAKEN_AFTER) {
+            Taken::Dropped => return taken_past_the_limit,
+            Taken::Answered => taken_past_the_limit.push(consumer),
+            Taken::Waiting => panic!("the watcher left a watch waiting rather than turn it away"),
         }
         assert!(
             taken_past_the_limit.len() <= TAKEN_PAST_THE_LIMIT_AT_MOST,
             "the watcher kept taking connections past its limit"
         );
     }
+}
+
+/// A watch sent to a watcher with no descriptor free, which it closes
+/// unanswered rather than leave waiting.
+#[cfg(target_os = "linux")]
+fn a_watch_turned_away(home: &Path) {
+    let mut consumer = Consumer::connected_to(&watching_at(home));
+    assert_eq!(
+        consumer.taken_within("watch arkham", UNTAKEN_AFTER),
+        Taken::Dropped
+    );
+}
+
+/// The answer to a watch sent on a new connection.
+#[cfg(target_os = "linux")]
+fn a_new_watch_answered(home: &Path) -> Vec<Value> {
+    Consumer::connected_to(&watching_at(home))
+        .sends("watch arkham")
+        .hears_an_answer()
 }
 
 /// The processor time `pid` has spent, in user and system time together.

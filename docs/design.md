@@ -2294,22 +2294,26 @@ What goes at the end of it is the sentence and not the fact: the `stderr` line
 is still on the primary screen where it was written, carrying the path and the
 remedy no phrase could.
 
-**A socket that stops taking connections says so, and keeps trying.** A run
-holding as many files as it may fails every accept, and the connection being
-taken stays queued, so the next try would fail at once. The accept loop waits
-a tenth of a second between tries rather than spin a core, and takes
-connections again once the run has a descriptor free. A connection is read,
-answered and hung up on through the one descriptor it was taken on, so one
-free is room enough to serve it. A socket accepts only once a connection
-waits on it, so a socket with nothing waiting holds no descriptor back from
-one that has. It says why at the first failure of each
-run of them. `bdi watch`, `bdi web` and `bdi gates` say it on `stderr`,
+**A socket that stops taking connections says so, turns them away, and
+keeps trying.** A run holding as many files as it may fails every accept. It
+holds one descriptor spare for every socket it listens on, and gives it up
+for a moment to take the waiting connection and close it unread, so the
+queue does not fill. A full queue would leave every connect waiting, and on
+macOS refused as a dead socket's is, so another `bdi` would take the name of
+a live one. Where even the spare cannot be had, the connection stays queued
+and the next try would fail at once, so the accept loop waits a tenth of a
+second between tries rather than spin a core. The socket serves connections
+again once the run has a descriptor free. A connection is read, answered and
+hung up on through the one descriptor it was taken on, so one free is room
+enough to serve it. A socket accepts only once a connection waits on it, so
+a socket with nothing waiting holds no descriptor back from one that has. It
+says why at the first failure of each run of them. `bdi watch`, `bdi web` and `bdi gates` say it on `stderr`,
 naming the socket and the error, from a thread of their own and straight to
 the descriptor, without the lock Rust's `stderr` holds across a write. A
 `stderr` that refuses the write or is never read then holds up neither the
 loop nor anything else the run says on `stderr`. A view says it at the foot instead, *bdi cannot take reports of changes ·
 <error> · it keeps trying*, because its `stderr` is the screen. That notice
-comes off when the socket takes a connection again.
+comes off when the socket serves a connection again.
 
 `README.md` carries the worked example: a `bd` wrapper that writes the project
 name to the socket after any command that wrote something.

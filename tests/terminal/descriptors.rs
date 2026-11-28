@@ -1,5 +1,5 @@
 //! A run's open-files limit, read and lowered from outside it, and a report
-//! sent until the run takes no more, for a test of what `bdi` does once it
+//! sent until the run turns one away, for a test of what `bdi` does once it
 //! holds as many files as it may.
 //!
 //! Linux only, because the descriptors a run holds are read off `/proc`.
@@ -70,31 +70,53 @@ pub enum Answered {
     Waiting,
 }
 
-/// A report sent on a connection to the socket `at` that its run has not
-/// taken, once the run's limit is lowered, and the connections it took
-/// before it stopped. Each is sent on its own, so the run runs out of room
-/// before the one it does not take.
-pub fn a_report_past_the_limit(
-    at: &std::path::Path,
-) -> (
-    std::os::unix::net::UnixStream,
-    Vec<std::os::unix::net::UnixStream>,
-) {
-    use std::io::Write;
+/// The reports the run at the socket `at` answered once its limit was
+/// lowered, sent one at a time until it turned one away. Each is sent on its
+/// own, so the run runs out of room before the one it turns away.
+pub fn a_report_turned_away(at: &std::path::Path) -> Vec<std::os::unix::net::UnixStream> {
     let mut taken_past_the_limit = Vec::new();
     loop {
-        let mut reporting =
+        let reporting =
             std::os::unix::net::UnixStream::connect(at).expect("the socket queues the connection");
-        writeln!(reporting, "arkham").expect("the report is ours to send");
-        match answered_within(&reporting, UNTAKEN_AFTER) {
-            Answered::Waiting => return (reporting, taken_past_the_limit),
-            Answered::With(_) | Answered::Dropped => taken_past_the_limit.push(reporting),
+        match reported_on(&reporting) {
+            Answered::Dropped => return taken_past_the_limit,
+            Answered::With(_) => taken_past_the_limit.push(reporting),
+            Answered::Waiting => panic!("the run left a report waiting rather than turn it away"),
         }
         assert!(
             taken_past_the_limit.len() < PAST_THE_LIMIT,
             "the run kept taking connections past its limit"
         );
     }
+}
+
+/// What the run did with a report sent on `reporting`, read for
+/// [`UNTAKEN_AFTER`]. A run that turns the connection away can close it
+/// before the report is sent.
+fn reported_on(mut reporting: &std::os::unix::net::UnixStream) -> Answered {
+    use std::io::{ErrorKind, Write};
+    match writeln!(reporting, "arkham") {
+        Ok(()) => answered_within(reporting, UNTAKEN_AFTER),
+        Err(why)
+            if matches!(
+                why.kind(),
+                ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+            ) =>
+        {
+            Answered::Dropped
+        }
+        Err(why) => panic!("the report is ours to send ({why})"),
+    }
+}
+
+/// What the run at the socket `at` answers to a report sent on a new
+/// connection, read for `quiet`.
+pub fn a_new_report_answered(at: &std::path::Path, quiet: std::time::Duration) -> Answered {
+    use std::io::Write;
+    let mut reporting =
+        std::os::unix::net::UnixStream::connect(at).expect("the socket queues the connection");
+    writeln!(reporting, "arkham").expect("the report is ours to send");
+    answered_within(&reporting, quiet)
 }
 
 /// What the run answered on `reporting`, read for `quiet`.
@@ -120,8 +142,8 @@ pub fn answered_within(
 /// it.
 const UNTAKEN_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// More connections than a run with no descriptor free takes before an
-/// accept fails. A collection or a check of the config can hold a descriptor
+/// More connections than a run with no descriptor free takes before it turns
+/// one away. A collection or a check of the config can hold a descriptor
 /// for a moment as the limit is lowered, and the run takes a connection on
 /// each one that closes.
 const PAST_THE_LIMIT: usize = 16;
