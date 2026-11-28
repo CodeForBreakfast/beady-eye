@@ -1227,6 +1227,12 @@ pub fn not_in_any_tree() -> &'static str {
     "This bead is not in any tree"
 }
 
+/// What a web page's bead view says over a bead that the list or the root
+/// the page is drawn with leaves out of the forest beside it.
+pub fn hidden_by_the_view() -> &'static str {
+    "This view hides this bead"
+}
+
 /// The link on a web page that says only one sentence, back to the forest.
 pub fn back() -> &'static str {
     "✕ back"

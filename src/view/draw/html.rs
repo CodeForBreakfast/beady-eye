@@ -88,13 +88,28 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     let matched = matches!(shown.landed, Some(Landed::On { .. }));
     let drawing = Drawing {
         forest,
+        linked: forest,
         layout,
         asked,
         selected: (node.is_some() || matched).then(|| forest.selected_line()),
         writes: drawn.writes,
     };
 
-    let title = node.map_or_else(
+    let unhidden = shown.unhidden.as_ref().map(|unhidden| {
+        let drawing = Drawing {
+            forest: &unhidden.forest,
+            linked: forest,
+            layout,
+            asked,
+            selected: None,
+            writes: drawing.writes,
+        };
+        (drawing, &unhidden.asked)
+    });
+    let hidden = unhidden
+        .as_ref()
+        .and_then(|(drawing, _)| show::selected(drawing.forest));
+    let title = node.or(hidden).map_or_else(
         || phrase::PRODUCT.to_string(),
         |node| phrase::bead_page_title(&node.title),
     );
@@ -119,12 +134,24 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
             escaped(&phrase::back_to(&list)),
             escaped(&list)
         ));
-        match node {
-            Some(node) => {
+        match (node, &unhidden, hidden) {
+            (Some(node), _, _) => {
                 drawing.actions(&mut html, node);
-                drawing.bead_view(&mut html, node, offset);
+                drawing.bead_view(&mut html, node, offset, None);
             }
-            None => html.push_str(&format!(
+            (None, Some((panel, every_tree)), Some(node)) => {
+                let among_every_tree = Drawing {
+                    asked: every_tree,
+                    ..*panel
+                };
+                among_every_tree.actions(&mut html, node);
+                let shown_among_every_tree = panel.forest.place().map_or_else(
+                    || every_tree.opening(key),
+                    |place| every_tree.opening_at(place),
+                );
+                panel.bead_view(&mut html, node, offset, Some(&shown_among_every_tree));
+            }
+            _ => html.push_str(&format!(
                 "<p class=\"missing\">{}</p>",
                 not_in_any_tree(key)
             )),
@@ -135,7 +162,7 @@ pub fn page(snapshot: Snapshot, layout: &Layout, asked: &Asked, drawn: Drawn) ->
     drawing.foot(&mut html, shown.landed, &shown.searched);
     html.push_str("</body></html>\n");
     Answer {
-        found: asked.bead.is_none() || node.is_some(),
+        found: asked.bead.is_none() || node.or(hidden).is_some(),
         html: kept_current(&title, &html),
     }
 }
@@ -411,6 +438,10 @@ fn head(title: &str, version: Option<&str>) -> String {
 /// asked, and the line the bead asked for is on.
 struct Drawing<'a> {
     forest: &'a Forest,
+    /// The forest the page draws, where a link to a bead keeps to what was
+    /// asked if it reaches the bead. It differs from `forest` only where the
+    /// view hides the bead asked for, which the panel draws from every tree.
+    linked: &'a Forest,
     layout: &'a Layout,
     asked: &'a Asked,
     selected: Option<usize>,
@@ -1062,7 +1093,15 @@ impl Drawing<'_> {
     /// prose, which reads as its author wrote it rather than in the
     /// terminal's rows, and each section that names beads, which is a list
     /// with a reference to each bead it names.
-    fn bead_view(&self, html: &mut String, node: &Node, offset: FixedOffset) {
+    /// The panel's view of `node`, headed where the view hides the bead by
+    /// a band saying so and linking `shown_among_every_tree`.
+    fn bead_view(
+        &self,
+        html: &mut String,
+        node: &Node,
+        offset: FixedOffset,
+        shown_among_every_tree: Option<&str>,
+    ) {
         let forest = self.forest;
         let mentioned = show::mentioned(forest, node);
         let followable = |related: &Related| show::followable(forest, related);
@@ -1082,6 +1121,14 @@ impl Drawing<'_> {
             .collect();
 
         html.push_str("<div class=\"page\"><div class=\"head\">");
+        if let Some(every_tree) = shown_among_every_tree {
+            html.push_str(&format!(
+                "<p class=\"hidden\">{} <a class=\"all\" href=\"{}\">{}</a></p>",
+                escaped(phrase::hidden_by_the_view()),
+                escaped(every_tree),
+                escaped(phrase::show_all())
+            ));
+        }
         self.head(html, node, &page);
         html.push_str("</div>");
         let listed_from = page.tied.first().map_or(page.rows.len(), |tied| tied.from);
@@ -1387,8 +1434,8 @@ impl Drawing<'_> {
     /// with as its only root, or without a row in the list drawn, opens with
     /// every tree drawn, because this page has no line to show it on.
     fn opening(&self, key: &BeadKey) -> String {
-        match self.forest.reaches(key) {
-            Some(place) if self.forest.list().is_some() => self.asked.opening_at(&place),
+        match self.linked.reaches(key) {
+            Some(place) if self.linked.list().is_some() => self.asked.opening_at(&place),
             Some(_) => self.asked.opening(key),
             None => Asked {
                 root: Root::Whole,
@@ -1951,6 +1998,7 @@ vertical-align:bottom}\
 .page .prose .bead{display:inline;width:auto}.page .prose .bead>span:not([class]){display:inline}\
 .page .prose .bead .title{font-size:inherit;line-height:inherit;color:var(--accent)}.page .prose .bead .id{font-size:var(--size-detail)}\
 .page .head{display:flex;flex-direction:column;gap:10px;white-space:normal}\
+.page .hidden{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0;padding:10px 12px;border-radius:10px;background:var(--accent-soft)}\
 .page .head .state{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0}\
 .page .head .state>.id,.waits>.id,.missing>.id{font:500 var(--size-detail) var(--body);color:var(--muted);letter-spacing:.01em}\
 .status{--status:var(--muted);display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 8px;\
@@ -4296,6 +4344,22 @@ mod tests {
         let opened = page_of(reached_twice(), &bead_link(&bead, other));
 
         assert_eq!(shown_line(&opened), other, "{:#?}", page_lines(&opened));
+    }
+
+    /// A copy followed onto a page whose view hides the bead is the copy
+    /// the bead is shown on among every tree.
+    #[test]
+    fn a_bead_the_view_hides_is_shown_among_every_tree_on_the_copy_followed() {
+        let (bead, other) = the_other_copy();
+        let hidden = page_of(
+            reached_twice(),
+            &format!("{}&ready=1", bead_link(&bead, other)),
+        );
+
+        let band = &hidden[hidden.find("<p class=\"hidden\">").expect("a band says so")..];
+        let shown = page_of(reached_twice(), &link_saying(band, phrase::show_all()));
+
+        assert_eq!(shown_line(&shown), other, "{:#?}", page_lines(&shown));
     }
 
     #[test]
@@ -7342,8 +7406,12 @@ mod tests {
             );
         }
         let said = format!("{}?ready=1", address(&key("smt-4kd3p.8")));
-        assert!(!started_answer(&ready, &said).found);
-        assert!(!page_at(&said).found);
+        for answer in [started_answer(&ready, &said), page_at(&said)] {
+            assert_eq!(
+                page_lines(&answer.html),
+                page_lines(&page_at("/?ready=1").html)
+            );
+        }
 
         // Where the list alone leaves the bead out, the roots stay.
         let both = Start {
@@ -7380,6 +7448,74 @@ mod tests {
             page_lines(&answer.html),
             page_lines(&started_page_at(&ready, &outside_the_root))
         );
+    }
+
+    /// A bead the list or the root an address names leaves out is still
+    /// shown, over the forest the address draws, with a band saying the view
+    /// hides it and a link to the bead among every tree. Its tree, shown
+    /// only, draws it too, and so does the page each bead its view names
+    /// opens, keeping the view where the view draws that bead.
+    #[test]
+    fn a_bead_the_view_hides_is_shown_and_said_to_be_hidden() {
+        let theming = format!("view={}", VIEWS[0].0);
+        let hiding = [
+            ("smt-4kd3p.8", "ready=1"),
+            ("smt-4kd3p.8", theming.as_str()),
+            ("smt-4kd3p.8", "check=1"),
+            ("smt-4kd3p.2", "left=1&project=summit-works"),
+            (
+                "smt-4kd3p.4",
+                "root=summit-works%3Asmt-4kd3p%2Fsummit-works%3Asmt-4kd3p.6",
+            ),
+        ];
+        let held = ground();
+        for (bead, query) in hiding {
+            let (target, view) = (
+                format!("{}?{query}", address(&key(bead))),
+                format!("/?{query}"),
+            );
+            let answer = page_at(&target);
+            assert!(answer.found, "{target}");
+            assert_eq!(page_lines(&answer.html), page_lines(&page_at(&view).html));
+            assert!(!answer.html.contains("class=\"line shown\""), "{target}");
+            let aside = &answer.html[answer.html.find("<aside").expect("the bead is open")..];
+            assert!(!aside.contains("class=\"missing\""), "{aside}");
+            let title = &held.node(&key(bead)).expect("the ground holds it").title;
+            assert!(text_of(aside).contains(title.as_str()), "{target}: {aside}");
+            // The band heads the bead's view rather than taking a row of the
+            // panel's own, which a phone lays out around its bar of actions.
+            let head = "<div class=\"page\"><div class=\"head\">";
+            let at = aside.find(&format!("{head}<p class=\"hidden\">"));
+            let band = &aside[at.expect("a band heads the view") + head.len()..];
+            assert!(
+                text_of(&band[..band.find("</p>").expect("the band ends")])
+                    .starts_with(phrase::hidden_by_the_view()),
+                "{band}"
+            );
+            let shown = Asked::of(&link_saying(band, phrase::show_all())).expect("a page");
+            assert_eq!(
+                (shown.bead.clone(), shown.list.clone()),
+                (Some(key(bead)), None)
+            );
+            assert!(shown.roots().is_empty(), "{shown:?}");
+            assert!(page_at(&link_saying(band, phrase::show_all()))
+                .html
+                .contains("class=\"line shown\""));
+            let tree = page_at(&link_saying(aside, phrase::only_this_tree())).html;
+            assert!(tree.contains("class=\"line shown\""), "{target}: {tree}");
+            for (id, named) in named_by_the_bead_view(&answer.html) {
+                let opened = page(ground(), &Layout::default(), &named, drawing()).html;
+                assert!(
+                    opened.contains("class=\"line shown\""),
+                    "{target} names {id}"
+                );
+            }
+        }
+        let ready = format!("{}?ready=1", address(&key("smt-4kd3p.8")));
+        let named = named_by_the_bead_view(&page_at(&ready).html);
+        assert!(named["smt-4kd3p"].list.is_some(), "{named:?}");
+        let ground = page_at(&address(&key("smt-4kd3p.8"))).html;
+        assert!(!ground.contains("<p class=\"hidden\">"), "{ground}");
     }
 
     /// The links on a page drawn from its start leave the start to the
