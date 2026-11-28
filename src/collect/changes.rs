@@ -15,7 +15,7 @@
 //! the loop or the terminal being put back.
 
 use std::collections::BTreeSet;
-use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::io::{self, BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -477,13 +477,20 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
 
 /// Open the channel and start watching it, reporting what stopped it
 /// rather than failing: a `bdi` nothing can reach still draws, just polled.
+/// `cannot_accept` is told why, each time the channel starts failing to take
+/// connections.
 pub fn watch(
     at: Option<PathBuf>,
     reported: &Reported,
     changed: impl Report,
+    cannot_accept: impl Fn(&io::Error) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let reported = reported.clone();
-    serve(at, move |writer| hear(writer, &reported, &changed))
+    serve(
+        at,
+        move |writer| hear(writer, &reported, &changed),
+        cannot_accept,
+    )
 }
 
 /// The channel a view `opened`, or the refusal worth saying where it could
@@ -505,13 +512,15 @@ pub fn opened_unless_a_watcher_holds_it(
 }
 
 /// Open a socket and hand each connection to `each` on a thread of its own,
-/// reporting what stopped it rather than failing.
+/// reporting what stopped it rather than failing. `cannot_accept` is told
+/// why, each time the socket starts failing to take connections.
 pub fn serve(
     at: Option<PathBuf>,
     each: impl Fn(UnixStream) + Send + Sync + 'static,
+    cannot_accept: impl Fn(&io::Error) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
-    listening(at, reclaim, Arc::new(each))
+    listening(at, reclaim, Arc::new(each), Arc::new(cannot_accept))
 }
 
 /// What to do with a name some other socket already holds.
@@ -521,6 +530,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     at: PathBuf,
     in_use: InUse,
     each: Arc<F>,
+    cannot_accept: Arc<impl Fn(&io::Error) + Send + Sync + 'static>,
 ) -> Result<Socket, Refused> {
     let channel = bind(&at, in_use)?;
     // Read before anything else this run does, so the name has had as little
@@ -529,7 +539,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
 
-    thread::spawn(move || accept(&channel, &each));
+    thread::spawn(move || accept(channel.incoming(), &each, &*cannot_accept));
 
     Ok(Socket { at, bound })
 }
@@ -537,8 +547,10 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
 /// The inbound channel at `at`, taken from whatever socket holds it, live or
 /// not. Every `every` after that, for as long as `holding` says, it is taken
 /// back where the name has gone or what holds it now is dead. Each time it
-/// cannot be taken, `lost` is told why, once until it is taken again. Nothing
-/// where there is no path, as there is none for a view either.
+/// cannot be taken, `lost` is told why, once until it is taken again, and
+/// `cannot_accept` each time a socket taken starts failing to take
+/// connections. Nothing where there is no path, as there is none for a view
+/// either.
 ///
 /// For `bdi watch`, which every view reads through, so a change pushed to
 /// any view's socket is one it has to hear. A view holding the name can pass
@@ -554,6 +566,7 @@ pub fn keep(
     every: Duration,
     holding: impl Fn() -> bool + Send + 'static,
     lost: impl Fn(&Refused) + Send + 'static,
+    cannot_accept: impl Fn(&io::Error) + Send + Sync + 'static,
 ) -> Kept {
     let kept = Arc::new(Mutex::new(None));
     let Some(at) = at else {
@@ -561,7 +574,15 @@ pub fn keep(
     };
     let reported = reported.clone();
     let each = Arc::new(move |writer| hear(writer, &reported, &changed));
-    let take = move |in_use| listening(at.clone(), in_use, Arc::clone(&each));
+    let cannot_accept = Arc::new(cannot_accept);
+    let take = move |in_use| {
+        listening(
+            at.clone(),
+            in_use,
+            Arc::clone(&each),
+            Arc::clone(&cannot_accept),
+        )
+    };
 
     let mut said = match take(take_over) {
         Ok(socket) => {
@@ -825,13 +846,27 @@ const UNTIL_ACCEPTING_AGAIN: Duration = Duration::from_millis(100);
 ///
 /// An accept that fails is tried again rather than ending the channel. A run
 /// holding as many files as it may fails every accept, and takes connections
-/// again once it closes one.
-fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(channel: &UnixListener, each: &Arc<F>) {
-    for connection in channel.incoming() {
-        let Ok(connection) = connection else {
-            thread::sleep(UNTIL_ACCEPTING_AGAIN);
-            continue;
+/// again once it closes one. `cannot_accept` is told why the first accept of
+/// each run of failures failed, because nobody else will be: a writer whose
+/// connection is never taken has nothing to read the reason from.
+fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
+    connections: impl IntoIterator<Item = io::Result<UnixStream>>,
+    each: &Arc<F>,
+    cannot_accept: &impl Fn(&io::Error),
+) {
+    let mut failing = false;
+    for connection in connections {
+        let connection = match connection {
+            Ok(connection) => connection,
+            Err(why) => {
+                if !std::mem::replace(&mut failing, true) {
+                    cannot_accept(&why);
+                }
+                thread::sleep(UNTIL_ACCEPTING_AGAIN);
+                continue;
+            }
         };
+        failing = false;
 
         let each = Arc::clone(each);
         thread::spawn(move || each(connection));
@@ -1059,7 +1094,8 @@ mod tests {
     /// An open channel, and the end of it the loop would be reading.
     fn open(at: &Path, reported: &Reported) -> (Socket, Receiver<Heard>) {
         let (changed, changes) = mpsc::channel();
-        let socket = watch(Some(at.to_path_buf()), reported, changed).expect("the socket opens");
+        let socket =
+            watch(Some(at.to_path_buf()), reported, changed, |_| {}).expect("the socket opens");
         (socket, changes)
     }
 
@@ -1283,7 +1319,7 @@ mod tests {
     fn without_a_runtime_directory_there_is_no_inbound_channel() {
         let (changed, _changes) = mpsc::channel();
 
-        let refused = watch(None, &watching(["arkham", "ferry"]), changed);
+        let refused = watch(None, &watching(["arkham", "ferry"]), changed, |_| {});
 
         assert!(matches!(refused, Err(Refused::NoRuntimeDirectory)));
     }
@@ -1516,7 +1552,7 @@ mod tests {
         let at = a_socket_in_a_directory_moded("open-directory", 0o777);
 
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed, |_| {});
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1570,7 +1606,7 @@ mod tests {
         let at = shared.join("mine").join("changes.sock");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed, |_| {});
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1602,7 +1638,7 @@ mod tests {
 
         let at = shared.join("link").join("changes.sock");
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at), &watching(["arkham"]), changed);
+        let refused = watch(Some(at), &watching(["arkham"]), changed, |_| {});
 
         let named = match refused.err() {
             Some(Refused::NameOthersMayTake(directory)) => directory,
@@ -1729,7 +1765,7 @@ mod tests {
         std::fs::write(&at, "what the reader meant to keep").expect("a file to be typed over");
 
         let (changed, _changes) = mpsc::channel();
-        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed);
+        let refused = watch(Some(at.clone()), &watching(["arkham"]), changed, |_| {});
 
         assert!(
             matches!(refused, Err(Refused::NotASocket(_))),
@@ -1751,7 +1787,7 @@ mod tests {
         let (_first, _changes) = open(&at, &reported);
 
         let (changed, _changes) = mpsc::channel();
-        let second = watch(Some(at.clone()), &reported, changed);
+        let second = watch(Some(at.clone()), &reported, changed, |_| {});
 
         assert!(matches!(second, Err(Refused::AlreadyWatching(_))));
         say(&at, &[("arkham\n", "ok arkham")]);
@@ -1861,6 +1897,7 @@ mod tests {
             move |refused| {
                 let _ = said.send(refused.to_string());
             },
+            |_| {},
         );
         (kept, changes, refusals)
     }
@@ -1995,5 +2032,40 @@ mod tests {
         let told = PathBuf::from("/var/folders/T/bdi/changes.sock");
 
         assert_eq!(where_writers_find_bdi(Some(told.clone())), Some(told));
+    }
+
+    /// A run out of descriptors fails every accept until it closes one. Its
+    /// operator is told once for each run of failures, and the connection
+    /// taken between two runs is still handed on.
+    #[test]
+    fn a_run_of_failed_accepts_is_told_once_and_the_connection_after_it_is_taken() {
+        let out_of_descriptors = || std::io::Error::from_raw_os_error(libc::EMFILE);
+        let (connection, _other_end) = UnixStream::pair().expect("a connection");
+        let (handing, handed) = mpsc::channel();
+        let (telling, told) = mpsc::channel();
+
+        accept(
+            [
+                Err(out_of_descriptors()),
+                Err(out_of_descriptors()),
+                Ok(connection),
+                Err(out_of_descriptors()),
+            ],
+            &Arc::new(move |connection| handing.send(connection).expect("the test is listening")),
+            &move |why: &std::io::Error| {
+                telling
+                    .send(why.raw_os_error())
+                    .expect("the test is listening")
+            },
+        );
+
+        assert!(
+            handed.recv_timeout(A_MOMENT).is_ok(),
+            "the connection is handed on"
+        );
+        assert_eq!(
+            told.try_iter().collect::<Vec<_>>(),
+            [Some(libc::EMFILE), Some(libc::EMFILE)]
+        );
     }
 }

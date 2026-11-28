@@ -36,7 +36,7 @@ use crate::view::forest::listed;
 use crate::view::{phrase, Notice};
 
 use super::{
-    arming, parses_as_launched, read_config, where_producers_find_this_run,
+    arming, not_taking_connections, parses_as_launched, read_config, where_producers_find_this_run,
     where_this_machine_watches, Launch, Polling, Reading, ViewOptions,
 };
 
@@ -462,7 +462,8 @@ fn refreshing_for(
 ) -> (Refreshing, Option<Socket>) {
     let armed = arms(cfg);
     let reported = Reported::watching(armed.iter().map(|project| project.project().to_string()));
-    let opened = changes::watch(at, &reported, PassingOn { passing_on, told });
+    let not_taking = not_taking_connections("bdi web", at.clone().unwrap_or_default());
+    let opened = changes::watch(at, &reported, PassingOn { passing_on, told }, not_taking);
     let socket = changes::opened_unless_a_watcher_holds_it(opened, || {
         watched::answers(where_this_machine_watches(cfg).as_deref())
     })

@@ -14,6 +14,8 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+#[cfg(target_os = "linux")]
+use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -78,6 +80,27 @@ impl Watcher {
 
     fn pid(&self) -> u32 {
         self.0.as_ref().expect("the watcher is still held").id()
+    }
+
+    /// Each line the watcher says on stderr from here on, as it says it.
+    /// [`stopped`] then hands back none of them.
+    #[cfg(target_os = "linux")]
+    fn saying(&mut self) -> Receiver<String> {
+        let stderr = self
+            .0
+            .as_mut()
+            .and_then(|child| child.stderr.take())
+            .expect("the watcher's stderr is still ours to read");
+        let (saying, said) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let line = line.expect("the watcher says text");
+                if saying.send(line).is_err() {
+                    return;
+                }
+            }
+        });
+        said
     }
 }
 
@@ -399,16 +422,42 @@ fn a_watcher_that_stops_closes_its_consumers_and_takes_no_more() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
-    let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors");
+    let (home, _tracker, mut watcher) = a_watcher("watch-out-of-descriptors");
     let room = open_files(watcher.pid()).rlim_cur;
-    let mut untaken = a_watch_out_of_descriptors(&home, &watcher);
+    let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
 
     limit_open_files(watcher.pid(), room);
     let answer = untaken.waiting.hears_an_answer();
 
-    let out = stopped(watcher);
+    stopped(watcher);
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
-    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+/// What an operator relies on to learn why sessions cannot reach the
+/// watcher: it says so with the error, once however often it tries again.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_watcher_out_of_descriptors_says_so_once() {
+    let (home, _tracker, mut watcher) = a_watcher("watch-out-of-descriptors-says");
+    let room = open_files(watcher.pid()).rlim_cur;
+    let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+
+    limit_open_files(watcher.pid(), room);
+    untaken.waiting.hears_an_answer();
+
+    stopped(watcher);
+    assert_eq!(
+        untaken.told,
+        format!(
+            "bdi watch cannot take connections on {}, and keeps trying: \
+             Too many open files (os error 24)",
+            watching_at(&home).display()
+        )
+    );
+    assert_eq!(
+        untaken.saying.iter().collect::<Vec<_>>(),
+        Vec::<String>::new()
+    );
 }
 
 /// What the rest of the machine relies on while a watcher has no descriptor
@@ -416,9 +465,9 @@ fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_watcher_out_of_descriptors_spends_next_to_no_time_waiting_for_one() {
-    let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors-idles");
+    let (home, _tracker, mut watcher) = a_watcher("watch-out-of-descriptors-idles");
 
-    let untaken = a_watch_out_of_descriptors(&home, &watcher);
+    let untaken = a_watch_out_of_descriptors(&home, &mut watcher);
 
     stopped(watcher);
     assert!(
@@ -434,6 +483,10 @@ struct Untaken {
     waiting: Consumer,
     /// The processor time the watcher spent while the watch waited.
     spent_waiting: Duration,
+    /// What the watcher said on finding it could not take the watch.
+    told: String,
+    /// Every line the watcher says on stderr after that.
+    saying: Receiver<String>,
     _taken_past_the_limit: Vec<Consumer>,
 }
 
@@ -442,9 +495,11 @@ struct Untaken {
 ///
 /// A thread already blocked in accept holds the descriptor its next
 /// connection takes, so the watcher can take a connection past the limit,
-/// and answer it or drop it, before it fails to take one.
+/// and answer it or drop it, before it fails to take one. Its saying so is
+/// what shows an accept has failed, where silence on the watch would not.
 #[cfg(target_os = "linux")]
-fn a_watch_out_of_descriptors(home: &Path, watcher: &Watcher) -> Untaken {
+fn a_watch_out_of_descriptors(home: &Path, watcher: &mut Watcher) -> Untaken {
+    let saying = watcher.saying();
     let mut answered = Consumer::connected_to(&watching_at(home));
     answered.sends("watch arkham").hears_an_answer();
 
@@ -457,11 +512,16 @@ fn a_watch_out_of_descriptors(home: &Path, watcher: &Watcher) -> Untaken {
         let spent_waiting = processor_time(watcher.pid()) - before;
         match taken {
             Taken::Waiting => {
+                let told = saying
+                    .recv_timeout(GIVING_UP)
+                    .expect("the watcher says it cannot take the watch");
                 return Untaken {
                     waiting: consumer,
                     spent_waiting,
+                    told,
+                    saying,
                     _taken_past_the_limit: taken_past_the_limit,
-                }
+                };
             }
             Taken::Answered | Taken::Dropped => taken_past_the_limit.push(consumer),
         }

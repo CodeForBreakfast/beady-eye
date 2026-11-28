@@ -818,10 +818,14 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let producing = heard_by.clone();
     // Held, not discarded: the socket comes off the filesystem when this
     // returns.
-    let _socket = match changes::serve(at.clone(), move |connection| {
-        let (held, reported) = &serving;
-        serve(connection, held, reported, &heard_by);
-    }) {
+    let _socket = match changes::serve(
+        at.clone(),
+        move |connection| {
+            let (held, reported) = &serving;
+            serve(connection, held, reported, &heard_by);
+        },
+        not_taking_connections("bdi watch", at.clone().unwrap_or_default()),
+    ) {
         Ok(socket) => socket,
         Err(refused) => {
             eprintln!(
@@ -838,6 +842,8 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
     let views_at = changes::where_writers_find_bdi(cfg.changes.socket.clone())
         .filter(|views_at| !_socket.is_at(views_at));
     let watcher_at = at.unwrap_or_default();
+    let not_taking_producers =
+        not_taking_connections("bdi watch", views_at.clone().unwrap_or_default());
     let _changes = changes::keep(
         views_at,
         &reported,
@@ -851,6 +857,7 @@ fn watch(socket: Option<PathBuf>, config: &Path) -> anyhow::Result<ExitCode> {
                 socket_refused(refused, "bdi watch", CHOOSING_THE_VIEWS_SOCKET)
             );
         },
+        not_taking_producers,
     );
 
     let reading = crate::app::Reading::of(armed, reported).unread(armed_unread(&arms, &cfg));
@@ -887,6 +894,21 @@ fn socket_refused(refused: &changes::Refused, holder: &str, choose: &str) -> Str
             directory.display()
         ),
         Refused::Unopenable(at, error) => format!("{} could not be opened: {error}", at.display()),
+    }
+}
+
+/// What `holder` says each time the socket at `at` starts failing to take
+/// connections. Nothing else would say it: a writer whose connection is never
+/// taken has nobody to ask why.
+fn not_taking_connections(
+    holder: &'static str,
+    at: PathBuf,
+) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
+    move |why| {
+        eprintln!(
+            "{holder} cannot take connections on {}, and keeps trying: {why}",
+            at.display()
+        );
     }
 }
 

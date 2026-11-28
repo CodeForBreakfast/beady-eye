@@ -128,8 +128,11 @@ pub(super) fn wire(
     // being settled at startup: a channel arriving later has to retract it,
     // and its `Socket` has to reach the loop, or nothing takes the socket off
     // the filesystem when the run ends.
+    //
+    // A socket that stops taking connections goes unsaid, because stderr is
+    // the screen here and a line written to it would tear the frame.
     let (socket, refused) = inbound(
-        changes::watch(watching_at, &reported, changed.clone()),
+        changes::watch(watching_at, &reported, changed.clone(), |_| {}),
         || watched::answers(watcher_at.as_deref()),
     );
 
@@ -644,6 +647,7 @@ mod tests {
                 Some(at),
                 &Reported::watching(["arkham".to_string()]),
                 changed,
+                |_| {},
             ),
             || false,
         );
@@ -669,6 +673,7 @@ mod tests {
             Some(at.clone()),
             &Reported::watching(["arkham".to_string()]),
             changed.clone(),
+            |_| {},
         )
         .expect("a socket of this test's own");
 
