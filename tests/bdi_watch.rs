@@ -446,6 +446,27 @@ fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
 }
 
+/// The same once the watcher has a single descriptor free: the one it takes
+/// the connection on is all it needs to answer it.
+#[cfg(target_os = "linux")]
+#[test]
+///
+/// The watcher is left one socket, because a thread blocked in accept holds
+/// the descriptor its next connection takes, and the views' socket's would
+/// hold the one given back.
+fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_one_free() {
+    let (home, tracker) = a_home_with_a_watcher_configured("watch-out-of-descriptors-one-free");
+    the_views_socket_is_the_watchers_own(&home);
+    let mut watcher = watching_in(&home, &tracker);
+    let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
+
+    limit_open_files(watcher.pid(), lowest_free_descriptor(watcher.pid()) + 1);
+    let answer = untaken.past.waiting.hears_an_answer();
+
+    stopped(watcher);
+    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
+}
+
 /// The same for a watcher whose stderr cannot be written, so that saying it
 /// cannot take connections fails too.
 #[cfg(target_os = "linux")]
@@ -768,6 +789,17 @@ fn a_home_with_a_watcher_configured(named: &str) -> (PathBuf, ShimmedTracker) {
     (home, tracker)
 }
 
+/// `home`'s config naming the watcher's own socket for the views' as well.
+fn the_views_socket_is_the_watchers_own(home: &Path) {
+    let config = home.join(".config/beady-eye/config.toml");
+    let mut text = std::fs::read_to_string(&config).expect("the config was just written");
+    text.push_str(&format!(
+        "\n[changes]\nsocket = \"{}\"\n",
+        watching_at(home).display()
+    ));
+    std::fs::write(&config, text).expect("the config is ours to write");
+}
+
 /// A watcher started in `home`, once it has answered for its first read of
 /// the tracker, which is when every call of that read has been made.
 fn watching_in(home: &Path, tracker: &ShimmedTracker) -> Watcher {
@@ -1066,13 +1098,7 @@ fn a_change_pushed_after_a_board_started_first_reaches_the_watchers_boards() {
 #[test]
 fn a_views_socket_named_as_the_watchers_own_stays_the_watchers() {
     let (home, tracker) = a_home_with_a_watcher_configured("watch-one-socket");
-    let config = home.join(".config/beady-eye/config.toml");
-    let mut text = std::fs::read_to_string(&config).expect("the config was just written");
-    text.push_str(&format!(
-        "\n[changes]\nsocket = \"{}\"\n",
-        watching_at(&home).display()
-    ));
-    std::fs::write(&config, text).expect("the config is ours to write");
+    the_views_socket_is_the_watchers_own(&home);
     let watcher = watching_in(&home, &tracker);
 
     let answer = Producer::connected_to(&watching_at(&home)).says("arkham");

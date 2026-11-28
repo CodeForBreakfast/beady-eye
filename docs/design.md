@@ -2297,7 +2297,9 @@ remedy no phrase could.
 holding as many files as it may fails every accept, and the connection being
 taken stays queued, so the next try would fail at once. The accept loop waits
 a tenth of a second between tries rather than spin a core, and takes
-connections again once the run has a descriptor free. It says why at the first
+connections again once the run has a descriptor free. A connection is read,
+answered and hung up on through the one descriptor it was taken on, so one
+free is room enough to serve it. It says why at the first
 failure of each run of them. `bdi watch`, `bdi web` and `bdi gates` say it on
 `stderr`, naming the socket and the error, from a thread of their own, so a
 `stderr` that refuses the write or is never read cannot hold the loop up. A

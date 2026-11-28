@@ -195,7 +195,7 @@ struct Consumer {
     /// connection's own thread.
     telling: SyncSender<Vec<String>>,
     /// The connection, to hang up on where it falls behind.
-    connection: UnixStream,
+    connection: Arc<UnixStream>,
     interests: BTreeMap<String, Interest>,
     /// The agent sessions this connection's watches on single beads named, by
     /// the bead's project and id.
@@ -312,7 +312,11 @@ impl Hold {
     }
 
     /// A connection that will watch beads, sent its lines on `telling`.
-    pub fn connect(&mut self, telling: SyncSender<Vec<String>>, connection: UnixStream) -> u64 {
+    pub fn connect(
+        &mut self,
+        telling: SyncSender<Vec<String>>,
+        connection: Arc<UnixStream>,
+    ) -> u64 {
         let id = self.next_consumer;
         self.next_consumer += 1;
         let consumer = Consumer {
@@ -552,20 +556,22 @@ pub const ALIVE_EVERY: Duration = Duration::from_secs(20);
 
 /// Serve one connection to the watcher's socket until it goes away: its
 /// watch lines go to `hold`, and every other line is a producer's.
+///
+/// Reading, writing and hanging up share the one descriptor the connection
+/// was taken on, so a watcher with a single descriptor free can serve it.
 pub fn serve(
     connection: UnixStream,
     hold: &Mutex<Hold>,
     reported: &Reported,
     changed: &Sender<Heard>,
 ) {
-    let (Ok(writing), Ok(hanging_up)) = (connection.try_clone(), connection.try_clone()) else {
-        return;
-    };
+    let connection = Arc::new(connection);
     let (telling, told) = mpsc::sync_channel(FALLING_BEHIND);
-    thread::spawn(move || tell(writing, &told, ALIVE_EVERY));
-    let consumer = locked(hold).connect(telling.clone(), hanging_up);
+    let writing = Arc::clone(&connection);
+    thread::spawn(move || tell(&writing, &told, ALIVE_EVERY));
+    let consumer = locked(hold).connect(telling.clone(), Arc::clone(&connection));
 
-    changes::each_line(connection, |message| {
+    changes::each_line(&*connection, |message| {
         let answer = match message.map(|line| (line, watching::asked(line))) {
             Some((line, Some(asked))) => asked
                 .and_then(|watch| locked(hold).watch(consumer, &watch, Utc::now()))
@@ -593,7 +599,7 @@ pub fn serve(
 /// Write each batch of lines `told` hands over to `to`, and an alive line
 /// every `alive_every`, until nothing is left to hand any over or `to` will
 /// not take them.
-fn tell(to: UnixStream, told: &Receiver<Vec<String>>, alive_every: Duration) {
+fn tell(to: &UnixStream, told: &Receiver<Vec<String>>, alive_every: Duration) {
     let mut to = BufWriter::new(to);
     let mut alive_at = Instant::now() + alive_every;
     loop {
@@ -819,13 +825,14 @@ mod tests {
         /// The watcher's end, kept open beside the one the hold has as a
         /// connection's reading thread keeps it, so that only a hang-up
         /// ends the connection.
-        _reading: UnixStream,
+        _reading: Arc<UnixStream>,
     }
 
     fn connected(hold: &mut Hold, behind: usize) -> Connection {
         let (telling, told) = mpsc::sync_channel(behind);
         let (ours, theirs) = UnixStream::pair().expect("a connection");
-        let reading = ours.try_clone().expect("the end is ours to share");
+        let ours = Arc::new(ours);
+        let reading = Arc::clone(&ours);
         let consumer = hold.connect(telling, ours);
         Connection {
             consumer,
@@ -1684,7 +1691,7 @@ mod tests {
     fn every_connection_is_told_the_watcher_is_alive_on_the_interval() {
         let (ours, theirs) = UnixStream::pair().expect("a connection");
         let (telling, told) = mpsc::sync_channel(4);
-        let writing = thread::spawn(move || tell(ours, &told, Duration::from_millis(50)));
+        let writing = thread::spawn(move || tell(&ours, &told, Duration::from_millis(50)));
         theirs
             .set_read_timeout(Some(GIVING_UP))
             .expect("a read is ours to give up on");

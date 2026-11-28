@@ -880,11 +880,12 @@ fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
 /// A thread of its own because a producer that connects once and speaks
 /// whenever it has something to say is the shape this channel is for, and a
 /// long quiet stretch on such a connection is not a wedge to be timed out.
+///
+/// Reading and answering share the one descriptor the connection was taken
+/// on, so a run with a single descriptor free can hear it.
 fn hear(writer: UnixStream, reported: &Reported, changed: &impl Report) {
-    let Ok(mut answering) = writer.try_clone() else {
-        return;
-    };
-    each_line(writer, |message| {
+    let mut answering = &writer;
+    each_line(&writer, |message| {
         answered(message, reported, changed)
             .is_some_and(|answer| writeln!(answering, "{answer}").is_ok())
     });
@@ -893,7 +894,7 @@ fn hear(writer: UnixStream, reported: &Reported, changed: &impl Report) {
 /// Each line a connection sends until it goes away, handed to `take` as
 /// text, or as nothing where it is not text or never ended. `take` answering
 /// false ends the reading.
-pub fn each_line(from: UnixStream, mut take: impl FnMut(Option<&str>) -> bool) {
+pub fn each_line(from: impl Read, mut take: impl FnMut(Option<&str>) -> bool) {
     let mut reading = BufReader::new(from);
     let mut line = Vec::new();
 
