@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -359,6 +359,48 @@ fn each_id_written<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Er
     })
 }
 
+/// The most bd processes one CLI runs at once, across every project it reads.
+///
+/// Every bd process opens its own connections to the tracker's server, and
+/// trackers often share one server whose connections are capped. Unbounded,
+/// a watcher of twenty projects starting on a loaded machine ran nearly sixty
+/// bd at once against a server already near its cap, and the server refused
+/// some of them.
+pub const MOST_AT_ONCE: usize = 16;
+
+/// The [`MOST_AT_ONCE`] slots a CLI's bd processes run in. A call waits for a
+/// slot to come free before it starts, and frees it once bd has exited.
+#[derive(Default)]
+struct Slots {
+    taken: Mutex<usize>,
+    freed: Condvar,
+}
+
+impl Slots {
+    /// `run` once a slot is free, holding the slot until it returns or
+    /// panics.
+    fn run<T>(&self, run: impl FnOnce() -> T) -> T {
+        let mut taken = self
+            .freed
+            .wait_while(self.taken.lock().unwrap(), |taken| *taken >= MOST_AT_ONCE)
+            .unwrap();
+        *taken += 1;
+        drop(taken);
+        let _slot = Slot(self);
+        run()
+    }
+}
+
+/// A slot taken, which frees itself however the call holding it ends.
+struct Slot<'s>(&'s Slots);
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        *self.0.taken.lock().unwrap() -= 1;
+        self.0.freed.notify_one();
+    }
+}
+
 /// bd's CLI, reaching every project's tracker through one runner.
 pub struct Cli<'r> {
     runner: &'r dyn Runner,
@@ -371,6 +413,8 @@ pub struct Cli<'r> {
     /// refresh. Found out once per project, from the refusal itself, so the
     /// probe is paid for once per run rather than once per refresh.
     without_a_probe: Mutex<BTreeSet<String>>,
+    /// The slots every bd process this CLI runs takes one of.
+    slots: Slots,
     /// Whether a project claiming an events journal has it read. Only a
     /// watcher asks, because only a watcher passes the records on.
     reading_journals: bool,
@@ -388,6 +432,7 @@ impl<'r> Cli<'r> {
             runner,
             ambient: environment::ambient_credential(),
             without_a_probe: Mutex::default(),
+            slots: Slots::default(),
             reading_journals: false,
             unfinished_work: false,
             cache: None,
@@ -436,6 +481,7 @@ impl Cli<'_> {
             path: project.path.clone(),
             env,
             without_a_probe: &self.without_a_probe,
+            slots: &self.slots,
             journal: self.reading_journals && project.events_journal,
             unfinished_work: self.unfinished_work,
             probed: Mutex::default(),
@@ -565,6 +611,8 @@ struct Reader<'r> {
     /// The run's memory of which projects' trackers refused the probe,
     /// shared with every reader the run opens.
     without_a_probe: &'r Mutex<BTreeSet<String>>,
+    /// The CLI's slots, shared with every reader it opens.
+    slots: &'r Slots,
     /// Whether this tracker's events journal is read.
     journal: bool,
     unfinished_work: bool,
@@ -626,7 +674,8 @@ impl Reader<'_> {
         let mut argv = vec!["-C", named.as_ref()];
         argv.extend_from_slice(flags);
         argv.extend_from_slice(subcommand);
-        self.runner.run("bd", &argv, Some(&self.path), &self.env)
+        self.slots
+            .run(|| self.runner.run("bd", &argv, Some(&self.path), &self.env))
     }
 
     /// Every table's hash in the Dolt working set bar `leases`, folded into
@@ -1931,6 +1980,7 @@ mod tests {
             path: project_dir(),
             env: credentialled(),
             without_a_probe: Box::leak(Box::default()),
+            slots: Box::leak(Box::default()),
             journal: false,
             unfinished_work: false,
             probed: Mutex::default(),
@@ -1964,6 +2014,7 @@ mod tests {
             runner,
             ambient: ambient.map(str::to_string),
             without_a_probe: Mutex::default(),
+            slots: Slots::default(),
             reading_journals: false,
             unfinished_work: false,
             cache: None,
@@ -1978,6 +2029,64 @@ mod tests {
     /// wrapper with `bdi`'s own probe appended, through `sh`.
     fn entering_the_directory() -> String {
         format!("{DIRENV} env -0")
+    }
+
+    /// Long enough for a call nothing holds back to have started, so one
+    /// that has not is waiting.
+    const LONG_ENOUGH_TO_START: std::time::Duration = std::time::Duration::from_millis(50);
+
+    /// Long enough for what is coming to have come, and short enough that
+    /// what is not is a failure rather than a hang.
+    const GIVING_UP: std::time::Duration = std::time::Duration::from_secs(10);
+
+    #[test]
+    fn a_call_past_the_bound_waits_until_a_slot_comes_free() {
+        let slots = Slots::default();
+        let (inside, entered) = (Mutex::new(0), Condvar::new());
+        let (free_one, freed) = std::sync::mpsc::channel::<()>();
+        let freed = Mutex::new(freed);
+        let past_the_bound = Mutex::new(false);
+        let until = |what: &Mutex<usize>, holds: &dyn Fn(usize) -> bool| {
+            let (now, waited) = entered
+                .wait_timeout_while(what.lock().unwrap(), GIVING_UP, |now| !holds(*now))
+                .unwrap();
+            drop(now);
+            assert!(!waited.timed_out(), "never came");
+        };
+
+        std::thread::scope(|calls| {
+            // Moved in, so a failed assertion drops it and frees every slot
+            // rather than leaving the scope waiting on them.
+            let free_one = free_one;
+            for _ in 0..MOST_AT_ONCE {
+                calls.spawn(|| {
+                    slots.run(|| {
+                        *inside.lock().unwrap() += 1;
+                        entered.notify_all();
+                        freed.lock().unwrap().recv().ok();
+                    })
+                });
+            }
+            until(&inside, &|now| now == MOST_AT_ONCE);
+            calls.spawn(|| {
+                slots.run(|| {
+                    *past_the_bound.lock().unwrap() = true;
+                    *inside.lock().unwrap() += 1;
+                    entered.notify_all();
+                })
+            });
+            std::thread::sleep(LONG_ENOUGH_TO_START);
+            assert!(
+                !*past_the_bound.lock().unwrap(),
+                "ran with every slot taken"
+            );
+
+            free_one.send(()).unwrap();
+            until(&inside, &|now| now == MOST_AT_ONCE + 1);
+            for _ in 1..MOST_AT_ONCE {
+                free_one.send(()).unwrap();
+            }
+        });
     }
 
     /// The seam's promise: a tracker opened for a project is read in the
