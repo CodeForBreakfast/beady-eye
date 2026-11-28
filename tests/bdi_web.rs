@@ -295,7 +295,7 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
 fn read_until_it_says(mut unread: std::io::PipeReader, wanted: &str) -> String {
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut chunk = [0; PAGE];
+        let mut chunk = vec![0; a_page()];
         while let Ok(read @ 1..) = unread.read(&mut chunk) {
             if sent.send(chunk[..read].to_vec()).is_err() {
                 break;
@@ -360,23 +360,27 @@ fn a_pipe_with_room_for(room: usize) -> (std::io::PipeReader, std::io::PipeWrite
     let (reader, mut writer) = std::io::pipe().expect("a pipe");
     let size = unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_GETPIPE_SZ) };
     assert!(size > 0, "{}", std::io::Error::last_os_error());
-    let pages = size as usize / PAGE;
-    for _ in 1..pages {
+    let page = a_page();
+    for _ in 1..size as usize / page {
         writer
-            .write_all(&[b'x'; PAGE])
+            .write_all(&vec![b'x'; page])
             .expect("the pipe has room for a page");
     }
     writer
-        .write_all(&vec![b'x'; PAGE - room])
+        .write_all(&vec![b'x'; page - room])
         .expect("the pipe has room for most of a page");
     assert_eq!(held_by(&reader), size as usize - room);
     (reader, writer)
 }
 
-/// What each of a pipe's pages holds. A write of a whole page starts a page
-/// of its own, and a shorter one goes into the last page where it fits.
+/// What each of a pipe's pages holds, which is the host's page. A write of
+/// a whole page starts a page of its own, and a shorter one goes into the
+/// last page where it fits.
 #[cfg(target_os = "linux")]
-const PAGE: usize = 4096;
+fn a_page() -> usize {
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    usize::try_from(page).expect("the host has a page size")
+}
 
 /// How many bytes `reader`'s pipe holds.
 #[cfg(target_os = "linux")]
