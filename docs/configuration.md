@@ -1227,6 +1227,10 @@ Run one per machine. A second `bdi watch` finds the first by connecting to the
 socket, says on stderr which socket is taken, and exits non-zero. One that
 cannot open its socket for any other reason exits the same way.
 
+Every connection costs the watcher open files, so it raises its soft limit on
+them to the hard limit as it starts, and neither example below sets one. On
+macOS it stops at `kern.maxfilesperproc` where the hard limit is higher.
+
 Start it under whatever supervises your processes. A systemd user unit, at `~/.config/systemd/user/bdi-watch.service`:
 
 ```ini

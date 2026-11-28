@@ -186,6 +186,59 @@ fn a_second_watcher_on_the_same_socket_will_not_start_and_says_where() {
     assert_eq!(reads_in_full(&tracker), 1, "the second read nothing");
 }
 
+/// Below the hard limit of any host that runs these tests, and above what a
+/// watcher of one project holds open.
+#[cfg(target_os = "linux")]
+const A_LOW_OPEN_FILES_LIMIT: libc::rlim_t = 128;
+
+#[cfg(target_os = "linux")]
+fn open_files_limit_of(pid: u32) -> libc::rlimit {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let read = unsafe {
+        libc::prlimit(
+            pid as libc::pid_t,
+            libc::RLIMIT_NOFILE,
+            std::ptr::null(),
+            &mut limit,
+        )
+    };
+    assert_eq!(read, 0, "{}", std::io::Error::last_os_error());
+    limit
+}
+
+/// Linux only, because no other system answers for another process's limits.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_watcher_started_under_a_low_open_files_limit_raises_it_to_the_hard_one() {
+    let home = a_home_naming_one_project_settled("watch-open-files", NOT_POLLED);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let mut command = bdi_watch(&home, &tracker);
+    let mut inherited = open_files_limit_of(std::process::id());
+    assert!(inherited.rlim_max > A_LOW_OPEN_FILES_LIMIT);
+    inherited.rlim_cur = A_LOW_OPEN_FILES_LIMIT;
+    unsafe {
+        command.pre_exec(
+            move || match libc::setrlimit(libc::RLIMIT_NOFILE, &inherited) {
+                0 => Ok(()),
+                _ => Err(std::io::Error::last_os_error()),
+            },
+        )
+    };
+
+    let watcher = Watcher(Some(command.spawn().expect("bdi watch starts")));
+    until(|| watching_at(&home).exists(), "the socket");
+    let limit = open_files_limit_of(watcher.pid());
+
+    let out = stopped(watcher);
+    assert_eq!(limit.rlim_cur, inherited.rlim_max);
+    assert_eq!(limit.rlim_max, inherited.rlim_max);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
 /// Something outside `bdi` watching beads on the watcher's socket.
 struct Consumer {
     speaking: UnixStream,

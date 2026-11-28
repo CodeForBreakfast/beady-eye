@@ -7,7 +7,7 @@
 //! anything that watches or delivers changing.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
@@ -539,6 +539,54 @@ pub fn allocate_from_one_arena() {
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn allocate_from_one_arena() {}
+
+/// Raise this process's soft open-files limit as far as it may go. Every
+/// connection costs the watcher a descriptor or more, and a host may start it
+/// with a few hundred, as launchd does.
+pub fn raise_the_open_files_limit() -> io::Result<()> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` writes only the struct it is handed.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    limit.rlim_cur = highest_soft_limit(limit.rlim_max);
+    // SAFETY: `setrlimit` only reads the struct it is handed.
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// A macOS hard limit may be unlimited, which some releases refuse as a soft
+/// limit. The kernel holds no process to more than `kern.maxfilesperproc`.
+#[cfg(target_os = "macos")]
+fn highest_soft_limit(hard: libc::rlim_t) -> libc::rlim_t {
+    let mut per_process: libc::c_int = 0;
+    let mut size = std::mem::size_of_val(&per_process);
+    // SAFETY: the name ends in a nul, and `size` is the size of what
+    // `sysctlbyname` is given to write.
+    let read = unsafe {
+        libc::sysctlbyname(
+            c"kern.maxfilesperproc".as_ptr(),
+            std::ptr::from_mut(&mut per_process).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    match libc::rlim_t::try_from(per_process) {
+        Ok(per_process) if read == 0 => hard.min(per_process),
+        _ => hard,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn highest_soft_limit(hard: libc::rlim_t) -> libc::rlim_t {
+    hard
+}
 
 /// How many answers a connection may fall behind by before it is hung up
 /// on. A consumer that reconnects is sent the beads as they then stand, so
