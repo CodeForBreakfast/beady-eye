@@ -801,10 +801,57 @@ fn others_may_take_a_name_in(how: u32, owner: u32, this_user: u32) -> bool {
 /// is refused exactly as a dead socket's is — so what is there has to be
 /// looked at rather than inferred from either of them.
 fn reclaim(at: &Path) -> Result<UnixListener, Refused> {
-    if UnixStream::connect(at).is_ok() {
+    if listened_on(at) {
         return Err(Refused::AlreadyWatching(at.to_path_buf()));
     }
     take_over(at)
+}
+
+/// Whether a run listens on the socket at `at`.
+///
+/// A run out of descriptors takes no connections, so its queue can fill, and
+/// a connect that waited for a place in it would wait as long as the run
+/// does. So the connect does not wait, and a full queue is a run listening.
+fn listened_on(at: &Path) -> bool {
+    match connected_without_waiting(at) {
+        Ok(_connection) => true,
+        Err(why) => {
+            why.kind() == ErrorKind::WouldBlock || why.raw_os_error() == Some(libc::EINPROGRESS)
+        }
+    }
+}
+
+/// A connection to the socket at `at`, refused rather than waited for where
+/// its queue is full.
+fn connected_without_waiting(at: &Path) -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    let path = at.as_os_str().as_bytes();
+    if path.len() >= address.sun_path.len() {
+        return Err(ErrorKind::InvalidInput.into());
+    }
+    for (to, from) in address.sun_path.iter_mut().zip(path) {
+        *to = *from as libc::c_char;
+    }
+    let made = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if made < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let connection = unsafe { OwnedFd::from_raw_fd(made) };
+    let set = unsafe {
+        libc::fcntl(made, libc::F_SETFD, libc::FD_CLOEXEC) == 0
+            && libc::fcntl(made, libc::F_SETFL, libc::O_NONBLOCK) == 0
+    };
+    if !set {
+        return Err(io::Error::last_os_error());
+    }
+    let length = std::mem::size_of_val(&address) as libc::socklen_t;
+    if unsafe { libc::connect(made, (&raw const address).cast(), length) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(connection)
 }
 
 /// The socket at the path put aside for this run's own, whether anything is
@@ -1837,6 +1884,36 @@ mod tests {
 
         assert!(matches!(second, Err(Refused::AlreadyWatching(_))));
         say(&at, &[("arkham\n", "ok arkham")]);
+    }
+
+    /// A run out of descriptors takes no connections, so its queue can fill.
+    /// A second `bdi` still finds the socket held, and finds it without
+    /// waiting for a place in the queue.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_socket_whose_queue_is_full_is_left_alone_at_once() {
+        use std::os::fd::AsRawFd;
+        let at = a_socket_path("queue-full");
+        std::fs::create_dir_all(at.parent().expect("the socket has a directory"))
+            .expect("the socket's directory is ours to make");
+        let first = UnixListener::bind(&at).expect("the socket binds");
+        // Listening again sets how long the queue is, and on Linux a queue
+        // of none holds one connection.
+        assert_eq!(unsafe { libc::listen(first.as_raw_fd(), 0) }, 0);
+        let _queued = UnixStream::connect(&at).expect("one connection is queued");
+
+        let (answered, answer) = mpsc::channel();
+        let asked = at.clone();
+        thread::spawn(move || {
+            let held = matches!(reclaim(&asked), Err(Refused::AlreadyWatching(_)));
+            let _ = answered.send(held);
+        });
+
+        assert_eq!(
+            answer.recv_timeout(Duration::from_secs(1)),
+            Ok(true),
+            "a second bdi finds the socket held without waiting"
+        );
     }
 
     /// The line that reaches the primary screen carries the half no notice
