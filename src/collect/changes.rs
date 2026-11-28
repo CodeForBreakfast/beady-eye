@@ -813,15 +813,25 @@ fn is_a_socket(at: &Path) -> bool {
     fs::symlink_metadata(at).is_ok_and(|what| what.file_type().is_socket())
 }
 
-/// Take connections until the socket stops giving them, each on a thread of
-/// its own.
+/// How long the channel waits after an accept fails before it tries again.
 ///
-/// An accept that fails ends the channel rather than being retried: there is
-/// no error here a retry would clear, and the poll is what the view falls
-/// back to.
+/// An accept fails where the run holds as many files as it may, and the
+/// connection it was taking is still waiting, so the next try would fail at
+/// once and spin a core until a descriptor is free.
+const UNTIL_ACCEPTING_AGAIN: Duration = Duration::from_millis(100);
+
+/// Take connections for as long as the run holds the socket, each on a
+/// thread of its own.
+///
+/// An accept that fails is tried again rather than ending the channel. A run
+/// holding as many files as it may fails every accept, and takes connections
+/// again once it closes one.
 fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(channel: &UnixListener, each: &Arc<F>) {
     for connection in channel.incoming() {
-        let Ok(connection) = connection else { return };
+        let Ok(connection) = connection else {
+            thread::sleep(UNTIL_ACCEPTING_AGAIN);
+            continue;
+        };
 
         let each = Arc::clone(each);
         thread::spawn(move || each(connection));

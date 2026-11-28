@@ -192,6 +192,17 @@ struct Consumer {
     watching: BufReader<UnixStream>,
 }
 
+/// What a watcher did with a connection a consumer made.
+#[cfg(target_os = "linux")]
+enum Taken {
+    /// It sent a line.
+    Answered,
+    /// It closed the connection unanswered.
+    Dropped,
+    /// It has done nothing with it yet.
+    Waiting,
+}
+
 impl Consumer {
     /// Connected once the watcher takes connections, which is a moment
     /// after its socket appears: `bind` names it before `listen`.
@@ -240,6 +251,28 @@ impl Consumer {
             Err(why) if why.kind() == ErrorKind::ConnectionReset => None,
             Err(why) => panic!("the watcher said nothing in time ({why})"),
         }
+    }
+
+    /// What the watcher did with this connection within `quiet`.
+    #[cfg(target_os = "linux")]
+    fn taken_within(&mut self, quiet: Duration) -> Taken {
+        self.watching
+            .get_ref()
+            .set_read_timeout(Some(quiet))
+            .expect("a read nothing answers is ours to give up on");
+        let mut line = String::new();
+        let taken = match self.watching.read_line(&mut line) {
+            Ok(0) => Taken::Dropped,
+            Ok(_) => Taken::Answered,
+            Err(why) if why.kind() == ErrorKind::ConnectionReset => Taken::Dropped,
+            Err(why) if why.kind() == ErrorKind::WouldBlock => Taken::Waiting,
+            Err(why) => panic!("the connection is ours to read ({why})"),
+        };
+        self.watching
+            .get_ref()
+            .set_read_timeout(Some(GIVING_UP))
+            .expect("a read nothing answers is ours to give up on");
+        taken
     }
 
     /// Every line up to and including the next freshness line: one answer
@@ -345,6 +378,107 @@ fn a_watcher_that_stops_closes_its_consumers_and_takes_no_more() {
 
     assert_eq!(consumer.hears(), None);
     assert!(UnixStream::connect(watching_at(&home)).is_err());
+}
+
+/// What a session whose connection dropped relies on: a watcher that runs
+/// out of descriptors takes it back once one is free, without a restart.
+///
+/// The watcher's soft limit is lowered to the lowest descriptor it has free,
+/// which leaves it no room for one more, as reaching its limit does. A
+/// thread already blocked in accept holds the descriptor its next connection
+/// takes, so the watcher can take a connection past the limit, and answer it
+/// or drop it, before it fails to take one.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_watcher_out_of_descriptors_answers_a_new_watch_once_one_is_free() {
+    let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors");
+    let mut answered = Consumer::connected_to(&watching_at(&home));
+    answered.sends("watch arkham").hears_an_answer();
+    let room = open_files(watcher.pid()).rlim_cur;
+
+    limit_open_files(watcher.pid(), lowest_free_descriptor(watcher.pid()));
+    let mut taken_past_the_limit = Vec::new();
+    let mut waiting = loop {
+        let mut consumer = Consumer::connected_to(&watching_at(&home));
+        consumer.sends("watch arkham");
+        match consumer.taken_within(UNTAKEN_AFTER) {
+            Taken::Waiting => break consumer,
+            Taken::Answered | Taken::Dropped => taken_past_the_limit.push(consumer),
+        }
+        assert!(
+            taken_past_the_limit.len() < TAKEN_PAST_THE_LIMIT_AT_MOST,
+            "the watcher kept taking connections past its limit"
+        );
+    };
+    limit_open_files(watcher.pid(), room);
+    let answer = waiting.hears_an_answer();
+
+    let out = stopped(watcher);
+    assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+/// Long enough for a watcher that is going to take a connection to have
+/// taken it.
+#[cfg(target_os = "linux")]
+const UNTAKEN_AFTER: Duration = Duration::from_millis(500);
+
+/// More connections than a watcher with no descriptor free takes before an
+/// accept fails. It takes the one its blocked accept holds a descriptor for.
+#[cfg(target_os = "linux")]
+const TAKEN_PAST_THE_LIMIT_AT_MOST: usize = 4;
+
+/// The limits on how many files `pid` may hold open.
+#[cfg(target_os = "linux")]
+fn open_files(pid: u32) -> libc::rlimit {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let read = unsafe {
+        libc::prlimit(
+            pid as libc::pid_t,
+            libc::RLIMIT_NOFILE,
+            std::ptr::null(),
+            &mut limit,
+        )
+    };
+    assert_eq!(read, 0, "{}", std::io::Error::last_os_error());
+    limit
+}
+
+/// Set the soft limit on how many files `pid` may hold open, leaving its
+/// hard limit as it was.
+#[cfg(target_os = "linux")]
+fn limit_open_files(pid: u32, soft: libc::rlim_t) {
+    let limit = libc::rlimit {
+        rlim_cur: soft,
+        ..open_files(pid)
+    };
+    let set = unsafe {
+        libc::prlimit(
+            pid as libc::pid_t,
+            libc::RLIMIT_NOFILE,
+            &limit,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(set, 0, "{}", std::io::Error::last_os_error());
+}
+
+/// The descriptor `pid` would be given next. A soft limit at it refuses the
+/// next one, since a descriptor has to be below the limit.
+#[cfg(target_os = "linux")]
+fn lowest_free_descriptor(pid: u32) -> libc::rlim_t {
+    let held: std::collections::BTreeSet<libc::rlim_t> =
+        std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .expect("the watcher is ours to read")
+            .map(|entry| {
+                let entry = entry.expect("the watcher is ours to read");
+                entry.file_name().to_string_lossy().parse().expect("a descriptor is a number")
+            })
+            .collect();
+    (0..).find(|descriptor| !held.contains(descriptor)).expect("a descriptor is free")
 }
 
 /// What a consumer waiting on a deferred bead relies on: nothing is written
