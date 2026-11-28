@@ -941,12 +941,10 @@ struct StderrUnlocked;
 
 impl Write for StderrUnlocked {
     fn write(&mut self, said: &[u8]) -> std::io::Result<usize> {
-        use std::os::fd::FromRawFd;
-        // Stderr's descriptor is the process's for its whole life, so it is
-        // borrowed here and never closed.
-        let mut stderr =
-            std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(libc::STDERR_FILENO) });
-        stderr.write(said)
+        // SAFETY: `said` is readable for its whole length, and a write to a
+        // descriptor that is not open fails rather than touching memory.
+        let written = unsafe { libc::write(libc::STDERR_FILENO, said.as_ptr().cast(), said.len()) };
+        usize::try_from(written).map_err(|_| std::io::Error::last_os_error())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
