@@ -253,9 +253,22 @@ impl Consumer {
         }
     }
 
-    /// What the watcher did with this connection within `quiet`.
+    /// What the watcher did within `quiet` with `line`, sent on this
+    /// connection.
     #[cfg(target_os = "linux")]
-    fn taken_within(&mut self, quiet: Duration) -> Taken {
+    fn taken_within(&mut self, line: &str, quiet: Duration) -> Taken {
+        match writeln!(self.speaking, "{line}") {
+            Ok(()) => {}
+            Err(why)
+                if matches!(
+                    why.kind(),
+                    ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+                ) =>
+            {
+                return Taken::Dropped
+            }
+            Err(why) => panic!("the line is ours to send ({why})"),
+        }
         self.watching
             .get_ref()
             .set_read_timeout(Some(quiet))
@@ -438,9 +451,8 @@ fn a_watch_out_of_descriptors(home: &Path, watcher: &Watcher) -> Untaken {
     let mut taken_past_the_limit = vec![answered];
     loop {
         let mut consumer = Consumer::connected_to(&watching_at(home));
-        consumer.sends("watch arkham");
         let before = processor_time(watcher.pid());
-        let taken = consumer.taken_within(UNTAKEN_AFTER);
+        let taken = consumer.taken_within("watch arkham", UNTAKEN_AFTER);
         let spent_waiting = processor_time(watcher.pid()) - before;
         match taken {
             Taken::Waiting => {
