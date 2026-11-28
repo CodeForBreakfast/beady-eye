@@ -904,7 +904,15 @@ fn not_taking_connections(
     holder: &'static str,
     at: PathBuf,
 ) -> impl Fn(changes::Taking<'_>) + Send + Sync + 'static {
-    not_taking_connections_into(std::io::stderr(), holder, at)
+    // `Stderr` holds a lock across each write that every other line said on
+    // stderr waits for, so a report waiting on a pipe nobody reads would hold
+    // them all. A descriptor of its own writes without the lock.
+    let out: Box<dyn Write + Send> =
+        match std::os::fd::AsFd::as_fd(&std::io::stderr()).try_clone_to_owned() {
+            Ok(own) => Box::new(std::fs::File::from(own)),
+            Err(_) => Box::new(std::io::stderr()),
+        };
+    not_taking_connections_into(out, holder, at)
 }
 
 /// The same, said into `out`.

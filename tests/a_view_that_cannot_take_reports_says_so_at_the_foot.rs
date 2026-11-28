@@ -15,12 +15,10 @@
 
 mod terminal;
 
-use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::os::unix::net::UnixStream;
-use std::path::Path;
-use std::time::Duration;
-
-use terminal::descriptors::{limit_open_files, lowest_free_descriptor, open_files};
+use terminal::descriptors::{
+    a_report_past_the_limit, answered_within, limit_open_files, lowest_free_descriptor, open_files,
+    Answered,
+};
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::{
     a_home_naming_one_project, a_socket_of_its_own, contains, the_socket_under,
@@ -42,13 +40,6 @@ const NOT_TAKEN: &[u8] = "bdi cannot take reports of changes".as_bytes();
 /// it there would tear its frame with.
 const SAID_ON_STDERR: &[u8] = "cannot take connections".as_bytes();
 
-/// More connections than a view with no descriptor free takes before an
-/// accept fails. A thread already blocked in accept holds the descriptor for
-/// the next one, so the view takes that one past its limit. A collection or
-/// a check of the config can hold a descriptor for a moment as the limit is
-/// lowered, and the view takes a connection on each one that closes.
-const PAST_THE_LIMIT: usize = 16;
-
 #[test]
 fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
     let home = a_home_naming_one_project("view-out-of-descriptors");
@@ -59,7 +50,7 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
     let room = open_files(pid).rlim_cur;
 
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let _waiting = a_report_past_the_limit(&home);
+    let _waiting = a_report_past_the_limit(&the_socket_under(&home));
     bdi.read_until(NOT_TAKEN, GIVING_UP);
 
     let mut rows = ROWS - 1;
@@ -103,7 +94,7 @@ fn a_view_out_of_descriptors_answers_a_report_once_it_has_one_free() {
     let pid = bdi.pid() as u32;
 
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&home);
+    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&the_socket_under(&home));
     limit_open_files(pid, lowest_free_descriptor(pid) + 1);
 
     assert_eq!(
@@ -113,52 +104,3 @@ fn a_view_out_of_descriptors_answers_a_report_once_it_has_one_free() {
         bdi.timeline()
     );
 }
-
-/// What a view did with a report sent to it.
-#[derive(Debug, PartialEq)]
-enum Answered {
-    With(String),
-    /// It closed the connection unanswered.
-    Dropped,
-    /// It has done nothing with it yet.
-    Waiting,
-}
-
-/// A report sent on a connection the view has not taken, once its limit is
-/// lowered, and the connections it took before it stopped. Each is sent on
-/// its own, so the view runs out of room before the one it does not take.
-fn a_report_past_the_limit(home: &Path) -> (UnixStream, Vec<UnixStream>) {
-    let mut taken_past_the_limit = Vec::new();
-    loop {
-        let mut reporting =
-            UnixStream::connect(the_socket_under(home)).expect("the socket queues the connection");
-        writeln!(reporting, "arkham").expect("the report is ours to send");
-        match answered_within(&reporting, UNTAKEN_AFTER) {
-            Answered::Waiting => return (reporting, taken_past_the_limit),
-            Answered::With(_) | Answered::Dropped => taken_past_the_limit.push(reporting),
-        }
-        assert!(
-            taken_past_the_limit.len() < PAST_THE_LIMIT,
-            "the view kept taking connections past its limit"
-        );
-    }
-}
-
-/// What the view answered on `reporting`, read for `quiet`.
-fn answered_within(reporting: &UnixStream, quiet: Duration) -> Answered {
-    reporting
-        .set_read_timeout(Some(quiet))
-        .expect("a read nothing answers is ours to give up on");
-    let mut line = String::new();
-    match BufReader::new(reporting).read_line(&mut line) {
-        Ok(0) => Answered::Dropped,
-        Ok(_) => Answered::With(line),
-        Err(why) if why.kind() == ErrorKind::ConnectionReset => Answered::Dropped,
-        Err(why) if why.kind() == ErrorKind::WouldBlock => Answered::Waiting,
-        Err(why) => panic!("the connection is ours to read ({why})"),
-    }
-}
-
-/// Long enough for a view that is going to take a connection to have taken
-/// it.
-const UNTAKEN_AFTER: Duration = Duration::from_millis(500);

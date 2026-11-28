@@ -15,10 +15,15 @@ use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use terminal::descriptors::{
+    a_report_past_the_limit, answered_within, limit_open_files, lowest_free_descriptor, open_files,
+    Answered,
+};
 use terminal::shims::ShimmedTracker;
 use terminal::{
-    a_home_naming_one_project, a_home_naming_one_project_settled, die_with, EACH_VIEW, THE_ARCHIVE,
-    THE_DESCRIBED_SUBTREE, TWO_VIEWS,
+    a_home_naming_one_project, a_home_naming_one_project_settled, die_with, the_socket_under,
+    Producer, EACH_VIEW, THE_ARCHIVE, THE_DESCRIBED_SUBTREE, TWO_VIEWS,
 };
 
 /// Long enough for a read that is coming to have come, and short enough
@@ -57,6 +62,18 @@ fn bdi_web(
     runtime_dir: Option<&Path>,
     exported: &[(&str, &str)],
 ) -> (Web, String) {
+    bdi_web_saying_into(home, tracker, args, runtime_dir, exported, Stdio::null())
+}
+
+/// The same, with its stderr going to `stderr`.
+fn bdi_web_saying_into(
+    home: &Path,
+    tracker: &ShimmedTracker,
+    args: &[&str],
+    runtime_dir: Option<&Path>,
+    exported: &[(&str, &str)],
+    stderr: Stdio,
+) -> (Web, String) {
     let spawned_by = std::process::id();
     let mut command = Command::new(env!("CARGO_BIN_EXE_bdi"));
     command
@@ -72,7 +89,7 @@ fn bdi_web(
         .envs(tracker.environment())
         .envs(exported.iter().copied())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(stderr);
     // Dropping a `Child` leaves its process running, and a test binary that
     // is killed runs no `Drop`, so the kernel is asked to end it with its
     // spawner.
@@ -184,6 +201,102 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
         "bdi web stopped once it had read"
     );
     assert_eq!(get(&address, "/").0, "HTTP/1.1 200 OK");
+}
+
+/// What a reader of a server's stderr relies on: a report that its socket
+/// cannot take connections, waiting on a stderr nobody reads, leaves the
+/// server saying the rest of what it has to say, and reading on after it.
+///
+/// The pipe has room for the config's notice but not for the report, so the
+/// report waits on the pipe while the notice is said.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
+    let home = a_home_naming_one_project_settled("web-report-waiting", "poll = false\n");
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    let (unread, stderr) = a_pipe_with_room_for(ROOM_FOR_THE_NOTICE);
+    let full = held_by(&unread);
+    let (web, address) =
+        bdi_web_saying_into(&home, &tracker, &[], Some(&home), &[], Stdio::from(stderr));
+    until_it_has_read(&address);
+    assert_eq!(
+        held_by(&unread),
+        full,
+        "bdi web said nothing on stderr before the report"
+    );
+    let pid = web.0.id();
+    let room = open_files(pid).rlim_cur;
+    let socket = the_socket_under(&home);
+    limit_open_files(pid, lowest_free_descriptor(pid));
+    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&socket);
+    limit_open_files(pid, room);
+    assert!(
+        matches!(answered_within(&waiting, GIVING_UP), Answered::With(_)),
+        "the socket takes connections again"
+    );
+
+    let config = home.join(".config/beady-eye/config.toml");
+    std::fs::write(&config, "[[projects]\n").expect("the config is ours to write");
+    std::thread::sleep(UNTIL_THE_CONFIG_IS_CHECKED);
+    let called = tracker.calls().len();
+    assert_eq!(Producer::connected_to(&socket).says("arkham"), "ok arkham");
+
+    let giving_up = Instant::now() + GIVING_UP;
+    while tracker.calls().len() == called {
+        assert!(
+            Instant::now() < giving_up,
+            "bdi web read nothing after the report it was sent"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Room in a pipe for the line `bdi web` says on finding the config will
+/// not load, and not for the one it says on finding its socket cannot take
+/// connections, which names the socket's path as well.
+#[cfg(target_os = "linux")]
+const ROOM_FOR_THE_NOTICE: usize = 80;
+
+/// Longer than the config is left between checks.
+#[cfg(target_os = "linux")]
+const UNTIL_THE_CONFIG_IS_CHECKED: Duration = Duration::from_secs(3);
+
+/// A pipe holding as much as it can but `room` bytes, with the room left in
+/// the page it filled last, so a write of up to `room` bytes goes in and a
+/// longer one waits for its reader.
+#[cfg(target_os = "linux")]
+fn a_pipe_with_room_for(room: usize) -> (std::io::PipeReader, std::io::PipeWriter) {
+    use std::os::fd::AsRawFd;
+    let (reader, mut writer) = std::io::pipe().expect("a pipe");
+    let size = unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_GETPIPE_SZ) };
+    assert!(size > 0, "{}", std::io::Error::last_os_error());
+    let pages = size as usize / PAGE;
+    for _ in 1..pages {
+        writer
+            .write_all(&[b'x'; PAGE])
+            .expect("the pipe has room for a page");
+    }
+    writer
+        .write_all(&vec![b'x'; PAGE - room])
+        .expect("the pipe has room for most of a page");
+    assert_eq!(held_by(&reader), size as usize - room);
+    (reader, writer)
+}
+
+/// What each of a pipe's pages holds. A write of a whole page starts a page
+/// of its own, and a shorter one goes into the last page where it fits.
+#[cfg(target_os = "linux")]
+const PAGE: usize = 4096;
+
+/// How many bytes `reader`'s pipe holds.
+#[cfg(target_os = "linux")]
+fn held_by(reader: &std::io::PipeReader) -> usize {
+    use std::os::fd::AsRawFd;
+    let mut held: libc::c_int = 0;
+    let asked = unsafe { libc::ioctl(reader.as_raw_fd(), libc::FIONREAD, &mut held) };
+    assert_eq!(asked, 0, "{}", std::io::Error::last_os_error());
+    held as usize
 }
 
 /// A page elsewhere that points a name of its own at the listener sends that

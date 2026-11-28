@@ -2299,11 +2299,11 @@ taken stays queued, so the next try would fail at once. The accept loop waits
 a tenth of a second between tries rather than spin a core, and takes
 connections again once the run has a descriptor free. A connection is read,
 answered and hung up on through the one descriptor it was taken on, so one
-free is room enough to serve it. It says why at the first
-failure of each run of them. `bdi watch`, `bdi web` and `bdi gates` say it on
-`stderr`, naming the socket and the error, from a thread of their own, so a
-`stderr` that refuses the write or is never read cannot hold the loop up. A
-view says it at the foot instead, *bdi cannot take reports of changes ·
+free is room enough to serve it. It says why at the first failure of each
+run of them. `bdi watch`, `bdi web` and `bdi gates` say it on `stderr`,
+naming the socket and the error, from a thread and a descriptor of their own.
+A `stderr` that refuses the write or is never read then holds up neither the
+loop nor anything else the run says on `stderr`. A view says it at the foot instead, *bdi cannot take reports of changes ·
 <error> · it keeps trying*, because its `stderr` is the screen. That notice
 comes off when the socket takes a connection again.
 
