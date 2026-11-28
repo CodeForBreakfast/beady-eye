@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 
 use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
 use terminal::shims::ShimmedTracker;
+use terminal::web::{bdi_web, get, until_it_has_read};
 use terminal::{
     a_home_naming_one_project_settled, a_socket_of_its_own, die_with, the_socket_under, Producer,
     ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
@@ -448,7 +449,12 @@ fn a_watch_on_a_bead_in_a_project_keeping_a_journal_is_sent_its_records_before_t
 /// A home whose config tells every run where the watcher is, as a setup
 /// that starts one says it, holding the described subtree.
 fn a_home_with_a_watcher_configured(named: &str) -> (PathBuf, ShimmedTracker) {
-    let home = a_home_naming_one_project_settled(named, NOT_POLLED);
+    a_home_with_a_watcher_configured_over(named, NOT_POLLED)
+}
+
+/// The same, with `settings` on the project's entry.
+fn a_home_with_a_watcher_configured_over(named: &str, settings: &str) -> (PathBuf, ShimmedTracker) {
+    let home = a_home_naming_one_project_settled(named, settings);
     let config = home.join(".config/beady-eye/config.toml");
     let mut text = std::fs::read_to_string(&config).expect("the config was just written");
     text.push_str(&format!(
@@ -892,10 +898,12 @@ impl BdServe {
 }
 
 /// A watcher following arkham's stream from the journal's head at 7, and a
-/// consumer watching arkham.
+/// consumer watching arkham. The project trusts the stream alone, so nothing
+/// reads it on a clock.
 fn a_watcher_following_a_stream(named: &str) -> (BdServe, ShimmedTracker, Watcher, Consumer) {
     let mut serve = BdServe::listening();
-    let (home, tracker, watcher) = a_watcher_over(named, &serve.named(), |_| {});
+    let settings = format!("{}{NOT_POLLED}", serve.named());
+    let (home, tracker, watcher) = a_watcher_over(named, &settings, |_| {});
     serve.answers_the_head(7);
     serve.opens_the_stream_after(7);
     let mut consumer = Consumer::connected_to(&watching_at(&home));
@@ -916,10 +924,9 @@ fn until_told_closed(consumer: &mut Consumer, id: &str) {
     }
 }
 
-/// The record stands for a write by any bd client, on this machine or
-/// another: the stream is the tracker's journal, whoever wrote to it. The
-/// project names no `poll`, so nothing reads it on a clock before the test
-/// is over.
+/// The record stands for a journalled write by any bd client, on this
+/// machine or another: the stream is the tracker's journal, whoever wrote to
+/// it.
 #[test]
 fn a_write_on_a_projects_stream_reaches_a_consumer_with_no_poll_behind_it() {
     let (mut serve, tracker, watcher, mut consumer) = a_watcher_following_a_stream("watch-stream");
@@ -951,12 +958,16 @@ fn a_dropped_stream_is_resumed_after_the_last_record_the_watcher_read() {
     stopped(watcher);
 }
 
-/// Nothing polls a project while its stream is down, so only the watcher
-/// can tell a consumer that the beads it holds are no longer vouched for.
+/// Nothing polls a project that trusts its stream alone, so while the
+/// stream is down only the watcher can tell a consumer that the beads it
+/// holds are no longer vouched for.
 #[test]
 fn a_stream_down_past_covered_for_seconds_has_its_consumers_told_the_project_lapsed() {
     let mut serve = BdServe::listening();
-    let settings = format!("{}[changes]\ncovered_for_seconds = 1\n", serve.named());
+    let settings = format!(
+        "{}{NOT_POLLED}[changes]\ncovered_for_seconds = 1\n",
+        serve.named()
+    );
     let (home, _tracker, watcher) = a_watcher_over("watch-stream-lapsed", &settings, |_| {});
     serve.answers_the_head(7);
     serve.opens_the_stream_after(7);
@@ -1001,4 +1012,138 @@ fn a_stream_the_journal_was_pruned_under_is_read_in_full_and_followed_from_its_h
     until_told_closed(&mut consumer, "dun-0tp.9");
     serve.opens_the_stream_after(31);
     stopped(watcher);
+}
+
+/// A bead a write deletes, and one it creates, in a tracker whose stream
+/// carries no record of the write. bd journals a write only where the
+/// process making it asks bd to, so a stream can miss the writes of a client
+/// that does not.
+const DELETED: &str = "dun-0tp.8";
+const CREATED: &str = "dun-0tp.10";
+
+/// A project that reads its tracker every second where it polls at all.
+const EVERY_SECOND: &str = "[tui]\nrefresh_seconds = 1\n";
+
+/// The described subtree once `DELETED` has gone and `CREATED` has been filed
+/// beneath its root.
+fn the_described_subtree_after_a_delete_and_a_create() -> String {
+    the_described_subtree_with(|rows| {
+        rows.retain(|row| row["id"] != DELETED);
+        let mut created = rows
+            .iter()
+            .find(|row| row["id"] == "dun-0tp.9")
+            .expect("the capture holds the bead")
+            .clone();
+        created["id"] = json!(CREATED);
+        created["title"] = json!("Filed after the watcher last read the tracker");
+        created["dependencies"][0]["issue_id"] = json!(CREATED);
+        rows.push(created);
+    })
+}
+
+/// Which of `DELETED` and `CREATED` a one-shot `bdi --beads` run in `home`
+/// cannot find. Each is read or not found, and any other unread tree fails
+/// the test.
+fn not_found_by_beads(home: &Path, tracker: &ShimmedTracker) -> Vec<String> {
+    let deleted = format!("arkham:{DELETED}");
+    let created = format!("arkham:{CREATED}");
+    let (listing, _) = one_shot(home, tracker, &["--beads", "--brief", &deleted, &created]);
+    listing["unread_trees"]
+        .as_array()
+        .expect("--beads says which trees it could not read")
+        .iter()
+        .inspect(|unread| assert_eq!(unread["tracker"], "root-not-found", "{unread}"))
+        .map(|unread| {
+            unread["root"]
+                .as_str()
+                .expect("a tree names its root")
+                .to_string()
+        })
+        .collect()
+}
+
+/// Which of `DELETED` and `CREATED` the `bdi web` at `address` has no page
+/// for. Each has a page or is not found, and any other answer fails the test.
+fn not_found_by_web(address: &str) -> Vec<String> {
+    [DELETED, CREATED]
+        .into_iter()
+        .filter(
+            |id| match get(address, &format!("/arkham/{id}")).0.as_str() {
+                "HTTP/1.1 404 Not Found" => true,
+                "HTTP/1.1 200 OK" => false,
+                status => panic!("the page for {id} answered {status}"),
+            },
+        )
+        .map(str::to_string)
+        .collect()
+}
+
+/// Wait until `not_found` names `CREATED` alone, as it does before the write,
+/// have the tracker take the write, and wait until `not_found` names
+/// `DELETED` alone.
+fn the_write_is_read(tracker: &ShimmedTracker, not_found: impl Fn() -> Vec<String>) {
+    until(|| not_found() == [CREATED], "the read before the write");
+    tracker.holds(&the_described_subtree_after_a_delete_and_a_create());
+    until(|| not_found() == [DELETED], "the read of the write");
+}
+
+/// A home whose config names the watcher, and a watcher following arkham's
+/// stream from the journal's head at 7, which then carries nothing, once the
+/// read the head asked for is in. The project names `serve` and says nothing
+/// about `poll`, as a setup that runs bd serve does.
+fn a_watcher_following_a_silent_stream(named: &str) -> (PathBuf, ShimmedTracker, BdServe, Watcher) {
+    let mut serve = BdServe::listening();
+    let settings = format!("{}{EVERY_SECOND}", serve.named());
+    let (home, tracker) = a_home_with_a_watcher_configured_over(named, &settings);
+    let watcher = watching_in(&home, &tracker);
+    serve.answers_the_head(7);
+    serve.opens_the_stream_after(7);
+    until(
+        || reads_in_full(&tracker) >= 2,
+        "the read the journal's head asked for",
+    );
+    (home, tracker, serve, watcher)
+}
+
+#[test]
+fn a_write_the_stream_never_carries_reaches_a_one_shot_through_the_watcher() {
+    let (home, tracker, _serve, watcher) =
+        a_watcher_following_a_silent_stream("stream-misses-beads");
+
+    the_write_is_read(&tracker, || not_found_by_beads(&home, &tracker));
+
+    stopped(watcher);
+}
+
+#[test]
+fn a_write_the_stream_never_carries_reaches_a_web_through_the_watcher() {
+    let (home, tracker, _serve, watcher) = a_watcher_following_a_silent_stream("stream-misses-web");
+    let (_web, address) = bdi_web(&home, &tracker, &[], Some(&home), &[]);
+    until_it_has_read(&address);
+
+    the_write_is_read(&tracker, || not_found_by_web(&address));
+
+    stopped(watcher);
+}
+
+/// The config names a watcher that is not running, so each run reads the
+/// tracker itself.
+fn a_home_with_no_watcher_running(named: &str) -> (PathBuf, ShimmedTracker) {
+    a_home_with_a_watcher_configured_over(named, EVERY_SECOND)
+}
+
+#[test]
+fn a_write_reaches_a_one_shot_with_no_watcher() {
+    let (home, tracker) = a_home_with_no_watcher_running("unwatched-beads");
+
+    the_write_is_read(&tracker, || not_found_by_beads(&home, &tracker));
+}
+
+#[test]
+fn a_write_reaches_a_web_with_no_watcher() {
+    let (home, tracker) = a_home_with_no_watcher_running("unwatched-web");
+    let (_web, address) = bdi_web(&home, &tracker, &[], Some(&home), &[]);
+    until_it_has_read(&address);
+
+    the_write_is_read(&tracker, || not_found_by_web(&address));
 }

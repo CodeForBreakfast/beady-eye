@@ -201,8 +201,9 @@ lists it among the projects not read.
 
 **`poll`** says how this project is kept current. Left out, the project polls
 until a producer [says it covers the project](#telling-bdi-a-project-changed),
-and then polls no more for the rest of the run. `poll = true` polls whatever
-covers the project. `poll = false` never polls, and relies on something
+and then polls no more for the rest of the run. A project naming `serve`
+and leaving `poll` out polls whatever covers it, because bd serve's stream
+can miss a write. `poll = true` polls whatever covers the project. `poll = false` never polls, and relies on something
 telling `bdi` when the project changed from the start. Nothing covers for a
 producer that dies, so a project that does not poll turns its mark to `?` once
 nothing has vouched for it for `covered_for_seconds`.
@@ -236,19 +237,24 @@ each bead as it now stands rather than the records of how it got there.
 **`serve`** is the address this project's `bd serve` listens on, written as
 `bd serve --addr` takes it: `serve = "127.0.0.1:8742"`. [The
 watcher](#running-the-watcher) then follows bd serve's event stream, which
-carries every write to the tracker, whichever bd client made it. A write is
-read within seconds, and the stream opening stands the project's poll down as
-a producer's `covered` line does. bd serve sends a heartbeat on a quiet stream
-every 20 seconds, and each one vouches for the project. The stream needs bd's
-events journal turned on where bd serve runs.
+carries every write bd journalled, whichever bd client made it. A journalled
+write is read within seconds. bd journals a write only where the process
+making it asks bd to, with `BD_EVENTS_JOURNAL` or its own clone's
+`events-journal`, so a write from any other process never reaches the
+stream. The project's poll reads that write instead, at the next interval,
+because a project naming `serve` polls unless it says `poll = false`. bd
+serve sends a heartbeat on a quiet stream every 20 seconds, and each one
+vouches for the project. The stream needs bd's events journal turned on
+where bd serve runs.
 
 A stream that drops, or says nothing for 30 seconds, is followed again from
 the last record the watcher read. Where bd has pruned the journal past that
 record, the watcher reads the project in full once and follows the stream
-from the journal's end. Nothing polls the project while its stream is down,
-so once nothing has vouched for it for `covered_for_seconds`, the watcher
-tells its consumers it has lapsed, and the beads already sent stand as the
-last known. A project naming no `serve` is polled as `poll` says.
+from the journal's end. A project that says `poll = false` is not polled
+while its stream is down, so once nothing has vouched for it for
+`covered_for_seconds`, the watcher tells its consumers it has lapsed, and the
+beads already sent stand as the last known. A project naming no `serve` is
+polled as `poll` says.
 
 `bdi web` and the view do not follow the stream themselves. Each reads a
 project through the watcher where one runs, so a write the stream carries
@@ -1190,8 +1196,9 @@ nothing of herdr's.
 
 It follows the event stream of each project whose entry names its
 [`serve`](#projects), and reads that project whenever the stream says it was
-written to. Run a `bd serve` for each such tracker, and the watcher needs
-nothing else to hear of a change.
+written to. Run a `bd serve` for each such tracker, and the watcher hears of
+each journalled write within seconds, while the poll reads the rest, as
+[`serve`](#projects) says.
 
 It has a socket of its own, apart from the one a view watches, at
 `$XDG_RUNTIME_DIR/beady-eye/watcher.sock` or the path `[watcher]` names. A

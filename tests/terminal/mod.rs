@@ -42,6 +42,7 @@
 
 pub mod driver;
 pub mod shims;
+pub mod web;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};

@@ -231,14 +231,32 @@ pub struct Project {
 #[serde(from = "bool")]
 pub enum Poll {
     /// Polls until a producer says it covers the project, and not after.
-    /// What a project saying nothing about `poll` does.
+    /// What a project saying nothing about `poll` and naming no `serve` does.
     #[default]
     UntilCovered,
     /// `poll = true`: the reader chose the poll, and keeps it under cover.
+    /// Also what a project naming `serve` and saying nothing about `poll`
+    /// does.
     Always,
     /// `poll = false`: a claim that something else reports this project's
     /// changes, from the run's first read.
     Never,
+}
+
+impl Poll {
+    /// How a project kept current as this says is kept current beside the
+    /// bd serve at `serve`, where it names one.
+    ///
+    /// bd serve's stream carries only the writes bd journalled, and bd
+    /// journals a write only where the process making it asks bd to. So the
+    /// stream cannot stand in for the poll, and a project naming one keeps
+    /// its poll unless it says otherwise.
+    fn beside(self, serve: Option<SocketAddr>) -> Self {
+        match (self, serve) {
+            (Poll::UntilCovered, Some(_)) => Poll::Always,
+            (poll, _) => poll,
+        }
+    }
 }
 
 impl From<bool> for Poll {
@@ -1192,6 +1210,7 @@ impl Config {
         let mut cfg: Config = table.try_into()?;
         for project in &mut cfg.projects {
             project.server = cfg.dolt.server_of(project)?;
+            project.poll = project.poll.beside(project.serve);
         }
         if cfg.projects.is_empty() {
             anyhow::bail!("config names no projects; bdi has nothing to read");
@@ -1663,7 +1682,7 @@ path = "/home/user/dev/kadath"
                         "cat /home/user/dev/kadath/.beads-password".to_string()
                     ),
                     prefix: Some("kad".to_string()),
-                    poll: Default::default(),
+                    poll: Poll::Always,
                     events_journal: true,
                     serve: Some("127.0.0.1:8742".parse().unwrap()),
                     badges: vec![Badge {
@@ -2527,6 +2546,22 @@ path = "/home/user/kadath"
             ("poll = false\n", Poll::Never),
         ] {
             let cfg = Config::from_toml(&format!("{ONE_PROJECT}{key}")).expect("parses");
+
+            assert_eq!(cfg.projects[0].poll, poll, "with {key:?}");
+        }
+    }
+
+    /// bd serve's stream carries only the writes bd journalled, so a project
+    /// naming one keeps its poll unless it says it trusts the stream alone.
+    #[test]
+    fn a_project_naming_serve_keeps_its_poll_unless_it_says_otherwise() {
+        for (key, poll) in [
+            ("", Poll::Always),
+            ("poll = true\n", Poll::Always),
+            ("poll = false\n", Poll::Never),
+        ] {
+            let entry = format!("{ONE_PROJECT}serve = \"127.0.0.1:8742\"\n{key}");
+            let cfg = Config::from_toml(&entry).expect("parses");
 
             assert_eq!(cfg.projects[0].poll, poll, "with {key:?}");
         }
