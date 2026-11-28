@@ -146,19 +146,23 @@ pub trait Trackers: Sync {
         BTreeSet::new()
     }
 
-    /// The agent sessions watching each of `project`'s beads, by the bead's
-    /// id, as a running watcher says. `None` where no watcher answers for
-    /// the project, so nobody can say who watches its beads.
-    fn watches(&self, _project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    /// Who watches `project`'s beads, as a running watcher says. `None`
+    /// where no watcher answers for the project, so nobody can say who
+    /// watches its beads.
+    fn watches(&self, _project: &str) -> Option<Watches> {
         None
     }
+}
 
-    /// Whether the running watcher said who watches `project`'s beads ahead
-    /// of its answer, so that a bead `watches` leaves out is watched by
-    /// nobody.
-    fn said_who_watches_first(&self, _project: &str) -> bool {
-        false
-    }
+/// Who watches one project's beads, as a running watcher says.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Watches {
+    /// The agent sessions watching each bead, by the bead's id. A bead
+    /// nobody watches is not held.
+    pub agent_sessions: BTreeMap<String, BTreeSet<String>>,
+    /// Whether the watcher said who watches ahead of its answer, so that a
+    /// bead `agent_sessions` leaves out is watched by nobody.
+    pub whole: bool,
 }
 
 impl<T: Trackers + ?Sized> Trackers for &T {
@@ -170,12 +174,8 @@ impl<T: Trackers + ?Sized> Trackers for &T {
         (**self).unanswered_by_the_watcher()
     }
 
-    fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    fn watches(&self, project: &str) -> Option<Watches> {
         (**self).watches(project)
-    }
-
-    fn said_who_watches_first(&self, project: &str) -> bool {
-        (**self).said_who_watches_first(project)
     }
 }
 

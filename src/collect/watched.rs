@@ -25,7 +25,7 @@ use serde::Deserialize;
 use crate::collect::bd::{bead_of, Fields};
 use crate::collect::changes::{self, Heard};
 use crate::collect::run::{FailureKind, RunFailure};
-use crate::collect::tracker::{OpenFailure, Tracker, Trackers};
+use crate::collect::tracker::{OpenFailure, Tracker, Trackers, Watches};
 use crate::config::{Project, Reach};
 use crate::model::snapshot::{TrackerFailure, TrackerState};
 use crate::model::types::Bead;
@@ -190,16 +190,13 @@ impl<O: Trackers> Trackers for Through<O> {
         self.watcher.said().around.clone()
     }
 
-    fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    fn watches(&self, project: &str) -> Option<Watches> {
         let said = self.watcher.said();
-        let answering = said.current.contains_key(project) && !said.around.contains(project);
-        answering.then(|| said.watches.get(project).cloned().unwrap_or_default())
-    }
-
-    fn said_who_watches_first(&self, project: &str) -> bool {
-        let said = self.watcher.said();
-        let told_first = said.current.get(project).is_some_and(|told| told.watching);
-        told_first && !said.around.contains(project)
+        let told = said.current.get(project)?;
+        (!said.around.contains(project)).then(|| Watches {
+            agent_sessions: said.watches.get(project).cloned().unwrap_or_default(),
+            whole: told.watching,
+        })
     }
 }
 
@@ -1001,12 +998,14 @@ path = "/srv/work/ferry"
 
         assert_eq!(
             through.watches("dunwich"),
-            Some(BTreeMap::from([(
-                "dun-1".to_string(),
-                sessions(&["4f1c-keeper", "9a2e-ferryman"])
-            )]))
+            Some(Watches {
+                agent_sessions: BTreeMap::from([(
+                    "dun-1".to_string(),
+                    sessions(&["4f1c-keeper", "9a2e-ferryman"])
+                )]),
+                whole: true,
+            })
         );
-        assert!(through.said_who_watches_first("dunwich"));
     }
 
     /// A watcher whose freshness line does not say it sent who watches ahead
@@ -1036,13 +1035,12 @@ path = "/srv/work/ferry"
         }
         through.of(project(&cfg, "dunwich")).expect("answered");
 
-        assert!(!through.said_who_watches_first("dunwich"));
         assert_eq!(
             through.watches("dunwich"),
-            Some(BTreeMap::from([(
-                "dun-1".to_string(),
-                sessions(&["4f1c-keeper"])
-            )]))
+            Some(Watches {
+                agent_sessions: BTreeMap::from([("dun-1".to_string(), sessions(&["4f1c-keeper"]))]),
+                whole: false,
+            })
         );
     }
 
@@ -1072,7 +1070,6 @@ path = "/srv/work/ferry"
 
         assert_eq!(through.watches("ferry"), None);
         assert_eq!(through.watches("dunwich"), None);
-        assert!(!through.said_who_watches_first("dunwich"));
         let unwatched = Through::watcher_at(None, ["dunwich"], &own);
         assert_eq!(unwatched.watches("dunwich"), None);
     }

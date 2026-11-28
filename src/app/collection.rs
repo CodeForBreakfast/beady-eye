@@ -792,13 +792,12 @@ impl Collection {
         }
         let joined = &joined;
 
-        let watching: BTreeMap<&str, BTreeMap<String, Watchers>> = answered
+        let watching: BTreeMap<&str, (BTreeMap<String, Watchers>, bool)> = answered
             .iter()
             .filter_map(|(project, _)| {
-                Some((
-                    *project,
-                    watching::in_panes(trackers.watches(project)?, panes),
-                ))
+                let watches = trackers.watches(project)?;
+                let watchers = watching::in_panes(watches.agent_sessions, panes);
+                Some((*project, (watchers, watches.whole)))
             })
             .collect();
         let said: BTreeMap<&str, Said> = answered
@@ -811,8 +810,8 @@ impl Collection {
                         relations: &work.relations,
                         waiting: self.reached.waiting.get(*project),
                         elsewhere: self.reached.elsewhere.get(*project),
-                        watching: watching.get(*project),
-                        watching_is_whole: trackers.said_who_watches_first(project),
+                        watching: watching.get(*project).map(|(watchers, _)| watchers),
+                        watching_is_whole: watching.get(*project).is_some_and(|(_, whole)| *whole),
                     },
                 )
             })
@@ -1245,6 +1244,7 @@ mod tests {
     use crate::collect::run::{FailureKind, RunFailure};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::collect::tracker::Tracker;
+    use crate::collect::tracker::Watches;
     use crate::collect::worktree::testing::a_linked_worktree_written_by_hand;
     use crate::model::anomaly::Anomaly;
     use crate::model::join::{BeadKey, Conflict};
@@ -1545,12 +1545,11 @@ mod tests {
             self.inner.of(project)
         }
 
-        fn watches(&self, project: &str) -> Option<BTreeMap<String, BTreeSet<String>>> {
-            (project == "dunwich").then(|| self.watches.clone())
-        }
-
-        fn said_who_watches_first(&self, project: &str) -> bool {
-            project == "dunwich"
+        fn watches(&self, project: &str) -> Option<Watches> {
+            (project == "dunwich").then(|| Watches {
+                agent_sessions: self.watches.clone(),
+                whole: true,
+            })
         }
     }
 
