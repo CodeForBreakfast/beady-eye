@@ -13,7 +13,7 @@ use crate::model::edges::{Elsewhere, Named, Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
-use crate::model::watching::{Watchers, Watching};
+use crate::model::watching::{self, Watchers, Watching};
 
 use super::filter::{in_flight_first, partition};
 use super::{
@@ -144,7 +144,7 @@ pub fn build_tree(
             anomalies.extend(anomaly::unwatched(
                 own,
                 bead,
-                &Watching::of(watched_by, &bead.id, None),
+                watching::anyone_watches(watched_by, &bead.id),
                 &cfg.anomalies,
             ));
             Node {

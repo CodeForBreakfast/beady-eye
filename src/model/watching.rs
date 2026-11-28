@@ -80,6 +80,13 @@ impl Watching {
     }
 }
 
+/// Whether any agent session watches bead `id`, of the watchers of each bead
+/// in its project, the agent on its claim among them, since it too is woken
+/// when the bead moves. Nothing where nothing could say who watches.
+pub fn anyone_watches(project: Option<&BTreeMap<String, Watchers>>, id: &str) -> Option<bool> {
+    project.map(|project| project.get(id).is_some_and(|watchers| !watchers.is_empty()))
+}
+
 /// Each bead's watchers, found among `panes`. herdr keeps a pane's agent
 /// session after its agent leaves, so only a pane with a live agent places
 /// one.
@@ -199,6 +206,16 @@ mod tests {
             }
         );
         assert!(watching.is_watched());
+    }
+
+    /// The agent on the claim and one herdr reports in no pane both watch.
+    #[test]
+    fn anyone_watching_counts_every_agent_session_the_watcher_names() {
+        let found = in_panes(watched_by(&["4f1c-keeper"]), &[]);
+
+        assert_eq!(anyone_watches(Some(&found), "dun-7"), Some(true));
+        assert_eq!(anyone_watches(Some(&found), "dun-8"), Some(false));
+        assert_eq!(anyone_watches(None, "dun-7"), None);
     }
 
     #[test]

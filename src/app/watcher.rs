@@ -365,17 +365,17 @@ impl Hold {
         for (project, watched) in watched {
             let interest = connection.interests.entry(project.clone()).or_default();
             interest.widen(watch, at);
+            if interest.watches_all() {
+                lines.extend(watched.iter().map(|(id, agent_sessions)| {
+                    watching::watching_line(&project, id, agent_sessions)
+                }));
+            }
             lines.extend(
                 self.projects[&project]
                     .told(&project, interest, true)
                     .into_iter()
                     .flatten(),
             );
-            if interest.watches_all() {
-                lines.extend(watched.iter().map(|(id, agent_sessions)| {
-                    watching::watching_line(&project, id, agent_sessions)
-                }));
-            }
         }
         if !lines.is_empty() && !connection.tells(lines) {
             self.hang_up(vec![consumer]);
@@ -1257,6 +1257,31 @@ mod tests {
                 agent_sessions(&["5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"])
             )]
         );
+    }
+
+    /// A consumer takes a project's answer as whole at its freshness line, so
+    /// one that read the project there and then would otherwise find every
+    /// bead watched by nobody.
+    #[test]
+    fn a_view_starting_is_told_who_watches_before_the_answer_closes() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1", "dun-2"]));
+        let named = connected(&mut hold, 4);
+        hold.watch(
+            named.consumer,
+            &from_agent_session("dun-2", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+        let view = connected(&mut hold, 4);
+
+        hold.watch(view.consumer, &watching_all_of_dunwich(), now())
+            .expect("dunwich is read");
+
+        let told = kinds(&view.told).concat();
+        let watching = told.iter().position(|kind| kind == "watching");
+        let freshness = told.iter().position(|kind| kind == "freshness");
+        assert!(watching.is_some() && watching < freshness, "got: {told:?}");
     }
 
     /// A watch on the whole project, or on every project, is not a view's,
