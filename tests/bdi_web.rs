@@ -22,9 +22,11 @@ use terminal::descriptors::{
 };
 use terminal::shims::ShimmedTracker;
 use terminal::{
-    a_home_naming_one_project, a_home_naming_one_project_settled, die_with, the_socket_under,
-    Producer, EACH_VIEW, THE_ARCHIVE, THE_DESCRIBED_SUBTREE, TWO_VIEWS,
+    a_home_naming_one_project, a_home_naming_one_project_settled, die_with, EACH_VIEW, THE_ARCHIVE,
+    THE_DESCRIBED_SUBTREE, TWO_VIEWS,
 };
+#[cfg(target_os = "linux")]
+use terminal::{the_socket_under, Producer};
 
 /// Long enough for a read that is coming to have come, and short enough
 /// that one that is not is a failure rather than a hang.
@@ -208,14 +210,16 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
 /// server saying the rest of what it has to say, and reading on after it.
 ///
 /// The pipe has room for the config's notice but not for the report, so the
-/// report waits on the pipe while the notice is said.
+/// report waits on the pipe while the notice is said. A check of the config
+/// made while the server has no descriptor free cannot open the file and
+/// says the same notice, so the pipe has room for that one too.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
     let home = a_home_naming_one_project_settled("web-report-waiting", "poll = false\n");
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
-    let (unread, stderr) = a_pipe_with_room_for(ROOM_FOR_THE_NOTICE);
+    let (unread, stderr) = a_pipe_with_room_for(ROOM_FOR_THE_NOTICES);
     let full = held_by(&unread);
     let (web, address) =
         bdi_web_saying_into(&home, &tracker, &[], Some(&home), &[], Stdio::from(stderr));
@@ -228,6 +232,15 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
     let pid = web.0.id();
     let room = open_files(pid).rlim_cur;
     let socket = the_socket_under(&home);
+    let report = format!(
+        "bdi web cannot take connections on {}, and keeps trying: \
+         Too many open files (os error 24)\n",
+        socket.display()
+    );
+    assert!(
+        report.len() > ROOM_FOR_THE_NOTICES,
+        "the report waits on the pipe"
+    );
     limit_open_files(pid, lowest_free_descriptor(pid));
     let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&socket);
     limit_open_files(pid, room);
@@ -236,16 +249,19 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
         "the socket takes connections again"
     );
 
+    std::thread::sleep(UNTIL_THE_CONFIG_IS_CHECKED);
+    let before = held_by(&unread);
     let config = home.join(".config/beady-eye/config.toml");
     std::fs::write(&config, "[[projects]\n").expect("the config is ours to write");
     let giving_up = Instant::now() + GIVING_UP;
-    while held_by(&unread) == full {
+    while held_by(&unread) == before {
         assert!(
             Instant::now() < giving_up,
             "bdi web never said the config will not load while the report waited"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+    assert_eq!(held_by(&unread), before + THE_NOTICE.len());
     let called = tracker.calls().len();
     assert_eq!(Producer::connected_to(&socket).says("arkham"), "ok arkham");
 
@@ -259,11 +275,19 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
     }
 }
 
-/// Room in a pipe for the line `bdi web` says on finding the config will
-/// not load, and not for the one it says on finding its socket cannot take
-/// connections, which names the socket's path as well.
+/// What `bdi web` says on finding the config will not load.
 #[cfg(target_os = "linux")]
-const ROOM_FOR_THE_NOTICE: usize = 80;
+const THE_NOTICE: &str = "bdi web: the edited config has an error · still using the previous one\n";
+
+/// Room in a pipe for the config's notice twice over.
+#[cfg(target_os = "linux")]
+const ROOM_FOR_THE_NOTICES: usize = 2 * THE_NOTICE.len();
+
+/// Longer than the config is left between checks, so a check made once the
+/// limit is given back has read the file whole. A notice said while the
+/// file would not open is then not taken as already said of the broken one.
+#[cfg(target_os = "linux")]
+const UNTIL_THE_CONFIG_IS_CHECKED: Duration = Duration::from_secs(3);
 
 /// A pipe holding as much as it can but `room` bytes, with the room left in
 /// the page it filled last, so a write of up to `room` bytes goes in and a
