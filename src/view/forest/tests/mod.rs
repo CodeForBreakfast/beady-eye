@@ -815,12 +815,15 @@ fn built(filter: Filter) -> Snapshot {
     gather(
         vec![
             tree_of("dunwich", DUNWICH),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         vec![FailedProject {
             project: "lunar".into(),
-            tracker: TrackerFailure::Unstartable,
+            tracker: TrackerFailure::Unstartable {
+                command: None,
+                error: None,
+            },
         }],
         filter,
     )

@@ -177,7 +177,7 @@ fn a_bead_named_before_anything_is_read_is_focused_when_it_is_drawn() {
 fn a_bead_named_while_its_tracker_fails_is_focused_once_it_answers() {
     let mut forest = flatten(gather(
         vec![
-            Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
+            Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -442,7 +442,7 @@ fn a_collection_that_has_lost_the_focused_bead_puts_the_forest_back() {
     forest.refresh(gather(
         vec![
             tree_of("dunwich", &renamed),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -467,7 +467,7 @@ fn the_key_roots_the_forest_afresh_once_the_focused_bead_has_gone() {
     forest.refresh(gather(
         vec![
             tree_of("dunwich", &renamed),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -536,7 +536,7 @@ fn a_focused_root_that_stopped_reading_stays_focused_until_it_reads_again() {
 
     forest.refresh(gather(
         vec![
-            Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
+            Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -563,12 +563,15 @@ fn the_selection_stays_on_a_focused_root_that_stopped_reading_as_the_lines_above
 
     forest.refresh(gather(
         vec![
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
-            Tree::tracker_unreachable("harbour", "hbr-3", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
+            Tree::tracker_unreachable("harbour", "hbr-3", TrackerFailure::Auth { command: None }),
         ],
         vec![FailedProject {
             project: "dunwich".into(),
-            tracker: TrackerFailure::Unstartable,
+            tracker: TrackerFailure::Unstartable {
+                command: None,
+                error: None,
+            },
         }],
         Filter::All,
     ));
@@ -591,7 +594,7 @@ fn a_named_bead_its_tracker_no_longer_holds_is_said_to_be_gone_where_it_stood() 
     forest.refresh(gather(
         vec![
             tree_of("dunwich", &renamed),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -629,7 +632,7 @@ fn a_focus_taken_by_key_after_a_named_start_ends_once_the_bead_has_gone() {
     forest.refresh(gather(
         vec![
             tree_of("dunwich", &renamed),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -648,12 +651,15 @@ fn a_focus_taken_by_key_after_a_named_start_ends_once_the_bead_has_gone() {
 fn dunwich_failed() -> Snapshot {
     gather(
         vec![
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         vec![FailedProject {
             project: "dunwich".into(),
-            tracker: TrackerFailure::Unstartable,
+            tracker: TrackerFailure::Unstartable {
+                command: None,
+                error: None,
+            },
         }],
         Filter::LiveAgents,
     )
@@ -769,7 +775,7 @@ fn a_collection_that_moved_the_focused_bead_roots_the_forest_where_it_moved_to()
         gather(
             vec![
                 tree_of("dunwich", &moved),
-                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+                Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
                 tree_of("harbour", HARBOUR),
             ],
             Vec::new(),
@@ -824,7 +830,7 @@ fn the_focused_bead_closing_leaves_the_forest_rooted_at_it() {
     forest.refresh(gather(
         vec![
             tree_of("dunwich", &closed),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),
@@ -1082,7 +1088,7 @@ fn a_held_back_root_whose_tracker_refused_is_drawn_nowhere() {
     let mut forest = flatten(gather(
         vec![
             tree_of("dunwich", DUNWICH),
-            Tree::tracker_unreachable("dunwich", "dun-0", TrackerFailure::Auth),
+            Tree::tracker_unreachable("dunwich", "dun-0", TrackerFailure::Auth { command: None }),
             tree_of("harbour", HARBOUR),
         ],
         Vec::new(),

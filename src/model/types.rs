@@ -177,7 +177,7 @@ impl Bead {
                 return self
                     .values
                     .get(key)
-                    .map(|value| Cow::Borrowed(value.as_str()))
+                    .map(|value| Cow::Borrowed(value.as_str()));
             }
         };
         text.filter(|text| {
@@ -395,6 +395,7 @@ impl Pane {
 #[cfg(feature = "testing")]
 pub mod testing {
     use super::{PaneKey, Unreadable};
+    use crate::model::snapshot::TrackerFailure;
 
     /// The session a test's panes are in unless it says otherwise: the one
     /// herdr runs where nothing names another.
@@ -409,6 +410,27 @@ pub mod testing {
         Unreadable {
             read: "list".to_string(),
             cause: "invalid type: null, expected a string at line 1 column 25".to_string(),
+        }
+    }
+
+    /// The command line a failing bd was run with.
+    pub const A_COMMAND: &str = "--readonly list --json";
+
+    /// A bd failing for a reason no phrase places, said over two lines, with
+    /// its password already taken out.
+    pub fn an_unplaced() -> TrackerFailure {
+        TrackerFailure::Unavailable {
+            command: Some(A_COMMAND.to_string()),
+            said: Some("Error: the ledger is sealed\n(asked with <redacted>)".to_string()),
+        }
+    }
+
+    /// A bd the operating system would not start, as a watcher out of file
+    /// descriptors meets it.
+    pub fn an_unstarted() -> TrackerFailure {
+        TrackerFailure::InstalledUnstartable {
+            command: Some(A_COMMAND.to_string()),
+            error: Some("Too many open files (os error 24)".to_string()),
         }
     }
 

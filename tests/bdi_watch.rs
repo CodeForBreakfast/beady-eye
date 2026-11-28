@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
-use terminal::shims::ShimmedTracker;
+use terminal::shims::{shims_first_with_nothing_called, ShimmedTracker};
 use terminal::{
     a_home_naming_one_project_settled, a_socket_of_its_own, die_with, the_socket_under, Producer,
     ENTER_ALTERNATE_SCREEN, THE_DESCRIBED_SUBTREE,
@@ -257,7 +257,7 @@ impl Consumer {
                 }
                 connected => {
                     break connected
-                        .unwrap_or_else(|why| panic!("bdi watch is on {} ({why})", at.display()))
+                        .unwrap_or_else(|why| panic!("bdi watch is on {} ({why})", at.display()));
                 }
             }
         };
@@ -382,6 +382,185 @@ fn a_watch_is_sent_the_projects_beads_then_how_current_they_are() {
     assert_eq!(freshness["protocol"], 1);
     assert!(freshness["as_of"].is_string(), "{freshness}");
     assert!(freshness["reach"]["path"].is_string(), "{freshness}");
+}
+
+/// The password every watcher in the tests below is handed for bd.
+const PASSWORD: &str = "hunter2";
+
+/// What a watch of arkham is told, and what the watcher has logged, once a
+/// watcher over `tracker` in `home` has logged its first word on a tracker.
+/// The watcher is handed [`PASSWORD`], and runs on `path` where one is given.
+fn told_and_logged(
+    home: &Path,
+    tracker: &ShimmedTracker,
+    path: Option<&str>,
+) -> (Vec<Value>, String) {
+    let log = home.join("watcher.log");
+    let mut command = bdi_watch(home, tracker);
+    command
+        .env("BEADS_DOLT_PASSWORD", PASSWORD)
+        .stderr(std::fs::File::create(&log).expect("the log is ours to make"));
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let watcher = Watcher(Some(command.spawn().expect("bdi watch starts")));
+    let logged = || std::fs::read_to_string(&log).expect("the log is ours to read");
+    until(|| logged().ends_with('\n'), "the log line");
+    until(|| watching_at(home).exists(), "the socket");
+
+    let answer = Consumer::connected_to(&watching_at(home))
+        .sends("watch arkham")
+        .hears_an_answer();
+    stopped(watcher);
+    (answer, logged())
+}
+
+/// Why arkham's tracker could not be read, as the last line of `answer`
+/// tells a watch.
+fn unreachable(answer: &[Value]) -> &Value {
+    &answer.last().expect("an answer ends")["tracker"]["unreachable"]
+}
+
+fn never_the_password<'a>(told: impl IntoIterator<Item = &'a str>) {
+    for told in told {
+        assert!(
+            !told.contains(PASSWORD),
+            "the password survived into: {told}"
+        );
+    }
+}
+
+/// A tracker bd fails to read for a reason `bdi` cannot place is told to a
+/// watch with the command that failed and what bd said, and written where
+/// whoever supervises the watcher reads it. The password bd was handed
+/// reaches neither.
+#[test]
+fn a_tracker_failing_for_a_reason_bdi_cannot_place_says_what_bd_said_and_never_the_password() {
+    let home = a_home_naming_one_project_settled("watch-unplaced", NOT_POLLED);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.refuses_with(
+        READ_IN_FULL,
+        &format!("Error: the ledger is sealed\n(asked as arkham with {PASSWORD})\n"),
+    );
+
+    let (answer, logged) = told_and_logged(&home, &tracker, None);
+
+    let unreachable = unreachable(&answer);
+    assert_eq!(unreachable["reason"], "unavailable", "{unreachable}");
+    let command = unreachable["command"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the command is told: {unreachable}"));
+    assert!(command.ends_with(READ_IN_FULL), "{command}");
+    assert_eq!(
+        unreachable["said"],
+        "Error: the ledger is sealed\n(asked as arkham with <redacted>)"
+    );
+    assert!(
+        logged.contains(command)
+            && logged.contains("Error: the ledger is sealed (asked as arkham with <redacted>)"),
+        "the log says what bd said: {logged}"
+    );
+    let told: Vec<String> = answer.iter().map(Value::to_string).collect();
+    never_the_password(told.iter().map(String::as_str).chain([logged.as_str()]));
+}
+
+/// A tracker bd could not reach is told to a watch and written to the log
+/// with the command bd failed on, and with nothing bd said.
+#[test]
+fn a_tracker_bd_could_not_reach_says_the_command_bd_failed_on() {
+    let home = a_home_naming_one_project_settled("watch-placed", NOT_POLLED);
+    let tracker = ShimmedTracker::beside(&home);
+    tracker.holds(THE_DESCRIBED_SUBTREE);
+    tracker.refuses_with(
+        READ_IN_FULL,
+        "Error: dial tcp 192.0.2.7:3306: i/o timeout\n",
+    );
+
+    let (answer, logged) = told_and_logged(&home, &tracker, None);
+
+    let unreachable = unreachable(&answer);
+    assert_eq!(unreachable["reason"], "unavailable", "{unreachable}");
+    let command = unreachable["command"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the command is told: {unreachable}"));
+    assert!(command.ends_with(READ_IN_FULL), "{command}");
+    assert_eq!(unreachable.get("said"), None, "{unreachable}");
+    assert!(
+        logged.contains(&format!("the tracker did not answer · bd {command}")),
+        "the log names the command: {logged}"
+    );
+    assert!(
+        !logged.contains("192.0.2.7"),
+        "bd's words are kept out: {logged}"
+    );
+}
+
+/// A `bd` the operating system will not start is told to a watch, written to
+/// the log and written by `bdi --beads` with the command `bdi` asked it to
+/// run and the system's error. A file with no execute bit is one a test can
+/// make, and it is refused the way a watcher out of file descriptors is.
+/// The password bdi would have handed bd reaches none of them.
+#[test]
+fn a_bd_that_could_not_be_started_says_its_command_and_the_systems_error() {
+    let home = a_home_naming_one_project_settled("watch-unstarted", NOT_POLLED);
+    let tracker = ShimmedTracker::beside(&home);
+    let unrunnable = home.join("unrunnable");
+    std::fs::create_dir(&unrunnable).expect("the directory is ours to make");
+    std::fs::write(unrunnable.join("bd"), "#!/bin/sh\nexit 0\n").expect("bd is ours to write");
+    const REFUSED: &str = "Permission denied (os error 13)";
+
+    let (_, elsewhere) = shims_first_with_nothing_called("bd", &home);
+    let path = format!("{}:{elsewhere}", unrunnable.display());
+    let (answer, logged) = told_and_logged(&home, &tracker, Some(&path));
+
+    let unreachable = unreachable(&answer);
+    assert_eq!(
+        unreachable["reason"], "installed-unstartable",
+        "{unreachable}"
+    );
+    assert_eq!(unreachable["error"], REFUSED, "{unreachable}");
+    let command = unreachable["command"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the command is told: {unreachable}"));
+    assert!(command.ends_with(READ_IN_FULL), "{unreachable}");
+    assert!(
+        logged.contains(&format!(
+            "bd is installed but could not be started · bd {command} · {REFUSED}"
+        )),
+        "the log names the command and the error: {logged}"
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_bdi"))
+        .arg("--beads")
+        .current_dir(&home)
+        .env("HOME", &home)
+        .env_remove("BEADS_DIR")
+        .env_remove("BDI_PROJECT")
+        .env("BEADS_DOLT_PASSWORD", PASSWORD)
+        .envs(tracker.environment())
+        .env("PATH", &path)
+        .output()
+        .expect("bdi runs");
+    let written = String::from_utf8_lossy(&out.stdout).into_owned();
+    let listing: Value = serde_json::from_str(&written).expect("bdi --beads writes JSON");
+    let failed = &listing["failed_projects"][0]["tracker"];
+    assert_eq!(failed["reason"], "installed-unstartable", "{listing}");
+    let read = "--readonly list --all --include-gates";
+    assert!(
+        failed["command"]
+            .as_str()
+            .is_some_and(|told| told.contains(read)),
+        "{listing}"
+    );
+    assert_eq!(failed["error"], REFUSED, "{listing}");
+
+    let told: Vec<String> = answer.iter().map(Value::to_string).collect();
+    never_the_password(
+        told.iter()
+            .map(String::as_str)
+            .chain([logged.as_str(), written.as_str()]),
+    );
 }
 
 /// What a consumer that acts only on what it is told relies on: a watcher

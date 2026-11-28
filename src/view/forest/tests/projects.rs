@@ -62,7 +62,7 @@ fn a_root_that_could_not_be_read_says_so_where_its_row_would_have_been() {
             &forest.lines()[at + 1].content,
             Content::Unread(unread)
                 if unread.root == "fer-2"
-                    && unread.tracker == TrackerState::Unreachable(TrackerFailure::Auth)
+                    && unread.tracker == TrackerState::Unreachable(TrackerFailure::Auth { command: None })
         ),
         "{:#?}",
         sketch(&forest)
@@ -363,7 +363,10 @@ fn a_failed_projects_loose_panes_hang_under_its_own_line() {
         vec![tree_of("dunwich", DUNWICH)],
         vec![FailedProject {
             project: "ferry".into(),
-            tracker: TrackerFailure::Unstartable,
+            tracker: TrackerFailure::Unstartable {
+                command: None,
+                error: None,
+            },
         }],
         Filter::LiveAgents,
     ));
@@ -396,7 +399,10 @@ fn a_project_drawn_only_for_its_loose_panes_keeps_the_line_it_opened_on() {
         Vec::new(),
         vec![FailedProject {
             project: "ferry".into(),
-            tracker: TrackerFailure::Unstartable,
+            tracker: TrackerFailure::Unstartable {
+                command: None,
+                error: None,
+            },
         }],
         Filter::LiveAgents,
     ));

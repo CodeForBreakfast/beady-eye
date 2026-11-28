@@ -2262,6 +2262,7 @@ mod tests {
             program: "bd".to_string(),
             detail: "bd cannot run that against this tracker".to_string(),
             unreadable: None,
+            ran: None,
         }
     }
 
@@ -2273,6 +2274,7 @@ mod tests {
             program: "bd".to_string(),
             detail: "bd could not reach the tracker".to_string(),
             unreadable: None,
+            ran: None,
         }
     }
 
@@ -2601,6 +2603,7 @@ mod tests {
                     program: "bd".to_string(),
                     detail: "bd does not know a flag bdi uses".to_string(),
                     unreadable: None,
+                    ran: None,
                 },
             )
             .with(&spelled(WISP_CALL), "[]")
@@ -2939,6 +2942,7 @@ mod tests {
             program: "bd".to_string(),
             detail: "bd does not know a flag bdi uses".to_string(),
             unreadable: None,
+            ran: None,
         };
         let runner = FakeRunner::default()
             .failing(&spelled("ready --brief --limit 0 --json"), unknown_flag())
@@ -3069,6 +3073,7 @@ mod tests {
                     program: "bd".to_string(),
                     detail: "bd was refused the tracker's credential".to_string(),
                     unreadable: None,
+                    ran: None,
                 },
             )
             .with(&spelled(WISP_CALL), "[]");
