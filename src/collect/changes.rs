@@ -477,20 +477,16 @@ fn under(runtime_directory: Option<&Path>) -> Option<PathBuf> {
 
 /// Open the channel and start watching it, reporting what stopped it
 /// rather than failing: a `bdi` nothing can reach still draws, just polled.
-/// `cannot_accept` is told why, each time the channel starts failing to take
-/// connections.
+/// `taking` is told each time the channel stops taking connections, and why,
+/// and each time it takes them again.
 pub fn watch(
     at: Option<PathBuf>,
     reported: &Reported,
     changed: impl Report,
-    cannot_accept: impl Fn(&io::Error) + Send + Sync + 'static,
+    taking: impl Fn(Taking<'_>) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let reported = reported.clone();
-    serve(
-        at,
-        move |writer| hear(writer, &reported, &changed),
-        cannot_accept,
-    )
+    serve(at, move |writer| hear(writer, &reported, &changed), taking)
 }
 
 /// The channel a view `opened`, or the refusal worth saying where it could
@@ -512,15 +508,16 @@ pub fn opened_unless_a_watcher_holds_it(
 }
 
 /// Open a socket and hand each connection to `each` on a thread of its own,
-/// reporting what stopped it rather than failing. `cannot_accept` is told
-/// why, each time the socket starts failing to take connections.
+/// reporting what stopped it rather than failing. `taking` is told each time
+/// the socket stops taking connections, and why, and each time it takes them
+/// again.
 pub fn serve(
     at: Option<PathBuf>,
     each: impl Fn(UnixStream) + Send + Sync + 'static,
-    cannot_accept: impl Fn(&io::Error) + Send + Sync + 'static,
+    taking: impl Fn(Taking<'_>) + Send + Sync + 'static,
 ) -> Result<Socket, Refused> {
     let at = at.ok_or(Refused::NoRuntimeDirectory)?;
-    listening(at, reclaim, Arc::new(each), Arc::new(cannot_accept))
+    listening(at, reclaim, Arc::new(each), Arc::new(taking))
 }
 
 /// What to do with a name some other socket already holds.
@@ -530,7 +527,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     at: PathBuf,
     in_use: InUse,
     each: Arc<F>,
-    cannot_accept: Arc<impl Fn(&io::Error) + Send + Sync + 'static>,
+    taking: Arc<impl Fn(Taking<'_>) + Send + Sync + 'static>,
 ) -> Result<Socket, Refused> {
     let channel = bind(&at, in_use)?;
     // Read before anything else this run does, so the name has had as little
@@ -539,7 +536,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
 
-    thread::spawn(move || accept(channel.incoming(), &each, &*cannot_accept));
+    thread::spawn(move || accept(channel.incoming(), &each, &*taking));
 
     Ok(Socket { at, bound })
 }
@@ -548,9 +545,9 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
 /// not. Every `every` after that, for as long as `holding` says, it is taken
 /// back where the name has gone or what holds it now is dead. Each time it
 /// cannot be taken, `lost` is told why, once until it is taken again, and
-/// `cannot_accept` each time a socket taken starts failing to take
-/// connections. Nothing where there is no path, as there is none for a view
-/// either.
+/// `taking` is told each time a socket taken stops taking connections, and
+/// each time it takes them again. Nothing where there is no path, as there is
+/// none for a view either.
 ///
 /// For `bdi watch`, which every view reads through, so a change pushed to
 /// any view's socket is one it has to hear. A view holding the name can pass
@@ -566,7 +563,7 @@ pub fn keep(
     every: Duration,
     holding: impl Fn() -> bool + Send + 'static,
     lost: impl Fn(&Refused) + Send + 'static,
-    cannot_accept: impl Fn(&io::Error) + Send + Sync + 'static,
+    taking: impl Fn(Taking<'_>) + Send + Sync + 'static,
 ) -> Kept {
     let kept = Arc::new(Mutex::new(None));
     let Some(at) = at else {
@@ -574,15 +571,8 @@ pub fn keep(
     };
     let reported = reported.clone();
     let each = Arc::new(move |writer| hear(writer, &reported, &changed));
-    let cannot_accept = Arc::new(cannot_accept);
-    let take = move |in_use| {
-        listening(
-            at.clone(),
-            in_use,
-            Arc::clone(&each),
-            Arc::clone(&cannot_accept),
-        )
-    };
+    let taking = Arc::new(taking);
+    let take = move |in_use| listening(at.clone(), in_use, Arc::clone(&each), Arc::clone(&taking));
 
     let mut said = match take(take_over) {
         Ok(socket) => {
@@ -841,18 +831,28 @@ fn is_a_socket(at: &Path) -> bool {
 /// once and spin a core until a descriptor is free.
 const UNTIL_ACCEPTING_AGAIN: Duration = Duration::from_millis(100);
 
+/// What a socket says of the connections it takes, each time that changes.
+#[derive(Debug)]
+pub enum Taking<'a> {
+    /// It has stopped taking them, and this is why.
+    Stopped(&'a io::Error),
+    /// It takes them again.
+    Again,
+}
+
 /// Take connections for as long as the run lasts, each on a thread of its
 /// own.
 ///
 /// An accept that fails is tried again rather than ending the channel. A run
 /// holding as many files as it may fails every accept, and takes connections
-/// again once it closes one. `cannot_accept` is told why the first accept of
-/// each run of failures failed, because nobody else will be: a writer whose
-/// connection is never taken has nothing to read the reason from.
+/// again once it closes one. `taking` is told why the first accept of each
+/// run of failures failed, and told when one succeeds after it, because
+/// nobody else will be: a writer whose connection is never taken has nothing
+/// to read the reason from.
 fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
     connections: impl IntoIterator<Item = io::Result<UnixStream>>,
     each: &Arc<F>,
-    cannot_accept: &impl Fn(&io::Error),
+    taking: &impl Fn(Taking<'_>),
 ) {
     let mut failing = false;
     for connection in connections {
@@ -860,13 +860,15 @@ fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
             Ok(connection) => connection,
             Err(why) => {
                 if !std::mem::replace(&mut failing, true) {
-                    cannot_accept(&why);
+                    taking(Taking::Stopped(&why));
                 }
                 thread::sleep(UNTIL_ACCEPTING_AGAIN);
                 continue;
             }
         };
-        failing = false;
+        if std::mem::replace(&mut failing, false) {
+            taking(Taking::Again);
+        }
 
         let each = Arc::clone(each);
         thread::spawn(move || each(connection));
@@ -2038,7 +2040,7 @@ mod tests {
     /// operator is told once for each run of failures, and the connection
     /// taken between two runs is still handed on.
     #[test]
-    fn a_run_of_failed_accepts_is_told_once_and_the_connection_after_it_is_taken() {
+    fn a_run_of_failed_accepts_is_told_once_and_the_connection_ending_it_is_taken_and_told() {
         let out_of_descriptors = || std::io::Error::from_raw_os_error(libc::EMFILE);
         let (connection, _other_end) = UnixStream::pair().expect("a connection");
         let (handing, handed) = mpsc::channel();
@@ -2052,9 +2054,12 @@ mod tests {
                 Err(out_of_descriptors()),
             ],
             &Arc::new(move |connection| handing.send(connection).expect("the test is listening")),
-            &move |why: &std::io::Error| {
+            &move |taking: Taking<'_>| {
                 telling
-                    .send(why.raw_os_error())
+                    .send(match taking {
+                        Taking::Stopped(why) => why.raw_os_error(),
+                        Taking::Again => None,
+                    })
                     .expect("the test is listening")
             },
         );
@@ -2065,7 +2070,7 @@ mod tests {
         );
         assert_eq!(
             told.try_iter().collect::<Vec<_>>(),
-            [Some(libc::EMFILE), Some(libc::EMFILE)]
+            [Some(libc::EMFILE), None, Some(libc::EMFILE)]
         );
     }
 }

@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+#[cfg(target_os = "linux")]
+use terminal::descriptors::{limit_open_files, lowest_free_descriptor, open_files};
 use terminal::driver::{Driven, GIVING_UP as THE_SCREEN_GIVING_UP};
 use terminal::shims::ShimmedTracker;
 use terminal::{
@@ -651,65 +653,6 @@ const UNTAKEN_AFTER: Duration = Duration::from_millis(500);
 /// accept fails. It takes the one its blocked accept holds a descriptor for.
 #[cfg(target_os = "linux")]
 const TAKEN_PAST_THE_LIMIT_AT_MOST: usize = 4;
-
-/// The limits on how many files `pid` may hold open.
-#[cfg(target_os = "linux")]
-fn open_files(pid: u32) -> libc::rlimit {
-    let mut limit = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    let read = unsafe {
-        libc::prlimit(
-            pid as libc::pid_t,
-            libc::RLIMIT_NOFILE,
-            std::ptr::null(),
-            &mut limit,
-        )
-    };
-    assert_eq!(read, 0, "{}", std::io::Error::last_os_error());
-    limit
-}
-
-/// Set the soft limit on how many files `pid` may hold open, leaving its
-/// hard limit as it was.
-#[cfg(target_os = "linux")]
-fn limit_open_files(pid: u32, soft: libc::rlim_t) {
-    let limit = libc::rlimit {
-        rlim_cur: soft,
-        ..open_files(pid)
-    };
-    let set = unsafe {
-        libc::prlimit(
-            pid as libc::pid_t,
-            libc::RLIMIT_NOFILE,
-            &limit,
-            std::ptr::null_mut(),
-        )
-    };
-    assert_eq!(set, 0, "{}", std::io::Error::last_os_error());
-}
-
-/// The descriptor `pid` would be given next. A soft limit at it refuses the
-/// next one, since a descriptor has to be below the limit.
-#[cfg(target_os = "linux")]
-fn lowest_free_descriptor(pid: u32) -> libc::rlim_t {
-    let held: std::collections::BTreeSet<libc::rlim_t> =
-        std::fs::read_dir(format!("/proc/{pid}/fd"))
-            .expect("the watcher is ours to read")
-            .map(|entry| {
-                let entry = entry.expect("the watcher is ours to read");
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .parse()
-                    .expect("a descriptor is a number")
-            })
-            .collect();
-    (0..)
-        .find(|descriptor| !held.contains(descriptor))
-        .expect("a descriptor is free")
-}
 
 /// What a consumer waiting on a deferred bead relies on: nothing is written
 /// when its date passes, and the watcher still sends it again, marked as

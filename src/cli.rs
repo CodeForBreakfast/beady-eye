@@ -903,7 +903,7 @@ fn socket_refused(refused: &changes::Refused, holder: &str, choose: &str) -> Str
 fn not_taking_connections(
     holder: &'static str,
     at: PathBuf,
-) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
+) -> impl Fn(changes::Taking<'_>) + Send + Sync + 'static {
     not_taking_connections_into(std::io::stderr(), holder, at)
 }
 
@@ -912,7 +912,7 @@ fn not_taking_connections_into(
     mut out: impl Write + Send + 'static,
     holder: &'static str,
     at: PathBuf,
-) -> impl Fn(&std::io::Error) + Send + Sync + 'static {
+) -> impl Fn(changes::Taking<'_>) + Send + Sync + 'static {
     // A write to stderr can fail or wait for ever, and the accept loop doing
     // the telling has to go on trying either way. So a thread of its own
     // writes, and a report is dropped while another still waits to be written.
@@ -922,7 +922,10 @@ fn not_taking_connections_into(
             let _ = writeln!(out, "{report}");
         }
     });
-    move |why| {
+    move |taking| {
+        let changes::Taking::Stopped(why) = taking else {
+            return;
+        };
         let _ = telling.try_send(format!(
             "{holder} cannot take connections on {}, and keeps trying: {why}",
             at.display()
@@ -1164,11 +1167,11 @@ mod tests {
         );
         let out_of_descriptors = std::io::Error::from_raw_os_error(libc::EMFILE);
 
-        telling(&out_of_descriptors);
+        telling(changes::Taking::Stopped(&out_of_descriptors));
         refused
             .recv_timeout(Duration::from_secs(10))
             .expect("the first report is tried");
-        telling(&out_of_descriptors);
+        telling(changes::Taking::Stopped(&out_of_descriptors));
 
         let said: Vec<u8> =
             std::iter::from_fn(|| written.recv_timeout(Duration::from_secs(1)).ok())

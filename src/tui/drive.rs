@@ -42,6 +42,9 @@ pub(super) enum Event {
     Resize,
     /// Work has moved on, and what has to be read to see it.
     Changed(Wanted),
+    /// The inbound channel has stopped taking connections, and why, or
+    /// nothing where it takes them again.
+    Taking(Option<String>),
     /// Something outside says it covers this project and nothing in it has
     /// moved, so there is nothing to read.
     Covered(String),
@@ -235,6 +238,11 @@ pub(super) trait View {
     /// setting the view learns some other way is one a reload cannot reach,
     /// which is what this hands it rather than the verdict alone.
     fn reloaded(&mut self, reloaded: Reloaded<'_>, now: DateTime<Utc>) -> bool;
+
+    /// Take what the inbound channel says of the connections it takes, which
+    /// is why it stopped or nothing where it takes them again, reporting
+    /// whether the screen has changed.
+    fn taking(&mut self, stopped: Option<String>) -> bool;
 
     /// Take note that the reader has pressed something — a key, a button, a
     /// wheel notch — before the loop works out what it means, reporting
@@ -830,6 +838,7 @@ fn answered(
         Event::Scrolled(notch) => view.scrolled(notch),
         Event::Resize => true,
         Event::Changed(wanted) => asked_for(view, outstanding, wanted),
+        Event::Taking(stopped) => view.taking(stopped),
         Event::Covered(covered) => {
             reading.covered(&covered, Utc::now());
             false
@@ -1137,6 +1146,11 @@ pub(super) mod tests {
         /// here hands the loop a file to look at. What a check does to the
         /// foot is `Shown`'s, where a test can read the row it lands on.
         fn reloaded(&mut self, _reloaded: Reloaded<'_>, _now: DateTime<Utc>) -> bool {
+            false
+        }
+
+        /// What the channel's word does to the foot is `Shown`'s too.
+        fn taking(&mut self, _stopped: Option<String>) -> bool {
             false
         }
 

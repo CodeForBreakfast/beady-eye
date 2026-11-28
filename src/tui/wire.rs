@@ -129,10 +129,19 @@ pub(super) fn wire(
     // and its `Socket` has to reach the loop, or nothing takes the socket off
     // the filesystem when the run ends.
     //
-    // A socket that stops taking connections goes unsaid, because stderr is
-    // the screen here and a line written to it would tear the frame.
+    // A socket that stops taking connections is said at the foot rather than
+    // on stderr, because stderr is the screen here and a line written to it
+    // would tear the frame.
+    let told_the_loop = to_the_loop.clone();
+    let taking = move |taking: changes::Taking<'_>| {
+        let stopped = match taking {
+            changes::Taking::Stopped(why) => Some(why.to_string()),
+            changes::Taking::Again => None,
+        };
+        let _ = told_the_loop.send(Event::Taking(stopped));
+    };
     let (socket, refused) = inbound(
-        changes::watch(watching_at, &reported, changed.clone(), |_| {}),
+        changes::watch(watching_at, &reported, changed.clone(), taking),
         || watched::answers(watcher_at.as_deref()),
     );
 
