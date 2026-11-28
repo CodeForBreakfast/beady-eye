@@ -42,10 +42,12 @@ const NOT_TAKEN: &[u8] = "bdi cannot take reports of changes".as_bytes();
 /// it there would tear its frame with.
 const SAID_ON_STDERR: &[u8] = "cannot take connections".as_bytes();
 
-/// More connections than a run with no descriptor free takes before an
+/// More connections than a view with no descriptor free takes before an
 /// accept fails. A thread already blocked in accept holds the descriptor for
-/// the next one, so the run takes that one past its limit.
-const PAST_THE_LIMIT: usize = 4;
+/// the next one, so the view takes that one past its limit. A collection or
+/// a check of the config can hold a descriptor for a moment as the limit is
+/// lowered, and the view takes a connection on each one that closes.
+const PAST_THE_LIMIT: usize = 16;
 
 #[test]
 fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
@@ -57,11 +59,7 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
     let room = open_files(pid).rlim_cur;
 
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let _waiting: Vec<UnixStream> = (0..PAST_THE_LIMIT)
-        .map(|_| {
-            UnixStream::connect(the_socket_under(&home)).expect("the socket queues the connection")
-        })
-        .collect();
+    let _waiting = a_report_past_the_limit(&home);
     bdi.read_until(NOT_TAKEN, GIVING_UP);
 
     let mut rows = ROWS - 1;
@@ -126,11 +124,9 @@ enum Answered {
     Waiting,
 }
 
-/// A report sent on a connection the view has not taken.
-///
-/// A thread already blocked in accept holds the descriptor its next
-/// connection takes, so the view can take a connection past the limit before
-/// it fails to take one.
+/// A report sent on a connection the view has not taken, once its limit is
+/// lowered, and the connections it took before it stopped. Each is sent on
+/// its own, so the view runs out of room before the one it does not take.
 fn a_report_past_the_limit(home: &Path) -> (UnixStream, Vec<UnixStream>) {
     let mut taken_past_the_limit = Vec::new();
     loop {
