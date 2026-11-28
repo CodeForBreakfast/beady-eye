@@ -1627,6 +1627,80 @@ mod tests {
         assert_eq!(watching_of(&snap, "dun-7"), &Watching::nobody());
     }
 
+    /// Two questions and two gates waiting on someone. `w:p1` claims the
+    /// first question; the second gate is watched from no pane herdr reports.
+    const WAITING_ON_SOMEONE: &str = r#"[
+      {"id":"dun-7","title":"lift the ground station","status":"in_progress",
+       "priority":1,"issue_type":"epic"},
+      {"id":"dun-7.1","title":"which dish to re-point","status":"in_progress","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task","labels":["human"],
+       "metadata":{"agent_pane":"w:p1"}},
+      {"id":"dun-7.2","title":"which mast to survey","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"task","labels":["human"]},
+      {"id":"dun-7.3","title":"merge the dish change","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"gate","labels":["outcome","human-move"]},
+      {"id":"dun-7.4","title":"merge the mast change","status":"open","parent":"dun-7",
+       "dependencies":[{"depends_on_id":"dun-7","type":"parent-child"}],
+       "priority":2,"issue_type":"gate","labels":["outcome","human-move"]}
+    ]"#;
+
+    /// The agent on a bead's claim is left out of who else watches it, but
+    /// it is woken when the bead moves, so its watch is enough.
+    #[test]
+    fn a_bead_the_config_wants_watched_is_unwatched_until_any_agent_watches_it() {
+        let cfg = Config::from_toml(&format!(
+            r#"
+[[projects]]
+name = "dunwich"
+path = "{DUNWICH}"
+
+[[anomalies.unwatched]]
+when = {{ labels = "human" }}
+
+[[anomalies.unwatched]]
+when = {{ labels = "human-move", issue_type = "gate" }}
+"#
+        ))
+        .expect("the config parses");
+        let keeper = holding_agent(
+            titled(pane("w:p1", DUNWICH, PaneStatus::Working), "the dish"),
+            "4f1c-keeper",
+        );
+        let trackers = WatchedBy {
+            inner: dunwich_with(dunwich_holding(WAITING_ON_SOMEONE)),
+            watches: BTreeMap::from([
+                (
+                    "dun-7.1".to_string(),
+                    ["4f1c-keeper"].map(str::to_string).into(),
+                ),
+                (
+                    "dun-7.3".to_string(),
+                    ["9a2e-ferryman"].map(str::to_string).into(),
+                ),
+            ]),
+        };
+
+        let snap = run(
+            &cfg,
+            &Provider::holding(vec![keeper]),
+            &trackers,
+            Filter::All,
+            now(),
+        );
+
+        let unwatched: Vec<&str> = tree_of(&snap, "dunwich")
+            .beads
+            .iter()
+            .filter(|n| n.anomalies.contains(&Anomaly::Unwatched))
+            .map(|n| n.id.as_str())
+            .collect();
+        assert_eq!(unwatched, ["dun-7.2", "dun-7.4"]);
+        assert_eq!(watching_of(&snap, "dun-7.1"), &Watching::nobody());
+    }
+
     #[test]
     fn who_watches_a_bead_is_unknown_where_no_watcher_answers_for_its_project() {
         let snap = run(&one_project(), &panes(), &dunwich(), Filter::All, now());

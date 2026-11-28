@@ -130,6 +130,23 @@ pub fn build_tree(
                     .iter()
                     .any(|orphan| orphan.id == *id && orphan.why.is_unread())
             });
+            let watched_by = said.and_then(|said| said.watching);
+            let mut anomalies = anomaly::detect(
+                bead,
+                agent.as_ref(),
+                refused,
+                agents,
+                out_of_reach,
+                joined.under_a_seat.contains(&key),
+                &cfg.anomalies,
+                now,
+            );
+            anomalies.extend(anomaly::unwatched(
+                own,
+                bead,
+                &Watching::of(watched_by, &bead.id, None),
+                &cfg.anomalies,
+            ));
             Node {
                 project: own.to_string(),
                 id: bead.id.clone(),
@@ -143,18 +160,9 @@ pub fn build_tree(
                 closed_at: bead.closed_at,
                 badges: badged.drawn,
                 undrawn: badged.undrawn,
-                anomalies: anomaly::detect(
-                    bead,
-                    agent.as_ref(),
-                    refused,
-                    agents,
-                    out_of_reach,
-                    joined.under_a_seat.contains(&key),
-                    &cfg.anomalies,
-                    now,
-                ),
+                anomalies,
                 watching: Watching::of(
-                    said.and_then(|said| said.watching),
+                    watched_by,
                     &bead.id,
                     agent
                         .as_ref()

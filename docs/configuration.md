@@ -953,6 +953,21 @@ environment gives it.
 `stale_claim_days` is how long a claim may go untouched before `bdi` flags it.
 The default is `bd stale`'s own window.
 
+Each `[[anomalies.unwatched]]` selects beads that some agent should be watching,
+and `bdi` flags one that is not closed and that no agent watches. It takes the
+`projects`, `when` and `unless` a view's `[[views.select]]` takes, and a bead
+any one entry selects is flagged. None is configured by default. The rule needs
+the watcher, because only the watcher knows who watches a bead.
+
+```toml
+# Every bead labelled human, and every gate labelled human-move.
+[[anomalies.unwatched]]
+when = { labels = "human" }
+
+[[anomalies.unwatched]]
+when = { labels = "human-move", issue_type = "gate" }
+```
+
 ## `[tui]`
 
 Three intervals, each a gap *after* an answer rather than a fixed period, so a

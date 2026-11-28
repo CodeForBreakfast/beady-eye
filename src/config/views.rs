@@ -1,13 +1,11 @@
 //! Views: lists of beads a setup names and defines, each opened in place of
 //! the forest.
 
-use std::collections::BTreeMap;
-
 use serde::Deserialize;
 
 use crate::model::types::Bead;
 
-use super::{conditions_hold, Pattern};
+use super::Select;
 
 /// One list of beads, under the name the reader gave it.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -18,29 +16,12 @@ pub struct View {
     pub select: Vec<Select>,
 }
 
-/// One set of conditions a bead can meet to be in a view.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Select {
-    /// The projects whose beads this selects. Every project where it names
-    /// none.
-    #[serde(default)]
-    pub projects: Vec<String>,
-    /// Read as a badge's `when` is read.
-    #[serde(default)]
-    pub when: BTreeMap<String, Pattern>,
-    /// Read as a badge's `unless` is read.
-    #[serde(default)]
-    pub unless: BTreeMap<String, Pattern>,
-}
-
 impl View {
     /// Whether this view lists `bead`, which `project`'s tracker holds.
     pub fn holds(&self, project: &str, bead: &Bead) -> bool {
-        self.select.iter().any(|select| {
-            (select.projects.is_empty() || select.projects.iter().any(|p| p == project))
-                && conditions_hold(&select.when, &select.unless, bead)
-        })
+        self.select
+            .iter()
+            .any(|select| select.selects(project, bead))
     }
 }
 
