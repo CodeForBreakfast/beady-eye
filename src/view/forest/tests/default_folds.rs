@@ -27,7 +27,7 @@ fn a_snapshot_flattens_to_the_lines_the_design_draws() {
             "▾ harbour",
             "  └─▸ [HiddenTrees harbour] 1",
             "▾ [FailedProjects] 1",
-            "  └── - Failed(FailedProject { project: \"lunar\", tracker: Unstartable })",
+            "  └── - Failed(FailedProject { project: \"lunar\", tracker: Unstartable { command: None, error: None } })",
             "▾ [Unconfigured] 1",
             "  └── - Unconfigured(UnconfiguredPane { pane: PaneKey { session: \"default\", id: \"w:pF\" }, cwd: \"/srv/spike\", pane_status: Idle })",
             "▾ [Conflicts] 1",

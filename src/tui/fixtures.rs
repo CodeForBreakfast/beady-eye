@@ -40,7 +40,14 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         project: "arkham".to_string(),
         root: "a-1".to_string(),
         title: "the only tree there is".to_string(),
-        ..Tree::tracker_unreachable("arkham", "a-1", TrackerFailure::Unavailable)
+        ..Tree::tracker_unreachable(
+            "arkham",
+            "a-1",
+            TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
+        )
     });
 
     Snapshot {

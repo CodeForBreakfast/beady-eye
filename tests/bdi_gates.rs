@@ -377,7 +377,17 @@ fn a_tracker_with_no_schema_is_reported_and_the_other_trackers_gates_are_settled
     let settling = Settling::started(&home, &tracker, &github);
 
     settling.says("example/ark#42 merged: arkham closed gate ark-0i5");
-    settling.says("dunwich: its gates could not be read: the tracker did not answer");
+    let refused = "dunwich: its gates could not be read: bd failed for a reason bdi cannot place";
+    until(
+        || {
+            settling.said().lines().any(|said| {
+                said.starts_with(refused)
+                    && said.contains("gate list --limit 0 --json")
+                    && said.contains("Error 1146 (HY000): table not found: issues")
+            })
+        },
+        &format!("what bd said among {:?}", settling.said()),
+    );
     assert_eq!(
         tracker.calls_for("dunwich"),
         ["gate list --limit 0 --json"],

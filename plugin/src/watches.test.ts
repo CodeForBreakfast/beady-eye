@@ -1701,6 +1701,81 @@ test('a tracker the watcher cannot reach for a minute wakes the session, and aga
   expect(await use.nextMessage()).toEqual(started)
 })
 
+const unreachableAs = (why: Record<string, string>) => ({
+  ...freshness('summit-works'),
+  tracker: { unreachable: { command: '--readonly list --json', ...why } },
+})
+
+/** The notice for a tracker summit-works could not be read, told `reason`
+ * and then `bd`. */
+const toldUnreachable = (reason: string, bd: string) => ({
+  content: [
+    `The watcher cannot reach the tracker of summit-works: ${reason}.`,
+    bd,
+    'These beads keep their last known status until it can:',
+    '- smt-4kd3p.20 in summit-works',
+    'This session will be told when it can.',
+  ].join('\n'),
+  meta: { project: 'summit-works', tracker: 'unreachable' },
+})
+
+const unplaced = unreachableAs({
+  reason: 'unavailable',
+  said: 'Error: the ledger is sealed\n(asked with <redacted>)',
+})
+
+const toldUnplaced = toldUnreachable(
+  'unavailable',
+  'bd was run as "bd --readonly list --json", and said "Error: the ledger is sealed\\n(asked with <redacted>)".',
+)
+
+test('a tracker bd fails for a reason bdi cannot place says which command failed and what bd said', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(unplaced))
+
+  expect(await use.nextMessage()).toEqual(toldUnplaced)
+})
+
+test('a tracker bd could not reach says which command failed', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(unreachableAs({ reason: 'unavailable' })))
+
+  expect(await use.nextMessage()).toEqual(
+    toldUnreachable('unavailable', 'bd was run as "bd --readonly list --json".'),
+  )
+})
+
+test('a bd the system would not start says which command it was and the system’s error', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(
+    said(
+      unreachableAs({
+        reason: 'installed-unstartable',
+        error: 'Too many open files (os error 24)',
+      }),
+    ),
+  )
+
+  expect(await use.nextMessage()).toEqual(
+    toldUnreachable(
+      'installed-unstartable',
+      'bd was run as "bd --readonly list --json", and the system would not start it: "Too many open files (os error 24)".',
+    ),
+  )
+})
+
+test('a tracker whose failure changes before the minute is up is told as it last failed', async () => {
+  const { use, connection } = await aWatchedBead()
+
+  connection.write(said(unreachable))
+  connection.write(said(unplaced))
+
+  expect(await use.nextMessage()).toEqual(toldUnplaced)
+})
+
 test('a watch restored from disk is the same as the bead heard from the watcher, and is not kept again', async () => {
   const place = aPlace()
   const told = {

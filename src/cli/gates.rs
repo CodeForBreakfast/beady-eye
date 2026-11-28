@@ -26,7 +26,7 @@ use crate::collect::run::RealRunner;
 use crate::collect::webhook::{self, Delivery, Heard, Named, Secret};
 use crate::config::{Gates, Project};
 use crate::model::gate::Fault;
-use crate::view::phrase;
+use crate::view::phrase::{self, spelled_out};
 
 use super::{not_taking_connections, read_config, socket_refused, Launch, Polling, Reading};
 
@@ -508,21 +508,6 @@ fn reported(found: &Found) -> Option<String> {
     Some(spelled_out(&line))
 }
 
-/// `line` with each control character written as its escape. Ids, repos and
-/// await ids are whatever a tracker's writers put there, and printed raw they
-/// could move the terminal or start a report line of their own.
-fn spelled_out(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    for glyph in line.chars() {
-        if glyph.is_control() {
-            out.extend(glyph.escape_default());
-        } else {
-            out.push(glyph);
-        }
-    }
-    out
-}
-
 fn fault(fault: &Fault) -> String {
     match fault {
         Fault::NoRepo => "it names no repo".to_string(),
@@ -652,7 +637,14 @@ mod tests {
     #[test]
     fn a_write_that_failed_is_reported_against_its_bead() {
         assert_eq!(
-            told("closed unmerged", Err(TrackerFailure::Unavailable)).as_deref(),
+            told(
+                "closed unmerged",
+                Err(TrackerFailure::Unavailable {
+                    command: None,
+                    said: None
+                })
+            )
+            .as_deref(),
             Some("example/ark#7: arkham could not settle ark-2ud: the tracker did not answer")
         );
     }
@@ -670,6 +662,7 @@ mod tests {
                     program: "gh".to_string(),
                     detail: "gh did not answer".to_string(),
                     unreadable: None,
+                    ran: None,
                 },
             })
             .as_deref(),
@@ -713,7 +706,10 @@ mod tests {
         assert_eq!(
             reported(&Found::TrackerUnread {
                 project: "dunwich".to_string(),
-                failure: TrackerFailure::Unavailable,
+                failure: TrackerFailure::Unavailable {
+                    command: None,
+                    said: None
+                },
             })
             .as_deref(),
             Some("dunwich: its gates could not be read: the tracker did not answer")

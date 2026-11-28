@@ -439,7 +439,7 @@ mod tests {
         snapshot.trees.push(Arc::new(Tree::tracker_unreachable(
             "harbour",
             "qua-9",
-            TrackerFailure::Auth,
+            TrackerFailure::Auth { command: None },
         )));
         snapshot.collected.clone_from(&snapshot.trees);
 
@@ -814,7 +814,10 @@ mod tests {
     fn an_unread_root_is_named_where_its_row_would_have_been_with_the_reason() {
         let unread = unread(
             "smt-4kd3p",
-            TrackerState::Unreachable(TrackerFailure::Unavailable),
+            TrackerState::Unreachable(TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            }),
         );
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 60, 1).rows();
 
@@ -853,7 +856,10 @@ mod tests {
     fn a_focused_bead_whose_tracker_did_not_answer_says_why() {
         let absent = unread(
             "smt-4kd3p.21",
-            TrackerState::Unreachable(TrackerFailure::Unavailable),
+            TrackerState::Unreachable(TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            }),
         );
         let drawn = Painted::of(absent_line(&absent, LAST, 12), 90, 1).rows();
 
@@ -865,7 +871,10 @@ mod tests {
     /// opposite of what is true — that it was read and holds nothing.
     #[test]
     fn an_unread_root_never_shows_a_count_it_could_not_read() {
-        let unread = unread("smt-4kd3p", TrackerState::Unreachable(TrackerFailure::Auth));
+        let unread = unread(
+            "smt-4kd3p",
+            TrackerState::Unreachable(TrackerFailure::Auth { command: None }),
+        );
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 120, 1).rows();
 
         does_not_say(&drawn[0], "0/0");
@@ -894,7 +903,10 @@ mod tests {
     /// who cannot tell which root failed learns nothing from knowing one did.
     #[test]
     fn a_narrow_unread_root_keeps_the_root_over_the_reason() {
-        let unread = unread("smt-4kd3p", TrackerState::Unreachable(TrackerFailure::Auth));
+        let unread = unread(
+            "smt-4kd3p",
+            TrackerState::Unreachable(TrackerFailure::Auth { command: None }),
+        );
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 24, 1).rows();
 
         says(&drawn[0], "smt-4kd3p");

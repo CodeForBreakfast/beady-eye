@@ -520,7 +520,7 @@ mod tests {
         let hold = Mutex::new(crate::app::watcher::Hold::default());
         drop(tell);
 
-        crate::app::watcher::hold(&mut source, &hold);
+        crate::app::watcher::hold(&mut source, &hold, &mut |_, _| {});
 
         let held = hold.lock().unwrap();
         let dunwich = held.of("dunwich").expect("dunwich is held");

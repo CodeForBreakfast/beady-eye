@@ -30,7 +30,7 @@ pub use outstanding::Outstanding;
 pub use reading::Reading;
 pub use reading_trackers::{ReadingTrackers, Reads, Refreshing};
 pub use reload::{reads_under, Parses, Reload, Reloaded, CHECKED_EVERY};
-pub use watcher::{allocate_from_one_arena, hold, serve, Hold};
+pub use watcher::{allocate_from_one_arena, hold, raise_the_open_files_limit, serve, Hold};
 
 /// The fake trackers and panes both halves read in their tests.
 ///
@@ -257,6 +257,7 @@ path = "{FERRY}"
             program: "bd".to_string(),
             detail: "bd could not read the tracker".to_string(),
             unreadable: None,
+            ran: None,
         }
     }
 

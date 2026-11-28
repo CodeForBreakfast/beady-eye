@@ -450,7 +450,7 @@ mod tests {
     use crate::collect::run::{FailureKind, Retained};
     use crate::model::join::JoinSource;
     use crate::model::snapshot::TrackerFailure;
-    use crate::model::types::testing::an_unreadable;
+    use crate::model::types::testing::{an_unplaced, an_unreadable, an_unstarted};
     use chrono::{TimeDelta, TimeZone};
     use pretty_assertions::assert_eq;
 
@@ -538,16 +538,29 @@ mod tests {
             Some(TrackerFailure::NoEnvironment),
             |failure| match failure {
                 TrackerFailure::NoEnvironment => Some(TrackerFailure::NoCredential),
-                TrackerFailure::NoCredential => Some(TrackerFailure::Auth),
-                TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
-                TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
-                TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
-                TrackerFailure::Unstartable => Some(TrackerFailure::InstalledUnstartable),
-                TrackerFailure::InstalledUnstartable => {
+                TrackerFailure::NoCredential => Some(TrackerFailure::Auth { command: None }),
+                TrackerFailure::Auth { .. } => Some(TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                }),
+                TrackerFailure::Unavailable { said: None, .. } => Some(an_unplaced()),
+                TrackerFailure::Unavailable { said: Some(_), .. } => {
+                    Some(TrackerFailure::NotInstalled { command: None })
+                }
+                TrackerFailure::NotInstalled { .. } => Some(TrackerFailure::Unstartable {
+                    command: None,
+                    error: None,
+                }),
+                TrackerFailure::Unstartable { .. } => Some(TrackerFailure::InstalledUnstartable {
+                    command: None,
+                    error: None,
+                }),
+                TrackerFailure::InstalledUnstartable { error: None, .. } => Some(an_unstarted()),
+                TrackerFailure::InstalledUnstartable { error: Some(_), .. } => {
                     Some(TrackerFailure::Parse(an_unreadable()))
                 }
-                TrackerFailure::Parse(_) => Some(TrackerFailure::UnknownFlag),
-                TrackerFailure::UnknownFlag => None,
+                TrackerFailure::Parse(_) => Some(TrackerFailure::UnknownFlag { command: None }),
+                TrackerFailure::UnknownFlag { .. } => None,
             },
         )
     }

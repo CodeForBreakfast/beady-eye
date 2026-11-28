@@ -89,6 +89,7 @@ coin one — and say so.**
 | **outcome step** | *coined* | the step of a molecule that closes once the work it delivers has landed, which the bead the molecule delivers waits on. beads has the molecule and its steps, and leaves which step is the outcome to the formula, so a setup names the label that marks one. |
 | **way up** | *coined* | the beads stepped through from a ready list row's bead to a line in what it unblocks. The way down turned round: it tells apart the lines of a bead reached more than once, holds the selection, and is where a loop is cut. |
 | **notice** | *coined* | something true of the view as a whole rather than of any row in it, said at the foot of the screen. |
+| **unplaced** | *coined* | a failure bd exited non-zero with that no phrase `bdi` knows places, so `bdi` can name nothing about it but the command and what bd said. Neither project classifies bd's failures. |
 | **freshness** | *coined* | how stale one project's rows are, said beside its name: a mark for how the read of it is going, and how long ago the rows were last read. Neither `bd` nor herdr has a word for it. |
 | **armed** | *coined* | a project set to ask to be read again at a known instant. Neither project names it: the ask is `bdi`'s own. Armed by the read that came back and disarmed by the ask it makes, so a project always has a read outstanding or an ask armed — a project with neither is a project nothing will ever read again. A project with a producer and no poll is never armed. |
 | **reach** | *coined* | the `path` and `environment_command` a project's config entry gives, and the server and database where the entry names a database in place of a checkout. Together they decide the tracker bd reaches. Neither project names them together. |
@@ -2501,7 +2502,11 @@ which for the reading source is its last read that came back, a skipped one
 included, or the last covered line naming the project. `tracker` is `ok`, or
 `{ "unreachable": { "reason": "auth" } }` where the last attempt to reach the
 project failed. The reason is the object `--json` gives, so a `parse` reason
-carries `read` and `cause` beside its kind. The beads already sent then stand as the
+carries `read` and `cause` beside its kind, and one that came from a run of
+bd carries the `command` it failed on, with `said` or `error` where it has
+them. The watcher also writes a
+line to its stderr when a project's tracker stops answering, fails another
+way, or answers again, in the words the screen uses. The beads already sent then stand as the
 last known, and `as_of` says how old that is. `lapsed` is `true` once a
 project that nothing polls has gone `[changes] covered_for_seconds` with
 nothing vouching for it, such as a project whose stream is down. The watcher
@@ -3015,7 +3020,9 @@ speak the same protocol.
 
 **A tracker the watcher cannot reach is told the same way.** A watched bead's
 project whose freshness line has said `unreachable` for a minute sends one
-message, and its first `ok` after that sends another.
+message, and its first `ok` after that sends another. The message quotes the
+bd command that failed, and what bd said or the system's error where the
+reason carries one.
 
 **A watch the watcher refuses after accepting it is told at once.** The
 watcher can refuse a bead it watched before, for instance when its project has
@@ -3171,10 +3178,33 @@ since every other root came out of the tracker's own answers.
 empty-by-omission — a filtered tree is reported, not dropped. A reason is
 `{ "reason": <kind> }`, tagged inside its own object the way an anomaly's
 `rule` and a conflict's `conflict` are, so every reason reads the same way and
-the ones that know more are found by their extra keys. `parse` is the only one
-that knows more, and it carries `read` and `cause` beside its kind: `read` is
+the ones that know more are found by their extra keys. `parse`
+carries `read` and `cause` beside its kind: `read` is
 the bd subcommand whose answer would not parse, and `cause` is the shape that
-did not match and where in the answer it was. `failed_projects`
+did not match and where in the answer it was. Every reason a failed run of
+bd gives carries `command`, the arguments `bdi` gave bd, quoted as a shell
+needs them and kept on one line. An argument holding a line break or a
+character that moves a terminal is written with escapes inside `$'…'`, so
+the command still runs again when pasted after `bd`. A `parse` reason comes
+from a run that succeeded, and its `read` names the subcommand. `unavailable` also carries `said` where bd
+exited non-zero for a reason `bdi` cannot place, and `said` is bd's stderr,
+cut at a thousand characters. Where bd wrote nothing, `said` is how it
+ended instead, such as `<nothing, and exited 3>`. `unstartable` and `installed-unstartable`
+carry `error`, the error the operating system refused to start bd with, such
+as `Too many open files (os error 24)`. Those are all such a reader has to go
+on, so they are kept, and every other failure keeps nothing bd wrote. bd
+names the database and the SQL user in what it writes, and those go to
+whoever runs `bdi`. The password does not. The one bd was handed is taken
+out of `command`, `said` and `error` wherever it appears. Where it holds a
+character bd may write as an escape, such as a tab or a quote, a `said`
+holding a backslash is withheld, because the password may be in it escaped. bd can also find a
+password `bdi` never sees, in its credentials file, and nothing can say where
+such a password ends. So where `said` names a password anywhere or holds an
+`@`, as a connection string's `user:secret@` does, all of it is withheld and
+only `command` is kept. MySQL's `'user'@'host'` names an account and holds
+no password, so it does not count as an `@`. A control character other than a line break is kept
+as its escape, and so is a character that breaks a line or turns text round
+without being one. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
 Two of those reasons are not about bd, and they are the two ways opening a
 tracker fails. `no-environment` is a project that asked to be read in a captured

@@ -31,7 +31,10 @@ fn harbour_failing_to_answer() -> Snapshot {
     );
     failing.failed_projects.push(FailedProject {
         project: "harbour".into(),
-        tracker: TrackerFailure::Unstartable,
+        tracker: TrackerFailure::Unstartable {
+            command: None,
+            error: None,
+        },
     });
     failing
 }
@@ -428,7 +431,10 @@ fn a_focus_on_another_projects_bead_holds_while_its_own_project_does_not_answer(
         harbour_and_dunwich(HARBOUR_WAITING, "[]", &[("harbour", "hbr-1")], &[]);
     dunwich_failing.failed_projects.push(FailedProject {
         project: "dunwich".into(),
-        tracker: TrackerFailure::Unstartable,
+        tracker: TrackerFailure::Unstartable {
+            command: None,
+            error: None,
+        },
     });
     forest.refresh(dunwich_failing);
 
