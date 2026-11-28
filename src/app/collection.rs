@@ -1243,7 +1243,8 @@ mod tests {
         holding_agent, in_session, named, pane, titled, Asked as AskedOfTheProvider,
         Fake as Provider, THE_FAKE,
     };
-    use crate::collect::run::{FailureKind, RunFailure};
+    use crate::collect::bd;
+    use crate::collect::run::{Env, FailureKind, RunFailure, Runner};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::collect::tracker::Tracker;
     use crate::collect::tracker::Watches;
@@ -4471,6 +4472,82 @@ prefix = "kad"
 
         assert_eq!(said_of(&first), [("dunwich", "read"), ("ferry", "read")]);
         assert_eq!(first.projects, ["dunwich", "ferry"]);
+    }
+
+    /// A bd that answers every tracker with nothing, and keeps each call
+    /// running until one more is running than bd's CLI allows at once or a
+    /// moment has passed. A watcher that would break the bound breaks it here
+    /// every time rather than when its threads happen to overlap.
+    #[derive(Default)]
+    struct CrowdedServer {
+        running: Mutex<usize>,
+        most_running: Mutex<usize>,
+        changed: Condvar,
+    }
+
+    impl CrowdedServer {
+        const A_MOMENT: Duration = Duration::from_millis(20);
+
+        fn most_running(&self) -> usize {
+            *self.most_running.lock().unwrap()
+        }
+    }
+
+    impl Runner for CrowdedServer {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            _cwd: Option<&Path>,
+            _env: &Env,
+        ) -> Result<String, RunFailure> {
+            assert_eq!(program, "bd", "asked to run {program} {args:?}");
+            let mut running = self.running.lock().unwrap();
+            *running += 1;
+            let mut most = self.most_running.lock().unwrap();
+            *most = (*most).max(*running);
+            drop(most);
+            self.changed.notify_all();
+            let (mut running, _) = self
+                .changed
+                .wait_timeout_while(running, Self::A_MOMENT, |running| {
+                    *running <= bd::MOST_AT_ONCE
+                })
+                .unwrap();
+            *running -= 1;
+            Ok("[]".to_string())
+        }
+    }
+
+    /// Three times as many projects as bd's CLI runs bd for at once.
+    fn more_projects_than_run_at_once() -> Config {
+        let projects: String = (0..3 * bd::MOST_AT_ONCE)
+            .map(|n| format!("[[projects]]\nname = \"p{n:02}\"\npath = \"/srv/work/p{n:02}\"\n"))
+            .collect();
+        Config::from_toml(&projects).expect("the config parses")
+    }
+
+    #[test]
+    fn a_watcher_of_many_projects_starts_within_the_bound_and_reads_every_project() {
+        let cfg = more_projects_than_run_at_once();
+        let server = CrowdedServer::default();
+
+        let first = Collection::default().watched(
+            &cfg,
+            &no_panes(),
+            &bd::Cli::new(&server),
+            &Wanted::Everything,
+            now(),
+        );
+
+        assert!(
+            server.most_running() <= bd::MOST_AT_ONCE,
+            "{} bd ran at once",
+            server.most_running()
+        );
+        assert_eq!(first.failed_projects, []);
+        let read: Vec<_> = cfg.read().map(|p| (p.name.as_str(), "read")).collect();
+        assert_eq!(said_of(&first), read);
     }
 
     /// The probe found nothing, so there is nothing to draw and nothing new

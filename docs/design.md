@@ -1887,6 +1887,17 @@ a read waits for the slowest of them rather than for the four in turn. bd
 1.3.0 answered four `--readonly` reads at once on one embedded store eighty
 times out of eighty, measured 2026-10-04 on a throwaway store.
 
+**No more than sixteen bd run at once, across every project.** Each bd
+process opens its own connections to the tracker's server, and trackers
+often share one server that caps its connections. Unbounded, a watcher of
+twenty projects starting on a loaded machine ran nearly sixty bd at once
+against a server already near its cap, and the server refused some of them,
+measured 2026-11-28. So every bd call `bdi` makes to read a tracker or
+settle a gate first waits for one of sixteen slots. The bound is one
+process's share: other processes on the machine, and other machines, hold
+connections to the same server, and it can still refuse one. A bd call that
+never returns keeps its slot, so sixteen of them stall every read.
+
 Measured 2026-09-01 against this project's tracker with bd 1.2.2, when the
 probe was the whole working root, `dolt_hashof_db()`: the probe 0.203–0.205 s
 against 1.53 s for the cascade; a read does not move the root (three probes
