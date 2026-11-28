@@ -28,7 +28,7 @@ use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link, OrphanedDependency};
-use crate::model::types::{Edge, Pane, PaneKey, PaneStatus, Printed, Status, Unplaced, Unreadable};
+use crate::model::types::{Edge, Pane, PaneKey, PaneStatus, Printed, Status, Unreadable};
 use crate::model::watching::Watching;
 
 /// Which agent provider this run read, and how that went.
@@ -200,28 +200,56 @@ pub enum TrackerFailure {
     /// tracker refused a credential it was never offered.
     NoCredential,
     /// The tracker refused the credential it was given.
-    Auth,
+    ///
+    /// This and every kind after it but `Parse` carries the `command` bd
+    /// failed on: the arguments `bdi` gave it, quoted as a shell needs them,
+    /// with the password taken out. A failure that did not come from a run
+    /// of bd has none.
+    Auth {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
     /// The tracker did not answer, or bd failed for a reason `bdi` cannot
-    /// place. Only the second carries anything: the command and what bd
-    /// said, with the password taken out, which is all a reader has to go on.
+    /// place. Only the second carries what bd `said`, with the password
+    /// taken out, which is all a reader has to go on.
     Unavailable {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        unplaced: Option<Unplaced>,
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        said: Option<String>,
     },
     /// Nothing is installed under bd's name for the tracker to be read with.
-    NotInstalled,
+    NotInstalled {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
     /// bd never ran, and whether bd is there was not established: a `PATH`
     /// entry nothing may search hides bd and a machine with no bd alike.
-    Unstartable,
-    /// bd is there and never ran: no execute bit, a dangling symlink, or a
-    /// project directory that is not there to run it in.
-    InstalledUnstartable,
+    /// It carries the `error` the operating system refused to start bd with.
+    Unstartable {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// bd is there and never ran: no execute bit, a dangling symlink, a
+    /// project directory that is not there to run it in, or a `bdi` out of
+    /// file descriptors. It carries what `Unstartable` does.
+    InstalledUnstartable {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// bd answered with something `bdi` cannot read, and where in the answer
     /// the reader will find it.
     Parse(Unreadable),
     /// bd does not know a flag `bdi` uses, so it refused the command line
     /// before reading anything: a bd below the floor README states.
-    UnknownFlag,
+    UnknownFlag {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1014,7 +1042,7 @@ render = "⏸ waiting"
                 trees: vec![Tree::tracker_unreachable(
                     "ferry",
                     "fry-3",
-                    TrackerFailure::Auth,
+                    TrackerFailure::Auth { command: None },
                 )],
                 failed_projects: vec![FailedProject {
                     project: "dunwich".to_string(),

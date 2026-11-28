@@ -47,7 +47,7 @@ fn a_lost_cursor_falls_back_onto_the_header_of_a_root_whose_tracker_refused() {
         vec![Tree::tracker_unreachable(
             "ferry",
             "fer-2",
-            TrackerFailure::Auth,
+            TrackerFailure::Auth { command: None },
         )],
         Vec::new(),
         Filter::All,
@@ -70,9 +70,9 @@ fn a_selected_root_keeps_the_selection_when_its_tracker_stops_reading() {
 
     forest.refresh(gather(
         vec![
-            Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth),
-            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth),
-            Tree::tracker_unreachable("harbour", "hbr-3", TrackerFailure::Auth),
+            Tree::tracker_unreachable("dunwich", "dun-7", TrackerFailure::Auth { command: None }),
+            Tree::tracker_unreachable("ferry", "fer-2", TrackerFailure::Auth { command: None }),
+            Tree::tracker_unreachable("harbour", "hbr-3", TrackerFailure::Auth { command: None }),
         ],
         Vec::new(),
         Filter::All,

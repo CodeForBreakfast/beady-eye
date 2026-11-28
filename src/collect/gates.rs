@@ -919,7 +919,7 @@ mod tests {
                 program: "bd".to_string(),
                 detail: "bd could not reach the tracker".to_string(),
                 unreadable: None,
-                unplaced: None,
+                ran: None,
             },
         );
 
@@ -2463,7 +2463,7 @@ mod tests {
             program: program.to_string(),
             detail: format!("{program} exited 1 for a reason bdi cannot place"),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -3041,7 +3041,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh found no such repository, pull request or issue on GitHub".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         };
         let runner = FakeRunner::default().failing(&queried(7..=7), gone.clone());
 
@@ -3098,7 +3098,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh exited 1 for a reason bdi cannot place".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         };
         let runner = FakeRunner::default()
             .failing(&queried(1..=100), unavailable.clone())

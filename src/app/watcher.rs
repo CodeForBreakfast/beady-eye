@@ -747,7 +747,10 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: later(30),
-                failure: TrackerFailure::Unavailable { unplaced: None },
+                failure: TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             },
         ));
 
@@ -756,7 +759,10 @@ mod tests {
         assert_eq!(standing.as_of, Some(now()));
         assert_eq!(
             standing.unreachable,
-            Some(TrackerFailure::Unavailable { unplaced: None })
+            Some(TrackerFailure::Unavailable {
+                command: None,
+                said: None
+            })
         );
     }
 
@@ -774,9 +780,7 @@ mod tests {
     /// which a polled tracker does on every poll.
     #[test]
     fn a_tracker_is_said_to_be_reached_differently_only_when_it_is() {
-        let unplaced = TrackerFailure::Unavailable {
-            unplaced: Some(crate::model::types::testing::an_unplaced()),
-        };
+        let unplaced = crate::model::types::testing::an_unplaced();
         let unreachable = |at, failure: &TrackerFailure| {
             said(
                 "dunwich",
@@ -791,7 +795,7 @@ mod tests {
                 read("dunwich", now(), &["dun-1"]),
                 unreachable(later(10), &unplaced),
                 unreachable(later(20), &unplaced),
-                unreachable(later(30), &TrackerFailure::Auth),
+                unreachable(later(30), &TrackerFailure::Auth { command: None }),
                 read("dunwich", later(40), &["dun-1"]),
                 read("dunwich", later(50), &["dun-1"]),
             ]
@@ -810,7 +814,7 @@ mod tests {
             reached,
             vec![
                 dunwich(Some(&unplaced)),
-                dunwich(Some(&TrackerFailure::Auth)),
+                dunwich(Some(&TrackerFailure::Auth { command: None })),
                 dunwich(None)
             ]
         );
@@ -823,7 +827,10 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: now(),
-                failure: TrackerFailure::Unavailable { unplaced: None },
+                failure: TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             },
         ));
 
@@ -972,7 +979,7 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: now(),
-                failure: TrackerFailure::Auth,
+                failure: TrackerFailure::Auth { command: None },
             },
         ));
 
@@ -1086,7 +1093,7 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: later(3),
-                failure: TrackerFailure::Auth,
+                failure: TrackerFailure::Auth { command: None },
             },
         ));
 
@@ -1105,7 +1112,7 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: now(),
-                failure: TrackerFailure::Auth,
+                failure: TrackerFailure::Auth { command: None },
             },
         ));
 
@@ -1747,7 +1754,8 @@ mod tests {
 
         hold.take(Answer {
             journal: Some(Journal::Unreadable(TrackerFailure::Unavailable {
-                unplaced: None,
+                command: None,
+                said: None,
             })),
             ..read("dunwich", later(30), &["dun-1", "dun-2"])
         });

@@ -182,7 +182,7 @@ impl Agents for Hc<'_> {
             program: "hc".to_string(),
             detail: "the herdr app cannot be asked to bring a terminal to the front".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         })
     }
 }

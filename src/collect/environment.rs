@@ -793,7 +793,7 @@ mod tests {
                     program: "direnv".to_string(),
                     detail: "direnv did not produce an environment".to_string(),
                     unreadable: None,
-                    unplaced: None,
+                    ran: None,
                 },
             );
 
@@ -1297,7 +1297,7 @@ mod tests {
                     program: "sh".to_string(),
                     detail: "op: command not found".to_string(),
                     unreadable: None,
-                    unplaced: None,
+                    ran: None,
                 },
             );
 

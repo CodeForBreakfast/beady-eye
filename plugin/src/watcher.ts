@@ -131,12 +131,15 @@ const EventRecord = Schema.Struct({
   comment: Schema.optional(Schema.Struct({ author: Schema.String, text: Schema.String })),
 }).check(Schema.makeFilter(({ op, comment }) => (op === 'comment') === (comment !== undefined)))
 
-/** Why the watcher could not read a tracker. A failure bdi cannot place also
- * carries the bd command line that failed and what bd said, with the
- * password already taken out. */
+/** Why the watcher could not read a tracker. A failure that came from a run
+ * of bd carries the command line it failed on. A failure bdi cannot place
+ * also carries what bd said, and a bd that never started carries the
+ * operating system's error. Each has the password already taken out. */
 const Unreachable = Schema.Struct({
   reason: Schema.String,
-  unplaced: Schema.optional(Schema.Struct({ command: Schema.String, said: Schema.String })),
+  command: Schema.optional(Schema.String),
+  said: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
 })
 
 /** Why the watcher could not read a tracker. */

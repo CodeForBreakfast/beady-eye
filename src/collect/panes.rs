@@ -193,7 +193,7 @@ fn no_answer(provider: &str) -> RunFailure {
         program: provider.to_string(),
         detail: format!("{provider} did not answer in time"),
         unreadable: None,
-        unplaced: None,
+        ran: None,
     }
 }
 

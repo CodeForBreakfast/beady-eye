@@ -1293,11 +1293,14 @@ render = "⇢ {repo} #{number}"
         let failed = vec![
             FailedProject {
                 project: "ferry".to_string(),
-                tracker: TrackerFailure::Auth,
+                tracker: TrackerFailure::Auth { command: None },
             },
             FailedProject {
                 project: "dunwich".to_string(),
-                tracker: TrackerFailure::Unavailable { unplaced: None },
+                tracker: TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             },
         ];
 

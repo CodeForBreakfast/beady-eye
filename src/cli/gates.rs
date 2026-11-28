@@ -648,7 +648,10 @@ mod tests {
         assert_eq!(
             told(
                 "closed unmerged",
-                Err(TrackerFailure::Unavailable { unplaced: None })
+                Err(TrackerFailure::Unavailable {
+                    command: None,
+                    said: None
+                })
             )
             .as_deref(),
             Some("example/ark#7: arkham could not settle ark-2ud: the tracker did not answer")
@@ -668,7 +671,7 @@ mod tests {
                     program: "gh".to_string(),
                     detail: "gh did not answer".to_string(),
                     unreadable: None,
-                    unplaced: None,
+                    ran: None,
                 },
             })
             .as_deref(),
@@ -712,7 +715,10 @@ mod tests {
         assert_eq!(
             reported(&Found::TrackerUnread {
                 project: "dunwich".to_string(),
-                failure: TrackerFailure::Unavailable { unplaced: None },
+                failure: TrackerFailure::Unavailable {
+                    command: None,
+                    said: None
+                },
             })
             .as_deref(),
             Some("dunwich: its gates could not be read: the tracker did not answer")

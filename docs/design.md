@@ -2485,8 +2485,9 @@ which for the reading source is its last read that came back, a skipped one
 included, or the last covered line naming the project. `tracker` is `ok`, or
 `{ "unreachable": { "reason": "auth" } }` where the last attempt to reach the
 project failed. The reason is the object `--json` gives, so a `parse` reason
-carries `read` and `cause` beside its kind, and an `unavailable` one bd failed
-for a reason `bdi` cannot place carries `unplaced`. The watcher also writes a
+carries `read` and `cause` beside its kind, and one that came from a run of
+bd carries the `command` it failed on, with `said` or `error` where it has
+them. The watcher also writes a
 line to its stderr when a project's tracker stops answering, fails another
 way, or answers again, in the words the screen uses. The beads already sent then stand as the
 last known, and `as_of` says how old that is. `lapsed` is `true` once a
@@ -3002,8 +3003,9 @@ speak the same protocol.
 
 **A tracker the watcher cannot reach is told the same way.** A watched bead's
 project whose freshness line has said `unreachable` for a minute sends one
-message, and its first `ok` after that sends another. Where the reason carries
-`unplaced`, the message quotes the bd command that failed and what bd said.
+message, and its first `ok` after that sends another. The message quotes the
+bd command that failed, and what bd said or the system's error where the
+reason carries one.
 
 **A watch the watcher refuses after accepting it is told at once.** The
 watcher can refuse a bead it watched before, for instance when its project has
@@ -3159,24 +3161,26 @@ since every other root came out of the tracker's own answers.
 empty-by-omission — a filtered tree is reported, not dropped. A reason is
 `{ "reason": <kind> }`, tagged inside its own object the way an anomaly's
 `rule` and a conflict's `conflict` are, so every reason reads the same way and
-the ones that know more are found by their extra keys. Two know more. `parse`
+the ones that know more are found by their extra keys. `parse`
 carries `read` and `cause` beside its kind: `read` is
 the bd subcommand whose answer would not parse, and `cause` is the shape that
-did not match and where in the answer it was. `unavailable` carries
-`unplaced` where bd exited non-zero for a reason `bdi` cannot place:
-`command` is the arguments `bdi` gave bd, quoted as a shell needs them, and
-`said` is bd's stderr, cut at a thousand characters. That is all such a
-reader has to go on, so it is kept, and every other failure keeps nothing bd
-wrote. bd names the database and the SQL user in what it writes, and those go
-to whoever runs `bdi`. The password does not. The one bd was handed is taken
-out of both wherever it appears. bd can also find a password `bdi` never
-sees, in its credentials file, and nothing can say where such a password
-ends. So where `said` names a password anywhere or holds an `@`, as a
-connection string's `user:secret@` does, all of it is withheld and only
-`command` is kept. A control character other than a line break is kept as
-its escape, and so is a character that breaks a line or turns text round
-without being one. `command` keeps a line break as its escape too, so it
-stays on one line. `failed_projects`
+did not match and where in the answer it was. Every reason that came from a
+run of bd carries `command`, the arguments `bdi` gave bd, quoted as a shell
+needs them and kept on one line. `unavailable` also carries `said` where bd
+exited non-zero for a reason `bdi` cannot place, and `said` is bd's stderr,
+cut at a thousand characters. `unstartable` and `installed-unstartable`
+carry `error`, the error the operating system refused to start bd with, such
+as `Too many open files (os error 24)`. Those are all such a reader has to go
+on, so they are kept, and every other failure keeps nothing bd wrote. bd
+names the database and the SQL user in what it writes, and those go to
+whoever runs `bdi`. The password does not. The one bd was handed is taken
+out of `command`, `said` and `error` wherever it appears. bd can also find a
+password `bdi` never sees, in its credentials file, and nothing can say where
+such a password ends. So where `said` names a password anywhere or holds an
+`@`, as a connection string's `user:secret@` does, all of it is withheld and
+only `command` is kept. A control character other than a line break is kept
+as its escape, and so is a character that breaks a line or turns text round
+without being one. `failed_projects`
 names each project whose tracker could not be read at all, with the reason.
 Two of those reasons are not about bd, and they are the two ways opening a
 tracker fails. `no-environment` is a project that asked to be read in a captured

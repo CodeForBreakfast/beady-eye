@@ -360,10 +360,13 @@ const watcherBack = (changed: readonly Omit<News, 'told'>[]): Omit<News, 'told'>
 
 /** Which bd command failed and what bd said, quoted, where bdi could not
  * place the failure. */
-const whatBdSaid = ({ unplaced }: Unreachable): readonly string[] =>
-  unplaced === undefined
-    ? []
-    : [`bd was run as ${quoted(`bd ${unplaced.command}`)}, and said ${quoted(unplaced.said)}.`]
+const whatBdSaid = ({ command, said, error }: Unreachable): readonly string[] => {
+  if (command === undefined) return []
+  const ran = `bd was run as ${quoted(`bd ${command}`)}`
+  if (said !== undefined) return [`${ran}, and said ${quoted(said)}.`]
+  if (error !== undefined) return [`${ran}, and the system would not start it: ${quoted(error)}.`]
+  return [`${ran}.`]
+}
 
 const trackerUnreachable = (
   project: ProjectName,

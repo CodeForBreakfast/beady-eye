@@ -937,7 +937,7 @@ impl Collection {
                         pane_agents: BTreeMap::new(),
                     },
                     OutOfReach::default(),
-                )
+                );
             }
         };
         self.panes_last_answered
@@ -1363,7 +1363,7 @@ mod tests {
             program: "a provider".to_string(),
             detail: "no such session".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         });
 
         let snap = run(
@@ -3261,7 +3261,7 @@ path = "{}"
             program: THE_FAKE.to_string(),
             detail: "no socket".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -3567,7 +3567,7 @@ path = "{}"
             after.failed_projects,
             vec![FailedProject {
                 project: "dunwich".to_string(),
-                tracker: TrackerFailure::Auth,
+                tracker: TrackerFailure::Auth { command: None },
             }]
         );
         assert!(
@@ -4417,7 +4417,7 @@ prefix = "kad"
         assert!(matches!(
             answers[0].said,
             watcher::Said::Unreachable {
-                failure: TrackerFailure::Auth,
+                failure: TrackerFailure::Auth { command: None },
                 ..
             }
         ));
@@ -4868,7 +4868,8 @@ prefix = "kad"
         assert_eq!(
             gap,
             Some(Journal::Unreadable(TrackerFailure::Unavailable {
-                unplaced: None
+                command: None,
+                said: None,
             }))
         );
         assert_eq!(

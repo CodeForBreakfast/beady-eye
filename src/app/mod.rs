@@ -257,7 +257,7 @@ path = "{FERRY}"
             program: "bd".to_string(),
             detail: "bd could not read the tracker".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 

@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 use regex_lite::Regex;
 
 use crate::collect::environment::{CREDENTIAL_VAR, NEVER_INHERITED};
-use crate::model::types::{Unplaced, Unreadable};
+use crate::model::types::Unreadable;
 
 /// The variables a child process is given on top of the environment `bdi`
 /// itself runs in; a set value replaces whatever the parent holds.
@@ -78,11 +78,12 @@ pub struct Retained {
 /// bd names the database and the user it authenticated as when it fails, and
 /// text that is never kept cannot leak into the output.
 ///
-/// `unplaced` is the exception, and only a failure no phrase places has it.
-/// A placed failure is acted on by its kind, and the reader of an unplaced
-/// one has nothing to act on but the command's own words. Those are kept
-/// with the tracker's password taken out, so the database and the user can
-/// reach the person running `bdi` and the password cannot.
+/// `ran` is the exception, and says which command failed. It holds the
+/// command's own words only where no phrase places the failure: a placed
+/// failure is acted on by its kind, and the reader of an unplaced one has
+/// nothing to act on but those words. They are kept with the tracker's
+/// password taken out, so the database and the user can reach the person
+/// running `bdi` and the password cannot.
 ///
 /// `unreadable` is the one thing a failure carries past its classification,
 /// and only a `Parse` has it. Nothing was on stderr for it to have come from:
@@ -94,7 +95,19 @@ pub struct RunFailure {
     pub program: String,
     pub detail: String,
     pub unreadable: Option<Box<Unreadable>>,
-    pub unplaced: Option<Box<Unplaced>>,
+    pub ran: Option<Box<Ran>>,
+}
+
+/// The command a failure came from, with no password left in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ran {
+    /// The arguments `bdi` gave the program, quoted as a shell would need
+    /// them, on one line: `--readonly list --json --limit 0`.
+    pub command: String,
+    /// Why it failed, beyond the failure's kind. That is what the program
+    /// wrote to stderr where no phrase places the failure, and the
+    /// operating system's error where the program was never started.
+    pub why: Option<String>,
 }
 
 /// What bd's client says when the server refuses the credential. Measured
@@ -359,7 +372,7 @@ impl RunFailure {
             program: program.to_string(),
             detail: format!("{program} is not installed: {cause}"),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -369,7 +382,7 @@ impl RunFailure {
             program: BD.to_string(),
             detail: format!("{BD} has pruned its events journal past where bdi read to"),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -386,7 +399,7 @@ impl RunFailure {
             program: program.to_string(),
             detail: format!("{program} could not be started: {cause}"),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -437,19 +450,38 @@ impl RunFailure {
     /// machine holding no `bd` is told so rather than told that a `bd` it
     /// does not have would not start. The cost is named in
     /// `a_refusal_nothing_can_place_is_answered_by_the_search_that_completed`.
+    ///
+    /// Each keeps the command line `args`, and each but `NotInstalled` keeps
+    /// the system's error too, with no password left in either.
     fn could_not_start(
         program: &str,
+        args: &[&str],
         cwd: Option<&Path>,
         env: &Env,
         cause: &std::io::Error,
     ) -> Self {
-        match installed(program, cwd, env) {
+        let failure = match installed(program, cwd, env) {
             _ if ours_to_report(cause, cwd) => Self::unstartable(program, cause),
             UnderThatName::Something => {
                 Self::could_not_be_started(FailureKind::InstalledUnstartable, program, cause)
             }
-            UnderThatName::Nothing => Self::not_installed(program, cause),
+            UnderThatName::Nothing => {
+                return Self::not_installed(program, cause).ran_as(args, env, None);
+            }
             UnderThatName::Unestablished => Self::unstartable(program, cause),
+        };
+        failure.ran_as(args, env, Some(&cause.to_string()))
+    }
+
+    /// This failure, naming the command line `args` it came from and why it
+    /// failed, with no password left in either.
+    fn ran_as(self, args: &[&str], env: &Env, why: Option<&str>) -> Self {
+        Self {
+            ran: Some(Box::new(Ran {
+                command: the_command(args, env),
+                why: why.map(|why| cut_short(&printable(&without_password(why, env)))),
+            })),
+            ..self
         }
     }
 
@@ -468,7 +500,7 @@ impl RunFailure {
                 read: String::new(),
                 cause: cause.to_string(),
             })),
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -484,27 +516,20 @@ impl RunFailure {
     /// Classify a non-zero exit from what the command wrote to stderr, then
     /// drop that text.
     pub(crate) fn from_exit(program: &str, code: Option<i32>, stderr: &str) -> Self {
-        Self::placed(program, stderr).unwrap_or_else(|| Self::unplaced(program, code, None))
+        Self::placed(program, stderr).unwrap_or_else(|| Self::unplaced(program, code))
     }
 
-    /// As [`from_exit`](Self::from_exit), but a failure no phrase places
-    /// keeps the command line `args` and what the command said, each with
-    /// no password left in it.
+    /// As [`from_exit`](Self::from_exit), but the failure keeps the command
+    /// line `args`, and one no phrase places keeps what the command said,
+    /// each with no password left in it.
     fn exited(program: &str, args: &[&str], env: &Env, code: Option<i32>, stderr: &str) -> Self {
-        Self::placed(program, stderr).unwrap_or_else(|| {
-            let args: Vec<String> = args
-                .iter()
-                .map(|arg| without_the_handed_password(arg, env))
-                .collect();
-            let unplaced = Unplaced {
-                command: on_one_line(&printable(&spelled(&args))),
-                said: cut_short(&printable(&without_password(stderr, env))),
-            };
-            Self::unplaced(program, code, Some(Box::new(unplaced)))
-        })
+        match Self::placed(program, stderr) {
+            Some(placed) => placed.ran_as(args, env, None),
+            None => Self::unplaced(program, code).ran_as(args, env, Some(stderr)),
+        }
     }
 
-    fn unplaced(program: &str, code: Option<i32>, unplaced: Option<Box<Unplaced>>) -> Self {
+    fn unplaced(program: &str, code: Option<i32>) -> Self {
         let detail = match code {
             Some(code) => format!("{program} exited {code} for a reason bdi cannot place"),
             None => format!("{program} was killed by a signal"),
@@ -514,7 +539,7 @@ impl RunFailure {
             program: program.to_string(),
             detail,
             unreadable: None,
-            unplaced,
+            ran: None,
         }
     }
 
@@ -575,7 +600,7 @@ impl RunFailure {
             program: program.to_string(),
             detail,
             unreadable: None,
-            unplaced: None,
+            ran: None,
         })
     }
 }
@@ -620,6 +645,16 @@ fn printable(said: &str) -> String {
         }
     }
     out
+}
+
+/// The command line `args` as a failure keeps it: with the handed password
+/// taken out of each argument, quoted as a shell needs it, and on one line.
+fn the_command(args: &[&str], env: &Env) -> String {
+    let args: Vec<String> = args
+        .iter()
+        .map(|arg| without_the_handed_password(arg, env))
+        .collect();
+    on_one_line(&printable(&spelled(&args)))
 }
 
 /// `text` with each line break written as its escape, so a command line
@@ -792,9 +827,9 @@ impl Runner for RealRunner {
         cwd: Option<&Path>,
         env: &Env,
     ) -> Result<String, Box<Printed>> {
-        let out = told(program, args, cwd, env)
-            .output()
-            .map_err(|e| Printed::nothing(RunFailure::could_not_start(program, cwd, env, &e)))?;
+        let out = told(program, args, cwd, env).output().map_err(|e| {
+            Printed::nothing(RunFailure::could_not_start(program, args, cwd, env, &e))
+        })?;
         answered(program, args, env, out)
     }
 
@@ -805,7 +840,7 @@ impl Runner for RealRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| RunFailure::could_not_start(program, None, &env, &e))?;
+            .map_err(|e| RunFailure::could_not_start(program, args, None, &env, &e))?;
         // A program that exits without reading its input refuses the write.
         // What it answered is still what says how the run went.
         let _ = child
@@ -815,7 +850,7 @@ impl Runner for RealRunner {
             .write_all(input.as_bytes());
         let out = child
             .wait_with_output()
-            .map_err(|e| RunFailure::could_not_start(program, None, &env, &e))?;
+            .map_err(|e| RunFailure::could_not_start(program, args, None, &env, &e))?;
         answered(program, args, &env, out).map_err(|printed| printed.failure)
     }
 }
@@ -850,7 +885,7 @@ pub fn captured(
 ) -> Result<Output, RunFailure> {
     told(program, args, cwd, env)
         .output()
-        .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))
+        .map_err(|e| RunFailure::could_not_start(program, args, cwd, env, &e))
 }
 
 /// Runs one command on `bdi`'s own stdin, stdout and stderr, and hands back
@@ -863,7 +898,7 @@ pub fn handed_over(
 ) -> Result<ExitStatus, RunFailure> {
     told(program, args, cwd, env)
         .status()
-        .map_err(|e| RunFailure::could_not_start(program, cwd, env, &e))
+        .map_err(|e| RunFailure::could_not_start(program, args, cwd, env, &e))
 }
 
 /// A command as every child is told it: the environment `bdi` runs in, less
@@ -1464,11 +1499,11 @@ mod tests {
 
         assert_eq!(failure.kind, FailureKind::Unavailable);
         assert_eq!(
-            failure.unplaced,
-            Some(Box::new(Unplaced {
+            failure.ran,
+            Some(Box::new(Ran {
                 command: r#"-c 'echo '\''  Error: the ledger is sealed  '\'' >&2; exit 3'"#
                     .to_string(),
-                said: "Error: the ledger is sealed".to_string(),
+                why: Some("Error: the ledger is sealed".to_string()),
             }))
         );
     }
@@ -1481,24 +1516,63 @@ mod tests {
             .expect_err("the command exits non-zero");
 
         assert_eq!(
-            failure.unplaced,
-            Some(Box::new(Unplaced {
+            failure.ran,
+            Some(Box::new(Ran {
                 command: "-c 'exit 1'".to_string(),
-                said: String::new(),
+                why: Some(String::new()),
             }))
         );
     }
 
-    /// Every failure a phrase places is acted on by its kind, and keeps
-    /// nothing of what was said: a refused credential is the one whose words
-    /// name the database and the user.
+    /// Every failure a phrase places is acted on by its kind, and keeps the
+    /// command it failed on but nothing of what was said: a refused
+    /// credential is the one whose words name the database and the user.
     #[test]
-    fn a_failure_bdi_places_keeps_none_of_what_it_said() {
+    fn a_failure_bdi_places_keeps_its_command_and_none_of_what_it_said() {
         for said in [REFUSED, UNREACHABLE, EMBEDDED, NO_SUCH_FLAG, PRUNED] {
             let failure = RunFailure::exited("bd", &["list"], &Env::new(), Some(1), said);
 
-            assert_eq!(failure.unplaced, None, "on {said:?}");
+            assert_eq!(
+                failure.ran,
+                Some(Box::new(Ran {
+                    command: "list".to_string(),
+                    why: None,
+                })),
+                "on {said:?}"
+            );
         }
+    }
+
+    /// A program the operating system would not start keeps the command it
+    /// was asked to run and the system's error, with the handed password
+    /// taken out of both. A file with no execute bit is one bdi can make
+    /// here, and it is refused the way a `bdi` out of file descriptors is.
+    #[test]
+    fn a_program_that_never_started_keeps_its_command_and_the_systems_error() {
+        let held = nothing_holds("unstarted");
+        std::fs::create_dir(&held).expect("the directory is ours to make");
+        let program = held.join("bd");
+        std::fs::write(&program, "#!/bin/sh\n").expect("the program is ours to write");
+        let env = Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())]);
+
+        let failure = RealRunner
+            .run(
+                &program.display().to_string(),
+                &["--readonly", "list", "--as", "hunter2"],
+                None,
+                &env,
+            )
+            .expect_err("the program cannot run");
+        let _ = std::fs::remove_dir_all(&held);
+
+        assert_eq!(failure.kind, FailureKind::InstalledUnstartable);
+        assert_eq!(
+            failure.ran,
+            Some(Box::new(Ran {
+                command: "--readonly list --as '<redacted>'".to_string(),
+                why: Some("Permission denied (os error 13)".to_string()),
+            }))
+        );
     }
 
     /// bd is handed the tracker's password in its environment, and can find
@@ -1529,11 +1603,14 @@ mod tests {
                 )
                 .expect_err("the command exits non-zero");
             let _ = std::fs::remove_file(&words);
-            *failure.unplaced.expect("the failure is unplaced")
+            *failure.ran.expect("the failure names its command")
         };
 
         let handed_back = kept("Error: ping failed as hunter'2 \n");
-        assert_eq!(handed_back.said, "Error: ping failed as <redacted>");
+        assert_eq!(
+            handed_back.why.as_deref(),
+            Some("Error: ping failed as <redacted>")
+        );
         assert!(
             handed_back
                 .command
@@ -1551,7 +1628,7 @@ mod tests {
             "{\"Password\":\n  \"esc\\\"aped value\"}",
         ] {
             let said = format!("Error: the ledger is sealed\n{unseen}\n");
-            assert_eq!(kept(&said).said, WITHHELD, "on {said:?}");
+            assert_eq!(kept(&said).why.as_deref(), Some(WITHHELD), "on {said:?}");
         }
     }
 
@@ -1564,7 +1641,7 @@ mod tests {
             .expect_err("the command exits non-zero");
 
         assert_eq!(
-            failure.unplaced.expect("the failure is unplaced").command,
+            failure.ran.expect("the failure names its command").command,
             r"-c 'exit 1' 'the\nledger'"
         );
     }
@@ -1588,7 +1665,10 @@ mod tests {
             .expect_err("the command exits non-zero");
 
         assert_eq!(
-            failure.unplaced.expect("the failure is unplaced").said,
+            failure
+                .ran
+                .and_then(|ran| ran.why)
+                .expect("the failure keeps what was said"),
             "Error: \\u{1b}[31mseal\\red\n\\tat the \\u{202e}ledger\\u{2028}kept"
         );
     }
@@ -1606,7 +1686,10 @@ mod tests {
             )
             .expect_err("the command exits non-zero");
 
-        let said = failure.unplaced.expect("the failure is unplaced").said;
+        let said = failure
+            .ran
+            .and_then(|ran| ran.why)
+            .expect("the failure keeps what was said");
         assert_eq!(said.chars().count(), SAID_AT_MOST + 1);
         assert!(said.ends_with('…'), "the cut is marked: {said}");
     }

@@ -310,7 +310,7 @@ mod tests {
     fn a_tree_bdi_could_not_read_leads_the_forest() {
         let mut trees = vec![
             counted("dunwich", "dun-1", 1, 40, 0),
-            Tree::tracker_unreachable("dunwich", "dun-9", TrackerFailure::Auth),
+            Tree::tracker_unreachable("dunwich", "dun-9", TrackerFailure::Auth { command: None }),
         ];
         in_flight_first(&mut trees);
 
@@ -402,7 +402,8 @@ mod tests {
 
     #[test]
     fn a_tree_whose_tracker_failed_is_never_hidden() {
-        let broken = Tree::tracker_unreachable("ferry", "fry-3", TrackerFailure::Auth);
+        let broken =
+            Tree::tracker_unreachable("ferry", "fry-3", TrackerFailure::Auth { command: None });
         let snap = snapshot(vec![broken]);
 
         assert_eq!(
@@ -522,7 +523,7 @@ mod tests {
         let mut before = built(interleaved(), Filter::LiveAgents);
         before.failed_projects = vec![FailedProject {
             project: "ferry".to_string(),
-            tracker: TrackerFailure::Auth,
+            tracker: TrackerFailure::Auth { command: None },
         }];
         before.conflicts = vec![Conflict::BeadAndPaneDisagree {
             bead: BeadKey {
@@ -547,7 +548,8 @@ mod tests {
 
     #[test]
     fn a_tracker_that_could_not_be_read_is_never_hidden_by_a_refilter() {
-        let broken = Tree::tracker_unreachable("ferry", "fry-3", TrackerFailure::Auth);
+        let broken =
+            Tree::tracker_unreachable("ferry", "fry-3", TrackerFailure::Auth { command: None });
 
         let filtered = refiltered(
             &built(vec![broken.clone()], Filter::All),

@@ -85,21 +85,6 @@ pub struct Unreadable {
     pub cause: String,
 }
 
-/// What is known about a command that exited non-zero for a reason `bdi`
-/// cannot place: the command line `bdi` gave it, and what it wrote to stderr.
-///
-/// Together they are enough to run the command by hand and see the failure
-/// again. Both have the tracker's password taken out, so nothing here can
-/// carry one to wherever the failure is shown.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Unplaced {
-    /// The arguments `bdi` gave the program, quoted as a shell would need
-    /// them: `--readonly list --json --limit 0`.
-    pub command: String,
-    /// What the program wrote to stderr, trimmed and cut short where long.
-    pub said: String,
-}
-
 /// One bead as `bdi` holds it: only the fields it uses, in its own shape.
 /// How a tracker spells them on the wire is the adapter's business.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,7 +177,7 @@ impl Bead {
                 return self
                     .values
                     .get(key)
-                    .map(|value| Cow::Borrowed(value.as_str()))
+                    .map(|value| Cow::Borrowed(value.as_str()));
             }
         };
         text.filter(|text| {
@@ -409,7 +394,8 @@ impl Pane {
 /// `tests/`, which is why it sits behind the feature rather than `cfg(test)`.
 #[cfg(feature = "testing")]
 pub mod testing {
-    use super::{PaneKey, Unplaced, Unreadable};
+    use super::{PaneKey, Unreadable};
+    use crate::model::snapshot::TrackerFailure;
 
     /// The session a test's panes are in unless it says otherwise: the one
     /// herdr runs where nothing names another.
@@ -427,12 +413,24 @@ pub mod testing {
         }
     }
 
-    /// What a bd failing for a reason no phrase places keeps, said over two
-    /// lines, with its password already taken out.
-    pub fn an_unplaced() -> Unplaced {
-        Unplaced {
-            command: "--readonly list --json".to_string(),
-            said: "Error: the ledger is sealed\n(asked with <redacted>)".to_string(),
+    /// The command line a failing bd was run with.
+    pub const A_COMMAND: &str = "--readonly list --json";
+
+    /// A bd failing for a reason no phrase places, said over two lines, with
+    /// its password already taken out.
+    pub fn an_unplaced() -> TrackerFailure {
+        TrackerFailure::Unavailable {
+            command: Some(A_COMMAND.to_string()),
+            said: Some("Error: the ledger is sealed\n(asked with <redacted>)".to_string()),
+        }
+    }
+
+    /// A bd the operating system would not start, as a watcher out of file
+    /// descriptors meets it.
+    pub fn an_unstarted() -> TrackerFailure {
+        TrackerFailure::InstalledUnstartable {
+            command: Some(A_COMMAND.to_string()),
+            error: Some("Too many open files (os error 24)".to_string()),
         }
     }
 

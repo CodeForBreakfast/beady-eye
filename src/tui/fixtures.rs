@@ -43,7 +43,10 @@ pub(in crate::tui) fn a_snapshot() -> Snapshot {
         ..Tree::tracker_unreachable(
             "arkham",
             "a-1",
-            TrackerFailure::Unavailable { unplaced: None },
+            TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
         )
     });
 

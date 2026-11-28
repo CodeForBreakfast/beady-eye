@@ -1052,7 +1052,10 @@ mod tests {
         let failed = Tree::tracker_unreachable(
             "summit-works",
             "smt-4kd3p",
-            TrackerFailure::Unavailable { unplaced: None },
+            TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
         );
         let forest = flatten(snapshot(
             vec![failed],
@@ -1132,7 +1135,10 @@ render = "{}"
         let unreadable = Tree::tracker_unreachable(
             "summit-works",
             "smt-7",
-            TrackerFailure::Unavailable { unplaced: None },
+            TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
         );
         let forest = opened(&snapshot(
             vec![grove(1), unreadable],
@@ -1160,7 +1166,10 @@ render = "{}"
         let unreadable = Tree::tracker_unreachable(
             "summit-works",
             "smt-4kd3p",
-            TrackerFailure::Unavailable { unplaced: None },
+            TrackerFailure::Unavailable {
+                command: None,
+                said: None,
+            },
         );
         let forest = flatten(snapshot(
             vec![grove(2), unreadable],

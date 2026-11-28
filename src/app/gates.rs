@@ -571,7 +571,7 @@ impl Kept {
                 return Settling {
                     found: vec![Found::CommitUnread { commit, failure }],
                     github: Read::Refused,
-                }
+                };
             }
         };
         let mut settling = Settling {
@@ -1344,8 +1344,7 @@ mod tests {
     }
 
     const SHA: &str = "5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff";
-    const HEADED_BY_SHA: &str =
-        "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls?per_page=100";
+    const HEADED_BY_SHA: &str = "gh api repos/example/ark/commits/5eaf00d1c0ffee5eaf00d1c0ffee5eaf00d1c0ff/pulls?per_page=100";
 
     fn commit() -> Commit {
         Commit {
@@ -2001,7 +2000,7 @@ mod tests {
             program: program.to_string(),
             detail: format!("{program} exited 1 for a reason bdi cannot place"),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -2062,7 +2061,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh found no such repository, pull request or issue on GitHub".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -2105,7 +2104,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh was refused for GitHub's rate limit".to_string(),
             unreadable: None,
-            unplaced: None,
+            ran: None,
         }
     }
 
@@ -2185,7 +2184,10 @@ mod tests {
             [
                 Found::TrackerUnread {
                     project: "arkham".to_string(),
-                    failure: TrackerFailure::Unavailable { unplaced: None },
+                    failure: TrackerFailure::Unavailable {
+                        command: None,
+                        said: None
+                    },
                 },
                 no_number("dunwich"),
                 settling("dunwich"),
@@ -2939,7 +2941,9 @@ mod tests {
     fn awaited_in(project: &str, ids: &str) -> String {
         read(
             project,
-            &format!("list --id {ids} --all --include-gates --include-infra --include-templates --limit 0 --json"),
+            &format!(
+                "list --id {ids} --all --include-gates --include-infra --include-templates --limit 0 --json"
+            ),
         )
     }
 

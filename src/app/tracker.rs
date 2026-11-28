@@ -647,25 +647,31 @@ pub(super) fn open_failure(failure: &OpenFailure) -> TrackerFailure {
 }
 
 pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
+    let command = failure.ran.as_ref().map(|ran| ran.command.clone());
+    let why = failure.ran.as_ref().and_then(|ran| ran.why.clone());
     match failure.kind {
-        FailureKind::Auth => TrackerFailure::Auth,
+        FailureKind::Auth => TrackerFailure::Auth { command },
         FailureKind::Unavailable
         | FailureKind::Gone
         | FailureKind::Busy
         | FailureKind::Unsupported
         | FailureKind::Pruned(_)
-        | FailureKind::RateLimited => TrackerFailure::Unavailable {
-            unplaced: failure.unplaced.as_deref().cloned(),
+        | FailureKind::RateLimited => TrackerFailure::Unavailable { command, said: why },
+        FailureKind::NotInstalled => TrackerFailure::NotInstalled { command },
+        FailureKind::Unstartable => TrackerFailure::Unstartable {
+            command,
+            error: why,
         },
-        FailureKind::NotInstalled => TrackerFailure::NotInstalled,
-        FailureKind::Unstartable => TrackerFailure::Unstartable,
-        FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
+        FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable {
+            command,
+            error: why,
+        },
         // `RunFailure::parse` fills both halves, so the fallback is only
         // reached by a failure built by hand.
         FailureKind::Parse => {
             TrackerFailure::Parse(failure.unreadable.as_deref().cloned().unwrap_or_default())
         }
-        FailureKind::UnknownFlag => TrackerFailure::UnknownFlag,
+        FailureKind::UnknownFlag => TrackerFailure::UnknownFlag { command },
     }
 }
 
@@ -677,11 +683,11 @@ mod tests {
     use crate::app::{Collection, Wanted};
     use crate::collect::agents::testing::{named, pane, Fake as Provider};
     use crate::collect::run::testing::Rendezvous;
-    use crate::collect::run::Retained;
+    use crate::collect::run::{Ran, Retained};
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
-    use crate::model::types::{PaneStatus, Unplaced};
+    use crate::model::types::PaneStatus;
     use pretty_assertions::assert_eq;
 
     /// A second root, reached only because config or a pane names it: closed,
@@ -2433,16 +2439,31 @@ dunwich = ["dun-404"]
     #[test]
     fn every_way_a_tracker_fails_keeps_its_own_kind() {
         let kinds = [
-            (FailureKind::Auth, TrackerFailure::Auth),
+            (FailureKind::Auth, TrackerFailure::Auth { command: None }),
             (
                 FailureKind::Unavailable,
-                TrackerFailure::Unavailable { unplaced: None },
+                TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             ),
-            (FailureKind::NotInstalled, TrackerFailure::NotInstalled),
-            (FailureKind::Unstartable, TrackerFailure::Unstartable),
+            (
+                FailureKind::NotInstalled,
+                TrackerFailure::NotInstalled { command: None },
+            ),
+            (
+                FailureKind::Unstartable,
+                TrackerFailure::Unstartable {
+                    command: None,
+                    error: None,
+                },
+            ),
             (
                 FailureKind::InstalledUnstartable,
-                TrackerFailure::InstalledUnstartable,
+                TrackerFailure::InstalledUnstartable {
+                    command: None,
+                    error: None,
+                },
             ),
             (
                 FailureKind::Parse,
@@ -2450,12 +2471,21 @@ dunwich = ["dun-404"]
             ),
             (
                 FailureKind::Unsupported,
-                TrackerFailure::Unavailable { unplaced: None },
+                TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             ),
-            (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
+            (
+                FailureKind::UnknownFlag,
+                TrackerFailure::UnknownFlag { command: None },
+            ),
             (
                 FailureKind::Pruned(Retained { floor: 5, head: 6 }),
-                TrackerFailure::Unavailable { unplaced: None },
+                TrackerFailure::Unavailable {
+                    command: None,
+                    said: None,
+                },
             ),
         ];
 
@@ -2490,28 +2520,76 @@ dunwich = ["dun-404"]
         );
     }
 
-    /// As does a failure bd gave and `bdi` cannot place: the command and what
-    /// bd said are all its reader has.
+    /// Every failure that came from a run of bd keeps the command it ran. A
+    /// failure bd gave and `bdi` cannot place keeps what bd said too, and a
+    /// bd that never started keeps the system's error, because each is all
+    /// its reader has.
     #[test]
-    fn a_tracker_failing_for_a_reason_bdi_cannot_place_keeps_what_bd_said() {
-        let said = Unplaced {
-            command: "--readonly list --json".to_string(),
-            said: "Error: the ledger is sealed".to_string(),
-        };
-        let unplaced = RunFailure {
-            unplaced: Some(Box::new(said.clone())),
-            ..failing(FailureKind::Unavailable)
-        };
-        let trackers = dunwich_with(dunwich_tracker().failing(Asked::All, unplaced));
+    fn a_tracker_failing_keeps_the_command_bd_failed_on_and_why() {
+        let command = || Some("--readonly list --json".to_string());
+        let said = || Some("Error: the ledger is sealed".to_string());
+        for (kind, why, reported) in [
+            (
+                FailureKind::Unavailable,
+                None,
+                TrackerFailure::Unavailable {
+                    command: command(),
+                    said: None,
+                },
+            ),
+            (
+                FailureKind::Unavailable,
+                said(),
+                TrackerFailure::Unavailable {
+                    command: command(),
+                    said: said(),
+                },
+            ),
+            (
+                FailureKind::Auth,
+                None,
+                TrackerFailure::Auth { command: command() },
+            ),
+            (
+                FailureKind::InstalledUnstartable,
+                said(),
+                TrackerFailure::InstalledUnstartable {
+                    command: command(),
+                    error: said(),
+                },
+            ),
+            (
+                FailureKind::Unstartable,
+                said(),
+                TrackerFailure::Unstartable {
+                    command: command(),
+                    error: said(),
+                },
+            ),
+            (
+                FailureKind::NotInstalled,
+                None,
+                TrackerFailure::NotInstalled { command: command() },
+            ),
+            (
+                FailureKind::UnknownFlag,
+                None,
+                TrackerFailure::UnknownFlag { command: command() },
+            ),
+        ] {
+            let failure = RunFailure {
+                ran: Some(Box::new(Ran {
+                    command: command().expect("a command"),
+                    why,
+                })),
+                ..failing(kind)
+            };
+            let trackers = dunwich_with(dunwich_tracker().failing(Asked::All, failure));
 
-        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
+            let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
 
-        assert_eq!(
-            snap.failed_projects[0].tracker,
-            TrackerFailure::Unavailable {
-                unplaced: Some(said)
-            }
-        );
+            assert_eq!(snap.failed_projects[0].tracker, reported, "on {kind:?}");
+        }
     }
 
     /// A project that asked to be read in a captured environment and did not
@@ -2591,7 +2669,10 @@ dunwich = ["dun-404"]
             snap.failed_projects,
             vec![FailedProject {
                 project: "dunwich".to_string(),
-                tracker: TrackerFailure::Unavailable { unplaced: None },
+                tracker: TrackerFailure::Unavailable {
+                    command: None,
+                    said: None
+                },
             }]
         );
         assert!(snap.trees.is_empty());
@@ -2634,7 +2715,7 @@ dunwich = ["dun-404"]
                 program: "bd".to_string(),
                 detail: "Access denied for user 'dunwich' at db.example.invalid:3306".to_string(),
                 unreadable: None,
-                unplaced: None,
+                ran: None,
             },
         ));
 
@@ -2660,7 +2741,10 @@ dunwich = ["dun-404"]
             assert!(snap.trees.is_empty(), "on {question:?}");
             assert_eq!(
                 snap.failed_projects[0].tracker,
-                TrackerFailure::Unavailable { unplaced: None },
+                TrackerFailure::Unavailable {
+                    command: None,
+                    said: None
+                },
                 "on {question:?}"
             );
         }
