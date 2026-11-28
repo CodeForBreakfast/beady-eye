@@ -301,6 +301,10 @@ pub struct Pane {
     /// name for it. `bdi` never reads anything into the name: it is the key
     /// the reader's `[tail.crop]` is written against.
     pub agent: Option<String>,
+    /// What the provider calls this agent in the pane — herdr's `name`, the
+    /// one a lane is identified by. Distinct from `display_agent`, which is
+    /// the pane's own claim about the bead it is working.
+    pub name: Option<String>,
     pub agent_session: Option<AgentSession>,
     pub display_agent: Option<String>,
     pub title: Option<String>,
@@ -327,6 +331,7 @@ impl Pane {
             pane_id,
             cwd,
             agent: None,
+            name: None,
             agent_session: None,
             display_agent: None,
             title: None,
