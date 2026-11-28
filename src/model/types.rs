@@ -85,6 +85,21 @@ pub struct Unreadable {
     pub cause: String,
 }
 
+/// What is known about a command that exited non-zero for a reason `bdi`
+/// cannot place: the command line `bdi` gave it, and what it wrote to stderr.
+///
+/// Together they are enough to run the command by hand and see the failure
+/// again. Both have the tracker's password taken out, so nothing here can
+/// carry one to wherever the failure is shown.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unplaced {
+    /// The arguments `bdi` gave the program, quoted as a shell would need
+    /// them: `--readonly list --json --limit 0`.
+    pub command: String,
+    /// What the program wrote to stderr, trimmed and cut short where long.
+    pub said: String,
+}
+
 /// One bead as `bdi` holds it: only the fields it uses, in its own shape.
 /// How a tracker spells them on the wire is the adapter's business.
 #[derive(Debug, Clone, PartialEq, Eq)]

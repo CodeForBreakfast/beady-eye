@@ -433,6 +433,7 @@ pub fn repository(repo: &str) -> Result<Repository<'_>, RunFailure> {
             "{repo} is not OWNER/REPO or HOST/OWNER/REPO, so GitHub has no such repository"
         ),
         unreadable: None,
+        unplaced: None,
     })
 }
 
@@ -762,6 +763,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh exited 1".to_string(),
             unreadable: None,
+            unplaced: None,
         }
     }
 

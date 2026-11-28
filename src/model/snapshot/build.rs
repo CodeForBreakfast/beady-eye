@@ -1297,7 +1297,7 @@ render = "⇢ {repo} #{number}"
             },
             FailedProject {
                 project: "dunwich".to_string(),
-                tracker: TrackerFailure::Unavailable,
+                tracker: TrackerFailure::Unavailable { unplaced: None },
             },
         ];
 

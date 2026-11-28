@@ -28,7 +28,7 @@ use crate::model::badges::{Badged, Undrawn};
 use crate::model::edges::Related;
 use crate::model::join::{AgentRef, BeadKey, Conflict};
 use crate::model::tree::{self, Link, OrphanedDependency};
-use crate::model::types::{Edge, Pane, PaneKey, PaneStatus, Printed, Status, Unreadable};
+use crate::model::types::{Edge, Pane, PaneKey, PaneStatus, Printed, Status, Unplaced, Unreadable};
 use crate::model::watching::Watching;
 
 /// Which agent provider this run read, and how that went.
@@ -158,13 +158,17 @@ pub enum Filter {
 
 /// Why a tracker could not be read, in `bdi`'s own words rather than bd's:
 /// bd names the database and the SQL user when it refuses a credential, so
-/// nothing it wrote is carried this far.
+/// nothing it wrote about a failure `bdi` can name is carried this far.
 ///
-/// `Parse` is the one kind that carries anything more, and what it carries is
-/// not bd's account of anything. bd names the database and the user on
-/// *stderr*, when it refuses a credential and exits non-zero; a parse failure
-/// is a run that succeeded, so what would not read is bd's stdout — the
-/// tracker's own rows, which `bdi` draws.
+/// `Parse` carries more, and what it carries is not bd's account of anything.
+/// bd names the database and the user on *stderr*, when it refuses a
+/// credential and exits non-zero; a parse failure is a run that succeeded, so
+/// what would not read is bd's stdout — the tracker's own rows, which `bdi`
+/// draws.
+///
+/// `Unavailable` carries bd's own words only where `bdi` cannot name the
+/// failure, because then they are all the reader has. They go to whoever runs
+/// `bdi`, whose database and user they are, with the password taken out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum TrackerFailure {
@@ -197,8 +201,13 @@ pub enum TrackerFailure {
     NoCredential,
     /// The tracker refused the credential it was given.
     Auth,
-    /// The tracker did not answer.
-    Unavailable,
+    /// The tracker did not answer, or bd failed for a reason `bdi` cannot
+    /// place. Only the second carries anything: the command and what bd
+    /// said, with the password taken out, which is all a reader has to go on.
+    Unavailable {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unplaced: Option<Unplaced>,
+    },
     /// Nothing is installed under bd's name for the tracker to be read with.
     NotInstalled,
     /// bd never ran, and whether bd is there was not established: a `PATH`

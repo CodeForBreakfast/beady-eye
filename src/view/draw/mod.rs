@@ -1049,8 +1049,11 @@ mod tests {
     /// line, after the root — the panes still working there.
     #[test]
     fn a_root_that_would_not_read_draws_its_reason_and_its_projects_panes() {
-        let failed =
-            Tree::tracker_unreachable("summit-works", "smt-4kd3p", TrackerFailure::Unavailable);
+        let failed = Tree::tracker_unreachable(
+            "summit-works",
+            "smt-4kd3p",
+            TrackerFailure::Unavailable { unplaced: None },
+        );
         let forest = flatten(snapshot(
             vec![failed],
             vec![pane("wCM:p9", PaneStatus::Working)],
@@ -1126,8 +1129,11 @@ render = "{}"
     /// starts where their titles do.
     #[test]
     fn an_unread_roots_reason_starts_where_the_bead_rows_titles_do() {
-        let unreadable =
-            Tree::tracker_unreachable("summit-works", "smt-7", TrackerFailure::Unavailable);
+        let unreadable = Tree::tracker_unreachable(
+            "summit-works",
+            "smt-7",
+            TrackerFailure::Unavailable { unplaced: None },
+        );
         let forest = opened(&snapshot(
             vec![grove(1), unreadable],
             Vec::new(),
@@ -1151,8 +1157,11 @@ render = "{}"
     /// them in the same place.
     #[test]
     fn a_root_with_nothing_under_it_draws_no_marker_and_still_lines_up() {
-        let unreadable =
-            Tree::tracker_unreachable("summit-works", "smt-4kd3p", TrackerFailure::Unavailable);
+        let unreadable = Tree::tracker_unreachable(
+            "summit-works",
+            "smt-4kd3p",
+            TrackerFailure::Unavailable { unplaced: None },
+        );
         let forest = flatten(snapshot(
             vec![grove(2), unreadable],
             Vec::new(),

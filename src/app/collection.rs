@@ -1363,6 +1363,7 @@ mod tests {
             program: "a provider".to_string(),
             detail: "no such session".to_string(),
             unreadable: None,
+            unplaced: None,
         });
 
         let snap = run(
@@ -3260,6 +3261,7 @@ path = "{}"
             program: THE_FAKE.to_string(),
             detail: "no socket".to_string(),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -4863,7 +4865,12 @@ prefix = "kad"
         let gap = journal_after_reading(&mut collection, &trackers);
         let after = journal_after_reading(&mut collection, &trackers);
 
-        assert_eq!(gap, Some(Journal::Unreadable(TrackerFailure::Unavailable)));
+        assert_eq!(
+            gap,
+            Some(Journal::Unreadable(TrackerFailure::Unavailable {
+                unplaced: None
+            }))
+        );
         assert_eq!(
             after,
             Some(Journal::Read(vec![

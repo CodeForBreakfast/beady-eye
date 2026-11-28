@@ -535,8 +535,8 @@ mod tests {
             |failure| match failure {
                 TrackerFailure::NoEnvironment => Some(TrackerFailure::NoCredential),
                 TrackerFailure::NoCredential => Some(TrackerFailure::Auth),
-                TrackerFailure::Auth => Some(TrackerFailure::Unavailable),
-                TrackerFailure::Unavailable => Some(TrackerFailure::NotInstalled),
+                TrackerFailure::Auth => Some(TrackerFailure::Unavailable { unplaced: None }),
+                TrackerFailure::Unavailable { .. } => Some(TrackerFailure::NotInstalled),
                 TrackerFailure::NotInstalled => Some(TrackerFailure::Unstartable),
                 TrackerFailure::Unstartable => Some(TrackerFailure::InstalledUnstartable),
                 TrackerFailure::InstalledUnstartable => {

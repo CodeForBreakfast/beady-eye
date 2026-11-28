@@ -654,7 +654,9 @@ pub(super) fn tracker_failure(failure: &RunFailure) -> TrackerFailure {
         | FailureKind::Busy
         | FailureKind::Unsupported
         | FailureKind::Pruned(_)
-        | FailureKind::RateLimited => TrackerFailure::Unavailable,
+        | FailureKind::RateLimited => TrackerFailure::Unavailable {
+            unplaced: failure.unplaced.clone(),
+        },
         FailureKind::NotInstalled => TrackerFailure::NotInstalled,
         FailureKind::Unstartable => TrackerFailure::Unstartable,
         FailureKind::InstalledUnstartable => TrackerFailure::InstalledUnstartable,
@@ -677,7 +679,7 @@ mod tests {
     use crate::collect::tracker::testing::{Asked, Fake, Fakes};
     use crate::model::snapshot::{FailedProject, Filter, Snapshot, TrackerState, Tree};
     use crate::model::tree::nestings_on_this_thread;
-    use crate::model::types::PaneStatus;
+    use crate::model::types::{PaneStatus, Unplaced};
     use pretty_assertions::assert_eq;
 
     /// A second root, reached only because config or a pane names it: closed,
@@ -2430,7 +2432,10 @@ dunwich = ["dun-404"]
     fn every_way_a_tracker_fails_keeps_its_own_kind() {
         let kinds = [
             (FailureKind::Auth, TrackerFailure::Auth),
-            (FailureKind::Unavailable, TrackerFailure::Unavailable),
+            (
+                FailureKind::Unavailable,
+                TrackerFailure::Unavailable { unplaced: None },
+            ),
             (FailureKind::NotInstalled, TrackerFailure::NotInstalled),
             (FailureKind::Unstartable, TrackerFailure::Unstartable),
             (
@@ -2441,11 +2446,14 @@ dunwich = ["dun-404"]
                 FailureKind::Parse,
                 TrackerFailure::Parse(Unreadable::default()),
             ),
-            (FailureKind::Unsupported, TrackerFailure::Unavailable),
+            (
+                FailureKind::Unsupported,
+                TrackerFailure::Unavailable { unplaced: None },
+            ),
             (FailureKind::UnknownFlag, TrackerFailure::UnknownFlag),
             (
                 FailureKind::Pruned(Retained { floor: 5, head: 6 }),
-                TrackerFailure::Unavailable,
+                TrackerFailure::Unavailable { unplaced: None },
             ),
         ];
 
@@ -2477,6 +2485,30 @@ dunwich = ["dun-404"]
                 read: "list".to_string(),
                 cause: "invalid type: null, expected a string".to_string(),
             })
+        );
+    }
+
+    /// As does a failure bd gave and `bdi` cannot place: the command and what
+    /// bd said are all its reader has.
+    #[test]
+    fn a_tracker_failing_for_a_reason_bdi_cannot_place_keeps_what_bd_said() {
+        let said = Unplaced {
+            command: "--readonly list --json".to_string(),
+            said: "Error: the ledger is sealed".to_string(),
+        };
+        let unplaced = RunFailure {
+            unplaced: Some(said.clone()),
+            ..failing(FailureKind::Unavailable)
+        };
+        let trackers = dunwich_with(dunwich_tracker().failing(Asked::All, unplaced));
+
+        let snap = run(&one_project(), &panes(), &trackers, Filter::All, now());
+
+        assert_eq!(
+            snap.failed_projects[0].tracker,
+            TrackerFailure::Unavailable {
+                unplaced: Some(said)
+            }
         );
     }
 
@@ -2557,7 +2589,7 @@ dunwich = ["dun-404"]
             snap.failed_projects,
             vec![FailedProject {
                 project: "dunwich".to_string(),
-                tracker: TrackerFailure::Unavailable,
+                tracker: TrackerFailure::Unavailable { unplaced: None },
             }]
         );
         assert!(snap.trees.is_empty());
@@ -2600,6 +2632,7 @@ dunwich = ["dun-404"]
                 program: "bd".to_string(),
                 detail: "Access denied for user 'dunwich' at db.example.invalid:3306".to_string(),
                 unreadable: None,
+                unplaced: None,
             },
         ));
 
@@ -2625,7 +2658,7 @@ dunwich = ["dun-404"]
             assert!(snap.trees.is_empty(), "on {question:?}");
             assert_eq!(
                 snap.failed_projects[0].tracker,
-                TrackerFailure::Unavailable,
+                TrackerFailure::Unavailable { unplaced: None },
                 "on {question:?}"
             );
         }

@@ -123,5 +123,6 @@ pub fn refused(kind: FailureKind) -> RunFailure {
         program: "bd".to_string(),
         detail: "Access denied for user 'dunwich' at db.example.invalid:3306".to_string(),
         unreadable: None,
+        unplaced: None,
     }
 }

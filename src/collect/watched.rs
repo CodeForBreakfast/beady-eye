@@ -704,7 +704,7 @@ fn reached_as(failure: &TrackerFailure) -> OpenFailure {
         TrackerFailure::NoEnvironment => return OpenFailure::NoEnvironment,
         TrackerFailure::NoCredential => return OpenFailure::NoCredential,
         TrackerFailure::Auth => FailureKind::Auth,
-        TrackerFailure::Unavailable => FailureKind::Unavailable,
+        TrackerFailure::Unavailable { .. } => FailureKind::Unavailable,
         TrackerFailure::NotInstalled => FailureKind::NotInstalled,
         TrackerFailure::Unstartable => FailureKind::Unstartable,
         TrackerFailure::InstalledUnstartable => FailureKind::InstalledUnstartable,
@@ -715,11 +715,16 @@ fn reached_as(failure: &TrackerFailure) -> OpenFailure {
         TrackerFailure::Parse(unreadable) => Some(unreadable.clone()),
         _ => None,
     };
+    let unplaced = match failure {
+        TrackerFailure::Unavailable { unplaced } => unplaced.clone(),
+        _ => None,
+    };
     OpenFailure::Refused(RunFailure {
         kind,
         program: "bd".to_string(),
         detail: "the watcher could not read the tracker".to_string(),
         unreadable,
+        unplaced,
     })
 }
 
@@ -1472,7 +1477,13 @@ path = "/srv/work/ferry"
             TrackerFailure::NoEnvironment,
             TrackerFailure::NoCredential,
             TrackerFailure::Auth,
-            TrackerFailure::Unavailable,
+            TrackerFailure::Unavailable { unplaced: None },
+            TrackerFailure::Unavailable {
+                unplaced: Some(crate::model::types::Unplaced {
+                    command: "--readonly list --json".to_string(),
+                    said: "Error: the ledger is sealed".to_string(),
+                }),
+            },
             TrackerFailure::NotInstalled,
             TrackerFailure::Unstartable,
             TrackerFailure::InstalledUnstartable,

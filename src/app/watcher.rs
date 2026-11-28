@@ -727,14 +727,17 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: later(30),
-                failure: TrackerFailure::Unavailable,
+                failure: TrackerFailure::Unavailable { unplaced: None },
             },
         ));
 
         let standing = hold.of("dunwich").expect("dunwich was read");
         assert_eq!(ids(standing), Some(vec!["dun-1"]));
         assert_eq!(standing.as_of, Some(now()));
-        assert_eq!(standing.unreachable, Some(TrackerFailure::Unavailable));
+        assert_eq!(
+            standing.unreachable,
+            Some(TrackerFailure::Unavailable { unplaced: None })
+        );
     }
 
     #[test]
@@ -744,7 +747,7 @@ mod tests {
             "dunwich",
             Said::Unreachable {
                 at: now(),
-                failure: TrackerFailure::Unavailable,
+                failure: TrackerFailure::Unavailable { unplaced: None },
             },
         ));
 
@@ -1667,7 +1670,9 @@ mod tests {
         };
 
         hold.take(Answer {
-            journal: Some(Journal::Unreadable(TrackerFailure::Unavailable)),
+            journal: Some(Journal::Unreadable(TrackerFailure::Unavailable {
+                unplaced: None,
+            })),
             ..read("dunwich", later(30), &["dun-1", "dun-2"])
         });
         let unreadable = events(&connection.told);

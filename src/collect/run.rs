@@ -6,9 +6,12 @@ use std::fmt;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::LazyLock;
 
-use crate::collect::environment::NEVER_INHERITED;
-use crate::model::types::Unreadable;
+use regex_lite::Regex;
+
+use crate::collect::environment::{CREDENTIAL_VAR, NEVER_INHERITED};
+use crate::model::types::{Unplaced, Unreadable};
 
 /// The variables a child process is given on top of the environment `bdi`
 /// itself runs in; a set value replaces whatever the parent holds.
@@ -75,6 +78,12 @@ pub struct Retained {
 /// bd names the database and the user it authenticated as when it fails, and
 /// text that is never kept cannot leak into the output.
 ///
+/// `unplaced` is the exception, and only a failure no phrase places has it.
+/// A placed failure is acted on by its kind, and the reader of an unplaced
+/// one has nothing to act on but the command's own words. Those are kept
+/// with the tracker's password taken out, so the database and the user can
+/// reach the person running `bdi` and the password cannot.
+///
 /// `unreadable` is the one thing a failure carries past its classification,
 /// and only a `Parse` has it. Nothing was on stderr for it to have come from:
 /// a command whose output would not parse is a command that succeeded, so
@@ -85,6 +94,7 @@ pub struct RunFailure {
     pub program: String,
     pub detail: String,
     pub unreadable: Option<Unreadable>,
+    pub unplaced: Option<Unplaced>,
 }
 
 /// What bd's client says when the server refuses the credential. Measured
@@ -349,6 +359,7 @@ impl RunFailure {
             program: program.to_string(),
             detail: format!("{program} is not installed: {cause}"),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -358,6 +369,7 @@ impl RunFailure {
             program: BD.to_string(),
             detail: format!("{BD} has pruned its events journal past where bdi read to"),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -374,6 +386,7 @@ impl RunFailure {
             program: program.to_string(),
             detail: format!("{program} could not be started: {cause}"),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -455,6 +468,7 @@ impl RunFailure {
                 read: String::new(),
                 cause: cause.to_string(),
             }),
+            unplaced: None,
         }
     }
 
@@ -470,6 +484,38 @@ impl RunFailure {
     /// Classify a non-zero exit from what the command wrote to stderr, then
     /// drop that text.
     pub(crate) fn from_exit(program: &str, code: Option<i32>, stderr: &str) -> Self {
+        Self::placed(program, stderr).unwrap_or_else(|| Self::unplaced(program, code, None))
+    }
+
+    /// As [`from_exit`](Self::from_exit), but a failure no phrase places
+    /// keeps the command line `args` and what the command said, each with
+    /// the password `env` handed it taken out.
+    fn exited(program: &str, args: &[&str], env: &Env, code: Option<i32>, stderr: &str) -> Self {
+        Self::placed(program, stderr).unwrap_or_else(|| {
+            let unplaced = Unplaced {
+                command: without_password(&spelled(args), env),
+                said: cut_short(&without_password(stderr.trim(), env)),
+            };
+            Self::unplaced(program, code, Some(unplaced))
+        })
+    }
+
+    fn unplaced(program: &str, code: Option<i32>, unplaced: Option<Unplaced>) -> Self {
+        let detail = match code {
+            Some(code) => format!("{program} exited {code} for a reason bdi cannot place"),
+            None => format!("{program} was killed by a signal"),
+        };
+        Self {
+            kind: FailureKind::Unavailable,
+            program: program.to_string(),
+            detail,
+            unreadable: None,
+            unplaced,
+        }
+    }
+
+    /// The failure a phrase on stderr places, where one does.
+    fn placed(program: &str, stderr: &str) -> Option<Self> {
         let said = stderr.to_lowercase();
         let (kind, detail) = if REFUSAL.iter().any(|phrase| said.contains(phrase)) {
             (
@@ -495,7 +541,7 @@ impl RunFailure {
             .then(|| retained(&said))
             .flatten()
         {
-            return Self::pruned(window);
+            return Some(Self::pruned(window));
         } else if program == GH && said.contains(NOT_ON_GITHUB) {
             (
                 FailureKind::Gone,
@@ -517,20 +563,76 @@ impl RunFailure {
                 format!("{program} cannot read that pane while it is busy"),
             )
         } else {
-            let detail = match code {
-                Some(code) => format!("{program} exited {code} for a reason bdi cannot place"),
-                None => format!("{program} was killed by a signal"),
-            };
-            (FailureKind::Unavailable, detail)
+            return None;
         };
 
-        Self {
+        Some(Self {
             kind,
             program: program.to_string(),
             detail,
             unreadable: None,
-        }
+            unplaced: None,
+        })
     }
+}
+
+/// The most of what a command said that an unplaced failure keeps, in
+/// characters. A bd error is a line or two, and past this it is usage text
+/// or a trace, whose start says enough to go and look.
+const SAID_AT_MOST: usize = 1000;
+
+fn cut_short(said: &str) -> String {
+    match said.char_indices().nth(SAID_AT_MOST) {
+        Some((cut, _)) => format!("{}…", &said[..cut]),
+        None => said.to_string(),
+    }
+}
+
+/// `args` as a shell needs them typed, so the command runs again when pasted
+/// after the program's name.
+fn spelled(args: &[&str]) -> String {
+    let plain = |arg: &str| {
+        !arg.is_empty()
+            && arg
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-./=:,@%+".contains(c))
+    };
+    args.iter()
+        .map(|arg| {
+            if plain(arg) {
+                (*arg).to_string()
+            } else {
+                format!("'{}'", arg.replace('\'', r"'\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// What stands in for a password taken out of what a command said.
+const TAKEN_OUT: &str = "<password>";
+
+/// `said` with the tracker's password taken out.
+///
+/// The password the child was handed goes wherever it appears. bd can also
+/// find one `bdi` never sees, in its credentials file, so anything in the two
+/// shapes a password is written in goes too: the secret of a
+/// `user:secret@host` connection string, and a value given for a key named
+/// password.
+fn without_password(said: &str, env: &Env) -> String {
+    static USERINFO: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"([A-Za-z0-9._%+-]+):[^\s@/:]+@").expect("the pattern compiles")
+    });
+    static KEYED: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)(password\s*[=:]\s*)\S+").expect("the pattern compiles"));
+    let handed = match env.get(CREDENTIAL_VAR) {
+        Some(password) if !password.is_empty() => said.replace(password.as_str(), TAKEN_OUT),
+        _ => said.to_string(),
+    };
+    let unkeyed = KEYED.replace_all(&handed, format!("${{1}}{TAKEN_OUT}"));
+    USERINFO
+        .replace_all(&unkeyed, format!("${{1}}:{TAKEN_OUT}@"))
+        .into_owned()
 }
 
 impl fmt::Display for RunFailure {
@@ -643,7 +745,7 @@ impl Runner for RealRunner {
         let out = told(program, args, cwd, env)
             .output()
             .map_err(|e| Printed::nothing(RunFailure::could_not_start(program, cwd, env, &e)))?;
-        answered(program, out)
+        answered(program, args, env, out)
     }
 
     fn run_feeding(&self, program: &str, args: &[&str], input: &str) -> Result<String, RunFailure> {
@@ -664,17 +766,20 @@ impl Runner for RealRunner {
         let out = child
             .wait_with_output()
             .map_err(|e| RunFailure::could_not_start(program, None, &env, &e))?;
-        answered(program, out).map_err(|printed| printed.failure)
+        answered(program, args, &env, out).map_err(|printed| printed.failure)
     }
 }
 
-/// What a finished run hands back: its stdout where it succeeded, and why it
-/// did not where it failed, beside whatever it printed first.
-fn answered(program: &str, out: Output) -> Result<String, Box<Printed>> {
+/// What a finished run of `program` with `args` and `env` hands back: its
+/// stdout where it succeeded, and why it did not where it failed, beside
+/// whatever it printed first.
+fn answered(program: &str, args: &[&str], env: &Env, out: Output) -> Result<String, Box<Printed>> {
     if !out.status.success() {
         return Err(Box::new(Printed {
-            failure: RunFailure::from_exit(
+            failure: RunFailure::exited(
                 program,
+                args,
+                env,
                 out.status.code(),
                 &String::from_utf8_lossy(&out.stderr),
             ),
@@ -1304,6 +1409,121 @@ mod tests {
                 "text on stderr reached a failure's own field: {said:?}"
             );
         }
+    }
+
+    /// A failure no phrase places is one the reader can do nothing about
+    /// without the command's own words, so it keeps them, beside the command
+    /// line `bdi` gave it, quoted so it can be run again by hand.
+    #[test]
+    fn a_failure_bdi_cannot_place_keeps_the_command_and_what_it_said() {
+        let failure = RealRunner
+            .run(
+                "sh",
+                &["-c", "echo '  Error: the ledger is sealed  ' >&2; exit 3"],
+                None,
+                &Env::new(),
+            )
+            .expect_err("the command exits non-zero");
+
+        assert_eq!(failure.kind, FailureKind::Unavailable);
+        assert_eq!(
+            failure.unplaced,
+            Some(Unplaced {
+                command: r#"-c 'echo '\''  Error: the ledger is sealed  '\'' >&2; exit 3'"#
+                    .to_string(),
+                said: "Error: the ledger is sealed".to_string(),
+            })
+        );
+    }
+
+    /// A command that wrote nothing still says which command it was.
+    #[test]
+    fn a_silent_failure_bdi_cannot_place_still_names_its_command() {
+        let failure = RealRunner
+            .run("sh", &["-c", "exit 1"], None, &Env::new())
+            .expect_err("the command exits non-zero");
+
+        assert_eq!(
+            failure.unplaced,
+            Some(Unplaced {
+                command: "-c 'exit 1'".to_string(),
+                said: String::new(),
+            })
+        );
+    }
+
+    /// Every failure a phrase places is acted on by its kind, and keeps
+    /// nothing of what was said: a refused credential is the one whose words
+    /// name the database and the user.
+    #[test]
+    fn a_failure_bdi_places_keeps_none_of_what_it_said() {
+        for said in [REFUSED, UNREACHABLE, EMBEDDED, NO_SUCH_FLAG, PRUNED] {
+            let failure = RunFailure::exited("bd", &["list"], &Env::new(), Some(1), said);
+
+            assert_eq!(failure.unplaced, None, "on {said:?}");
+        }
+    }
+
+    /// bd is handed the tracker's password in its environment, and the
+    /// connection string it builds from it carries it too. Neither reaches
+    /// what an unplaced failure keeps, from the words or from the command
+    /// line, whatever form the password takes there.
+    #[test]
+    fn no_password_survives_into_what_an_unplaced_failure_keeps() {
+        let env = Env::from([(CREDENTIAL_VAR.to_string(), "hunter2".to_string())]);
+        let failure = RealRunner
+            .run(
+                "sh",
+                &[
+                    "-c",
+                    r#"echo "Error: ping failed as $BEADS_DOLT_PASSWORD" >&2
+                       echo "dsn arkham:tr0ub4dor@tcp(db.example.invalid:3306)/arkham" >&2
+                       echo "url mysql://arkham:s3s4me@db.example.invalid/arkham" >&2
+                       echo "password=correcthorse PASSWORD: batterystaple" >&2
+                       exit 1"#,
+                ],
+                None,
+                &env,
+            )
+            .expect_err("the command exits non-zero");
+
+        let kept = failure.unplaced.expect("the failure is unplaced");
+        let shown = format!("{kept:?}");
+        for secret in [
+            "hunter2",
+            "tr0ub4dor",
+            "s3s4me",
+            "correcthorse",
+            "batterystaple",
+        ] {
+            assert!(!shown.contains(secret), "{secret:?} survived into: {shown}");
+        }
+        assert!(
+            kept.said.starts_with("Error: ping failed as "),
+            "what was said around the password is kept: {shown}"
+        );
+        assert!(
+            kept.said.contains("arkham:") && kept.said.contains("@tcp(db.example.invalid:3306)"),
+            "the user and the host are kept: {shown}"
+        );
+    }
+
+    /// A command that writes pages of stderr keeps the start of it, and says
+    /// it was cut.
+    #[test]
+    fn an_unplaced_failure_keeps_only_the_start_of_a_long_answer() {
+        let failure = RealRunner
+            .run(
+                "sh",
+                &["-c", "printf 'é%.0s' $(seq 5000) >&2; exit 1"],
+                None,
+                &Env::new(),
+            )
+            .expect_err("the command exits non-zero");
+
+        let said = failure.unplaced.expect("the failure is unplaced").said;
+        assert_eq!(said.chars().count(), SAID_AT_MOST + 1);
+        assert!(said.ends_with('…'), "the cut is marked: {said}");
     }
 
     #[test]

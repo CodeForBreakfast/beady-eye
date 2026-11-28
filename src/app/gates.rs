@@ -2001,6 +2001,7 @@ mod tests {
             program: program.to_string(),
             detail: format!("{program} exited 1 for a reason bdi cannot place"),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -2061,6 +2062,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh found no such repository, pull request or issue on GitHub".to_string(),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -2103,6 +2105,7 @@ mod tests {
             program: "gh".to_string(),
             detail: "gh was refused for GitHub's rate limit".to_string(),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -2182,7 +2185,7 @@ mod tests {
             [
                 Found::TrackerUnread {
                     project: "arkham".to_string(),
-                    failure: TrackerFailure::Unavailable,
+                    failure: TrackerFailure::Unavailable { unplaced: None },
                 },
                 no_number("dunwich"),
                 settling("dunwich"),

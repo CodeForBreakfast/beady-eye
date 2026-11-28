@@ -632,6 +632,7 @@ mod tests {
             program: "herdr".to_string(),
             detail: "herdr no longer has that pane".to_string(),
             unreadable: None,
+            unplaced: None,
         }
     }
 

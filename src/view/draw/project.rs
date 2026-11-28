@@ -814,7 +814,7 @@ mod tests {
     fn an_unread_root_is_named_where_its_row_would_have_been_with_the_reason() {
         let unread = unread(
             "smt-4kd3p",
-            TrackerState::Unreachable(TrackerFailure::Unavailable),
+            TrackerState::Unreachable(TrackerFailure::Unavailable { unplaced: None }),
         );
         let drawn = Painted::of(unread_line(&unread, LAST, 9), 60, 1).rows();
 
@@ -853,7 +853,7 @@ mod tests {
     fn a_focused_bead_whose_tracker_did_not_answer_says_why() {
         let absent = unread(
             "smt-4kd3p.21",
-            TrackerState::Unreachable(TrackerFailure::Unavailable),
+            TrackerState::Unreachable(TrackerFailure::Unavailable { unplaced: None }),
         );
         let drawn = Painted::of(absent_line(&absent, LAST, 12), 90, 1).rows();
 

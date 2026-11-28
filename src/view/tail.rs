@@ -298,6 +298,7 @@ mod tests {
             program: "herdr".to_string(),
             detail: "the test said so".to_string(),
             unreadable: None,
+            unplaced: None,
         }
     }
 
@@ -773,7 +774,7 @@ mod tests {
     fn failed_project() -> FailedProject {
         FailedProject {
             project: "lander".to_string(),
-            tracker: TrackerFailure::Unavailable,
+            tracker: TrackerFailure::Unavailable { unplaced: None },
         }
     }
 

@@ -78,7 +78,7 @@ fn redacted(failure: &TrackerFailure) -> &'static str {
             "nothing was read"
         ),
         TrackerFailure::Auth => "the tracker rejected the credential",
-        TrackerFailure::Unavailable => "the tracker did not answer",
+        TrackerFailure::Unavailable { .. } => "the tracker did not answer",
         TrackerFailure::NotInstalled => "bd is not installed",
         TrackerFailure::Unstartable => "bd could not be started",
         TrackerFailure::InstalledUnstartable => "bd is installed but could not be started",
