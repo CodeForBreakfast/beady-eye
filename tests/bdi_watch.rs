@@ -447,16 +447,12 @@ fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_room_again() {
 }
 
 /// The same once the watcher has a single descriptor free: the one it takes
-/// the connection on is all it needs to answer it.
+/// the connection on is all it needs to answer it, while the views' socket
+/// beside it has nothing waiting.
 #[cfg(target_os = "linux")]
 #[test]
-///
-/// The watcher is left one socket, because a thread blocked in accept holds
-/// the descriptor its next connection takes, and the views' socket's would
-/// hold the one given back.
 fn a_watcher_out_of_descriptors_answers_a_new_watch_once_it_has_one_free() {
     let (home, tracker) = a_home_with_a_watcher_configured("watch-out-of-descriptors-one-free");
-    the_views_socket_is_the_watchers_own(&home);
     let mut watcher = watching_in(&home, &tracker);
     let mut untaken = a_watch_out_of_descriptors(&home, &mut watcher);
 
@@ -613,9 +609,9 @@ struct PastTheLimit {
 /// A watch `watcher` has not taken once its soft limit is lowered to the
 /// lowest descriptor it has free.
 ///
-/// A thread already blocked in accept holds the descriptor its next
-/// connection takes, so the watcher can take a connection past the limit,
-/// and answer it or drop it, before it fails to take one.
+/// A read of the tracker can hold a descriptor for a moment as the limit is
+/// lowered, so the watcher can take a connection past the limit, and answer
+/// it or drop it, before it fails to take one.
 #[cfg(target_os = "linux")]
 fn a_watch_past_the_limit(home: &Path, watcher: &Watcher) -> PastTheLimit {
     let mut answered = Consumer::connected_to(&watching_at(home));
@@ -671,7 +667,8 @@ fn processor_time(pid: u32) -> Duration {
 const UNTAKEN_AFTER: Duration = Duration::from_millis(500);
 
 /// More connections than a watcher with no descriptor free takes before an
-/// accept fails. It takes the one its blocked accept holds a descriptor for.
+/// accept fails. It takes one on each descriptor a read lets go of as the
+/// limit is lowered.
 #[cfg(target_os = "linux")]
 const TAKEN_PAST_THE_LIMIT_AT_MOST: usize = 4;
 

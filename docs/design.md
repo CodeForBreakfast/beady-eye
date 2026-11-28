@@ -2299,7 +2299,9 @@ taken stays queued, so the next try would fail at once. The accept loop waits
 a tenth of a second between tries rather than spin a core, and takes
 connections again once the run has a descriptor free. A connection is read,
 answered and hung up on through the one descriptor it was taken on, so one
-free is room enough to serve it. It says why at the first failure of each
+free is room enough to serve it. A socket accepts only once a connection
+waits on it, so a socket with nothing waiting holds no descriptor back from
+one that has. It says why at the first failure of each
 run of them. `bdi watch`, `bdi web` and `bdi gates` say it on `stderr`,
 naming the socket and the error, from a thread of their own and straight to
 the descriptor, without the lock Rust's `stderr` holds across a write. A

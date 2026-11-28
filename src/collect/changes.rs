@@ -536,7 +536,7 @@ fn listening<F: Fn(UnixStream) + Send + Sync + 'static>(
     // which is a different device from the directory entry the name is.
     let bound = file_at(&at);
 
-    thread::spawn(move || accept(channel.incoming(), &each, &*taking));
+    thread::spawn(move || accept(queued(&channel), &each, &*taking));
 
     Ok(Socket { at, bound })
 }
@@ -652,6 +652,10 @@ fn bind(at: &Path, in_use: InUse) -> Result<UnixListener, Refused> {
     };
 
     fs::set_permissions(at, fs::Permissions::from_mode(OWNER_ONLY))
+        .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
+    // So that `queued` can try an accept that waits for nothing.
+    channel
+        .set_nonblocking(true)
         .map_err(|why| Refused::Unopenable(at.to_path_buf(), why))?;
 
     Ok(channel)
@@ -872,6 +876,45 @@ fn accept<F: Fn(UnixStream) + Send + Sync + 'static>(
 
         let each = Arc::clone(each);
         thread::spawn(move || each(connection));
+    }
+}
+
+/// Each connection `channel` takes, accepted only once one is waiting.
+///
+/// An accept that waits holds the descriptor for the connection it will
+/// take, from the moment it starts waiting. A run listening on two sockets
+/// with a single descriptor free would leave it with whichever socket waited
+/// first, while a connection waited on the other. `channel` is nonblocking,
+/// so nothing holds a descriptor until a connection is there to take.
+fn queued(channel: &UnixListener) -> impl Iterator<Item = io::Result<UnixStream>> + '_ {
+    std::iter::repeat_with(move || loop {
+        until_one_waits(channel)?;
+        match channel.accept() {
+            // A connection takes its listener's nonblocking flag on some
+            // systems, and is read and written as one that waits.
+            Ok((connection, _)) => return connection.set_nonblocking(false).map(|()| connection),
+            Err(why) if why.kind() == ErrorKind::WouldBlock => continue,
+            Err(why) => return Err(why),
+        }
+    })
+}
+
+/// Wait until a connection is queued on `channel`, without a descriptor.
+fn until_one_waits(channel: &UnixListener) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut waiting = libc::pollfd {
+        fd: channel.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        if unsafe { libc::poll(&mut waiting, 1, -1) } >= 0 {
+            return Ok(());
+        }
+        let why = io::Error::last_os_error();
+        if why.kind() != ErrorKind::Interrupted {
+            return Err(why);
+        }
     }
 }
 

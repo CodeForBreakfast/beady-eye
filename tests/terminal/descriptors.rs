@@ -121,8 +121,7 @@ pub fn answered_within(
 const UNTAKEN_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// More connections than a run with no descriptor free takes before an
-/// accept fails. A thread already blocked in accept holds the descriptor for
-/// the next one, so the run takes that one past its limit. A collection or a
-/// check of the config can hold a descriptor for a moment as the limit is
-/// lowered, and the run takes a connection on each one that closes.
+/// accept fails. A collection or a check of the config can hold a descriptor
+/// for a moment as the limit is lowered, and the run takes a connection on
+/// each one that closes.
 const PAST_THE_LIMIT: usize = 16;
