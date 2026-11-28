@@ -382,40 +382,101 @@ fn a_watcher_that_stops_closes_its_consumers_and_takes_no_more() {
 
 /// What a session whose connection dropped relies on: a watcher that runs
 /// out of descriptors takes it back once one is free, without a restart.
-///
-/// The watcher's soft limit is lowered to the lowest descriptor it has free,
-/// which leaves it no room for one more, as reaching its limit does. A
-/// thread already blocked in accept holds the descriptor its next connection
-/// takes, so the watcher can take a connection past the limit, and answer it
-/// or drop it, before it fails to take one.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_watcher_out_of_descriptors_answers_a_new_watch_once_one_is_free() {
     let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors");
-    let mut answered = Consumer::connected_to(&watching_at(&home));
-    answered.sends("watch arkham").hears_an_answer();
     let room = open_files(watcher.pid()).rlim_cur;
+    let mut untaken = a_watch_out_of_descriptors(&home, &watcher);
 
-    limit_open_files(watcher.pid(), lowest_free_descriptor(watcher.pid()));
-    let mut taken_past_the_limit = Vec::new();
-    let mut waiting = loop {
-        let mut consumer = Consumer::connected_to(&watching_at(&home));
-        consumer.sends("watch arkham");
-        match consumer.taken_within(UNTAKEN_AFTER) {
-            Taken::Waiting => break consumer,
-            Taken::Answered | Taken::Dropped => taken_past_the_limit.push(consumer),
-        }
-        assert!(
-            taken_past_the_limit.len() < TAKEN_PAST_THE_LIMIT_AT_MOST,
-            "the watcher kept taking connections past its limit"
-        );
-    };
     limit_open_files(watcher.pid(), room);
-    let answer = waiting.hears_an_answer();
+    let answer = untaken.waiting.hears_an_answer();
 
     let out = stopped(watcher);
     assert_eq!(beads_in(&answer), EVERY_DESCRIBED_BEAD);
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+/// What the rest of the machine relies on while a watcher has no descriptor
+/// free: it waits for one rather than spinning a core.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_watcher_out_of_descriptors_spends_next_to_no_time_waiting_for_one() {
+    let (home, _tracker, watcher) = a_watcher("watch-out-of-descriptors-idles");
+
+    let untaken = a_watch_out_of_descriptors(&home, &watcher);
+
+    stopped(watcher);
+    assert!(
+        untaken.spent_waiting < UNTAKEN_AFTER / 5,
+        "the watcher spent {:?} of {UNTAKEN_AFTER:?} on the processor",
+        untaken.spent_waiting
+    );
+}
+
+/// A watch the watcher has not taken because it has no descriptor free.
+#[cfg(target_os = "linux")]
+struct Untaken {
+    waiting: Consumer,
+    /// The processor time the watcher spent while the watch waited.
+    spent_waiting: Duration,
+    _taken_past_the_limit: Vec<Consumer>,
+}
+
+/// A watch `watcher` cannot take, once its soft limit is lowered to the
+/// lowest descriptor it has free, as reaching its limit does.
+///
+/// A thread already blocked in accept holds the descriptor its next
+/// connection takes, so the watcher can take a connection past the limit,
+/// and answer it or drop it, before it fails to take one.
+#[cfg(target_os = "linux")]
+fn a_watch_out_of_descriptors(home: &Path, watcher: &Watcher) -> Untaken {
+    let mut answered = Consumer::connected_to(&watching_at(home));
+    answered.sends("watch arkham").hears_an_answer();
+
+    limit_open_files(watcher.pid(), lowest_free_descriptor(watcher.pid()));
+    let mut taken_past_the_limit = vec![answered];
+    loop {
+        let mut consumer = Consumer::connected_to(&watching_at(home));
+        consumer.sends("watch arkham");
+        let before = processor_time(watcher.pid());
+        let taken = consumer.taken_within(UNTAKEN_AFTER);
+        let spent_waiting = processor_time(watcher.pid()) - before;
+        match taken {
+            Taken::Waiting => {
+                return Untaken {
+                    waiting: consumer,
+                    spent_waiting,
+                    _taken_past_the_limit: taken_past_the_limit,
+                }
+            }
+            Taken::Answered | Taken::Dropped => taken_past_the_limit.push(consumer),
+        }
+        assert!(
+            taken_past_the_limit.len() <= TAKEN_PAST_THE_LIMIT_AT_MOST,
+            "the watcher kept taking connections past its limit"
+        );
+    }
+}
+
+/// The processor time `pid` has spent, in user and system time together.
+#[cfg(target_os = "linux")]
+fn processor_time(pid: u32) -> Duration {
+    let stat =
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("the watcher is ours to read");
+    // The command name comes in parentheses and may hold spaces, so the
+    // fields are counted from after it: utime and stime are the 12th and
+    // 13th there.
+    let (_, fields) = stat.rsplit_once(')').expect("stat names the command");
+    let ticks: u64 = fields
+        .split_whitespace()
+        .skip(11)
+        .take(2)
+        .map(|field| field.parse::<u64>().expect("a time is a count of ticks"))
+        .sum();
+    let per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    assert!(per_second > 0, "{}", std::io::Error::last_os_error());
+    Duration::from_secs_f64(ticks as f64 / per_second as f64)
 }
 
 /// Long enough for a watcher that is going to take a connection to have
@@ -475,10 +536,16 @@ fn lowest_free_descriptor(pid: u32) -> libc::rlim_t {
             .expect("the watcher is ours to read")
             .map(|entry| {
                 let entry = entry.expect("the watcher is ours to read");
-                entry.file_name().to_string_lossy().parse().expect("a descriptor is a number")
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .parse()
+                    .expect("a descriptor is a number")
             })
             .collect();
-    (0..).find(|descriptor| !held.contains(descriptor)).expect("a descriptor is free")
+    (0..)
+        .find(|descriptor| !held.contains(descriptor))
+        .expect("a descriptor is free")
 }
 
 /// What a consumer waiting on a deferred bead relies on: nothing is written
