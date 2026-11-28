@@ -404,7 +404,7 @@ impl Hold {
         }
 
         if let Some((project, id, _)) = newly_watching {
-            let behind = self.tell_views_who_watches(project, id);
+            let behind = self.tell_views_who_watches(project, id, Some(consumer));
             self.hang_up(behind);
         }
         Ok(())
@@ -424,7 +424,7 @@ impl Hold {
             };
             for ((project, id), agent_sessions) in gone.agent_sessions {
                 if !agent_sessions.is_subset(&self.agent_sessions_watching(&project, &id)) {
-                    consumers.extend(self.tell_views_who_watches(&project, &id));
+                    consumers.extend(self.tell_views_who_watches(&project, &id, None));
                 }
             }
         }
@@ -454,11 +454,21 @@ impl Hold {
     }
 
     /// Tell every view watching all of `project` which agent sessions now watch
-    /// bead `id`, and hand back the connections too far behind to be told.
-    fn tell_views_who_watches(&self, project: &str, id: &str) -> Vec<u64> {
+    /// bead `id`, but `told_already`, and hand back the connections too far
+    /// behind to be told.
+    fn tell_views_who_watches(
+        &self,
+        project: &str,
+        id: &str,
+        told_already: Option<u64>,
+    ) -> Vec<u64> {
         let line = watching::watching_line(project, id, &self.agent_sessions_watching(project, id));
         let mut behind = Vec::new();
-        for (&consumer, view) in &self.consumers {
+        let others = self
+            .consumers
+            .iter()
+            .filter(|(consumer, _)| Some(**consumer) != told_already);
+        for (&consumer, view) in others {
             let watches_all = view
                 .interests
                 .get(project)
@@ -1321,6 +1331,7 @@ mod tests {
                 .any(|line| line.contains("5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")),
             "got: {answer:?}"
         );
+        assert_eq!(kinds(&view.told), Vec::<Vec<String>>::new());
     }
 
     /// A consumer can tell this watcher from one that sends who watches after

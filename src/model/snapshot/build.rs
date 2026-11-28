@@ -13,7 +13,7 @@ use crate::model::edges::{Elsewhere, Named, Related, Relations};
 use crate::model::join::{self, BeadKey, Conflict, Joined};
 use crate::model::tree::Assembled;
 use crate::model::types::{Edge, Pane, PaneKey};
-use crate::model::watching::{self, Watchers, Watching};
+use crate::model::watching::{self, ProjectWatchers, Watching};
 
 use super::filter::{in_flight_first, partition};
 use super::{
@@ -41,10 +41,7 @@ pub struct Said<'a> {
     /// The watchers of each of this project's beads, by id. Nothing where
     /// no watcher answered for the project, which leaves who watches them
     /// unknown.
-    pub watching: Option<&'a BTreeMap<String, Watchers>>,
-    /// Whether `watching` holds every watcher the watcher has, so that a bead
-    /// it leaves out is watched by nobody.
-    pub watching_is_whole: bool,
+    pub watching: Option<&'a ProjectWatchers>,
 }
 
 /// What one project said, as the only project a tree is drawn from.
@@ -62,7 +59,6 @@ pub fn said_by<'a>(
             waiting: None,
             elsewhere: None,
             watching: None,
-            watching_is_whole: false,
         },
     )])
 }
@@ -148,11 +144,7 @@ pub fn build_tree(
             anomalies.extend(anomaly::unwatched(
                 own,
                 bead,
-                watching::anyone_watches(
-                    watched_by,
-                    &bead.id,
-                    said.is_some_and(|said| said.watching_is_whole),
-                ),
+                watching::anyone_watches(watched_by, &bead.id),
                 &cfg.anomalies,
             ));
             Node {

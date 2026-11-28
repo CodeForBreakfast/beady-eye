@@ -30,7 +30,7 @@ use crate::model::snapshot::{
 };
 use crate::model::tree::{Across, Assembled, Nesting, Unreachable};
 use crate::model::types::{Bead, Pane};
-use crate::model::watching::{self, Watchers};
+use crate::model::watching::{self, ProjectWatchers};
 
 use super::tracker::{
     open_failure, refresh_project, tracker_failure, with_own_edges_unprefixed, ProjectWork, ReadAt,
@@ -792,12 +792,15 @@ impl Collection {
         }
         let joined = &joined;
 
-        let watching: BTreeMap<&str, (BTreeMap<String, Watchers>, bool)> = answered
+        let watching: BTreeMap<&str, ProjectWatchers> = answered
             .iter()
             .filter_map(|(project, _)| {
                 let watches = trackers.watches(project)?;
-                let watchers = watching::in_panes(watches.agent_sessions, panes);
-                Some((*project, (watchers, watches.whole)))
+                let watchers = ProjectWatchers {
+                    by_bead: watching::in_panes(watches.agent_sessions, panes),
+                    whole: watches.whole,
+                };
+                Some((*project, watchers))
             })
             .collect();
         let said: BTreeMap<&str, Said> = answered
@@ -810,8 +813,7 @@ impl Collection {
                         relations: &work.relations,
                         waiting: self.reached.waiting.get(*project),
                         elsewhere: self.reached.elsewhere.get(*project),
-                        watching: watching.get(*project).map(|(watchers, _)| watchers),
-                        watching_is_whole: watching.get(*project).is_some_and(|(_, whole)| *whole),
+                        watching: watching.get(*project),
                     },
                 )
             })
