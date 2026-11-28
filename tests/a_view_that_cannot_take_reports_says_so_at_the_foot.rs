@@ -36,6 +36,10 @@ const THE_FIRST_FRAME: &[u8] = "arkham".as_bytes();
 /// line, because the foot is drawn as a difference from the frame before.
 const NOT_TAKEN: &[u8] = "bdi cannot take reports of changes".as_bytes();
 
+/// The notice as the foot cuts it to make room for another, such as one a
+/// check of the config made while the view had no descriptor free.
+const NOT_TAKEN_CUT: &[u8] = "reports not taken".as_bytes();
+
 /// What `bdi watch` says on stderr of the same failure, which a view saying
 /// it there would tear its frame with.
 const SAID_ON_STDERR: &[u8] = "cannot take connections".as_bytes();
@@ -50,7 +54,7 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
     let room = open_files(pid).rlim_cur;
 
     limit_open_files(pid, lowest_free_descriptor(pid));
-    let _waiting = a_report_past_the_limit(&the_socket_under(&home));
+    let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&the_socket_under(&home));
     bdi.read_until(NOT_TAKEN, GIVING_UP);
 
     let mut rows = ROWS - 1;
@@ -68,9 +72,22 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
     );
 
     limit_open_files(pid, room);
-    let frame = whole_frames_until_gone(&mut bdi, &mut rows, ROWS, COLS, NOT_TAKEN, GIVING_UP);
+    assert_eq!(
+        answered_within(&waiting, GIVING_UP),
+        Answered::With("ok arkham\n".to_string()),
+        "the socket takes the report waiting on it\n{}",
+        bdi.timeline()
+    );
+    let frame = whole_frames_until_gone(
+        &mut bdi,
+        &mut rows,
+        ROWS,
+        COLS,
+        &[NOT_TAKEN, NOT_TAKEN_CUT],
+        GIVING_UP,
+    );
     assert!(
-        !contains(&frame, NOT_TAKEN),
+        !contains(&frame, NOT_TAKEN) && !contains(&frame, NOT_TAKEN_CUT),
         "the socket takes connections again and the foot still says it does \
          not\n{}",
         bdi.timeline()

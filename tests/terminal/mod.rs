@@ -349,8 +349,8 @@ pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|at| at == needle)
 }
 
-/// Whole frames until `gone` is off one, handed back either way, so an
-/// assertion has a frame that still holds it to fail against. `rows` is the
+/// Whole frames until every one of `gone` is off one, handed back either
+/// way, so an assertion has a frame that still holds one to fail against. `rows` is the
 /// height the terminal is at. The height alternates between `tall` and a row
 /// less, because a resize to the height it already is is no resize at all
 /// and is answered by no whole frame.
@@ -359,7 +359,7 @@ pub fn whole_frames_until_gone(
     rows: &mut u16,
     tall: u16,
     cols: u16,
-    gone: &[u8],
+    gone: &[&[u8]],
     patience: Duration,
 ) -> Vec<u8> {
     let giving_up = std::time::Instant::now() + patience;
@@ -367,7 +367,8 @@ pub fn whole_frames_until_gone(
         *rows = if *rows == tall { tall - 1 } else { tall };
         let whole = bdi.resize(*rows, cols);
         let frame = bdi.answer_to(whole, driver::GIVING_UP);
-        if !contains(&frame, gone) || std::time::Instant::now() >= giving_up {
+        let held = gone.iter().any(|said| contains(&frame, said));
+        if !held || std::time::Instant::now() >= giving_up {
             return frame;
         }
     }

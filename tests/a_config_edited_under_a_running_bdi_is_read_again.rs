@@ -87,7 +87,7 @@ fn a_config_that_will_not_parse_leaves_the_running_one_standing_and_says_so() {
         &mut rows,
         ROWS,
         COLS,
-        WOULD_NOT_LOAD,
+        &[WOULD_NOT_LOAD],
         A_CHECK_OR_TWO,
     );
     assert!(
