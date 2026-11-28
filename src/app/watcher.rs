@@ -399,6 +399,12 @@ impl Hold {
             );
         }
         if !lines.is_empty() && !connection.tells(lines) {
+            if let Some((project, id, agent_session)) = newly_watching {
+                let bead = (project.clone(), id.clone());
+                if let Some(agent_sessions) = connection.agent_sessions.get_mut(&bead) {
+                    agent_sessions.remove(agent_session);
+                }
+            }
             self.hang_up(vec![consumer]);
             return Ok(());
         }
@@ -1331,6 +1337,31 @@ mod tests {
                 .any(|line| line.contains("5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")),
             "got: {answer:?}"
         );
+        assert_eq!(kinds(&view.told), Vec::<Vec<String>>::new());
+    }
+
+    /// A watch whose answer could not be sent never began, so no view is
+    /// told it ended.
+    #[test]
+    fn a_watch_hung_up_on_before_its_answer_is_not_told_to_views() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        let view = connected(&mut hold, 4);
+        hold.watch(view.consumer, &watching_all_of_dunwich(), now())
+            .expect("dunwich is read");
+        let _ = view.told.try_iter().count();
+        let behind = connected(&mut hold, 1);
+        hold.watch(behind.consumer, &watching_dunwich(), now())
+            .expect("dunwich is read");
+
+        hold.watch(
+            behind.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+
+        assert!(!hold.consumers.contains_key(&behind.consumer));
         assert_eq!(kinds(&view.told), Vec::<Vec<String>>::new());
     }
 
