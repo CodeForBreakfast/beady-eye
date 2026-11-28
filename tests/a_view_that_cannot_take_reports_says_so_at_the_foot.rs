@@ -21,7 +21,7 @@ use terminal::descriptors::{
 };
 use terminal::driver::{Driven, GIVING_UP};
 use terminal::{
-    a_home_naming_one_project, a_socket_of_its_own, contains, the_socket_under,
+    a_home_naming_one_project, a_socket_of_its_own, contains, the_socket_under, whole_frames_until,
     whole_frames_until_gone,
 };
 
@@ -40,6 +40,11 @@ const NOT_TAKEN: &[u8] = "bdi cannot take reports of changes".as_bytes();
 /// check of the config made while the view had no descriptor free.
 const NOT_TAKEN_CUT: &[u8] = "reports not taken".as_bytes();
 
+/// Whether `frame` says the reports are not taken, in either form.
+fn says_not_taken(frame: &[u8]) -> bool {
+    contains(frame, NOT_TAKEN) || contains(frame, NOT_TAKEN_CUT)
+}
+
 /// What `bdi watch` says on stderr of the same failure, which a view saying
 /// it there would tear its frame with.
 const SAID_ON_STDERR: &[u8] = "cannot take connections".as_bytes();
@@ -55,13 +60,10 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
 
     limit_open_files(pid, lowest_free_descriptor(pid));
     let (waiting, _taken_past_the_limit) = a_report_past_the_limit(&the_socket_under(&home));
-    bdi.read_until(NOT_TAKEN, GIVING_UP);
-
-    let mut rows = ROWS - 1;
-    let whole = bdi.resize(rows, COLS);
-    let frame = bdi.answer_to(whole, GIVING_UP);
+    let mut rows = ROWS;
+    let frame = whole_frames_until(&mut bdi, &mut rows, ROWS, COLS, GIVING_UP, says_not_taken);
     assert!(
-        contains(&frame, NOT_TAKEN) && contains(&frame, THE_FIRST_FRAME),
+        says_not_taken(&frame) && contains(&frame, THE_FIRST_FRAME),
         "the foot says the reports are not taken, under the forest\n{}",
         bdi.timeline()
     );
@@ -87,7 +89,7 @@ fn a_view_out_of_descriptors_says_so_at_the_foot_until_it_has_room_again() {
         GIVING_UP,
     );
     assert!(
-        !contains(&frame, NOT_TAKEN) && !contains(&frame, NOT_TAKEN_CUT),
+        !says_not_taken(&frame),
         "the socket takes connections again and the foot still says it does \
          not\n{}",
         bdi.timeline()

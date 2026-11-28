@@ -216,18 +216,20 @@ fn a_web_with_no_socket_to_hear_on_stays_up_and_answering() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
-    // Named at length, because the report names the socket under it and has
-    // to be longer than the room the pipe has, wherever the home is made.
-    let home = a_home_naming_one_project_settled(
-        "web-report-waiting-on-a-stderr-nobody-reads",
-        "poll = false\n",
-    );
+    let home = a_home_naming_one_project_settled("web-report-waiting", "poll = false\n");
+    let runtime = a_runtime_directory_naming_a_long_socket(&home);
     let tracker = ShimmedTracker::beside(&home);
     tracker.holds(THE_DESCRIBED_SUBTREE);
     let (unread, stderr) = a_pipe_with_room_for(ROOM_FOR_THE_NOTICES);
     let full = held_by(&unread);
-    let (web, address) =
-        bdi_web_saying_into(&home, &tracker, &[], Some(&home), &[], Stdio::from(stderr));
+    let (web, address) = bdi_web_saying_into(
+        &home,
+        &tracker,
+        &[],
+        Some(&runtime),
+        &[],
+        Stdio::from(stderr),
+    );
     until_it_has_read(&address);
     assert_eq!(
         held_by(&unread),
@@ -236,7 +238,7 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
     );
     let pid = web.0.id();
     let room = open_files(pid).rlim_cur;
-    let socket = the_socket_under(&home);
+    let socket = the_socket_under(&runtime);
     let report = format!(
         "bdi web cannot take connections on {}, and keeps trying: \
          Too many open files (os error 24)\n",
@@ -279,6 +281,25 @@ fn a_report_waiting_on_stderr_leaves_the_web_reading_on() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// A runtime directory under `home` putting the socket at a path
+/// [`A_LONG_SOCKET_PATH`] long, or as long as `home` makes it where that is
+/// longer. The report names the socket, so it is then longer than the room
+/// the pipe has, wherever `home` is.
+#[cfg(target_os = "linux")]
+fn a_runtime_directory_naming_a_long_socket(home: &Path) -> std::path::PathBuf {
+    let socket = the_socket_under(home).as_os_str().len();
+    let padding = A_LONG_SOCKET_PATH.saturating_sub(socket + 1).max(1);
+    let runtime = home.join("r".repeat(padding));
+    std::fs::create_dir_all(&runtime).expect("the directory is ours to make");
+    runtime
+}
+
+/// Long enough that a report naming a socket this long outgrows the room
+/// the pipe has, and short enough to bind, since a socket's path holds at
+/// most 107 bytes.
+#[cfg(target_os = "linux")]
+const A_LONG_SOCKET_PATH: usize = 100;
 
 /// What `bdi web` says on finding the config will not load.
 #[cfg(target_os = "linux")]

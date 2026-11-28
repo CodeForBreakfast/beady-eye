@@ -362,13 +362,27 @@ pub fn whole_frames_until_gone(
     gone: &[&[u8]],
     patience: Duration,
 ) -> Vec<u8> {
+    whole_frames_until(bdi, rows, tall, cols, patience, |frame| {
+        !gone.iter().any(|said| contains(frame, said))
+    })
+}
+
+/// Whole frames until one is `done`, handed back either way, as
+/// [`whole_frames_until_gone`] hands them back.
+pub fn whole_frames_until(
+    bdi: &mut driver::Driven,
+    rows: &mut u16,
+    tall: u16,
+    cols: u16,
+    patience: Duration,
+    done: impl Fn(&[u8]) -> bool,
+) -> Vec<u8> {
     let giving_up = std::time::Instant::now() + patience;
     loop {
         *rows = if *rows == tall { tall - 1 } else { tall };
         let whole = bdi.resize(*rows, cols);
         let frame = bdi.answer_to(whole, driver::GIVING_UP);
-        let held = gone.iter().any(|said| contains(&frame, said));
-        if !held || std::time::Instant::now() >= giving_up {
+        if done(&frame) || std::time::Instant::now() >= giving_up {
             return frame;
         }
     }
