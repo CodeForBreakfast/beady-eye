@@ -343,10 +343,7 @@ impl Hold {
                 vec![project]
             }
         };
-        let watched: Vec<(String, BTreeMap<String, BTreeSet<String>>)> = projects
-            .iter()
-            .map(|project| ((*project).clone(), self.agent_sessions_in(project)))
-            .collect();
+        let projects: Vec<String> = projects.into_iter().cloned().collect();
         let newly_watching = match watch {
             Watch::Bead {
                 project,
@@ -358,6 +355,29 @@ impl Hold {
             .then_some((project, id, agent_session)),
             _ => None,
         };
+        if let (
+            Some(connection),
+            Watch::Bead {
+                project,
+                id,
+                agent_session: Some(agent_session),
+            },
+        ) = (self.consumers.get_mut(&consumer), watch)
+        {
+            let bead = (project.clone(), id.clone());
+            connection
+                .agent_sessions
+                .entry(bead)
+                .or_default()
+                .insert(agent_session.clone());
+        }
+        let watched: Vec<(String, BTreeMap<String, BTreeSet<String>>)> = projects
+            .into_iter()
+            .map(|project| {
+                let watched = self.agent_sessions_in(&project);
+                (project, watched)
+            })
+            .collect();
         let Some(connection) = self.consumers.get_mut(&consumer) else {
             return Ok(());
         };
@@ -383,19 +403,6 @@ impl Hold {
             return Ok(());
         }
 
-        if let Watch::Bead {
-            project,
-            id,
-            agent_session: Some(agent_session),
-        } = watch
-        {
-            let bead = (project.clone(), id.clone());
-            connection
-                .agent_sessions
-                .entry(bead)
-                .or_default()
-                .insert(agent_session.clone());
-        }
         if let Some((project, id, _)) = newly_watching {
             let behind = self.tell_views_who_watches(project, id);
             self.hang_up(behind);
@@ -1283,6 +1290,37 @@ mod tests {
         let watching = told.iter().position(|kind| kind == "watching");
         let freshness = told.iter().position(|kind| kind == "freshness");
         assert!(watching.is_some() && watching < freshness, "got: {told:?}");
+    }
+
+    /// A view watching from an agent session of its own is told that session
+    /// watches before the answer closes.
+    #[test]
+    fn a_view_is_told_its_own_watch_before_the_answer_closes() {
+        let mut hold = Hold::reading([("dunwich".to_string(), dunwich(), false)]);
+        hold.take(read("dunwich", now(), &["dun-1"]));
+        let view = connected(&mut hold, 4);
+        hold.watch(view.consumer, &watching_all_of_dunwich(), now())
+            .expect("dunwich is read");
+        let _ = view.told.try_iter().count();
+
+        hold.watch(
+            view.consumer,
+            &from_agent_session("dun-1", "5a1c9f30-6b28-4d17-9e04-71fb3c8ad952"),
+            now(),
+        )
+        .expect("dunwich is read");
+
+        let answer = view.told.try_recv().expect("an answer");
+        let freshness = answer
+            .iter()
+            .position(|line| line.contains(r#""line":"freshness""#))
+            .expect("a freshness line");
+        assert!(
+            answer[..freshness]
+                .iter()
+                .any(|line| line.contains("5a1c9f30-6b28-4d17-9e04-71fb3c8ad952")),
+            "got: {answer:?}"
+        );
     }
 
     /// A consumer can tell this watcher from one that sends who watches after
